@@ -1,10 +1,11 @@
 ---
 - name: Delete ElastiCache Serverless Redis
-  hosts: localhost
-  connection: local
+  hosts: "_bastion"
   gather_facts: false
-  vars:
-    ansible_python_interpreter: ../.venv/bin/python
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ access_key_v }}"
+    AWS_SECRET_ACCESS_KEY: "{{ secret_key_v }}"
+    AWS_REGION: "{{ region_v }}"
   tasks:
     - name: Check if ElastiCache Serverless cache exists
       ansible.builtin.command: >

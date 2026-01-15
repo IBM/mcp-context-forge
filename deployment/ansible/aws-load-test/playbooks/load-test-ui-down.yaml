@@ -60,29 +60,54 @@
         vpc_id_f: "{{ vpc_info_r.vpcs[0].id }}"
       when: vpc_info_r.vpcs | length > 0
 
-    - name: Find my public IP
+    - name: Find my public IPv4 address
       ansible.builtin.uri:
-        url: http://ifconfig.me/ip
+        url: https://ipv4.icanhazip.com
         return_content: true
-      register: ip_response
+        timeout: 5
+      register: ipv4_response
+      ignore_errors: true
+
+    - name: Find my public IPv6 address
+      ansible.builtin.uri:
+        url: https://ipv6.icanhazip.com
+        return_content: true
+        timeout: 5
+      register: ipv6_response
+      ignore_errors: true
+
+    - name: Set IP facts
+      ansible.builtin.set_fact:
+        my_ipv4: "{{ ipv4_response.content | default('') | trim }}"
+        my_ipv6: "{{ ipv6_response.content | default('') | trim }}"
+        has_ipv4: "{{ ipv4_response is success and ipv4_response.content | default('') | trim | length > 0 }}"
+        has_ipv6: "{{ ipv6_response is success and ipv6_response.content | default('') | trim | length > 0 }}"
+
+    - name: Build bastion security group rules (without ALB access)
+      ansible.builtin.set_fact:
+        bastion_rules: >-
+          {{
+            (has_ipv4 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 22, 'to_port': 22, 'cidr_ip': my_ipv4 + '/32'},
+               {'proto': 'tcp', 'from_port': 8089, 'to_port': 8089, 'cidr_ip': my_ipv4 + '/32'}],
+              []
+            ) +
+            (has_ipv6 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 22, 'to_port': 22, 'cidr_ipv6': my_ipv6 + '/128'},
+               {'proto': 'tcp', 'from_port': 8089, 'to_port': 8089, 'cidr_ipv6': my_ipv6 + '/128'}],
+              []
+            )
+          }}
 
     - name: Restore bastion security group (remove ALB access to 8089)
       amazon.aws.ec2_security_group:
         name: "{{ prefix_v }}-bastion-sg"
-        description: Allow SSH and Locust access
+        description: Allow SSH and Locust access (IPv4 and IPv6)
         region: "{{ region_v }}"
         vpc_id: "{{ vpc_id_f }}"
         tags:
           "Name": "{{ prefix_v }}-bastion-sg"
-        rules:
-          - proto: tcp
-            from_port: 22
-            to_port: 22
-            cidr_ip: "{{ ip_response.content }}/32"
-          - proto: tcp
-            from_port: 8089
-            to_port: 8089
-            cidr_ip: "{{ ip_response.content }}/32"
+        rules: "{{ bastion_rules }}"
       when: vpc_info_r.vpcs | length > 0
 
     - name: ALB and Locust UI removed

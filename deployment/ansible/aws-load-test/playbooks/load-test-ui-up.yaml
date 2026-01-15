@@ -29,11 +29,28 @@
           "map-public-ip-on-launch": true
       register: vpc_public_subnets_r
 
-    - name: Find my public IP
+    - name: Find my public IPv4 address
       ansible.builtin.uri:
-        url: http://ifconfig.me/ip
+        url: https://ipv4.icanhazip.com
         return_content: true
-      register: ip_response
+        timeout: 5
+      register: ipv4_response
+      ignore_errors: true
+
+    - name: Find my public IPv6 address
+      ansible.builtin.uri:
+        url: https://ipv6.icanhazip.com
+        return_content: true
+        timeout: 5
+      register: ipv6_response
+      ignore_errors: true
+
+    - name: Set IP facts
+      ansible.builtin.set_fact:
+        my_ipv4: "{{ ipv4_response.content | default('') | trim }}"
+        my_ipv6: "{{ ipv6_response.content | default('') | trim }}"
+        has_ipv4: "{{ ipv4_response is success and ipv4_response.content | default('') | trim | length > 0 }}"
+        has_ipv6: "{{ ipv6_response is success and ipv6_response.content | default('') | trim | length > 0 }}"
 
     - name: Get ALB security group
       amazon.aws.ec2_security_group_info:
@@ -63,48 +80,61 @@
       when: bastion_instance_r.instances | length == 0
 
     # =========================================================================
-    # Update Security Groups
+    # Update Security Groups (dual-stack IPv4 + IPv6)
     # =========================================================================
+
+    - name: Build ALB security group rules
+      ansible.builtin.set_fact:
+        alb_rules: >-
+          {{
+            (has_ipv4 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 80, 'to_port': 80, 'cidr_ip': my_ipv4 + '/32'},
+               {'proto': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_ip': my_ipv4 + '/32'}],
+              []
+            ) +
+            (has_ipv6 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 80, 'to_port': 80, 'cidr_ipv6': my_ipv6 + '/128'},
+               {'proto': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_ipv6': my_ipv6 + '/128'}],
+              []
+            )
+          }}
+
+    - name: Build bastion security group rules
+      ansible.builtin.set_fact:
+        bastion_rules: >-
+          {{
+            (has_ipv4 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 22, 'to_port': 22, 'cidr_ip': my_ipv4 + '/32'},
+               {'proto': 'tcp', 'from_port': 8089, 'to_port': 8089, 'cidr_ip': my_ipv4 + '/32'}],
+              []
+            ) +
+            (has_ipv6 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 22, 'to_port': 22, 'cidr_ipv6': my_ipv6 + '/128'},
+               {'proto': 'tcp', 'from_port': 8089, 'to_port': 8089, 'cidr_ipv6': my_ipv6 + '/128'}],
+              []
+            ) +
+            [{'proto': 'tcp', 'from_port': 8089, 'to_port': 8089, 'group_id': alb_sg_info_r.security_groups[0].group_id}]
+          }}
 
     - name: Update ALB security group for HTTPS
       amazon.aws.ec2_security_group:
         name: "{{ prefix_v }}-alb-sg"
-        description: Allow HTTPS traffic from my IP to ALB
+        description: Allow HTTP/HTTPS from my IP (IPv4 and IPv6)
         region: "{{ region_v }}"
         vpc_id: "{{ vpc_id_f }}"
         tags:
           "Name": "{{ prefix_v }}-alb-sg"
-        rules:
-          - proto: tcp
-            from_port: 80
-            to_port: 80
-            cidr_ip: "{{ ip_response.content }}/32"
-          - proto: tcp
-            from_port: 443
-            to_port: 443
-            cidr_ip: "{{ ip_response.content }}/32"
+        rules: "{{ alb_rules }}"
 
     - name: Add ALB access to bastion security group for Locust
       amazon.aws.ec2_security_group:
         name: "{{ prefix_v }}-bastion-sg"
-        description: Allow SSH and Locust access
+        description: Allow SSH and Locust access (IPv4 and IPv6)
         region: "{{ region_v }}"
         vpc_id: "{{ vpc_id_f }}"
         tags:
           "Name": "{{ prefix_v }}-bastion-sg"
-        rules:
-          - proto: tcp
-            from_port: 22
-            to_port: 22
-            cidr_ip: "{{ ip_response.content }}/32"
-          - proto: tcp
-            from_port: 8089
-            to_port: 8089
-            cidr_ip: "{{ ip_response.content }}/32"
-          - proto: tcp
-            from_port: 8089
-            to_port: 8089
-            group_id: "{{ alb_sg_info_r.security_groups[0].group_id }}"
+        rules: "{{ bastion_rules }}"
 
     # =========================================================================
     # Create Target Group for Locust and Look Up ECS Target Groups
@@ -130,52 +160,43 @@
             Port: 8089
       register: locust_target_group_r
 
-    - name: Wait for nginx target group to be ready
-      community.aws.elb_target_group_info:
-        names:
-          - "{{ prefix_v }}-nginx-tg"
-        region: "{{ region_v }}"
-      register: nginx_tg_info_r
-      retries: 30
-      delay: 10
-      until: nginx_tg_info_r.target_groups | length > 0
+    - name: Define ECS target groups to wait for
+      ansible.builtin.set_fact:
+        ecs_target_groups:
+          - name: "{{ prefix_v }}-nginx-tg"
+            var_name: nginx_tg_arn
+          - name: "{{ prefix_v }}-gateway-tg"
+            var_name: gateway_tg_arn
+          - name: "{{ prefix_v }}-pgadmin-tg"
+            var_name: pgadmin_tg_arn
+          - name: "{{ prefix_v }}-redis-cmd-tg"
+            var_name: redis_commander_tg_arn
 
-    - name: Wait for Gateway target group to be ready
+    - name: Wait for ECS target groups to be ready
       community.aws.elb_target_group_info:
         names:
-          - "{{ prefix_v }}-gateway-tg"
+          - "{{ item.name }}"
         region: "{{ region_v }}"
-      register: gateway_tg_info_r
+      register: tg_wait_result
       retries: 30
       delay: 10
-      until: gateway_tg_info_r.target_groups | length > 0
+      until: tg_wait_result.target_groups | length > 0
+      loop: "{{ ecs_target_groups }}"
+      loop_control:
+        label: "{{ item.name }}"
 
-    - name: Wait for pgAdmin target group to be ready
+    - name: Get all ECS target group ARNs
       community.aws.elb_target_group_info:
-        names:
-          - "{{ prefix_v }}-pgadmin-tg"
+        names: "{{ ecs_target_groups | map(attribute='name') | list }}"
         region: "{{ region_v }}"
-      register: pgadmin_tg_info_r
-      retries: 30
-      delay: 10
-      until: pgadmin_tg_info_r.target_groups | length > 0
-
-    - name: Wait for Redis Commander target group to be ready
-      community.aws.elb_target_group_info:
-        names:
-          - "{{ prefix_v }}-redis-cmd-tg"
-        region: "{{ region_v }}"
-      register: redis_commander_tg_info_r
-      retries: 30
-      delay: 10
-      until: redis_commander_tg_info_r.target_groups | length > 0
+      register: all_tg_info_r
 
     - name: Set target group ARN facts
       ansible.builtin.set_fact:
-        nginx_tg_arn: "{{ nginx_tg_info_r.target_groups[0].target_group_arn }}"
-        gateway_tg_arn: "{{ gateway_tg_info_r.target_groups[0].target_group_arn }}"
-        pgadmin_tg_arn: "{{ pgadmin_tg_info_r.target_groups[0].target_group_arn }}"
-        redis_commander_tg_arn: "{{ redis_commander_tg_info_r.target_groups[0].target_group_arn }}"
+        nginx_tg_arn: "{{ all_tg_info_r.target_groups | selectattr('target_group_name', 'equalto', prefix_v + '-nginx-tg') | map(attribute='target_group_arn') | first }}"
+        gateway_tg_arn: "{{ all_tg_info_r.target_groups | selectattr('target_group_name', 'equalto', prefix_v + '-gateway-tg') | map(attribute='target_group_arn') | first }}"
+        pgadmin_tg_arn: "{{ all_tg_info_r.target_groups | selectattr('target_group_name', 'equalto', prefix_v + '-pgadmin-tg') | map(attribute='target_group_arn') | first }}"
+        redis_commander_tg_arn: "{{ all_tg_info_r.target_groups | selectattr('target_group_name', 'equalto', prefix_v + '-redis-cmd-tg') | map(attribute='target_group_arn') | first }}"
 
     # =========================================================================
     # Create ALB with Path-Based Routing

@@ -18,51 +18,85 @@
       ansible.builtin.set_fact:
         vpc_id_f: "{{ vpc_info_r.vpcs[0].id }}"
 
-    # Find my public IP for bastion and ALB access
-    - name: Find my public IP
+    # Find my public IPv4 and IPv6 addresses for bastion and ALB access
+    - name: Find my public IPv4 address
       ansible.builtin.uri:
-        url: http://ifconfig.me/ip
+        url: https://ipv4.icanhazip.com
         return_content: true
-      register: ip_response
+        timeout: 5
+      register: ipv4_response
+      ignore_errors: true
+
+    - name: Find my public IPv6 address
+      ansible.builtin.uri:
+        url: https://ipv6.icanhazip.com
+        return_content: true
+        timeout: 5
+      register: ipv6_response
+      ignore_errors: true
+
+    - name: Set IP facts
+      ansible.builtin.set_fact:
+        my_ipv4: "{{ ipv4_response.content | default('') | trim }}"
+        my_ipv6: "{{ ipv6_response.content | default('') | trim }}"
+        has_ipv4: "{{ ipv4_response is success and ipv4_response.content | default('') | trim | length > 0 }}"
+        has_ipv6: "{{ ipv6_response is success and ipv6_response.content | default('') | trim | length > 0 }}"
+
+    - name: Build security group rules list
+      ansible.builtin.set_fact:
+        bastion_ssh_rules: >-
+          {{
+            (has_ipv4 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 22, 'to_port': 22, 'cidr_ip': my_ipv4 + '/32'},
+               {'proto': 'tcp', 'from_port': 8089, 'to_port': 8089, 'cidr_ip': my_ipv4 + '/32'}],
+              []
+            ) +
+            (has_ipv6 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 22, 'to_port': 22, 'cidr_ipv6': my_ipv6 + '/128'},
+               {'proto': 'tcp', 'from_port': 8089, 'to_port': 8089, 'cidr_ipv6': my_ipv6 + '/128'}],
+              []
+            )
+          }}
+        alb_rules: >-
+          {{
+            (has_ipv4 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 80, 'to_port': 80, 'cidr_ip': my_ipv4 + '/32'},
+               {'proto': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_ip': my_ipv4 + '/32'}],
+              []
+            ) +
+            (has_ipv6 | bool) | ternary(
+              [{'proto': 'tcp', 'from_port': 80, 'to_port': 80, 'cidr_ipv6': my_ipv6 + '/128'},
+               {'proto': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_ipv6': my_ipv6 + '/128'}],
+              []
+            )
+          }}
+
+    - name: Display detected IPs
+      ansible.builtin.debug:
+        msg: "IPv4: {{ my_ipv4 | default('none') }}, IPv6: {{ my_ipv6 | default('none') }}"
 
     # BASTION SECURITY GROUP (no dependencies)
     - name: Create Security Group for bastion host
       amazon.aws.ec2_security_group:
         name: "{{ prefix_v }}-bastion-sg"
-        description: Allow port 22 from my IP
+        description: Allow SSH and Locust from my IP (IPv4 and IPv6)
         region: "{{ region_v }}"
         vpc_id: "{{ vpc_id_f }}"
         tags:
           "Name": "{{ prefix_v }}-bastion-sg"
-        rules:
-          - proto: tcp
-            from_port: 22
-            to_port: 22
-            cidr_ip: "{{ ip_response.content }}/32"
-          - proto: tcp
-            from_port: 8089
-            to_port: 8089
-            cidr_ip: "{{ ip_response.content }}/32"
+        rules: "{{ bastion_ssh_rules }}"
       register: bastion_sg_r
 
     # ALB SECURITY GROUP (no dependencies - create before ECS SG)
     - name: Create Security Group for ALB
       amazon.aws.ec2_security_group:
         name: "{{ prefix_v }}-alb-sg"
-        description: Allow HTTPS traffic from my IP to ALB
+        description: Allow HTTP/HTTPS from my IP (IPv4 and IPv6)
         region: "{{ region_v }}"
         vpc_id: "{{ vpc_id_f }}"
         tags:
           "Name": "{{ prefix_v }}-alb-sg"
-        rules:
-          - proto: tcp
-            from_port: 80
-            to_port: 80
-            cidr_ip: "{{ ip_response.content }}/32"
-          - proto: tcp
-            from_port: 443
-            to_port: 443
-            cidr_ip: "{{ ip_response.content }}/32"
+        rules: "{{ alb_rules }}"
       register: alb_sg_r
 
     # ECS FARGATE TASKS SECURITY GROUP

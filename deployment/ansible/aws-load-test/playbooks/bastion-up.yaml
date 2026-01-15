@@ -127,6 +127,10 @@
       ansible.builtin.command: /tmp/aws/install
       when: aws_cli_check.rc != 0
 
+    - name: Reset SSH connection to pick up new PATH
+      ansible.builtin.meta: reset_connection
+      when: aws_cli_check.rc != 0
+
     # =========================================================================
     # Docker Installation
     # =========================================================================

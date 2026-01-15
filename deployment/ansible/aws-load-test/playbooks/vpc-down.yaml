@@ -3,6 +3,8 @@
   gather_facts: False
   vars:
     ansible_python_interpreter: ../.venv/bin/python
+  environment:
+    PATH: "{{ lookup('env', 'PATH') }}:/usr/local/bin:/opt/homebrew/bin"
   tasks:
     # RETRIEVE VPC INFORMATION
     - name: Get VPC info by name
@@ -93,6 +95,13 @@
         vpc_id: "{{ vpc_id }}"
         state: absent
       when: igw_info.internet_gateways | length > 0
+
+    # DELETE EGRESS-ONLY INTERNET GATEWAY (IPv6)
+    - name: Delete Egress-Only Internet Gateway
+      amazon.aws.ec2_vpc_egress_igw:
+        region: "{{ region_v }}"
+        vpc_id: "{{ vpc_id }}"
+        state: absent
 
     # DELETE SUBNETS
     - name: Delete subnets

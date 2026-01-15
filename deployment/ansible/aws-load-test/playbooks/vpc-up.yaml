@@ -55,12 +55,13 @@
         count: "{{ azs_r.availability_zones | length }}"
       register: vpc_private_subnet_cidrs_r
 
-    # VPC
+    # VPC with IPv6
     - name: Create VPC
       amazon.aws.ec2_vpc_net:
         name: "{{ prefix_v }}-vpc"
         cidr_block: "{{ vpc_cidr_f }}"
-        region: "{{region_v}}"
+        ipv6_cidr: true
+        region: "{{ region_v }}"
         dns_support: yes
         dns_hostnames: yes
         tenancy: default
@@ -69,39 +70,59 @@
           "Project": "{{ prefix_v }}"
       register: vpc_out
 
+    - name: Get VPC IPv6 CIDR block
+      ansible.builtin.set_fact:
+        vpc_ipv6_cidr_f: "{{ vpc_out.vpc.ipv6_cidr_block_association_set[0].ipv6_cidr_block }}"
+
     # Subnets are identified by VPC and CIDR.  The "good news" is that as long as
     # the CIDR selection algorithms are deterministic, we SHOULD get the same
     # combinations each time.  I'm going to add sort filters in the loops to
     # avoid any non-deterministic sort result problems.
 
-    # PUBLIC SUBNETS
-    - name: create Public Subnets
+    # Calculate IPv6 /64 subnet CIDRs from the VPC's /56
+    # AWS gives a /56 like 2a05:d018:185:e300::/56
+    # Subnets are /64 where the subnet ID is in the last two hex digits before ::
+    # Public subnets: 00, 01, 02, ... Private subnets: 10, 11, 12, ...
+    - name: Calculate IPv6 subnet base (strip last two hex chars and ::/56)
+      ansible.builtin.set_fact:
+        ipv6_base: "{{ vpc_ipv6_cidr_f | regex_replace('[0-9a-fA-F]{2}::/56$', '') }}"
+
+    # PUBLIC SUBNETS with IPv6
+    - name: Create Public Subnets
       amazon.aws.ec2_vpc_subnet:
         vpc_id: "{{ vpc_out.vpc.id }}"
         region: "{{ region_v }}"
-        az: "{{ item[0] }}"
+        az: "{{ item.0 }}"
         state: present
-        cidr: "{{ item[1] }}"
+        cidr: "{{ item.1 }}"
+        ipv6_cidr: "{{ ipv6_base }}{{ '%02x' | format(item.2) }}::/64"
+        assign_instances_ipv6: true
         map_public: yes
         tags:
           "Project": "{{ prefix_v }}"
-      loop: "{{ azs_r.availability_zones|map(attribute='zone_name') | sort |
-                ansible.builtin.zip(vpc_public_subnet_cidrs_r.allocated_cidrs | sort)
+      loop: "{{ azs_r.availability_zones | map(attribute='zone_name') | sort |
+                zip(vpc_public_subnet_cidrs_r.allocated_cidrs | sort) |
+                zip(range(0, azs_r.availability_zones | length)) |
+                map('flatten')
              }}"
       register: public_subnets_r
 
-    # PRIVATE SUBNETS
-    - name: create Private Subnets
+    # PRIVATE SUBNETS with IPv6
+    - name: Create Private Subnets
       amazon.aws.ec2_vpc_subnet:
         vpc_id: "{{ vpc_out.vpc.id }}"
         region: "{{ region_v }}"
-        az: "{{ item[0] }}"
+        az: "{{ item.0 }}"
         state: present
-        cidr: "{{ item[1] }}"
+        cidr: "{{ item.1 }}"
+        ipv6_cidr: "{{ ipv6_base }}{{ '%02x' | format(item.2 + 16) }}::/64"
+        assign_instances_ipv6: true
         tags:
           "Project": "{{ prefix_v }}"
-      loop: "{{ azs_r.availability_zones|map(attribute='zone_name') | sort |
-                ansible.builtin.zip(vpc_private_subnet_cidrs_r.allocated_cidrs | sort)
+      loop: "{{ azs_r.availability_zones | map(attribute='zone_name') | sort |
+                zip(vpc_private_subnet_cidrs_r.allocated_cidrs | sort) |
+                zip(range(0, azs_r.availability_zones | length)) |
+                map('flatten')
              }}"
       register: private_subnets_r
 
@@ -113,20 +134,22 @@
         state: present
       register: igw_out
 
-    # PUBLIC ROUTE TABLE
+    # PUBLIC ROUTE TABLE (IPv4 + IPv6)
     - name: Set up public subnet route table
       amazon.aws.ec2_vpc_route_table:
-        vpc_id: "{{vpc_out.vpc.id}}"
+        vpc_id: "{{ vpc_out.vpc.id }}"
         region: "{{ region_v }}"
         subnets: "{{ public_subnets_r.results | map(attribute='subnet') | map(attribute='id') }}"
         tags:
           Name: "{{ prefix_v }}-public-route-table"
         routes:
           - dest: 0.0.0.0/0
-            gateway_id: "{{igw_out.gateway_id}}"
+            gateway_id: "{{ igw_out.gateway_id }}"
+          - dest: ::/0
+            gateway_id: "{{ igw_out.gateway_id }}"
       register: pubRT_out
 
-    # NAT GATEWAY
+    # NAT GATEWAY (IPv4 only - NAT doesn't support IPv6)
     - name: Create new nat gateway
       amazon.aws.ec2_vpc_nat_gateway:
         state: present
@@ -136,7 +159,15 @@
         if_exist_do_not_create: true
       register: NATGW_out
 
-    # PRIVATE ROUTE TABLE
+    # EGRESS-ONLY INTERNET GATEWAY (for IPv6 outbound from private subnets)
+    - name: Create Egress-Only Internet Gateway for IPv6
+      amazon.aws.ec2_vpc_egress_igw:
+        vpc_id: "{{ vpc_out.vpc.id }}"
+        region: "{{ region_v }}"
+        state: present
+      register: eigw_out
+
+    # PRIVATE ROUTE TABLE (IPv4 via NAT, IPv6 via EIGW)
     - name: Set up Private subnet route table
       amazon.aws.ec2_vpc_route_table:
         vpc_id: "{{ vpc_out.vpc.id }}"
@@ -147,4 +178,6 @@
         routes:
           - dest: 0.0.0.0/0
             gateway_id: "{{ NATGW_out.nat_gateway_id }}"
+          - dest: ::/0
+            gateway_id: "{{ eigw_out.gateway_id }}"
       register: privRT_out
