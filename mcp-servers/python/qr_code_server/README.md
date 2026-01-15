@@ -116,9 +116,9 @@ Generate a single QR code.
 {
   "success": true,
   "output_format": "png",
-  "file_path": "./output/qr_0.png",
+  "file_path": "./output/qr.png",
   "image_base64": null,
-  "message": "QR code generated successfully",
+  "message": "QR code image saved at ./output/qr.png",
   "error": null
 }
 ```
@@ -138,9 +138,11 @@ Generate multiple QR codes at once.
 - `data_list` (list[str], required, must not be empty)
 - `format` ("png" | "svg" | "ascii", default "png")
 - `size` (int, default from config)
+- `border` (int, default from config)
+- `error_correction` ("L" | "M" | "Q" | "H", default from config)
 - `naming_pattern` (str, default "qr_{index}")
 - `output_directory` (str, default from config)
-- `zip_output` (bool, default true)
+- `zip_output` (bool, default from config)
 
 #### Validation
 
@@ -186,6 +188,7 @@ Decode QR code(s) from an image.
 
 - `data` is a string for single QR, `list[str]` when `multiple_codes=true`
 - `positions` is returned only if `return_positions=true`
+- `image_format` validates the declared format against supported formats; actual format is auto-detected from image data
 
 ### 4. validate_qr_data
 

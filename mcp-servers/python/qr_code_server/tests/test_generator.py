@@ -31,7 +31,7 @@ def test_create_qr_saves_file_different_formats(tmp_path, file_format):
     req = QRGenerationRequest(data="https://test.com", format=file_format, save_path=str(file_path))
     result = create_qr_code(req)
     assert result.success is True
-    assert result.output_format is req.format
+    assert result.output_format == req.format
 
 
 @pytest.mark.parametrize("file_format", ["png", "svg", "ascii"])

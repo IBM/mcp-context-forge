@@ -53,6 +53,15 @@ class QRGenerationRequest(BaseModel):
             raise ValueError("Data length exceeds maximum allowed")
         return v
 
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        """Validate format against configured supported formats."""
+        v = v.lower().strip()
+        if v not in config.qr_generation.supported_formats:
+            raise ValueError("Unsupported format. Supported formats: png, svg, ascii")
+        return v
+
     @field_validator("border")
     @classmethod
     def validate_border_size(cls, v: int) -> int:
@@ -64,6 +73,8 @@ class BatchQRGenerationRequest(BaseModel):
     data_list: list[str]  # List of data to encode
     format: Literal["png", "svg", "ascii"] = "png"
     size: int = config.qr_generation.default_size
+    border: int = config.qr_generation.default_border
+    error_correction: Literal["L", "M", "Q", "H"] = config.qr_generation.default_error_correction
     naming_pattern: str = "qr_{index}"
     output_directory: str = config.output.default_directory
     zip_output: bool = config.output.enable_zip_export
@@ -75,6 +86,12 @@ class BatchQRGenerationRequest(BaseModel):
         if v not in config.qr_generation.supported_formats:
             raise ValueError("Unsupported format. Supported formats: png, svg, ascii")
         return v
+
+    @field_validator("border")
+    @classmethod
+    def validate_border_size(cls, v: int) -> int:
+        """Cap border between 0 and 100 to avoid invalid values and memory issues."""
+        return max(0, min(v, 100))
 
     @field_validator("naming_pattern")
     @classmethod
@@ -179,6 +196,8 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest) -> BatchQRCodeResul
                 data=request.data_list,
                 format=request.format,
                 size=request.size,
+                border=request.border,
+                error_correction=request.error_correction,
             ):
                 filename = f"{request.naming_pattern.format(index=index)}.{request.format}"
                 logger.info("Adding image index=%d filename=%s to zip", index, filename)
@@ -214,6 +233,8 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest) -> BatchQRCodeResul
             data=request.data_list,
             format=request.format,
             size=request.size,
+            border=request.border,
+            error_correction=request.error_correction,
         ):
             filename = f"{request.naming_pattern.format(index=index)}.{request.format}"
             file_path = os.path.join(request.output_directory, filename)
