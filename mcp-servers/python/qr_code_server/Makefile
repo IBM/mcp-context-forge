@@ -43,4 +43,3 @@ test-http: ## Basic HTTP checks
 
 clean: ## Remove caches
 	rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__ */__pycache__
-

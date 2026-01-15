@@ -47,17 +47,17 @@ class QRGenerationRequest(BaseModel):
 
     @field_validator("data")
     @classmethod
-    def validate_data_lenght(cls, v: str) -> str:
-        v = v.strip()
+    def validate_data_length(cls, v: str) -> str:
+        """Validate data length without modifying content (whitespace is preserved)."""
         if len(v) > config.qr_generation.max_data_length:
             raise ValueError("Data length exceeds maximum allowed")
         return v
 
-    # Cap the border to avoid memory exploding
     @field_validator("border")
     @classmethod
     def validate_border_size(cls, v: int) -> int:
-        return min(v, 100)
+        """Cap border between 0 and 100 to avoid invalid values and memory issues."""
+        return max(0, min(v, 100))
 
 
 class BatchQRGenerationRequest(BaseModel):
@@ -91,11 +91,11 @@ class BatchQRGenerationRequest(BaseModel):
     @field_validator("data_list")
     @classmethod
     def validate_batch_size(cls, v: list[str]) -> list[str]:
-        """Validate batch size does not exceed configured limit."""
+        """Validate batch size and individual data lengths (whitespace preserved)."""
         max_size = config.output.max_batch_size
         max_data_length = config.qr_generation.max_data_length
         for data in v:
-            if len(data.strip()) > max_data_length:
+            if len(data) > max_data_length:
                 raise ValueError(f"Data length exceeds maximum allowed of {max_data_length}")
         if len(v) > max_size:
             raise ValueError(f"Batch size {len(v)} exceeds limit {max_size}")

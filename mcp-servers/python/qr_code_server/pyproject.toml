@@ -12,7 +12,7 @@ dependencies = [
   "fastmcp>=2.13.1",
   "mcp>=1.0.0",
   "numpy>=2.3.5",
-  "opencv-python>=4.11.0.86",
+  "opencv-python-headless>=4.11.0.86",
   "pydantic>=2.5.0",
   "pyyaml>=6.0.3",
   "qrcode[pil]>=8.2",
@@ -68,4 +68,3 @@ dev = [
     "pytest-cov>=7.0.0",
     "ruff>=0.14.6",
 ]
-

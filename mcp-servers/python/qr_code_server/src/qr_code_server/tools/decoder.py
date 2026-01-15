@@ -2,7 +2,7 @@ import logging
 from typing import Any, Literal
 
 import cv2
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from qr_code_server.config import config
 from qr_code_server.utils.file_utils import convert_to_bytes
@@ -28,6 +28,16 @@ class QRDecodingRequest(BaseModel):
     multiple_codes: bool = False  # Detect multiple QR codes
     return_positions: bool = False  # Return QR code positions
     preprocessing: bool = True  # Apply preprocessing for better detection
+
+    @field_validator("image_format")
+    @classmethod
+    def validate_image_format(cls, v: str) -> str:
+        """Validate image format against configured supported formats."""
+        v = v.lower().strip()
+        if v != "auto" and v not in config.decoding.supported_image_formats:
+            supported = ", ".join(config.decoding.supported_image_formats)
+            raise ValueError(f"Unsupported image format '{v}'. Supported: {supported}")
+        return v
 
 
 def qr_decode(request: QRDecodingRequest) -> QRCodeDecodeResult:

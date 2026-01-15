@@ -240,3 +240,51 @@ def test_batch_generator_unziped_valid_png_images(tmp_path):
         assert file_path.is_file()
         # check if file is png image
         assert puremagic.from_file(file_path) == ".png"
+
+
+# Path traversal security tests
+
+
+@pytest.mark.parametrize(
+    "bad_pattern",
+    [
+        "../escape_{index}",
+        "..\\escape_{index}",
+        "/absolute_{index}",
+        "path/with/slash_{index}",
+        "path\\with\\backslash_{index}",
+    ],
+)
+def test_naming_pattern_rejects_path_traversal(tmp_path, bad_pattern):
+    """Test that naming_pattern rejects path traversal attempts."""
+    with pytest.raises(ValidationError) as exc_info:
+        BatchQRGenerationRequest(
+            data_list=["test"],
+            output_directory=str(tmp_path),
+            naming_pattern=bad_pattern,
+        )
+    assert "naming_pattern" in str(exc_info.value)
+
+
+def test_naming_pattern_accepts_safe_patterns(tmp_path):
+    """Test that naming_pattern accepts safe patterns."""
+    safe_patterns = ["qr_{index}", "code-{index}", "image_{index}_v2", "{index}"]
+    for pattern in safe_patterns:
+        req = BatchQRGenerationRequest(
+            data_list=["test"],
+            output_directory=str(tmp_path),
+            naming_pattern=pattern,
+        )
+        assert req.naming_pattern == pattern
+
+
+def test_border_validation_clamps_negative_values():
+    """Test that negative border values are clamped to 0."""
+    req = QRGenerationRequest(data="test", border=-5)
+    assert req.border == 0
+
+
+def test_border_validation_clamps_large_values():
+    """Test that large border values are clamped to 100."""
+    req = QRGenerationRequest(data="test", border=500)
+    assert req.border == 100

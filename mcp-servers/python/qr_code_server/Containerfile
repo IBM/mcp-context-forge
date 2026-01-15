@@ -23,4 +23,3 @@ RUN useradd -u 1001 -m appuser && chown -R 1001:1001 /app
 USER 1001
 
 CMD ["python", "-m", "qr_code_server.server"]
-
