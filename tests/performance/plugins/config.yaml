@@ -1,10 +1,7 @@
-# plugins/config.yaml - Main plugin configuration file
-
 # Plugin directories to scan
 plugin_dirs:
   - "plugins/native"      # Built-in plugins
   - "plugins/custom"      # Custom organization plugins
-  - "/etc/mcpgateway/plugins"  # System-wide plugins
 
 # Global plugin settings
 plugin_settings:
@@ -213,7 +210,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "disabled"
+    mode: "permissive"
     priority: 20
     conditions: []
     config:
@@ -687,7 +684,7 @@ plugins:
     author: "ContextForge"
     hooks: ["prompt_post_fetch"]
     tags: ["compliance", "notice", "prompt"]
-    mode: "disabled"
+    mode: "permissive"
     priority: 90
     conditions: []
     config:
@@ -799,20 +796,11 @@ plugins:
     author: "Manav Gupta"
     hooks: ["tool_pre_invoke", "tool_post_invoke", "prompt_post_fetch", "resource_post_fetch"]
     tags: ["notification", "webhook", "monitoring", "observability"]
-    mode: "disabled"
+    mode: "permissive"
     priority: 900  # Run after other plugins to capture their violations
     conditions: []
     config:
-      webhooks:
-        # Webhook.site for testing - UPDATE WITH YOUR UNIQUE URL
-        - url: "https://webhook.site/38df7ac1-672a-4e49-9b55-3c0ed469e9d0"
-          events: ["violation", "tool_success", "tool_error", "rate_limit_exceeded", "pii_detected"]
-          authentication:
-            type: "none"
-          retry_attempts: 2
-          retry_delay: 1000
-          timeout: 10
-          enabled: true
+      webhooks: []        
 
       # Simple default template
       default_template: |
@@ -838,52 +826,12 @@ plugins:
     author: "Manav Gupta"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["safety", "moderation", "content", "ai", "ibm", "watson", "granite"]
-    mode: "disabled"
+    mode: "permissive"
     priority: 30  # Run early in the pipeline
     conditions: []
-    config:
-      provider: "ibm_granite"  # Use Granite for easier testing (no API key needed)
+    config:      
       fallback_provider: null
       fallback_on_error: "warn"  # Action when providers fail
-
-      # IBM Granite Guardian via Ollama (for testing)
-      ibm_granite:
-        ollama_url: "http://localhost:11434"
-        model: "granite3-guardian"
-        temperature: 0.1
-        timeout: 30
-
-      # IBM Watson Natural Language Understanding (requires API key)
-      # ibm_watson:
-      #   api_key: "${env.IBM_WATSON_API_KEY}"
-      #   url: "${env.IBM_WATSON_URL}"
-      #   version: "2022-04-07"
-      #   language: "en"
-      #   timeout: 30
-
-      # Category thresholds and actions
-      categories:
-        hate:
-          threshold: 0.7
-          action: "warn"  # Use warn for testing
-        violence:
-          threshold: 0.8
-          action: "warn"
-        sexual:
-          threshold: 0.6
-          action: "warn"
-        self_harm:
-          threshold: 0.5
-          action: "warn"
-        harassment:
-          threshold: 0.7
-          action: "warn"
-        profanity:
-          threshold: 0.6
-          action: "redact"
-        toxic:
-          threshold: 0.7
-          action: "warn"
 
       # General settings
       audit_decisions: true
