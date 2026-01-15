@@ -2844,7 +2844,9 @@ class MCPChatService:
                 dropped_count = len(dropped_tool_ends)
                 total_unique = len(all_orphan_ids)
                 total_affected = total_unique + dropped_overflow_count
-                logger.warning(f"Stream completed with {total_affected} orphan tool end(s): {buffered_count} buffered, {dropped_count} dropped (tracked), {dropped_overflow_count} dropped (untracked overflow)")
+                logger.warning(
+                    f"Stream completed with {total_affected} orphan tool end(s): {buffered_count} buffered, {dropped_count} dropped (tracked), {dropped_overflow_count} dropped (untracked overflow)"
+                )
                 # Log full list at debug level for observability
                 if all_orphan_ids:
                     logger.debug(f"Full orphan run_id list: {', '.join(all_orphan_ids)}")

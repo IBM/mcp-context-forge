@@ -55,9 +55,7 @@ def upgrade() -> None:
     # Backfill existing users: set password_changed_at = created_at for rows where it's NULL
     # This ensures existing users are subject to password expiry enforcement
     conn = op.get_bind()
-    conn.execute(
-        sa.text("UPDATE email_users SET password_changed_at = created_at WHERE password_changed_at IS NULL")
-    )
+    conn.execute(sa.text("UPDATE email_users SET password_changed_at = created_at WHERE password_changed_at IS NULL"))
 
 
 def downgrade() -> None:
