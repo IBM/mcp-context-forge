@@ -9,11 +9,12 @@ This migration adds a composite index on (name, id) for the email_teams table
 to optimize search and deterministic cursor-based pagination.
 """
 
+# Standard
 from typing import Sequence, Union
 
+# Third-Party
 from alembic import op
 from sqlalchemy import inspect
-
 
 # revision identifiers, used by Alembic.
 revision: str = "5f3c681b05e1"
