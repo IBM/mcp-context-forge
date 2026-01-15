@@ -66,6 +66,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
@@ -1268,15 +1269,15 @@ class ResourceService:
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
         """Create an SSL context with the provided CA certificate.
 
+        Uses caching to avoid repeated SSL context creation for the same certificate.
+
         Args:
             ca_certificate: CA certificate in PEM format
 
         Returns:
             ssl.SSLContext: Configured SSL context
         """
-        ctx = ssl.create_default_context()
-        ctx.load_verify_locations(cadata=ca_certificate)
-        return ctx
+        return get_cached_ssl_context(ca_certificate)
 
     async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None, user_identity: Optional[Union[str, Dict[str, Any]]] = None) -> Any:
         """

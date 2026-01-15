@@ -103,6 +103,7 @@ from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -447,15 +448,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
         """Create an SSL context with the provided CA certificate.
 
+        Uses caching to avoid repeated SSL context creation for the same certificate.
+
         Args:
             ca_certificate: CA certificate in PEM format
 
         Returns:
             ssl.SSLContext: Configured SSL context
         """
-        ctx = ssl.create_default_context()
-        ctx.load_verify_locations(cadata=ca_certificate)
-        return ctx
+        return get_cached_ssl_context(ca_certificate)
 
     async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader.

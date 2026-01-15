@@ -40,7 +40,12 @@ from mcpgateway.services.resource_service import (
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, patch("mcpgateway.services.resource_service.structured_logger") as mock_logger:
+    # Clear SSL context cache before each test for isolation
+    from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
+    clear_ssl_context_cache()
+
+    with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, \
+         patch("mcpgateway.services.resource_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
         yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
@@ -450,10 +455,10 @@ class TestResourceReading:
     """Test resource reading functionality."""
 
     @pytest.mark.asyncio
-    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
-    async def test_read_resource_success(self, mock_ssl, mock_db, mock_resource):
+    @patch("mcpgateway.services.resource_service.get_cached_ssl_context")
+    async def test_read_resource_success(self, mock_ssl_cache, mock_db, mock_resource):
         mock_ctx = MagicMock()
-        mock_ssl.return_value = mock_ctx
+        mock_ssl_cache.return_value = mock_ctx
 
         mock_scalar = MagicMock()
         mock_resource.gateway.ca_certificate = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----"
