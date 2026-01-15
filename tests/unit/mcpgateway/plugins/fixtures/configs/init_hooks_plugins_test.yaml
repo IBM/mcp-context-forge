@@ -803,7 +803,7 @@ plugins:
     priority: 900  # Run after other plugins to capture their violations
     conditions: []
     config:
-      webhooks: []        
+      webhooks: []
 
       # Simple default template
       default_template: |
@@ -832,7 +832,7 @@ plugins:
     mode: "permissive"
     priority: 30  # Run early in the pipeline
     conditions: []
-    config:      
+    config:
       fallback_provider: null
       fallback_on_error: "warn"  # Action when providers fail
 
