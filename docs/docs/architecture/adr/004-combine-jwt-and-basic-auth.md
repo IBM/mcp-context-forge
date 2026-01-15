@@ -84,6 +84,7 @@ JWT_ALGORITHM=RS256
 JWT_PUBLIC_KEY_PATH=jwt/public.pem
 JWT_PRIVATE_KEY_PATH=jwt/private.pem
 JWT_AUDIENCE_VERIFICATION=true
+JWT_ISSUER_VERIFICATION=true
 ```
 
 ### Benefits of Asymmetric Support

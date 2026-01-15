@@ -104,6 +104,11 @@
       "title": "Jwt Audience Verification",
       "type": "boolean"
     },
+    "jwt_issuer_verification": {
+      "default": true,
+      "title": "Jwt Issuer Verification",
+      "type": "boolean"
+    },
     "auth_required": {
       "default": true,
       "title": "Auth Required",

@@ -387,6 +387,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.JWT_AUDIENCE | string | `"mcpgateway-api"` |  |
 | mcpContextForge.secret.JWT_AUDIENCE_VERIFICATION | string | `"true"` |  |
 | mcpContextForge.secret.JWT_ISSUER | string | `"mcpgateway"` |  |
+| mcpContextForge.secret.JWT_ISSUER_VERIFICATION | string | `"true"` |  |
 | mcpContextForge.secret.JWT_PRIVATE_KEY_PATH | string | `""` |  |
 | mcpContextForge.secret.JWT_PUBLIC_KEY_PATH | string | `""` |  |
 | mcpContextForge.secret.JWT_SECRET_KEY | string | `"my-test-key"` |  |
