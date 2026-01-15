@@ -28,6 +28,7 @@ from mcpgateway.plugins.framework import (
     PluginContext,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
+    get_attr,
 )
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.logging_service import LoggingService
@@ -122,14 +123,15 @@ class Vault(Plugin):
         logger.debug(f"Processing tool pre-invoke for tool {payload}  with context {context}")
         logger.debug(f"Gateway metadata {context.global_context.metadata['gateway']}")
 
-        gateway_metadata = context.global_context.metadata["gateway"]
+        gateway_metadata = context.global_context.metadata.get("gateway")
 
         system_key: str | None = None
         auth_header: str | None = None
         if self._sconfig.system_handling == SystemHandling.TAG:
             # Extract tags from dict format {"id": "...", "label": "..."}
             normalized_tags: list[str] = []
-            for tag in gateway_metadata.tags:
+            gateway_tags = get_attr(gateway_metadata, "tags", [])
+            for tag in gateway_tags if gateway_tags else []:
                 if isinstance(tag, dict):
                     # Use 'label' field (the actual tag value)
                     tag_value = str(tag.get("label", ""))
