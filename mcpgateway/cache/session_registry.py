@@ -863,12 +863,16 @@ class SessionRegistry(SessionBackend):
         elif self._backend == "memory":
             transport = self.get_session_sync(session_id)
             if transport and self._session_message:
-                data = orjson.loads(self._session_message.get("message"))
-                if isinstance(data, dict) and "message" in data:
-                    message = data["message"]
+                message_json = self._session_message.get("message")
+                if message_json:
+                    data = orjson.loads(message_json)
+                    if isinstance(data, dict) and "message" in data:
+                        message = data["message"]
+                    else:
+                        message = data
+                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
                 else:
-                    message = data
-                await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                    logger.warning(f"Session message stored but message content is None for session {session_id}")
 
         elif self._backend == "redis":
             if not self._redis:
