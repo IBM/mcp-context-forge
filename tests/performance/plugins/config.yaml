@@ -244,7 +244,7 @@ plugins:
     author: Mihai Criveti
     hooks: [prompt_pre_fetch, tool_pre_invoke]
     tags: [limits, throttle]
-    mode: permissive
+    mode: disabled
     priority: 20
     conditions: []
     config:
@@ -741,7 +741,7 @@ plugins:
     author: ContextForge
     hooks: [prompt_post_fetch]
     tags: [compliance, notice, prompt]
-    mode: permissive
+    mode: disabled
     priority: 90
     conditions: []
     config:
@@ -875,7 +875,7 @@ plugins:
       - prompt_post_fetch
       - resource_post_fetch
     tags: [notification, webhook, monitoring, observability]
-    mode: permissive
+    mode: disabled
     priority: 900  # Run after other plugins to capture their violations
     conditions: []
     config:
@@ -905,12 +905,44 @@ plugins:
     author: Manav Gupta
     hooks: [prompt_pre_fetch, tool_pre_invoke, tool_post_invoke]
     tags: [safety, moderation, content, ai, ibm, watson, granite]
-    mode: permissive
+    mode: disabled
     priority: 30  # Run early in the pipeline
     conditions: []
     config:
+      provider: ibm_granite  # Use Granite for easier testing (no API key needed)
       fallback_provider:
       fallback_on_error: warn  # Action when providers fail
+
+      # IBM Granite Guardian via Ollama (for testing)
+      ibm_granite:
+        ollama_url: http://localhost:11434
+        model: granite3-guardian
+        temperature: 0.1
+        timeout: 30
+
+      # Category thresholds and actions
+      categories:
+        hate:
+          threshold: 0.7
+          action: warn
+        violence:
+          threshold: 0.8
+          action: warn
+        sexual:
+          threshold: 0.6
+          action: warn
+        self_harm:
+          threshold: 0.5
+          action: warn
+        harassment:
+          threshold: 0.7
+          action: warn
+        profanity:
+          threshold: 0.6
+          action: redact
+        toxic:
+          threshold: 0.7
+          action: warn
 
       # General settings
       audit_decisions: true
