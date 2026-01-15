@@ -152,10 +152,9 @@ Generate multiple QR codes at once.
 ```json
 {
   "success": true,
-  "zip_file_path": "./output/qr_batch.zip",
+  "zip_file_path": "./output/qr.zip",
   "output_directory": "./output/",
-  "files": ["qr_0.png", "qr_1.png"],
-  "message": "Batch generated successfully",
+  "message": "QR code images saved in zip archive at ./output/qr.zip",
   "error": null
 }
 ```

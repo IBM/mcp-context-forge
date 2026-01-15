@@ -66,7 +66,7 @@ class BatchQRGenerationRequest(BaseModel):
     size: int = config.qr_generation.default_size
     naming_pattern: str = "qr_{index}"
     output_directory: str = config.output.default_directory
-    zip_output: bool = True
+    zip_output: bool = config.output.enable_zip_export
 
     @field_validator("format")
     @classmethod
@@ -74,6 +74,18 @@ class BatchQRGenerationRequest(BaseModel):
         v = v.lower().strip()
         if v not in config.qr_generation.supported_formats:
             raise ValueError("Unsupported format. Supported formats: png, svg, ascii")
+        return v
+
+    @field_validator("naming_pattern")
+    @classmethod
+    def validate_naming_pattern(cls, v: str) -> str:
+        """Validate naming_pattern to prevent path traversal attacks."""
+        # Reject patterns containing path separators or parent directory references
+        if ".." in v or "/" in v or "\\" in v or os.sep in v:
+            raise ValueError("naming_pattern cannot contain path separators or '..'")
+        # Reject absolute paths
+        if os.path.isabs(v):
+            raise ValueError("naming_pattern cannot be an absolute path")
         return v
 
     @field_validator("data_list")
@@ -143,6 +155,7 @@ def create_qr_code(request: QRGenerationRequest) -> QRCodeResult:
         return QRCodeResult(
             success=True,
             output_format=request.format,
+            file_path=save_path,
             message=f"QR code image saved at {save_path}",
         )
     except Exception as e:
@@ -191,6 +204,8 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest) -> BatchQRCodeResul
                     return BatchQRCodeResult(success=False, error=str(e))
         return BatchQRCodeResult(
             success=True,
+            zip_file_path=zip_file_path,
+            output_directory=request.output_directory,
             message=f"QR code images saved in zip archive at {zip_file_path}",
         )
 
@@ -210,5 +225,6 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest) -> BatchQRCodeResul
                 return BatchQRCodeResult(success=False, error=str(e))
         return BatchQRCodeResult(
             success=True,
+            output_directory=request.output_directory,
             message=f"QR code images saved at {request.output_directory}",
         )

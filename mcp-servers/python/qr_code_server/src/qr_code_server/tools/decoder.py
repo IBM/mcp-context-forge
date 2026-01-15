@@ -64,7 +64,8 @@ def qr_decode(request: QRDecodingRequest) -> QRCodeDecodeResult:
     for info, p in zip(decoded_info, points, strict=True):
         if info:
             data.append(info)
-            positions.append(p)
+            # Convert NumPy array to list for JSON serialization
+            positions.append(p.tolist() if hasattr(p, "tolist") else p)
 
     if not data:
         logger.warning("Failed to retrieve qrcode data")

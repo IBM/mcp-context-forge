@@ -11,13 +11,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
+# Copy all source files before install (hatchling needs src/ at build time)
 COPY pyproject.toml README.md ./
+COPY src/ ./src/
 
 RUN python -m venv /app/.venv && \
     /app/.venv/bin/pip install --upgrade pip setuptools wheel && \
     /app/.venv/bin/pip install -e .
-
-COPY src/ ./src/
 
 RUN useradd -u 1001 -m appuser && chown -R 1001:1001 /app
 USER 1001

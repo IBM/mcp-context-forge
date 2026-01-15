@@ -92,10 +92,10 @@ async def generate_qr_code(
 async def generate_batch_qr_codes(
     data_list: list[str],
     format: str = "png",
-    size: int = 10,
+    size: int = config.qr_generation.default_size,
     naming_pattern: str = "qr_{index}",
-    output_directory: str = "./qr_codes/",
-    zip_output: bool = False,
+    output_directory: str = config.output.default_directory,
+    zip_output: bool = config.output.enable_zip_export,
 ) -> BatchQRCodeResult:
     try:
         async with _acquire_request_slot("generate_batch_qr_codes"):
@@ -124,10 +124,10 @@ async def decode_qr_code(
     image_format: str = "auto",
     multiple_codes: bool = False,
     return_positions: bool = False,
-    preprocessing: bool = True,
+    preprocessing: bool = config.decoding.preprocessing_enabled,
 ) -> QRCodeDecodeResult:
     try:
-        async with _acquire_request_slot("generate_batch_qr_codes"):
+        async with _acquire_request_slot("decode_qr_code"):
             request = QRDecodingRequest(
                 image_data=image_data,
                 image_format=image_format,
@@ -161,7 +161,7 @@ async def validate_qr_data(
     suggest_optimization: bool = True,
 ) -> QRValidationResult:
     try:
-        async with _acquire_request_slot("generate_batch_qr_codes"):
+        async with _acquire_request_slot("validate_qr_data"):
             request = QRValidationRequest(
                 data=data,
                 target_version=target_version,

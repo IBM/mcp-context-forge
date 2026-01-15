@@ -138,7 +138,7 @@ async def test_validate_qr_data():
     """Test validate qr data"""
     request = QRValidationRequest(
         data="small test data",
-        version=10,
+        target_version=10,
     ).model_dump()
     async with Client(mcp) as client:
         response = await client.call_tool_mcp(name="validate_qr_data", arguments=request)
