@@ -1004,6 +1004,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `JWT_PRIVATE_KEY_PATH`      | If an asymmetric algorithm is used, a private key is required                | (empty)             | path to pem |
 | `JWT_AUDIENCE`              | JWT audience claim for token validation                                      | `mcpgateway-api`    | string      |
 | `JWT_AUDIENCE_VERIFICATION` | Disables jwt audience verification (useful for DCR)                          | `true`              | boolean     |
+| `JWT_ISSUER_VERIFICATION`   | Disables jwt issuer verification (useful for custom auth)                    | `true`              | boolean     |
 | `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
 | `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
 | `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |

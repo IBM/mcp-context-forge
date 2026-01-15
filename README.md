@@ -1255,6 +1255,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `JWT_PRIVATE_KEY_PATH`      | If an asymmetric algorithm is used, a private key is required                | (empty)             | path to pem |
 | `JWT_AUDIENCE`              | JWT audience claim for token validation                                      | `mcpgateway-api`    | string      |
 | `JWT_AUDIENCE_VERIFICATION` | Disables jwt audience verification (useful for DCR)                          | `true`              | boolean     |
+| `JWT_ISSUER_VERIFICATION`   | Disables jwt issuer verification (useful for custom auth)                    | `true`              | boolean     |
 | `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
 | `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
 | `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |
@@ -1618,6 +1619,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
 | `JWT_AUDIENCE_VERIFICATION`                | JWT audience verification (disable for DCR)                    | `true`                         | bool          |
+| `JWT_ISSUER_VERIFICATION`                  | JWT issuer verification (disable if needed)                    | `true`                         | bool          |
 
 **Documentation:**
 - [DCR Configuration Guide](https://ibm.github.io/mcp-context-forge/manage/dcr/) - Complete DCR setup and troubleshooting

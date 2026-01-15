@@ -185,6 +185,7 @@ class Settings(BaseSettings):
     jwt_audience: str = "mcpgateway-api"
     jwt_issuer: str = "mcpgateway"
     jwt_audience_verification: bool = True
+    jwt_issuer_verification: bool = True
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
 

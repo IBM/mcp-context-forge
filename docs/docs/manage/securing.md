@@ -45,6 +45,7 @@ JWT_ALGORITHM=RS256                        # Recommended for production (asymmet
 JWT_PUBLIC_KEY_PATH=jwt/public.pem         # Path to public key file
 JWT_PRIVATE_KEY_PATH=jwt/private.pem       # Path to private key file (secure location)
 JWT_AUDIENCE_VERIFICATION=true             # Enable audience validation
+JWT_ISSUER_VERIFICATION=true               # Enable issuer validation
 JWT_ISSUER=your-company-name               # Set to your organization identifier
 
 # Set environment for security defaults
@@ -84,6 +85,7 @@ JWT_PRIVATE_KEY_PATH=/secure/path/jwt/private.pem
 JWT_AUDIENCE=your-api-identifier
 JWT_ISSUER=your-organization
 JWT_AUDIENCE_VERIFICATION=true
+JWT_ISSUER_VERIFICATION=true
 REQUIRE_TOKEN_EXPIRATION=true
 ```
 
@@ -96,6 +98,7 @@ JWT_SECRET_KEY=your-strong-secret-key-here  # Minimum 32 characters
 JWT_AUDIENCE=mcpgateway-api
 JWT_ISSUER=mcpgateway
 JWT_AUDIENCE_VERIFICATION=true
+JWT_ISSUER_VERIFICATION=true
 REQUIRE_TOKEN_EXPIRATION=true
 ```
 
