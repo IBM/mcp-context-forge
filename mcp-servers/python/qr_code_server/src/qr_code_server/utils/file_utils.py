@@ -39,10 +39,10 @@ def resolve_output_path(output_path: str, file_extension: str) -> str:
         logger.error("Error creating output folder '%s': %s", base, e)
         # img.save will handle the error
 
-    # case 2: output_path has file extension
-    if ext:
+    # case 2: output_path has a meaningful file extension matching target format
+    if ext and ext.lstrip(".").lower() == file_extension.lower():
         return output_path
-    # case 3: output_path has filename without extension
+    # case 3: output_path has filename (with or without extension) - append target extension
     elif filename:
         return os.path.join(base, f"{filename.rstrip('.')}.{file_extension}")
 
