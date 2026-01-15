@@ -43,7 +43,7 @@ def mock_logging_services():
     # Clear SSL context cache before each test for isolation
     from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
     clear_ssl_context_cache()
-    
+
     with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, \
          patch("mcpgateway.services.resource_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
