@@ -19,6 +19,8 @@
         - fast-time
         - fast-test
         - benchmark
+        - pgadmin
+        - redis-commander
       register: services_delete_result
 
     - name: Count deleted services
@@ -144,8 +146,43 @@
         - "{{ prefix_v }}-fast-time-td"
         - "{{ prefix_v }}-fast-test-td"
         - "{{ prefix_v }}-benchmark-td"
+        - "{{ prefix_v }}-pgadmin-td"
+        - "{{ prefix_v }}-redis-commander-td"
       retries: 5
       delay: 10
+
+    # Delete target groups (created by ECS services)
+    - name: Delete nginx target group
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-nginx-tg"
+        state: absent
+      retries: 5
+      delay: 10
+      ignore_errors: true
+
+    - name: Delete Gateway target group
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-gateway-tg"
+        state: absent
+      retries: 5
+      delay: 10
+      ignore_errors: true
+
+    - name: Delete pgAdmin target group
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-pgadmin-tg"
+        state: absent
+      retries: 5
+      delay: 10
+      ignore_errors: true
+
+    - name: Delete Redis Commander target group
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-redis-cmd-tg"
+        state: absent
+      retries: 5
+      delay: 10
+      ignore_errors: true
 
     - name: Delete CloudWatch log group
       amazon.aws.cloudwatchlogs_log_group:

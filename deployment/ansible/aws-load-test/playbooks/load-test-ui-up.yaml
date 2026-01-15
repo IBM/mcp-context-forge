@@ -107,10 +107,10 @@
             group_id: "{{ alb_sg_info_r.security_groups[0].group_id }}"
 
     # =========================================================================
-    # Create Target Group and ALB
+    # Create Target Group for Locust and Look Up ECS Target Groups
     # =========================================================================
 
-    - name: Create target group for Locust UI
+    - name: Create target group for Locust UI (default route)
       community.aws.elb_target_group:
         name: "{{ prefix_v }}-locust-tg"
         protocol: HTTP
@@ -130,7 +130,58 @@
             Port: 8089
       register: locust_target_group_r
 
-    - name: Create Application Load Balancer
+    - name: Wait for nginx target group to be ready
+      community.aws.elb_target_group_info:
+        names:
+          - "{{ prefix_v }}-nginx-tg"
+        region: "{{ region_v }}"
+      register: nginx_tg_info_r
+      retries: 30
+      delay: 10
+      until: nginx_tg_info_r.target_groups | length > 0
+
+    - name: Wait for Gateway target group to be ready
+      community.aws.elb_target_group_info:
+        names:
+          - "{{ prefix_v }}-gateway-tg"
+        region: "{{ region_v }}"
+      register: gateway_tg_info_r
+      retries: 30
+      delay: 10
+      until: gateway_tg_info_r.target_groups | length > 0
+
+    - name: Wait for pgAdmin target group to be ready
+      community.aws.elb_target_group_info:
+        names:
+          - "{{ prefix_v }}-pgadmin-tg"
+        region: "{{ region_v }}"
+      register: pgadmin_tg_info_r
+      retries: 30
+      delay: 10
+      until: pgadmin_tg_info_r.target_groups | length > 0
+
+    - name: Wait for Redis Commander target group to be ready
+      community.aws.elb_target_group_info:
+        names:
+          - "{{ prefix_v }}-redis-cmd-tg"
+        region: "{{ region_v }}"
+      register: redis_commander_tg_info_r
+      retries: 30
+      delay: 10
+      until: redis_commander_tg_info_r.target_groups | length > 0
+
+    - name: Set target group ARN facts
+      ansible.builtin.set_fact:
+        nginx_tg_arn: "{{ nginx_tg_info_r.target_groups[0].target_group_arn }}"
+        gateway_tg_arn: "{{ gateway_tg_info_r.target_groups[0].target_group_arn }}"
+        pgadmin_tg_arn: "{{ pgadmin_tg_info_r.target_groups[0].target_group_arn }}"
+        redis_commander_tg_arn: "{{ redis_commander_tg_info_r.target_groups[0].target_group_arn }}"
+
+    # =========================================================================
+    # Create ALB with Path-Based Routing
+    # =========================================================================
+
+    - name: Create Application Load Balancer with path-based routing
       amazon.aws.elb_application_lb:
         name: "{{ prefix_v }}-alb"
         region: "{{ region_v }}"
@@ -148,10 +199,47 @@
             SslPolicy: ELBSecurityPolicy-TLS13-1-2-Ext2-PQ-2025-09
             DefaultActions:
               - Type: forward
-                TargetGroupArn: "{{ locust_target_group_r.target_group_arn }}"
+                TargetGroupArn: "{{ nginx_tg_arn }}"
             Certificates:
               - CertificateArn: "{{ ca_certificate_arn }}"
+            Rules:
+              - Conditions:
+                  - Field: path-pattern
+                    Values:
+                      - "/locust*"
+                Priority: 1
+                Actions:
+                  - Type: forward
+                    TargetGroupArn: "{{ locust_target_group_r.target_group_arn }}"
+              - Conditions:
+                  - Field: path-pattern
+                    Values:
+                      - "/admin*"
+                Priority: 2
+                Actions:
+                  - Type: forward
+                    TargetGroupArn: "{{ gateway_tg_arn }}"
+              - Conditions:
+                  - Field: path-pattern
+                    Values:
+                      - "/pg*"
+                Priority: 3
+                Actions:
+                  - Type: forward
+                    TargetGroupArn: "{{ pgadmin_tg_arn }}"
+              - Conditions:
+                  - Field: path-pattern
+                    Values:
+                      - "/redis*"
+                Priority: 4
+                Actions:
+                  - Type: forward
+                    TargetGroupArn: "{{ redis_commander_tg_arn }}"
       register: alb_r
+
+    - name: Display routing info
+      ansible.builtin.debug:
+        msg: "ALB routes: /locust -> Locust, /admin -> Gateway, /pg -> pgAdmin, /redis -> Redis Commander, default -> nginx"
 
     # =========================================================================
     # Configure DNS

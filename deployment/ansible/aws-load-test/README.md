@@ -139,45 +139,51 @@ make down AWS_REGION=eu-west-1-dev ANSIBLE_VERBOSITY=2
 The playbooks deploy the following AWS infrastructure:
 
 ```
-                                    +---------------------------------------------+
-                                    |                   VPC                       |
-    +----------+                    |  +-----------------+  +-----------------+  |
-    | Internet |<-------------------+--| Public Subnet   |  | Public Subnet   |  |
-    +----------+                    |  | (AZ-a)          |  | (AZ-b)          |  |
-         |                          |  | +-----------+   |  +-----------------+  |
-         |                          |  | | Bastion   |   |                       |
-         v                          |  | | + Locust  |   |                       |
-    +---------+                     |  | +-----------+   |                       |
-    |   ALB   |<--------------------+--+-| NAT       |   |                       |
-    +---------+                     |  | +-----------+   |                       |
-         |                          |  +-----------------+                       |
-         |                          |                                            |
-         v                          |  +-----------------+  +-----------------+  |
-    +-----------------------------+ |  | Private Subnet  |  | Private Subnet  |  |
-    | ECS Cluster (Fargate)       | |  | (AZ-a)          |  | (AZ-b)          |  |
-    |                             | |  |                 |  |                 |  |
-    | +-------+ +-------+         | |  |                 |  |                 |  |
-    | |gateway| |gateway|         |<+--| ECS Tasks       |  |                 |  |
-    | +-------+ +-------+         | |  |                 |  |                 |  |
-    | +-------+ +-------+         | |  |                 |  |                 |  |
-    | |gateway| | nginx |         | |  |                 |  |                 |  |
-    | +-------+ +-------+         | |  |                 |  |                 |  |
-    | +-------+                   | |  +-----------------+  +-----------------+  |
-    | | redis |                   | |           |                    |           |
-    | +-------+                   | |           v                    v           |
-    +-----------------------------+ |  +-------------------------------------+   |
-                                    |  |         Aurora PostgreSQL           |   |
-                                    |  +-------------------------------------+   |
-                                    +---------------------------------------------+
++----------+     +---------------------------------------------------------------+
+| Internet |     |                              VPC                              |
++----+-----+     |  +-------------------------+  +-------------------------+     |
+     |           |  |    Public Subnet (AZ-a) |  |    Public Subnet (AZ-b) |     |
+     v           |  |  +---------+ +--------+ |  |                         |     |
++---------+      |  |  | Bastion | |  ALB   |<---+--- HTTPS :443           |     |
+|  ALB    |------+->|  | +Locust | +----+---+ |  |                         |     |
++---------+      |  |  +---------+      |     |  +-------------------------+     |
+     |           |  +-------------------|-----+                                  |
+     |           |                      | Path-Based Routing:                    |
+     |           |                      |   /locust* -> Bastion:8089             |
+     |           |                      |   /admin*  -> Gateway:4444             |
+     |           |                      |   /pg*     -> pgAdmin:80               |
+     |           |                      |   /redis*  -> Redis Commander:8081     |
+     |           |                      |   default  -> nginx:80                 |
+     |           |                      v                                        |
+     |           |  +-----------------------------------------------------+      |
+     |           |  |              Private Subnets (AZ-a, AZ-b)           |      |
+     |           |  |  +-----------------------------------------------+  |      |
+     |           |  |  |           ECS Cluster (Fargate)               |  |      |
+     |           |  |  |                                               |  |      |
+     +---------------->|  +-------+ +-------+ +-------+ +-------+      |  |      |
+                 |  |  |  |gateway| |gateway| |gateway| | nginx |      |  |      |
+                 |  |  |  +-------+ +-------+ +-------+ +-------+      |  |      |
+                 |  |  |  +---------+ +-------------+ +-----------+    |  |      |
+                 |  |  |  | pgadmin | |redis-cmdrer | | benchmark |    |  |      |
+                 |  |  |  +---------+ +-------------+ +-----------+    |  |      |
+                 |  |  +-----------------------------------------------+  |      |
+                 |  +-----------------------------------------------------+      |
+                 |                          |                                    |
+                 |                          v                                    |
+                 |  +-----------------------------------------------------+      |
+                 |  |         Aurora PostgreSQL  +  ElastiCache Redis     |      |
+                 |  +-----------------------------------------------------+      |
+                 +---------------------------------------------------------------+
 ```
 
 ### Components
 
 - **VPC**: Isolated network with public and private subnets across multiple AZs
 - **Bastion Host**: SSH jump server with Locust for load testing
-- **Application Load Balancer (ALB)**: HTTPS termination and traffic distribution
+- **Application Load Balancer (ALB)**: HTTPS termination with path-based routing
 - **ECS Cluster (Fargate)**: Serverless container orchestration
-- **Aurora PostgreSQL**: Managed database (standard PostgreSQL, no PostGIS)
+- **Aurora PostgreSQL**: Managed database with pgAdmin web UI
+- **ElastiCache Redis**: Managed Redis with Redis Commander web UI
 - **Route 53**: DNS management for the application domain
 
 ### ECS Services
@@ -185,11 +191,24 @@ The playbooks deploy the following AWS infrastructure:
 | Service | Replicas | CPU | RAM | Port | Description |
 |---------|----------|-----|-----|------|-------------|
 | `gateway` | 3 | 4 vCPU | 6 GB | 4444 | MCP Gateway API server |
-| `nginx` | 1 | 4 vCPU | 1 GB | 80 | Caching reverse proxy (public via ALB) |
-| `pgbouncer` | 1 | 1 vCPU | 256 MB | 6432 | PostgreSQL connection pooler |
-| `redis` | 1 | 2 vCPU | 2 GB | 6379 | Cache backend |
+| `nginx` | 1 | 1 vCPU | 1 GB | 80 | Caching reverse proxy (default ALB route) |
+| `fast-time` | 1 | 512m | 1 GB | 8080 | Fast Time MCP server |
+| `fast-test` | 1 | 512m | 1 GB | 8880 | Fast Test MCP server |
+| `benchmark` | 1 | 1 vCPU | 2 GB | 9000 | Benchmark MCP servers |
+| `pgadmin` | 1 | 512m | 1 GB | 80 | PostgreSQL admin UI |
+| `redis-commander` | 1 | 256m | 512 MB | 8081 | Redis admin UI |
 
-**Total Resources**: ~21 vCPU, ~25 GB RAM (on c6i.12xlarge: 48 vCPU, 96 GB)
+### ALB Path-Based Routing
+
+The Application Load Balancer routes traffic based on URL path:
+
+| Path | Target | Description |
+|------|--------|-------------|
+| `/locust*` | Bastion:8089 | Locust load testing UI |
+| `/admin*` | Gateway:4444 | MCP Gateway admin interface |
+| `/pg*` | pgAdmin:80 | PostgreSQL admin console |
+| `/redis*` | Redis Commander:8081 | Redis key browser |
+| Default | nginx:80 | Main application (caching proxy) |
 
 ## Playbooks
 

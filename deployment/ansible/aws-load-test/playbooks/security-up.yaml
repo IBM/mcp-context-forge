@@ -77,10 +77,20 @@
         tags:
           "Name": "{{ prefix_v }}-ecs-tasks-sg"
         rules:
-          # Allow traffic from ALB to nginx (port 80)
+          # Allow traffic from ALB to nginx and pgAdmin (port 80)
           - proto: tcp
             from_port: 80
             to_port: 80
+            group_id: "{{ alb_sg_r.group_id }}"
+          # Allow traffic from ALB to gateway (port 4444) for /admin route
+          - proto: tcp
+            from_port: 4444
+            to_port: 4444
+            group_id: "{{ alb_sg_r.group_id }}"
+          # Allow traffic from ALB to redis-commander (port 8081) for /redis route
+          - proto: tcp
+            from_port: 8081
+            to_port: 8081
             group_id: "{{ alb_sg_r.group_id }}"
           # Allow inter-service traffic via Service Connect
           # (nginx -> gateway, gateway -> redis)
@@ -96,6 +106,10 @@
             from_port: 6379
             to_port: 6379
             group_name: "{{ prefix_v }}-ecs-tasks-sg"
+          - proto: tcp
+            from_port: 8081
+            to_port: 8081
+            group_name: "{{ prefix_v }}-ecs-tasks-sg"
           # Allow bastion to access containers for debugging via ECS Exec
           - proto: tcp
             from_port: 80
@@ -104,6 +118,10 @@
           - proto: tcp
             from_port: 4444
             to_port: 4444
+            group_id: "{{ bastion_sg_r.group_id }}"
+          - proto: tcp
+            from_port: 8081
+            to_port: 8081
             group_id: "{{ bastion_sg_r.group_id }}"
       register: ecs_ec2_sg_r
 

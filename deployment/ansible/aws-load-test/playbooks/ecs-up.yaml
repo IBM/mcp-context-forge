@@ -264,7 +264,7 @@
               - name: PLATFORM_ADMIN_PASSWORD
                 value: "{{ platform_admin_password_v | default('changeme') }}"
               - name: MCPGATEWAY_UI_ENABLED
-                value: "false"  # Until we patch the cache to just forward admin requests
+                value: "true"
             portMappings:
               - name: gateway
                 containerPort: 4444
@@ -585,6 +585,160 @@
                 echo "Registration complete"
       register: benchmark_td_r
 
+    - name: ECS Task Definition for pgAdmin
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-pgadmin-td"
+        state: "present"
+        launch_type: FARGATE
+        memory: "1024"
+        cpu: "512"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: pgadmin
+            image: "dpage/pgadmin4:9.11.0"
+            essential: true
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: pgadmin
+            environment:
+              - name: PGADMIN_DEFAULT_EMAIL
+                value: "admin@example.com"
+              - name: PGADMIN_DEFAULT_PASSWORD
+                value: "{{ platform_admin_password_v | default('changeme') }}"
+              - name: PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION
+                value: "False"
+              - name: PGADMIN_CONFIG_WTF_CSRF_ENABLED
+                value: "False"
+              - name: SCRIPT_NAME
+                value: "/pg"
+            portMappings:
+              - name: pgadmin
+                containerPort: 80
+                protocol: tcp
+      register: pgadmin_td_r
+
+    - name: ECS Task Definition for Redis Commander
+      community.aws.ecs_taskdefinition:
+        family: "{{ prefix_v }}-redis-commander-td"
+        state: "present"
+        launch_type: FARGATE
+        memory: "512"
+        cpu: "256"
+        network_mode: awsvpc
+        execution_role_arn: "{{ execution_role_r.iam_role.arn }}"
+        task_role_arn: "{{ task_role_r.iam_role.arn }}"
+        force_create: true
+        containers:
+          - name: redis-commander
+            image: "rediscommander/redis-commander:latest"
+            essential: true
+            logConfiguration:
+              logDriver: awslogs
+              options:
+                awslogs-group: /ecs/mcf
+                awslogs-region: "{{ region_v }}"
+                awslogs-stream-prefix: redis-commander
+            environment:
+              - name: REDIS_HOSTS
+                value: "elasticache:rediss://:{{ redis_auth_token }}@{{ elasticache_endpoint }}:6379"
+              - name: HTTP_USER
+                value: "admin"
+              - name: HTTP_PASSWORD
+                value: "{{ platform_admin_password_v | default('changeme') }}"
+              - name: URL_PREFIX
+                value: "/redis"
+            portMappings:
+              - name: redis-commander
+                containerPort: 8081
+                protocol: tcp
+      register: redis_commander_td_r
+
+    # ==========================================================================
+    # ALB Target Groups (created before services so ECS can register containers)
+    # ==========================================================================
+
+    - name: Create target group for nginx (default route)
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-nginx-tg"
+        protocol: HTTP
+        port: 80
+        vpc_id: "{{ vpc_private_subnets_r.subnets[0].vpc_id }}"
+        target_type: ip
+        health_check_path: /health
+        health_check_protocol: HTTP
+        health_check_interval: 30
+        health_check_timeout: 5
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 2
+        state: present
+        tags:
+          Name: "{{ prefix_v }}-nginx-tg"
+          Project: "{{ prefix_v }}"
+      register: nginx_tg_r
+
+    - name: Create target group for Gateway (/admin route)
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-gateway-tg"
+        protocol: HTTP
+        port: 4444
+        vpc_id: "{{ vpc_private_subnets_r.subnets[0].vpc_id }}"
+        target_type: ip
+        health_check_path: /health
+        health_check_protocol: HTTP
+        health_check_interval: 30
+        health_check_timeout: 5
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 2
+        state: present
+        tags:
+          Name: "{{ prefix_v }}-gateway-tg"
+          Project: "{{ prefix_v }}"
+      register: gateway_tg_r
+
+    - name: Create target group for pgAdmin (/pg route)
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-pgadmin-tg"
+        protocol: HTTP
+        port: 80
+        vpc_id: "{{ vpc_private_subnets_r.subnets[0].vpc_id }}"
+        target_type: ip
+        health_check_path: /pg/misc/ping
+        health_check_protocol: HTTP
+        health_check_interval: 30
+        health_check_timeout: 5
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 2
+        state: present
+        tags:
+          Name: "{{ prefix_v }}-pgadmin-tg"
+          Project: "{{ prefix_v }}"
+      register: pgadmin_tg_r
+
+    - name: Create target group for Redis Commander (/redis route)
+      community.aws.elb_target_group:
+        name: "{{ prefix_v }}-redis-cmd-tg"
+        protocol: HTTP
+        port: 8081
+        vpc_id: "{{ vpc_private_subnets_r.subnets[0].vpc_id }}"
+        target_type: ip
+        health_check_path: /redis/
+        health_check_protocol: HTTP
+        health_check_interval: 30
+        health_check_timeout: 5
+        healthy_threshold_count: 2
+        unhealthy_threshold_count: 2
+        state: present
+        tags:
+          Name: "{{ prefix_v }}-redis-cmd-tg"
+          Project: "{{ prefix_v }}"
+      register: redis_commander_tg_r
+
     # ==========================================================================
     # ECS Services
     # ==========================================================================
@@ -602,6 +756,11 @@
           subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
           security_groups:
             - "{{ ecs_ec2_sg_group_id_f }}"
+        load_balancers:
+          - targetGroupArn: "{{ gateway_tg_r.target_group_arn }}"
+            containerName: gateway
+            containerPort: 4444
+        health_check_grace_period_seconds: 60
         enable_execute_command: "{{ debug_container_p }}"
         service_connect_configuration:
           enabled: true
@@ -631,6 +790,11 @@
           subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
           security_groups:
             - "{{ ecs_ec2_sg_group_id_f }}"
+        load_balancers:
+          - targetGroupArn: "{{ nginx_tg_r.target_group_arn }}"
+            containerName: nginx
+            containerPort: 80
+        health_check_grace_period_seconds: 60
         enable_execute_command: "{{ debug_container_p }}"
         service_connect_configuration:
           enabled: true
@@ -734,6 +898,74 @@
                 - port: 9000
                   dns_name: benchmark
 
+    - name: pgAdmin service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-pgadmin-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        launch_type: FARGATE
+        desired_count: 1
+        task_definition: "{{ pgadmin_td_r.taskdefinition.taskDefinitionArn }}"
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        load_balancers:
+          - targetGroupArn: "{{ pgadmin_tg_r.target_group_arn }}"
+            containerName: pgadmin
+            containerPort: 80
+        health_check_grace_period_seconds: 120
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: pgadmin-service-connect
+          services:
+            - port_name: pgadmin
+              client_aliases:
+                - port: 80
+                  dns_name: pgadmin
+
+    - name: Redis Commander service
+      ecs_service:
+        state: present
+        name: "{{ prefix_v }}-redis-commander-svc"
+        cluster: "{{ prefix_v }}-ecs-cluster"
+        launch_type: FARGATE
+        desired_count: 1
+        task_definition: "{{ redis_commander_td_r.taskdefinition.taskDefinitionArn }}"
+        network_configuration:
+          assign_public_ip: false
+          subnets: "{{ vpc_private_subnets_r.subnets | map(attribute='id') }}"
+          security_groups:
+            - "{{ ecs_ec2_sg_group_id_f }}"
+        load_balancers:
+          - targetGroupArn: "{{ redis_commander_tg_r.target_group_arn }}"
+            containerName: redis-commander
+            containerPort: 8081
+        health_check_grace_period_seconds: 60
+        enable_execute_command: "{{ debug_container_p }}"
+        service_connect_configuration:
+          enabled: true
+          namespace: "{{ prefix_v }}.local"
+          logConfiguration:
+            logDriver: awslogs
+            options:
+              awslogs-group: /ecs/mcf
+              awslogs-region: "{{ region_v }}"
+              awslogs-stream-prefix: redis-commander-service-connect
+          services:
+            - port_name: redis-commander
+              client_aliases:
+                - port: 8081
+                  dns_name: redis-commander
+
     # ==========================================================================
     # Wait and Configure DNS
     # ==========================================================================
@@ -757,3 +989,5 @@
         - fast-time
         - fast-test
         - benchmark
+        - pgadmin
+        - redis-commander
