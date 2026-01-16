@@ -148,6 +148,19 @@ SSO_TRUSTED_DOMAINS=["yourcompany.com"]
 
 # Optional: Preserve local admin authentication
 SSO_PRESERVE_ADMIN_AUTH=true
+
+# Role Mapping Configuration (New Feature)
+# Map EntraID groups to Context Forge roles
+SSO_ENTRA_GROUPS_CLAIM=groups
+SSO_ENTRA_DEFAULT_ROLE=viewer
+SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
+
+# Admin Groups (Object IDs or App Role names)
+SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
+
+# Group to Role Mapping (JSON format)
+# Format: {"group_id_or_name": "role_name"}
+SSO_ENTRA_ROLE_MAPPINGS={"e5f6g7h8-1234-5678-90ab-cdef12345678":"developer","i9j0k1l2-1234-5678-90ab-cdef12345678":"team_admin"}
 ```
 
 ### 5.2 Example Production Configuration
@@ -164,6 +177,12 @@ SSO_ENTRA_TENANT_ID=87654321-4321-4321-4321-210987654321
 SSO_AUTO_CREATE_USERS=true
 SSO_TRUSTED_DOMAINS=["acmecorp.com"]
 SSO_PRESERVE_ADMIN_AUTH=true
+
+# Role Mapping (automatically assign roles based on groups)
+SSO_ENTRA_GROUPS_CLAIM=groups
+SSO_ENTRA_DEFAULT_ROLE=viewer
+SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
+SSO_ENTRA_ROLE_MAPPINGS={"e5f6g7h8-1234-5678-90ab-cdef12345678":"developer"}
 ```
 
 ### 5.3 Development Configuration
@@ -179,6 +198,9 @@ SSO_ENTRA_TENANT_ID=dev-tenant-id-guid
 # More permissive for testing
 SSO_AUTO_CREATE_USERS=true
 SSO_PRESERVE_ADMIN_AUTH=true
+
+# Role Mapping (optional for development)
+SSO_ENTRA_DEFAULT_ROLE=developer
 ```
 
 ### 5.4 Multi-Environment Configuration
@@ -319,6 +341,300 @@ Configure MFA enforcement:
 
 Control who can access the application:
 
+## Step 8.5: Configure Role Mapping (New Feature)
+
+### Overview
+
+MCP Gateway now supports automatic role assignment based on EntraID group memberships. Users are automatically assigned Context Forge RBAC roles based on their groups, eliminating manual role management.
+
+### Available Roles
+
+Context Forge includes these default roles:
+
+1. **`platform_admin`** (global scope) - Full platform access with all permissions
+2. **`team_admin`** (team scope) - Team management, tools, resources, prompts
+3. **`developer`** (team scope) - Tool execution and resource access
+4. **`viewer`** (team scope) - Read-only access
+
+### 8.5.1 Configure Group Claims (Required)
+
+**This must be completed in Step 8.4 above** - ensure groups are included in ID tokens.
+
+### 8.5.2 Identify Group Object IDs
+
+Find your security group Object IDs in Azure:
+
+1. Go to **Microsoft Entra ID** → **Groups**
+2. Click on a group (e.g., "Developers")
+3. Copy the **Object ID** from the Overview page
+4. Repeat for all groups you want to map
+
+Example groups:
+- Admins: `a1b2c3d4-1234-5678-90ab-cdef12345678`
+- Developers: `e5f6g7h8-1234-5678-90ab-cdef12345678`
+- Team Admins: `i9j0k1l2-1234-5678-90ab-cdef12345678`
+- Viewers: `m3n4o5p6-1234-5678-90ab-cdef12345678`
+
+### 8.5.3 Configure Role Mappings
+
+Add these environment variables to your `.env` file:
+
+```bash
+# Role Mapping Configuration
+SSO_ENTRA_GROUPS_CLAIM=groups
+SSO_ENTRA_DEFAULT_ROLE=viewer
+SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
+
+# Admin Groups (grants platform_admin role)
+SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
+
+# Group to Role Mapping (JSON format)
+SSO_ENTRA_ROLE_MAPPINGS={
+  "e5f6g7h8-1234-5678-90ab-cdef12345678": "developer",
+  "i9j0k1l2-1234-5678-90ab-cdef12345678": "team_admin",
+  "m3n4o5p6-1234-5678-90ab-cdef12345678": "viewer"
+}
+```
+
+**Configuration Options:**
+
+- `SSO_ENTRA_GROUPS_CLAIM`: JWT claim containing groups (default: "groups")
+- `SSO_ENTRA_ADMIN_GROUPS`: Groups that grant platform_admin role
+- `SSO_ENTRA_ROLE_MAPPINGS`: Map group IDs to role names
+- `SSO_ENTRA_DEFAULT_ROLE`: Role assigned if no groups match (default: "viewer")
+- `SSO_ENTRA_SYNC_ROLES_ON_LOGIN`: Sync roles on each login (default: true)
+
+### 8.5.4 Using App Roles (Recommended Alternative)
+
+Instead of Security Groups, you can use App Roles for more semantic mappings:
+
+**Step 1: Create App Roles in Azure**
+
+1. In your app registration, go to **App roles**
+2. Click **+ Create app role**
+3. Create roles:
+
+```
+Display name: Admin
+Value: Admin
+Description: Platform administrators
+Allowed member types: Users/Groups
+
+Display name: Developer
+Value: Developer
+Description: Developers with tool access
+Allowed member types: Users/Groups
+
+Display name: TeamAdmin
+Value: TeamAdmin
+Description: Team administrators
+Allowed member types: Users/Groups
+
+Display name: Viewer
+Value: Viewer
+Description: Read-only users
+Allowed member types: Users/Groups
+```
+
+**Step 2: Assign Users to App Roles**
+
+1. Go to **Enterprise applications** → Your app
+2. Click **Users and groups**
+3. Click **+ Add user/group**
+4. Select user and assign appropriate role
+
+**Step 3: Configure Role Mappings**
+
+```bash
+# Use 'roles' claim instead of 'groups'
+SSO_ENTRA_GROUPS_CLAIM=roles
+
+# Map App Role values to Context Forge roles
+SSO_ENTRA_ADMIN_GROUPS=["Admin"]
+SSO_ENTRA_ROLE_MAPPINGS={
+  "Developer": "developer",
+  "TeamAdmin": "team_admin",
+  "Viewer": "viewer"
+}
+```
+
+**Benefits of App Roles:**
+- ✅ Semantic names (readable)
+- ✅ Stable (won't change)
+- ✅ No Object ID lookups needed
+- ✅ Easier to manage
+
+### 8.5.5 Verify Role Assignment
+
+After configuration, test role assignment:
+
+**Step 1: Login with Test User**
+
+1. Assign a test user to a group/role in Azure
+2. Login to MCP Gateway via EntraID SSO
+3. Check assigned roles
+
+**Step 2: Verify via API**
+
+```bash
+# Get current user's roles
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  http://localhost:8000/rbac/my/roles
+
+# Should return assigned roles:
+[
+  {
+    "role_name": "developer",
+    "scope": "team",
+    "granted_by": "sso_system"
+  }
+]
+```
+
+**Step 3: Check Logs**
+
+```bash
+# Look for role assignment messages
+tail -f logs/gateway.log | grep "Assigned SSO role"
+
+# Should see:
+# INFO: Assigned SSO role 'developer' to user@company.com
+# INFO: Mapped EntraID group 'e5f6g7h8-...' to role 'developer'
+```
+
+### 8.5.6 Role Synchronization
+
+Roles are automatically synchronized:
+
+**On User Creation:**
+- Groups extracted from token
+- Roles mapped and assigned
+- User created with appropriate permissions
+
+**On User Login (if `SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true`):**
+- Current groups extracted
+- Old SSO-granted roles revoked if no longer in groups
+- New roles assigned based on current groups
+- Manually assigned roles preserved
+
+**Manual Role Management:**
+- Admins can manually assign additional roles via Admin UI
+- Manually assigned roles are preserved during sync
+- Only SSO-granted roles (granted_by='sso_system') are synchronized
+
+### 8.5.7 Troubleshooting Role Mapping
+
+**Issue: Users not getting roles**
+
+Check:
+1. Groups claim is included in token (Step 8.4)
+2. `SSO_ENTRA_GROUPS_CLAIM` matches claim name in token
+3. Group IDs in `SSO_ENTRA_ROLE_MAPPINGS` match exactly
+4. Roles exist in Context Forge (check Admin UI → RBAC)
+
+Debug:
+```bash
+# Enable debug logging
+LOG_LEVEL=DEBUG
+
+# Check what groups are in the token
+# Look for: "Extracted groups from EntraID token"
+tail -f logs/gateway.log | grep "groups"
+```
+
+**Issue: Admin users not getting admin access**
+
+Check:
+1. User's group is in `SSO_ENTRA_ADMIN_GROUPS`
+2. Group ID/name matches exactly (case-insensitive)
+3. User's `is_admin` flag is set
+
+Debug:
+```bash
+# Check user's admin status
+curl -H "Authorization: Bearer ADMIN_TOKEN" \
+  http://localhost:8000/auth/users/{user_email}
+
+# Look for: "is_admin": true
+```
+
+**Issue: Roles not syncing on login**
+
+Check:
+1. `SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true`
+2. User has groups in token
+3. No errors in logs
+
+Debug:
+```bash
+# Check for sync messages
+tail -f logs/gateway.log | grep "sync"
+
+# Should see:
+# INFO: Assigned SSO role 'developer' to user@company.com
+# INFO: Revoked SSO role 'old_role' from user@company.com
+```
+
+### 8.5.8 Example Configurations
+
+**Example 1: Using Security Groups (Object IDs)**
+
+```bash
+SSO_ENTRA_GROUPS_CLAIM=groups
+SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
+SSO_ENTRA_ROLE_MAPPINGS={
+  "e5f6g7h8-1234-5678-90ab-cdef12345678": "developer",
+  "i9j0k1l2-1234-5678-90ab-cdef12345678": "team_admin",
+  "m3n4o5p6-1234-5678-90ab-cdef12345678": "viewer"
+}
+SSO_ENTRA_DEFAULT_ROLE=viewer
+```
+
+**Example 2: Using App Roles (Recommended)**
+
+```bash
+SSO_ENTRA_GROUPS_CLAIM=roles
+SSO_ENTRA_ADMIN_GROUPS=["Admin"]
+SSO_ENTRA_ROLE_MAPPINGS={
+  "Developer": "developer",
+  "TeamAdmin": "team_admin",
+  "Viewer": "viewer"
+}
+SSO_ENTRA_DEFAULT_ROLE=viewer
+```
+
+**Example 3: Mixed Approach**
+
+```bash
+SSO_ENTRA_GROUPS_CLAIM=groups
+SSO_ENTRA_ADMIN_GROUPS=["Admin","a1b2c3d4-1234-5678-90ab-cdef12345678"]
+SSO_ENTRA_ROLE_MAPPINGS={
+  "Developer": "developer",
+  "e5f6g7h8-1234-5678-90ab-cdef12345678": "team_admin"
+}
+```
+
+### 8.5.9 Best Practices
+
+**Security:**
+- ✅ Use App Roles for stable, semantic mappings
+- ✅ Limit admin groups to minimum necessary users
+- ✅ Enable role sync to keep permissions current
+- ✅ Audit role assignments regularly
+
+**Management:**
+- ✅ Document group-to-role mappings
+- ✅ Use descriptive App Role names
+- ✅ Test with non-admin users first
+- ✅ Monitor logs for role assignment issues
+
+**Scalability:**
+- ✅ Use groups instead of individual user assignments
+- ✅ Leverage Azure group nesting if needed
+- ✅ Consider token size limits (~200 groups)
+- ✅ Use App Roles for large organizations
+
+
 1. Go to your app registration → **Enterprise applications**
 2. Find your MCP Gateway application
 3. Go to **Users and groups**
@@ -326,19 +642,28 @@ Control who can access the application:
 5. Select users or security groups who should have access
 6. Assign appropriate roles
 
-### 8.4 Group Claims Configuration
+### 8.4 Group Claims Configuration (Required for Role Mapping)
+
+**IMPORTANT**: This step is required to enable automatic role assignment based on group memberships.
 
 To include group memberships in tokens:
 
 1. In your app registration, go to **Token configuration**
 2. Click **+ Add groups claim**
 3. Select group types to include:
-   - Security groups
+   - ✅ **Security groups** (recommended)
    - Microsoft 365 groups
    - Distribution groups
-4. Choose **Group ID** or **sAMAccountName** format
-5. Select token types (ID, Access, SAML)
+4. Choose **Group ID** format (recommended for stability)
+   - **Group ID**: Returns Object IDs (stable, won't change)
+   - **sAMAccountName**: Returns group names (readable but can change)
+5. Select token types:
+   - ✅ **ID** (required for SSO)
+   - Access (optional)
+   - SAML (if using SAML)
 6. Click **Add**
+
+**Note**: Groups will appear in the `groups` claim in the ID token. You can configure role mappings in Step 5.5 below.
 
 ## Step 9: Advanced Configuration
 

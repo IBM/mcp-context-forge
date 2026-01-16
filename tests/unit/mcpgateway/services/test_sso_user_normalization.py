@@ -94,6 +94,7 @@ class TestEntraIDNormalization:
             "sub": "abc123",
             "oid": "def456",
             "picture": "https://graph.microsoft.com/photo.jpg",
+            "groups": ["a1b2c3d4-1234-5678-90ab-cdef12345678"],
         }
 
         normalized = sso_service._normalize_user_info(entra_provider, user_data)

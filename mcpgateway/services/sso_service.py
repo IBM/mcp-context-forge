@@ -601,8 +601,11 @@ class SSOService:
                 "groups": list(set(groups)),  # Deduplicate
             }
 
-        # Handle Microsoft Entra ID provider
+        # Handle Microsoft Entra ID provider with role mapping
         if provider.id == "entra":
+            metadata = provider.metadata or {}
+            groups_claim = metadata.get("groups_claim", "groups")
+
             # Microsoft's userinfo endpoint often omits the email claim
             # Fallback: preferred_username (UPN) or upn claim
             email = user_data.get("email") or user_data.get("preferred_username") or user_data.get("upn")
@@ -614,6 +617,21 @@ class SSOService:
             elif email:
                 username = email.split("@")[0]
 
+            # Extract groups from token
+            groups = []
+
+            # Check configured groups claim (default: 'groups')
+            if groups_claim in user_data:
+                groups_value = user_data.get(groups_claim, [])
+                if isinstance(groups_value, list):
+                    groups.extend(groups_value)
+
+            # Also check 'roles' claim for App Role assignments
+            if "roles" in user_data:
+                roles_value = user_data.get("roles", [])
+                if isinstance(roles_value, list):
+                    groups.extend(roles_value)
+
             return {
                 "email": email,
                 "full_name": user_data.get("name") or email,  # Fallback to email if name missing
@@ -621,6 +639,7 @@ class SSOService:
                 "provider_id": user_data.get("sub") or user_data.get("oid"),
                 "username": username,
                 "provider": "entra",
+                "groups": list(set(groups)),  # Deduplicate
             }
 
         # Generic OIDC format for all other providers
@@ -663,6 +682,19 @@ class SSOService:
             user.last_login = utc_now()
 
             self.db.commit()
+
+            # Synchronize roles on login if enabled and user has groups
+            provider = self.get_provider(user_info.get("provider"))
+            
+            # Determine if syncing should happen (default True, respect Entra setting if applicable)
+            should_sync = True
+            if provider and provider.id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
+                should_sync = settings.sso_entra_sync_roles_on_login
+
+            if provider and user_info.get("groups") and should_sync:
+                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider)
+                if role_assignments:
+                    await self._sync_user_roles(email, role_assignments, provider)
         else:
             # Auto-create user if enabled
             provider = self.get_provider(user_info.get("provider"))
@@ -721,6 +753,12 @@ class SSOService:
             )
             if not user:
                 return None
+
+            # Assign RBAC roles based on SSO groups
+            if user_info.get("groups"):
+                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider)
+                if role_assignments:
+                    await self._sync_user_roles(email, role_assignments, provider)
 
             # If user was created from approved request, mark request as used
             if settings.sso_require_admin_approval:
@@ -786,4 +824,132 @@ class SSOService:
             if domain in [d.lower() for d in settings.sso_google_admin_domains]:
                 return True
 
+        # Check EntraID admin groups
+        if provider.id == "entra" and settings.sso_entra_admin_groups:
+            user_groups = user_info.get("groups", [])
+            if any(group.lower() in [g.lower() for g in settings.sso_entra_admin_groups] for group in user_groups):
+                return True
+
         return False
+
+    async def _map_groups_to_roles(self, user_email: str, user_groups: List[str], provider: SSOProvider) -> List[Dict[str, Any]]:
+        """Map SSO groups to Context Forge RBAC roles.
+
+        Args:
+            user_email: User's email address
+            user_groups: List of groups from SSO provider
+            provider: SSO provider configuration
+
+        Returns:
+            List of role assignments: [{"role_name": str, "scope": str, "scope_id": Optional[str]}]
+        """
+        # First-Party
+        from mcpgateway.services.role_service import RoleService
+
+        role_service = RoleService(self.db)
+        role_assignments = []
+
+        # Generic Role Mapping Logic
+        metadata = provider.metadata or {}
+        role_mappings = metadata.get("role_mappings", {})
+        
+        # Merge with legacy Entra specific settings if applicable
+        if provider.id == "entra":
+            # Admin groups -> platform_admin
+            if settings.sso_entra_admin_groups:
+                for group in user_groups:
+                    if group.lower() in [g.lower() for g in settings.sso_entra_admin_groups]:
+                        role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
+                        logger.info(f"Mapped EntraID admin group '{group}' to platform_admin role for {user_email}")
+                        break  # Only need one admin assignment
+
+            # Use generic role_mappings fallback to legacy setting
+            if not role_mappings and settings.sso_entra_role_mappings:
+                role_mappings = settings.sso_entra_role_mappings
+
+        # Process role mappings for ALL providers
+        for group in user_groups:
+            if group in role_mappings:
+                role_name = role_mappings[group]
+                # Special case for "admin"/"platform_admin" shorthand
+                if role_name in ["admin", "platform_admin"]:
+                    role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
+                    logger.info(f"Mapped group '{group}' to platform_admin role for {user_email}")
+                    continue
+
+                # Verify role exists (try team scope first, then global)
+                role = await role_service.get_role_by_name(role_name, scope="team")
+                if not role:
+                    role = await role_service.get_role_by_name(role_name, scope="global")
+
+                if role:
+                    # Avoid duplicate assignments
+                    if not any(r["role_name"] == role.name for r in role_assignments):
+                        role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": None})
+                        logger.info(f"Mapped group '{group}' to role '{role.name}' for {user_email}")
+                else:
+                    logger.warning(f"Role '{role_name}' not found for group '{group}' mapping")
+
+        # Apply default role if no mappings found (Entra legacy fallback)
+        if not role_assignments and provider.id == "entra" and settings.sso_entra_default_role:
+             default_role_name = settings.sso_entra_default_role
+             default_role = await role_service.get_role_by_name(default_role_name, scope="team")
+             if not default_role:
+                 default_role = await role_service.get_role_by_name(default_role_name, scope="global")
+
+             if default_role:
+                 role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": None})
+                 logger.info(f"Assigned default role '{default_role.name}' to {user_email}")
+
+        return role_assignments
+
+    async def _sync_user_roles(self, user_email: str, role_assignments: List[Dict[str, Any]], provider: SSOProvider) -> None:
+        """Synchronize user's SSO-based role assignments.
+
+        Args:
+            user_email: User's email address
+            role_assignments: List of role assignments to apply
+            provider: SSO provider configuration
+        """
+        # First-Party
+        from mcpgateway.services.role_service import RoleService
+
+        role_service = RoleService(self.db)
+
+        # Get current SSO-granted roles (granted_by='sso_system')
+        current_roles = await role_service.list_user_roles(user_email, include_expired=False)
+        sso_roles = [r for r in current_roles if r.granted_by == "sso_system"]
+
+        # Build set of desired role assignments
+        desired_roles = {(r["role_name"], r["scope"], r.get("scope_id")) for r in role_assignments}
+
+        # Revoke roles that are no longer in the desired set
+        for user_role in sso_roles:
+            role_tuple = (user_role.role.name, user_role.scope, user_role.scope_id)
+            if role_tuple not in desired_roles:
+                await role_service.revoke_role_from_user(user_email=user_email, role_id=user_role.role_id, scope=user_role.scope, scope_id=user_role.scope_id)
+                logger.info(f"Revoked SSO role '{user_role.role.name}' from {user_email} (no longer in groups)")
+
+        # Assign new roles
+        for assignment in role_assignments:
+            try:
+                # Get role by name
+                role = await role_service.get_role_by_name(assignment["role_name"], scope=assignment["scope"])
+                if not role:
+                    logger.warning(f"Role '{assignment['role_name']}' not found, skipping assignment for {user_email}")
+                    continue
+
+                # Check if assignment already exists
+                existing = await role_service.get_user_role_assignment(
+                    user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id")
+                )
+
+                if not existing or not existing.is_active:
+                    # Assign role to user
+                    await role_service.assign_role_to_user(
+                        user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by="sso_system"
+                    )
+                    logger.info(f"Assigned SSO role '{role.name}' to {user_email}")
+
+            except Exception as e:
+                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {user_email}: {e}")
