@@ -44,6 +44,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.session import RequestResponder
 import mcp.types as mcp_types
 import orjson
+from mcpgateway.config import settings
 
 # First-Party
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
@@ -346,9 +347,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         with different Authorization headers will have different identity hashes
         and thus separate session pools.
 
-        If an identity_extractor is configured, it is called first to extract
-        a stable identity (e.g., user_id from JWT). This prevents unbounded pool
-        growth when tokens rotate frequently.
+        Identity resolution order:
+        1. Custom identity_extractor (if configured) - for rotating tokens like JWTs
+        2. x-mcp-session-id header (if present) - for session affinity, ensures
+           requests with the same downstream session ID get the same upstream
+           session even when JWT tokens rotate (different jti values)
+        3. Configured identity headers - fallback to hashing all identity headers
 
         Args:
             headers: Request headers dict.
@@ -370,9 +374,21 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             except Exception as e:
                 logger.debug(f"Identity extractor failed, falling back to header hash: {e}")
 
-        # Normalize and extract identity headers (case-insensitive)
-        identity_parts = []
+        # Normalize headers for case-insensitive lookup
         headers_lower = {k.lower(): v for k, v in headers.items()}
+
+        # Session affinity: prioritize x-mcp-session-id for stable identity
+        # When present, use ONLY the session ID for identity hash. This ensures
+        # requests with the same downstream session ID get the same upstream session,
+        # even when JWT tokens rotate (different jti values per request).
+        if settings.mcpgateway_session_affinity_enabled:
+            session_id = headers_lower.get("x-mcp-session-id")
+            if session_id:
+                logger.debug(f"Using x-mcp-session-id for session affinity: {session_id[:8]}...")
+                return hashlib.sha256(session_id.encode()).hexdigest()
+
+        # Fallback: extract identity from configured headers
+        identity_parts = []
 
         for header in sorted(self._identity_headers):
             if header in headers_lower:
