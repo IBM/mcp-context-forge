@@ -583,6 +583,8 @@ mcpContextForge:
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
     TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
     REQUIRE_TOKEN_EXPIRATION: "false"      # require all JWT tokens to have expiration claims
+    REQUIRE_JTI: "false"                   # require JTI (JWT ID) claim for revocation support
+    REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
     AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
 
     # ─ Email-Based Authentication ─

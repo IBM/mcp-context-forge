@@ -144,7 +144,7 @@ services:
       - REDIS_RETRY_INTERVAL_MS=2000     # Base interval, grows exponentially with jitter
       - REDIS_MAX_BACKOFF_SECONDS=30     # Max backoff cap (jitter ±25% applied after)
       # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
-      - AUTH_CACHE_ENABLED=true
+      - AUTH_CACHE_ENABLED=${AUTH_CACHE_ENABLED:-true}
       - AUTH_CACHE_USER_TTL=300
       - AUTH_CACHE_REVOCATION_TTL=120
       - AUTH_CACHE_TEAM_TTL=300
@@ -198,6 +198,8 @@ services:
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
       - REQUIRE_TOKEN_EXPIRATION=false
+      - REQUIRE_JTI=${REQUIRE_JTI:-false}
+      - REQUIRE_USER_IN_DB=${REQUIRE_USER_IN_DB:-false}
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true
       # Security configuration (using defaults)
@@ -221,7 +223,7 @@ services:
       - TRUST_PROXY_AUTH=false
       # Logging configuration
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
-      - LOG_LEVEL=ERROR  # Required for SQLALCHEMY_ECHO output during load testing
+      - LOG_LEVEL=${LOG_LEVEL:-ERROR}  # Required for SQLALCHEMY_ECHO output during load testing
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       # Template auto-reload disabled for performance (prevents re-parsing templates on each request)
       - TEMPLATES_AUTO_RELOAD=false
