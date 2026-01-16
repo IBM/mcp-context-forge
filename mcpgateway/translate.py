@@ -1179,7 +1179,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
         # First-Party
         from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
 
-        async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY) as client:
+        async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY, connect_timeout=10.0, write_timeout=timeout, pool_timeout=timeout) as client:
             await _simple_sse_pump(client, url, max_retries, initial_retry_delay)
         return
 
@@ -1339,7 +1339,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
     # First-Party
     from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
 
-    async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY) as client:
+    async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY, connect_timeout=10.0, write_timeout=timeout, pool_timeout=timeout) as client:
         try:
             await asyncio.gather(read_stdout(client), pump_sse_to_stdio(client))
         except Exception as e:
@@ -1593,7 +1593,7 @@ async def _run_streamable_http_to_stdio(
         # First-Party
         from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
 
-        async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY) as client:
+        async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY, connect_timeout=10.0, write_timeout=timeout, pool_timeout=timeout) as client:
             await _simple_streamable_http_pump(client, url, max_retries, initial_retry_delay)
         return
 
@@ -1712,7 +1712,7 @@ async def _run_streamable_http_to_stdio(
     # First-Party
     from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
 
-    async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY) as client:
+    async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY, connect_timeout=10.0, write_timeout=timeout, pool_timeout=timeout) as client:
         try:
             await asyncio.gather(read_stdout(client), pump_streamable_http_to_stdio(client))
         except Exception as e:

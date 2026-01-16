@@ -95,7 +95,7 @@ async def make_authenticated_request(method: str, url: str, json_data: Optional[
     # First-Party
     from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
 
-    async with get_isolated_http_client(timeout=300.0, headers=headers) as client:
+    async with get_isolated_http_client(timeout=300.0, headers=headers, connect_timeout=300.0, write_timeout=300.0, pool_timeout=300.0) as client:
         try:
             response = await client.request(method=method, url=full_url, json=json_data, params=params)
             if response.status_code >= 400:
