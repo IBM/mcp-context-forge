@@ -844,10 +844,28 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         >>> sig.return_annotation.__origin__.__name__
         'list'
     """
+    # Extract filtering parameters from user context (same pattern as list_resources)
+    user_context = user_context_var.get()
+    user_email = user_context.get("email") if user_context else None
+    token_teams = user_context.get("teams") if user_context else None
+    is_admin = user_context.get("is_admin", False) if user_context else False
+
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    if is_admin and token_teams is None:
+        user_email = None
+        # token_teams stays None (unrestricted)
+    elif token_teams is None:
+        token_teams = []  # Non-admin without teams = public-only (secure default)
+
     try:
         async with get_db() as db:
             try:
-                resource_templates = await resource_service.list_resource_templates(db)
+                resource_templates = await resource_service.list_resource_templates(
+                    db,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                )
                 return [template.model_dump(by_alias=True) for template in resource_templates]
             except Exception as e:
                 logger.exception(f"Error listing resource templates: {e}")

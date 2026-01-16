@@ -758,6 +758,129 @@ async def test_list_resources_exception_no_server_id(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
+# list_resource_templates tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_resource_templates_public_only_token(monkeypatch):
+    """Test list_resource_templates passes empty token_teams for public-only access."""
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+
+    mock_db = MagicMock()
+    mock_template = MagicMock()
+    mock_template.model_dump = MagicMock(return_value={"uri_template": "file:///{path}", "name": "Files"})
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    # Track what parameters were passed to the service
+    captured_calls = []
+
+    async def mock_list_templates(db, user_email=None, token_teams=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+        return [mock_template]
+
+    monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
+
+    # Set public-only user context (no auth, teams=None which becomes [])
+    token = user_context_var.set({"email": None, "teams": None, "is_admin": False})
+    try:
+        result = await list_resource_templates()
+    finally:
+        user_context_var.reset(token)
+
+    # Verify the service was called with public-only access (empty teams)
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["user_email"] is None
+    assert captured_calls[0]["token_teams"] == []  # Public-only (secure default)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_resource_templates_admin_unrestricted(monkeypatch):
+    """Test list_resource_templates passes token_teams=None for admin users without team restrictions."""
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+
+    mock_db = MagicMock()
+    mock_template = MagicMock()
+    mock_template.model_dump = MagicMock(return_value={"uri_template": "file:///{path}", "name": "Files"})
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    captured_calls = []
+
+    async def mock_list_templates(db, user_email=None, token_teams=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+        return [mock_template]
+
+    monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
+
+    # Set admin user context with no team restrictions
+    token = user_context_var.set({"email": "admin@example.com", "teams": None, "is_admin": True})
+    try:
+        result = await list_resource_templates()
+    finally:
+        user_context_var.reset(token)
+
+    # Verify the service was called with admin unrestricted access
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["user_email"] is None  # Admin bypass clears email
+    assert captured_calls[0]["token_teams"] is None  # Unrestricted
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_resource_templates_team_scoped(monkeypatch):
+    """Test list_resource_templates passes token_teams for team-scoped access."""
+    from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
+
+    mock_db = MagicMock()
+    mock_template = MagicMock()
+    mock_template.model_dump = MagicMock(return_value={"uri_template": "file:///{path}", "name": "Files"})
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    captured_calls = []
+
+    async def mock_list_templates(db, user_email=None, token_teams=None):
+        captured_calls.append({"user_email": user_email, "token_teams": token_teams})
+        return [mock_template]
+
+    monkeypatch.setattr(resource_service, "list_resource_templates", mock_list_templates)
+
+    # Set user context with specific team membership
+    token = user_context_var.set({"email": "user@example.com", "teams": ["team-1", "team-2"], "is_admin": False})
+    try:
+        result = await list_resource_templates()
+    finally:
+        user_context_var.reset(token)
+
+    # Verify the service was called with team-scoped access
+    assert len(captured_calls) == 1
+    assert captured_calls[0]["user_email"] == "user@example.com"
+    assert captured_calls[0]["token_teams"] == ["team-1", "team-2"]
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
 # read_resource tests
 # ---------------------------------------------------------------------------
 

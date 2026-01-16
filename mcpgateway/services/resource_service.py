@@ -445,7 +445,8 @@ class ResourceService:
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
                 team_id=getattr(resource, "team_id", None) or team_id,
                 owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
-                visibility=getattr(resource, "visibility", None) or visibility,
+                # Endpoint visibility parameter takes precedence over schema default
+                visibility=visibility if visibility is not None else getattr(resource, "visibility", "public"),
             )
 
             # Add to DB
@@ -3238,16 +3239,25 @@ class ResourceService:
         await self._event_service.publish_event(event)
 
     # --- Resource templates ---
-    async def list_resource_templates(self, db: Session, include_inactive: bool = False) -> List[ResourceTemplate]:
+    async def list_resource_templates(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[ResourceTemplate]:
         """
-        List resource templates.
+        List resource templates with visibility-based access control.
 
         Args:
             db: Database session
             include_inactive: Whether to include inactive templates
+            user_email: Email of requesting user (for private visibility check)
+            token_teams: Teams from JWT. None = admin (no filtering),
+                         [] = public-only (no owner access), [...] = team-scoped
 
         Returns:
-            List of ResourceTemplate objects
+            List of ResourceTemplate objects the user has access to
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -3264,8 +3274,27 @@ class ResourceService:
             True
         """
         query = select(DbResource).where(DbResource.uri_template.isnot(None))
+
         if not include_inactive:
             query = query.where(DbResource.enabled)
+
+        # Apply visibility filtering when token_teams is set (non-admin access)
+        if token_teams is not None:
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public templates - no owner access
+            is_public_only_token = len(token_teams) == 0
+
+            conditions = [DbResource.visibility == "public"]
+
+            # Only include owner access for non-public-only tokens with user_email
+            if not is_public_only_token and user_email:
+                conditions.append(DbResource.owner_email == user_email)
+
+            if token_teams:
+                conditions.append(and_(DbResource.team_id.in_(token_teams), DbResource.visibility.in_(["team", "public"])))
+
+            query = query.where(or_(*conditions))
+
         # Cursor-based pagination logic can be implemented here in the future.
         templates = db.execute(query).scalars().all()
         result = [ResourceTemplate.model_validate(t) for t in templates]
