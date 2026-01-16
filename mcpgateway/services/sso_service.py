@@ -564,7 +564,7 @@ class SSOService:
 
         # Handle Keycloak provider with role mapping
         if provider.id == "keycloak":
-            metadata = provider.metadata or {}
+            metadata = provider.provider_metadata or {}
             username_claim = metadata.get("username_claim", "preferred_username")
             email_claim = metadata.get("email_claim", "email")
             groups_claim = metadata.get("groups_claim", "groups")
@@ -603,7 +603,7 @@ class SSOService:
 
         # Handle Microsoft Entra ID provider with role mapping
         if provider.id == "entra":
-            metadata = provider.metadata or {}
+            metadata = provider.provider_metadata or {}
             groups_claim = metadata.get("groups_claim", "groups")
 
             # Microsoft's userinfo endpoint often omits the email claim
@@ -683,18 +683,23 @@ class SSOService:
 
             self.db.commit()
 
-            # Synchronize roles on login if enabled and user has groups
+            # Synchronize roles on login if enabled (handles groups, default role, and revocation)
             provider = self.get_provider(user_info.get("provider"))
-            
-            # Determine if syncing should happen (default True, respect Entra setting if applicable)
-            should_sync = True
-            if provider and provider.id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
-                should_sync = settings.sso_entra_sync_roles_on_login
 
-            if provider and user_info.get("groups") and should_sync:
+            # Determine if syncing should happen (default True, respect provider-level and Entra setting)
+            should_sync = True
+            if provider:
+                # Check provider-level sync_roles flag in provider_metadata (allows disabling per-provider)
+                metadata = provider.provider_metadata or {}
+                if "sync_roles" in metadata:
+                    should_sync = metadata.get("sync_roles", True)
+                # Legacy Entra-specific setting (fallback for backwards compatibility)
+                elif provider.id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
+                    should_sync = settings.sso_entra_sync_roles_on_login
+
+            if provider and should_sync:
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider)
-                if role_assignments:
-                    await self._sync_user_roles(email, role_assignments, provider)
+                await self._sync_user_roles(email, role_assignments, provider)
         else:
             # Auto-create user if enabled
             provider = self.get_provider(user_info.get("provider"))
@@ -754,8 +759,15 @@ class SSOService:
             if not user:
                 return None
 
-            # Assign RBAC roles based on SSO groups
-            if user_info.get("groups"):
+            # Assign RBAC roles based on SSO groups (or default role if no groups)
+            # Check provider-level sync_roles flag in provider_metadata
+            metadata = provider.provider_metadata or {}
+            should_sync = metadata.get("sync_roles", True)
+            # Legacy Entra-specific setting (fallback for backwards compatibility)
+            if "sync_roles" not in metadata and provider.id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
+                should_sync = settings.sso_entra_sync_roles_on_login
+
+            if should_sync:
                 role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider)
                 if role_assignments:
                     await self._sync_user_roles(email, role_assignments, provider)
@@ -843,29 +855,60 @@ class SSOService:
         Returns:
             List of role assignments: [{"role_name": str, "scope": str, "scope_id": Optional[str]}]
         """
-        # First-Party
+        # pylint: disable=import-outside-toplevel
         from mcpgateway.services.role_service import RoleService
 
-        role_service = RoleService(self.db)
         role_assignments = []
 
         # Generic Role Mapping Logic
-        metadata = provider.metadata or {}
+        metadata = provider.provider_metadata or {}
         role_mappings = metadata.get("role_mappings", {})
-        
-        # Merge with legacy Entra specific settings if applicable
-        if provider.id == "entra":
-            # Admin groups -> platform_admin
-            if settings.sso_entra_admin_groups:
-                for group in user_groups:
-                    if group.lower() in [g.lower() for g in settings.sso_entra_admin_groups]:
-                        role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
-                        logger.info(f"Mapped EntraID admin group '{group}' to platform_admin role for {user_email}")
-                        break  # Only need one admin assignment
 
+        # Merge with legacy Entra specific settings if applicable
+        has_entra_admin_groups = provider.id == "entra" and settings.sso_entra_admin_groups
+        has_entra_default_role = provider.id == "entra" and settings.sso_entra_default_role
+
+        if provider.id == "entra":
             # Use generic role_mappings fallback to legacy setting
             if not role_mappings and settings.sso_entra_role_mappings:
                 role_mappings = settings.sso_entra_role_mappings
+
+        # Early exit: Skip role mapping if no configuration exists
+        if not role_mappings and not has_entra_admin_groups and not has_entra_default_role:
+            logger.debug(f"No role mappings configured for provider {provider.id}, skipping role sync")
+            return role_assignments
+
+        # Handle EntraID admin groups -> platform_admin
+        if has_entra_admin_groups:
+            admin_groups_lower = [g.lower() for g in settings.sso_entra_admin_groups]
+            for group in user_groups:
+                if group.lower() in admin_groups_lower:
+                    role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
+                    logger.debug(f"Mapped EntraID admin group to platform_admin role for {user_email}")
+                    break  # Only need one admin assignment
+
+        # Batch role lookups: collect all role names that need to be looked up
+        role_names_to_lookup = set()
+        for group in user_groups:
+            if group in role_mappings:
+                role_name = role_mappings[group]
+                if role_name not in ["admin", "platform_admin"]:
+                    role_names_to_lookup.add(role_name)
+
+        # Add default role to lookup if needed
+        if has_entra_default_role:
+            role_names_to_lookup.add(settings.sso_entra_default_role)
+
+        # Pre-fetch all roles by name in batches (reduces DB round-trips)
+        role_service = RoleService(self.db)
+        role_cache: Dict[str, Any] = {}
+        for role_name in role_names_to_lookup:
+            # Try team scope first, then global
+            role = await role_service.get_role_by_name(role_name, scope="team")
+            if not role:
+                role = await role_service.get_role_by_name(role_name, scope="global")
+            if role:
+                role_cache[role_name] = role
 
         # Process role mappings for ALL providers
         for group in user_groups:
@@ -874,44 +917,37 @@ class SSOService:
                 # Special case for "admin"/"platform_admin" shorthand
                 if role_name in ["admin", "platform_admin"]:
                     role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
-                    logger.info(f"Mapped group '{group}' to platform_admin role for {user_email}")
+                    logger.debug(f"Mapped group to platform_admin role for {user_email}")
                     continue
 
-                # Verify role exists (try team scope first, then global)
-                role = await role_service.get_role_by_name(role_name, scope="team")
-                if not role:
-                    role = await role_service.get_role_by_name(role_name, scope="global")
-
+                # Use pre-fetched role from cache
+                role = role_cache.get(role_name)
                 if role:
                     # Avoid duplicate assignments
                     if not any(r["role_name"] == role.name for r in role_assignments):
                         role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": None})
-                        logger.info(f"Mapped group '{group}' to role '{role.name}' for {user_email}")
+                        logger.debug(f"Mapped group to role '{role.name}' for {user_email}")
                 else:
-                    logger.warning(f"Role '{role_name}' not found for group '{group}' mapping")
+                    logger.warning(f"Role '{role_name}' not found for group mapping")
 
         # Apply default role if no mappings found (Entra legacy fallback)
-        if not role_assignments and provider.id == "entra" and settings.sso_entra_default_role:
-             default_role_name = settings.sso_entra_default_role
-             default_role = await role_service.get_role_by_name(default_role_name, scope="team")
-             if not default_role:
-                 default_role = await role_service.get_role_by_name(default_role_name, scope="global")
-
-             if default_role:
-                 role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": None})
-                 logger.info(f"Assigned default role '{default_role.name}' to {user_email}")
+        if not role_assignments and has_entra_default_role:
+            default_role = role_cache.get(settings.sso_entra_default_role)
+            if default_role:
+                role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": None})
+                logger.info(f"Assigned default role '{default_role.name}' to {user_email}")
 
         return role_assignments
 
-    async def _sync_user_roles(self, user_email: str, role_assignments: List[Dict[str, Any]], provider: SSOProvider) -> None:
+    async def _sync_user_roles(self, user_email: str, role_assignments: List[Dict[str, Any]], _provider: SSOProvider) -> None:
         """Synchronize user's SSO-based role assignments.
 
         Args:
             user_email: User's email address
             role_assignments: List of role assignments to apply
-            provider: SSO provider configuration
+            _provider: SSO provider configuration (reserved for future use)
         """
-        # First-Party
+        # pylint: disable=import-outside-toplevel
         from mcpgateway.services.role_service import RoleService
 
         role_service = RoleService(self.db)
@@ -940,15 +976,11 @@ class SSOService:
                     continue
 
                 # Check if assignment already exists
-                existing = await role_service.get_user_role_assignment(
-                    user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id")
-                )
+                existing = await role_service.get_user_role_assignment(user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"))
 
                 if not existing or not existing.is_active:
                     # Assign role to user
-                    await role_service.assign_role_to_user(
-                        user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by="sso_system"
-                    )
+                    await role_service.assign_role_to_user(user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by="sso_system")
                     logger.info(f"Assigned SSO role '{role.name}' to {user_email}")
 
             except Exception as e:

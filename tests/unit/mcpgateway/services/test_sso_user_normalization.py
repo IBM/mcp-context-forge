@@ -390,7 +390,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "master",
                 "map_realm_roles": True,
                 "map_client_roles": False,
@@ -428,7 +428,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "master",
                 "map_realm_roles": False,
                 "map_client_roles": True,
@@ -461,7 +461,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "master",
                 "map_realm_roles": True,
                 "map_client_roles": True,
@@ -497,7 +497,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
+            provider_metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
         )
 
         user_data = {
@@ -520,7 +520,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "custom-realm",
                 "map_realm_roles": True,
                 "map_client_roles": False,
@@ -555,7 +555,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
+            provider_metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
         )
 
         user_data = {
@@ -578,7 +578,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "master",
                 "map_realm_roles": True,
                 "map_client_roles": True,

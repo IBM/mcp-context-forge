@@ -152,7 +152,8 @@ SSO_PRESERVE_ADMIN_AUTH=true
 # Role Mapping Configuration (New Feature)
 # Map EntraID groups to Context Forge roles
 SSO_ENTRA_GROUPS_CLAIM=groups
-SSO_ENTRA_DEFAULT_ROLE=viewer
+# Optional: Default role for users without group mappings (default: None - no role)
+# SSO_ENTRA_DEFAULT_ROLE=viewer
 SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
 
 # Admin Groups (Object IDs or App Role names)
@@ -401,8 +402,10 @@ SSO_ENTRA_ROLE_MAPPINGS={
 - `SSO_ENTRA_GROUPS_CLAIM`: JWT claim containing groups (default: "groups")
 - `SSO_ENTRA_ADMIN_GROUPS`: Groups that grant platform_admin role
 - `SSO_ENTRA_ROLE_MAPPINGS`: Map group IDs to role names
-- `SSO_ENTRA_DEFAULT_ROLE`: Role assigned if no groups match (default: "viewer")
+- `SSO_ENTRA_DEFAULT_ROLE`: Role assigned if no groups match (default: None - no automatic role assignment)
 - `SSO_ENTRA_SYNC_ROLES_ON_LOGIN`: Sync roles on each login (default: true)
+
+**Security Note:** `SSO_ENTRA_DEFAULT_ROLE` defaults to `None` (not "viewer") to prevent automatic access grants. Set this explicitly only if you want all EntraID users to receive a default role when they don't match any group mappings.
 
 ### 8.5.4 Using App Roles (Recommended Alternative)
 
@@ -614,9 +617,32 @@ SSO_ENTRA_ROLE_MAPPINGS={
 }
 ```
 
-### 8.5.9 Best Practices
+### 8.5.9 Provider-Level Sync Control
+
+For fine-grained control over role synchronization, you can disable sync at the provider level using the Admin API:
+
+```bash
+# Disable role sync for a specific provider
+curl -X PUT "http://localhost:8000/auth/sso/admin/providers/entra" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider_metadata": {
+      "sync_roles": false,
+      "groups_claim": "groups"
+    }
+  }'
+```
+
+This is useful when:
+- Provider doesn't emit group claims
+- You want to manage roles manually for specific providers
+- Migrating from manual to automatic role management
+
+### 8.5.10 Best Practices
 
 **Security:**
+- ✅ Leave `SSO_ENTRA_DEFAULT_ROLE` unset unless you want automatic access for all users
 - ✅ Use App Roles for stable, semantic mappings
 - ✅ Limit admin groups to minimum necessary users
 - ✅ Enable role sync to keep permissions current

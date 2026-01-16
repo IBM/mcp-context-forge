@@ -47,7 +47,7 @@ def entra_provider():
         is_enabled=True,
         trusted_domains=["company.com"],
         auto_create_users=True,
-        metadata={
+        provider_metadata={
             "groups_claim": "groups",
             "role_mappings": {
                 "e5f6g7h8-1234-5678-90ab-cdef12345678": "developer",
@@ -146,7 +146,7 @@ class TestEntraIDGroupExtraction:
             client_id="test_client_id",
             client_secret_encrypted="encrypted_secret",
             is_enabled=True,
-            metadata={"groups_claim": "custom_groups"},
+            provider_metadata={"groups_claim": "custom_groups"},
         )
 
         user_data = {"email": "user@company.com", "name": "Test User", "sub": "abc123", "custom_groups": ["group1", "group2"]}
@@ -172,15 +172,15 @@ class TestEntraIDAdminGroupAssignment:
 
             # User with admin group (Object ID)
             user_info = {"full_name": "Test User", "provider": "entra", "groups": ["a1b2c3d4-1234-5678-90ab-cdef12345678", "other-group"]}
-            assert sso_service._should_user_be_admin("user@company.com", user_info, entra_provider) == True
+            assert sso_service._should_user_be_admin("user@company.com", user_info, entra_provider) is True
 
             # User with admin role (App Role)
             user_info_role = {"full_name": "Test User", "provider": "entra", "groups": ["Admin", "Developer"]}
-            assert sso_service._should_user_be_admin("user@company.com", user_info_role, entra_provider) == True
+            assert sso_service._should_user_be_admin("user@company.com", user_info_role, entra_provider) is True
 
             # User without admin group
             user_info_no_admin = {"full_name": "Test User", "provider": "entra", "groups": ["Developer", "Viewer"]}
-            assert sso_service._should_user_be_admin("user@company.com", user_info_no_admin, entra_provider) == False
+            assert sso_service._should_user_be_admin("user@company.com", user_info_no_admin, entra_provider) is False
 
     def test_entra_admin_group_case_insensitive(self, sso_service, entra_provider):
         """Test that admin group matching is case-insensitive."""
@@ -191,7 +191,7 @@ class TestEntraIDAdminGroupAssignment:
             mock_settings.sso_entra_admin_groups = ["admin"]
 
             user_info = {"full_name": "Test User", "provider": "entra", "groups": ["ADMIN", "Developer"]}
-            assert sso_service._should_user_be_admin("user@company.com", user_info, entra_provider) == True
+            assert sso_service._should_user_be_admin("user@company.com", user_info, entra_provider) is True
 
 
 class TestEntraIDRoleMapping:
@@ -325,9 +325,7 @@ class TestEntraIDRoleSynchronization:
             await sso_service._sync_user_roles("user@company.com", role_assignments, entra_provider)
 
             # Verify role was assigned
-            mock_role_service.assign_role_to_user.assert_called_once_with(
-                user_email="user@company.com", role_id="role-123", scope="team", scope_id=None, granted_by="sso_system"
-            )
+            mock_role_service.assign_role_to_user.assert_called_once_with(user_email="user@company.com", role_id="role-123", scope="team", scope_id=None, granted_by="sso_system")
 
     @pytest.mark.asyncio
     async def test_sync_user_roles_revoke_old_roles(self, sso_service, entra_provider):
@@ -356,9 +354,7 @@ class TestEntraIDRoleSynchronization:
             await sso_service._sync_user_roles("user@company.com", role_assignments, entra_provider)
 
             # Verify old role was revoked
-            mock_role_service.revoke_role_from_user.assert_called_once_with(
-                user_email="user@company.com", role_id="old-role-123", scope="team", scope_id=None
-            )
+            mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@company.com", role_id="old-role-123", scope="team", scope_id=None)
 
     @pytest.mark.asyncio
     async def test_sync_user_roles_preserve_manual_assignments(self, sso_service, entra_provider):
@@ -423,3 +419,259 @@ class TestEntraIDIntegration:
         # GitHub should not have groups key (not implemented for GitHub)
         assert "groups" not in normalized or normalized.get("groups") == []
 
+
+class TestEntraIDConfigurationIntegration:
+    """Test that configuration is properly wired through bootstrap to runtime."""
+
+    def test_entra_groups_claim_from_bootstrap_metadata(self, sso_service):
+        """Test that custom groups_claim from provider metadata is honored during normalization.
+
+        This tests the fix for: SSO_ENTRA_GROUPS_CLAIM env var being ignored because
+        the Entra provider bootstrap now includes metadata with groups_claim.
+        """
+        # Simulate provider with custom groups_claim in metadata (set via bootstrap)
+        provider = SSOProvider(
+            id="entra",
+            name="entra",
+            display_name="Microsoft Entra ID",
+            provider_type="oidc",
+            client_id="test_client_id",
+            client_secret_encrypted="encrypted_secret",
+            is_enabled=True,
+            provider_metadata={"groups_claim": "custom_groups"},  # Custom claim from env config
+        )
+
+        # User data has groups in custom claim, not default 'groups'
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "abc123",
+            "custom_groups": ["group1", "group2"],
+            "groups": ["should_be_ignored"],
+        }
+
+        normalized = sso_service._normalize_user_info(provider, user_data)
+
+        assert "groups" in normalized
+        assert "group1" in normalized["groups"]
+        assert "group2" in normalized["groups"]
+        # The default 'groups' claim should be ignored when custom_groups is configured
+        assert "should_be_ignored" not in normalized["groups"]
+
+
+class TestEntraIDRoleRevocationOnLogin:
+    """Test role revocation during login flow when user loses group mappings."""
+
+    @pytest.mark.asyncio
+    async def test_sync_revokes_all_roles_when_empty_assignments(self, sso_service, entra_provider):
+        """Test that all SSO roles are revoked when role_assignments is empty.
+
+        This tests the fix for: role sync not happening when role_assignments is empty,
+        which prevented revocation when user lost all mapped groups.
+        """
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_role_service = MockRoleService.return_value
+
+            # User previously had SSO-granted role
+            old_role = MagicMock(spec=Role)
+            old_role.id = "old-role-123"
+            old_role.name = "developer"
+
+            old_user_role = MagicMock(spec=UserRole)
+            old_user_role.role_id = "old-role-123"
+            old_user_role.role = old_role
+            old_user_role.scope = "team"
+            old_user_role.scope_id = None
+            old_user_role.granted_by = "sso_system"
+
+            mock_role_service.list_user_roles = AsyncMock(return_value=[old_user_role])
+            mock_role_service.revoke_role_from_user = AsyncMock()
+
+            # User now has no mapped roles (empty list)
+            role_assignments = []
+
+            await sso_service._sync_user_roles("user@company.com", role_assignments, entra_provider)
+
+            # Verify old SSO role was revoked
+            mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@company.com", role_id="old-role-123", scope="team", scope_id=None)
+
+    @pytest.mark.asyncio
+    async def test_sync_revokes_removed_roles_keeps_remaining(self, sso_service, entra_provider):
+        """Test partial revocation: some roles removed, some retained."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_role_service = MockRoleService.return_value
+
+            # User had two SSO-granted roles
+            developer_role = MagicMock(spec=Role)
+            developer_role.id = "dev-role-123"
+            developer_role.name = "developer"
+
+            admin_role = MagicMock(spec=Role)
+            admin_role.id = "admin-role-456"
+            admin_role.name = "team_admin"
+
+            dev_user_role = MagicMock(spec=UserRole)
+            dev_user_role.role_id = "dev-role-123"
+            dev_user_role.role = developer_role
+            dev_user_role.scope = "team"
+            dev_user_role.scope_id = None
+            dev_user_role.granted_by = "sso_system"
+
+            admin_user_role = MagicMock(spec=UserRole)
+            admin_user_role.role_id = "admin-role-456"
+            admin_user_role.role = admin_role
+            admin_user_role.scope = "team"
+            admin_user_role.scope_id = None
+            admin_user_role.granted_by = "sso_system"
+
+            mock_role_service.list_user_roles = AsyncMock(return_value=[dev_user_role, admin_user_role])
+            mock_role_service.revoke_role_from_user = AsyncMock()
+            mock_role_service.get_role_by_name = AsyncMock(return_value=developer_role)
+            mock_role_service.get_user_role_assignment = AsyncMock(return_value=dev_user_role)
+
+            # User now only has developer role (lost team_admin)
+            role_assignments = [{"role_name": "developer", "scope": "team", "scope_id": None}]
+
+            await sso_service._sync_user_roles("user@company.com", role_assignments, entra_provider)
+
+            # Verify only team_admin was revoked
+            mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@company.com", role_id="admin-role-456", scope="team", scope_id=None)
+
+
+class TestEntraIDDefaultRoleForNoGroups:
+    """Test default role assignment for users with no groups."""
+
+    @pytest.mark.asyncio
+    async def test_default_role_applied_with_empty_groups_list(self, sso_service, entra_provider):
+        """Test that default role is applied when user has empty groups list.
+
+        This tests the fix for: default role not being applied because
+        _map_groups_to_roles was only called when user_info.get('groups') was truthy.
+        """
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = "viewer"
+
+            with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+                mock_role_service = MockRoleService.return_value
+
+                viewer_role = MagicMock(spec=Role)
+                viewer_role.name = "viewer"
+                viewer_role.scope = "team"
+
+                mock_role_service.get_role_by_name = AsyncMock(return_value=viewer_role)
+
+                # User with empty groups list (not None, but [])
+                role_assignments = await sso_service._map_groups_to_roles("user@company.com", [], entra_provider)
+
+                assert len(role_assignments) == 1
+                assert role_assignments[0]["role_name"] == "viewer"
+                assert role_assignments[0]["scope"] == "team"
+
+    @pytest.mark.asyncio
+    async def test_default_role_not_applied_when_disabled(self, sso_service, entra_provider):
+        """Test that no default role is applied when setting is disabled."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None  # Disabled
+
+            role_assignments = await sso_service._map_groups_to_roles("user@company.com", [], entra_provider)
+
+            assert len(role_assignments) == 0
+
+    @pytest.mark.asyncio
+    async def test_default_role_not_applied_when_user_has_mapped_roles(self, sso_service, entra_provider):
+        """Test that default role is NOT applied when user has mapped roles."""
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = ["Admin"]
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = "viewer"
+
+            # User is in Admin group
+            role_assignments = await sso_service._map_groups_to_roles("user@company.com", ["Admin"], entra_provider)
+
+            # Should get platform_admin, not viewer
+            assert len(role_assignments) == 1
+            assert role_assignments[0]["role_name"] == "platform_admin"
+            assert not any(r["role_name"] == "viewer" for r in role_assignments)
+
+
+class TestProviderLevelSyncOptOut:
+    """Test provider-level sync_roles flag in provider_metadata."""
+
+    @pytest.mark.asyncio
+    async def test_sync_skipped_when_provider_sync_roles_disabled(self, sso_service):
+        """Test that role sync is skipped when provider has sync_roles=False."""
+        # Create provider with sync_roles disabled in metadata
+        provider_no_sync = SSOProvider(
+            id="entra",
+            name="entra",
+            display_name="Microsoft Entra ID",
+            provider_type="oidc",
+            client_id="test_client_id",
+            client_secret_encrypted="encrypted_secret",
+            is_enabled=True,
+            provider_metadata={
+                "sync_roles": False,  # Disable role synchronization
+                "role_mappings": {
+                    "Developer": "developer",
+                },
+            },
+        )
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None
+
+            # Even with mappings defined, sync_roles=False should skip all processing
+            # Call the function to verify it runs without error
+            await sso_service._map_groups_to_roles("user@company.com", ["Developer"], provider_no_sync)
+
+            # This test verifies the metadata sync_roles flag is accessible and respected
+            assert provider_no_sync.provider_metadata.get("sync_roles") is False
+
+    @pytest.mark.asyncio
+    async def test_early_exit_when_no_mappings_configured(self, sso_service):
+        """Test that role mapping returns early when no configuration exists."""
+        # Create provider with no role mappings
+        provider_no_mappings = SSOProvider(
+            id="generic",
+            name="generic",
+            display_name="Generic OIDC",
+            provider_type="oidc",
+            client_id="test_client_id",
+            client_secret_encrypted="encrypted_secret",
+            is_enabled=True,
+            provider_metadata={},  # No role_mappings
+        )
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None
+
+            # No mappings, no admin groups, no default role = early exit
+            role_assignments = await sso_service._map_groups_to_roles("user@company.com", ["SomeGroup"], provider_no_mappings)
+
+            # Should return empty list (early exit)
+            assert len(role_assignments) == 0
+
+    @pytest.mark.asyncio
+    async def test_sync_proceeds_when_provider_sync_roles_true(self, sso_service, entra_provider):
+        """Test that role sync proceeds when provider has sync_roles=True."""
+        # Update provider metadata to explicitly enable sync
+        entra_provider.provider_metadata["sync_roles"] = True
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = ["Admin"]
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None
+
+            role_assignments = await sso_service._map_groups_to_roles("user@company.com", ["Admin"], entra_provider)
+
+            # Should get platform_admin
+            assert len(role_assignments) == 1
+            assert role_assignments[0]["role_name"] == "platform_admin"

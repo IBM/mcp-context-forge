@@ -213,6 +213,10 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
                 "team_mapping": {},
+                "provider_metadata": {
+                    "groups_claim": settings.sso_entra_groups_claim,
+                    "role_mappings": settings.sso_entra_role_mappings,
+                },
             }
         )
 
@@ -242,7 +246,7 @@ def get_predefined_sso_providers() -> List[Dict]:
                         "trusted_domains": settings.sso_trusted_domains,
                         "auto_create_users": settings.sso_auto_create_users,
                         "team_mapping": {},
-                        "metadata": {
+                        "provider_metadata": {
                             "realm": settings.sso_keycloak_realm,
                             "base_url": settings.sso_keycloak_base_url,
                             "map_realm_roles": settings.sso_keycloak_map_realm_roles,
