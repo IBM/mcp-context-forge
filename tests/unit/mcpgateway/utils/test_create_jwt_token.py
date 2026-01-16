@@ -84,6 +84,32 @@ def test_create_token_paths():
     assert dec2["foo"] == "bar"
 
 
+def test_create_token_includes_jti():
+    """_create_jwt_token always includes a JTI claim for revocation support."""
+    payload: Dict[str, Any] = {"sub": "test@example.com"}
+
+    # Create token without providing JTI
+    tok1 = _create(payload, expires_in_minutes=1, secret=TEST_SECRET, algorithm=TEST_ALGO)
+    dec1 = jwt.decode(tok1, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+    assert "jti" in dec1, "Token should include JTI claim"
+    assert len(dec1["jti"]) == 36, "JTI should be a UUID (36 chars with hyphens)"
+
+    # Create another token and verify JTI is unique
+    tok2 = _create(payload, expires_in_minutes=1, secret=TEST_SECRET, algorithm=TEST_ALGO)
+    dec2 = jwt.decode(tok2, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+    assert dec1["jti"] != dec2["jti"], "Each token should have a unique JTI"
+
+
+def test_create_token_preserves_provided_jti():
+    """_create_jwt_token preserves JTI if already provided in payload."""
+    custom_jti = "custom-jti-12345"
+    payload: Dict[str, Any] = {"sub": "test@example.com", "jti": custom_jti}
+
+    tok = _create(payload, expires_in_minutes=1, secret=TEST_SECRET, algorithm=TEST_ALGO)
+    dec = jwt.decode(tok, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+    assert dec["jti"] == custom_jti, "Token should preserve provided JTI"
+
+
 @pytest.mark.asyncio
 async def test_async_wrappers():
     """create_jwt_token & get_jwt_token wrappers work end-to-end."""

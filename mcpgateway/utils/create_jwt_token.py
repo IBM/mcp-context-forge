@@ -46,6 +46,7 @@ import argparse
 import asyncio
 import datetime as _dt
 import sys
+import uuid
 from typing import Any, Dict, List, Sequence
 
 # Third-Party
@@ -122,6 +123,7 @@ def _create_jwt_token(
     payload["iat"] = int(now.timestamp())  # Issued at
     payload["iss"] = settings.jwt_issuer  # Issuer
     payload["aud"] = settings.jwt_audience  # Audience
+    payload["jti"] = payload.get("jti") or str(uuid.uuid4())  # JWT ID for revocation support
 
     # Handle legacy username format - convert to sub for consistency
     if "username" in payload and "sub" not in payload:
