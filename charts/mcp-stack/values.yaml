@@ -634,6 +634,8 @@ mcpContextForge:
     JWT_ISSUER_VERIFICATION: "true"        # JWT issuer verification (disable if needed)
     JWT_PRIVATE_KEY_PATH: ""               # path to JWT private key file (RSA/ECDSA algorithms)
     JWT_PUBLIC_KEY_PATH: ""                # path to JWT public key file (RSA/ECDSA algorithms)
+    EMBED_ENVIRONMENT_IN_TOKENS: "false"   # embed env claim in gateway-issued JWTs
+    VALIDATE_TOKEN_ENVIRONMENT: "false"    # reject tokens with mismatched env claim
 
     # ─ SSO (Single Sign-On) Configuration ─
     SSO_ENABLED: "false"                   # master switch for Single Sign-On authentication

@@ -423,6 +423,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.REQUIRE_TOKEN_EXPIRATION | string | `"false"` |  |
 | mcpContextForge.secret.REQUIRE_JTI | string | `"false"` |  |
 | mcpContextForge.secret.REQUIRE_USER_IN_DB | string | `"false"` |  |
+| mcpContextForge.secret.EMBED_ENVIRONMENT_IN_TOKENS | string | `"false"` | Embed env claim in gateway-issued JWTs |
+| mcpContextForge.secret.VALIDATE_TOKEN_ENVIRONMENT | string | `"false"` | Reject tokens with mismatched env claim |
 | mcpContextForge.secret.SSO_AUTO_ADMIN_DOMAINS | string | `"[]"` |  |
 | mcpContextForge.secret.SSO_AUTO_CREATE_USERS | string | `"true"` |  |
 | mcpContextForge.secret.SSO_ENABLED | string | `"false"` |  |
