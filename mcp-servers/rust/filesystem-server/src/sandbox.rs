@@ -46,6 +46,10 @@ impl Sandbox {
         Ok(false)
     }
 
+    pub fn get_roots(&self) -> Vec<String> {
+        self.roots.iter().map(|r| format!("{}", r.display())).collect()
+    }
+
     /// Returns the canonicalized path or an error if outside roots.
     pub async fn resolve_path(&self, path: &str) -> Result<PathBuf> {
         let canon = fs::canonicalize(path)
