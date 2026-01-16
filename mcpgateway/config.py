@@ -190,6 +190,7 @@ class Settings(BaseSettings):
     token_expiry: int = 10080  # minutes
 
     require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
+    require_jti: bool = Field(default=False, description="Require JTI (JWT ID) claim in all tokens for revocation support")  # Default to flexible mode for backward compatibility
 
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
