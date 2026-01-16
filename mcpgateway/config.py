@@ -269,6 +269,10 @@ class Settings(BaseSettings):
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
+    mcp_require_auth: bool = Field(
+        default=False,
+        description="Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. " "If true, all /mcp requests must include a valid Bearer token.",
+    )
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",

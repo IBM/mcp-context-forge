@@ -3591,22 +3591,31 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
     logger.debug(f"User {user} requested resource with ID {resource_id} (request_id: {request_id})")
 
-    # Check cache
-    if cached := resource_cache.get(resource_id):
-        return cached
+    # NOTE: Removed endpoint-level cache to prevent authorization bypass
+    # The cache was checked before access control, allowing unauthorized users
+    # to access cached private resources. Service layer handles caching safely.
 
     # Get plugin contexts from request.state for cross-hook sharing
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
     try:
+        # Extract user email and admin status for authorization
+        user_email = get_user_email(user)
+        is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+
+        # Admin bypass: pass user=None to trigger unrestricted access
+        # Non-admin: pass user_email and let service look up teams
+        auth_user_email = None if is_admin else user_email
+
         # Call service with context for plugin support
         content = await resource_service.read_resource(
             db,
             resource_id=resource_id,
             request_id=request_id,
-            user=user,
+            user=auth_user_email,
             server_id=server_id,
+            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -3614,7 +3623,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    resource_cache.set(resource_id, content)
+    # NOTE: Removed cache.set() - see cache removal comment above
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
@@ -4001,12 +4010,24 @@ async def get_prompt(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
+    # Extract user email, admin status, and server_id for authorization
+    user_email = get_user_email(user)
+    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    server_id = request.headers.get("X-Server-ID")
+
+    # Admin bypass: pass user=None to trigger unrestricted access
+    # Non-admin: pass user_email and let service look up teams
+    auth_user_email = None if is_admin else user_email
+
     try:
         PromptExecuteArgs(args=args)
         result = await prompt_service.get_prompt(
             db,
             prompt_id,
             args,
+            user=auth_user_email,
+            server_id=server_id,
+            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -4054,11 +4075,23 @@ async def get_prompt_no_args(
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
+    # Extract user email, admin status, and server_id for authorization
+    user_email = get_user_email(user)
+    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    server_id = request.headers.get("X-Server-ID")
+
+    # Admin bypass: pass user=None to trigger unrestricted access
+    # Non-admin: pass user_email and let service look up teams
+    auth_user_email = None if is_admin else user_email
+
     try:
         return await prompt_service.get_prompt(
             db,
             prompt_id,
             {},
+            user=auth_user_email,
+            server_id=server_id,
+            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -4743,8 +4776,17 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             request_id = params.get("requestId", None)
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+
+            # Get authorization context (same as resources/list)
+            auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            if auth_is_admin and auth_token_teams is None:
+                auth_user_email = None
+                # auth_token_teams stays None (unrestricted)
+            elif auth_token_teams is None:
+                auth_token_teams = []  # Non-admin without teams = public-only
+
             # Get user email for OAuth token selection
-            user_email = get_user_email(user)
+            oauth_user_email = get_user_email(user)
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
@@ -4753,7 +4795,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     db,
                     resource_uri=uri,
                     request_id=request_id,
-                    user=user_email,
+                    user=auth_user_email,
+                    server_id=server_id,
+                    token_teams=auth_token_teams,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                 )
@@ -4763,7 +4807,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = {"contents": [result]}
             except ValueError:
                 # Resource has no local content, forward to upstream MCP server
-                result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
+                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "resources/subscribe":
@@ -4807,6 +4851,15 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             arguments = params.get("arguments", {})
             if not name:
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
+
+            # Get authorization context (same as prompts/list)
+            auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            if auth_is_admin and auth_token_teams is None:
+                auth_user_email = None
+                # auth_token_teams stays None (unrestricted)
+            elif auth_token_teams is None:
+                auth_token_teams = []  # Non-admin without teams = public-only
+
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
@@ -4814,6 +4867,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 db,
                 name,
                 arguments,
+                user=auth_user_email,
+                server_id=server_id,
+                token_teams=auth_token_teams,
                 plugin_context_table=plugin_context_table,
                 plugin_global_context=plugin_global_context,
             )
@@ -4829,8 +4885,17 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             arguments = params.get("arguments", {})
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
+
+            # Get authorization context (same as tools/list)
+            auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            if auth_is_admin and auth_token_teams is None:
+                auth_user_email = None
+                # auth_token_teams stays None (unrestricted)
+            elif auth_token_teams is None:
+                auth_token_teams = []  # Non-admin without teams = public-only
+
             # Get user email for OAuth token selection
-            user_email = get_user_email(user)
+            oauth_user_email = get_user_email(user)
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
@@ -4840,14 +4905,17 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     name=name,
                     arguments=arguments,
                     request_headers=headers,
-                    app_user_email=user_email,
+                    app_user_email=oauth_user_email,
+                    user_email=auth_user_email,
+                    token_teams=auth_token_teams,
+                    server_id=server_id,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
-                result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
+                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
         # TODO: Implement methods  # pylint: disable=fixme
@@ -4993,10 +5061,35 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # This allows both old format (method=tool_name) and new format (method=tools/call)
             # Standard
             headers = {k.lower(): v for k, v in request.headers.items()}
+
+            # Get authorization context (same as tools/call)
+            auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
+            if auth_is_admin and auth_token_teams is None:
+                auth_user_email = None
+                # auth_token_teams stays None (unrestricted)
+            elif auth_token_teams is None:
+                auth_token_teams = []  # Non-admin without teams = public-only
+
             # Get user email for OAuth token selection
-            user_email = get_user_email(user)
+            oauth_user_email = get_user_email(user)
+            # Get server_id from params if provided
+            server_id = params.get("server_id")
+            # Get plugin contexts from request.state for cross-hook sharing
+            plugin_context_table = getattr(request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(request.state, "plugin_global_context", None)
             try:
-                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers, app_user_email=user_email)
+                result = await tool_service.invoke_tool(
+                    db=db,
+                    name=method,
+                    arguments=params,
+                    request_headers=headers,
+                    app_user_email=oauth_user_email,
+                    user_email=auth_user_email,
+                    token_teams=auth_token_teams,
+                    server_id=server_id,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):

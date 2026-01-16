@@ -186,7 +186,7 @@ def mock_tool(mock_gateway):
     tool.import_batch_id = "2"
     tool.federation_source = "federation_source"
     tool.team_id = "5"
-    tool.visibility = "private"
+    tool.visibility = "public"  # Use public for tests that don't test authorization
     tool.owner_email = "admin@admin.org"
     tool.enabled = True
     tool.reachable = True
@@ -3192,3 +3192,79 @@ class TestToolServiceTokenTeamsFiltering:
         result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
 
         assert test_db.execute.called
+
+
+class TestToolAccessAuthorization:
+    """Tests for _check_tool_access authorization logic."""
+
+    @pytest.fixture
+    def tool_service(self):
+        """Create a tool service instance."""
+        return ToolService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session."""
+        db = MagicMock()
+        db.commit = Mock()
+        return db
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_public_always_allowed(self, tool_service, mock_db):
+        """Public tools should be accessible to anyone."""
+        tool_payload = {"id": "1", "visibility": "public", "owner_email": None, "team_id": None}
+
+        # Unauthenticated
+        assert await tool_service._check_tool_access(mock_db, tool_payload, user_email=None, token_teams=[]) is True
+        # Authenticated
+        assert await tool_service._check_tool_access(mock_db, tool_payload, user_email="user@test.com", token_teams=["team-1"]) is True
+        # Admin
+        assert await tool_service._check_tool_access(mock_db, tool_payload, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_admin_bypass(self, tool_service, mock_db):
+        """Admin (user_email=None, token_teams=None) should have full access."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+
+        # Admin bypass: both None = unrestricted access
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_private_denied_to_unauthenticated(self, tool_service, mock_db):
+        """Private tools should be denied to unauthenticated users."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "owner@test.com", "team_id": None}
+
+        # Unauthenticated (public-only token)
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_private_allowed_to_owner(self, tool_service, mock_db):
+        """Private tools should be accessible to the owner."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "owner@test.com", "team_id": None}
+
+        # Owner with non-empty token_teams
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=["some-team"]) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_team_tool_allowed_to_member(self, tool_service, mock_db):
+        """Team tools should be accessible to team members."""
+        team_tool = {"id": "1", "visibility": "team", "owner_email": "owner@test.com", "team_id": "team-abc"}
+
+        # Team member via token_teams
+        assert await tool_service._check_tool_access(mock_db, team_tool, user_email="member@test.com", token_teams=["team-abc"]) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_team_tool_denied_to_non_member(self, tool_service, mock_db):
+        """Team tools should be denied to non-members."""
+        team_tool = {"id": "1", "visibility": "team", "owner_email": "owner@test.com", "team_id": "team-abc"}
+
+        # Non-member
+        assert await tool_service._check_tool_access(mock_db, team_tool, user_email="outsider@test.com", token_teams=["other-team"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_public_only_token_denied_private(self, tool_service, mock_db):
+        """Public-only tokens (token_teams=[]) should only access public tools."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "owner@test.com", "team_id": None}
+
+        # Even owner with public-only token is denied
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=[]) is False

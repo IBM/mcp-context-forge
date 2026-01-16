@@ -942,12 +942,14 @@ async def test_auth_all_ok(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_failure(monkeypatch):
-    """When verify_credentials raises, auth func responds 401 and returns False."""
+    """When verify_credentials raises and mcp_require_auth=True, auth func responds 401 and returns False."""
 
     async def fake_verify(_):  # noqa: D401 - stub that always fails
         raise ValueError("bad token")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    # Enable strict auth mode to test 401 behavior
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
 
     sent = []
 
@@ -982,8 +984,11 @@ async def test_streamable_http_auth_skips_non_mcp():
 
 
 @pytest.mark.asyncio
-async def test_streamable_http_auth_no_authorization():
-    """Auth returns False and sends 401 if no Authorization header."""
+async def test_streamable_http_auth_no_authorization_strict_mode(monkeypatch):
+    """Auth returns False and sends 401 if no Authorization header when mcp_require_auth=True."""
+    # Enable strict auth mode to test 401 behavior
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
     scope = _make_scope("/servers/1/mcp")
     called = []
 
@@ -997,13 +1002,38 @@ async def test_streamable_http_auth_no_authorization():
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_no_authorization_permissive_mode(monkeypatch):
+    """Auth allows unauthenticated requests with public-only access when mcp_require_auth=False."""
+    # Ensure permissive mode (default)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    scope = _make_scope("/servers/1/mcp")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is True  # Allowed through
+    assert called == []  # No 401 sent
+
+    # Verify user context was set with public-only access
+    user_ctx = tr.user_context_var.get()
+    assert user_ctx.get("email") is None
+    assert user_ctx.get("teams") == []  # Public-only
+    assert user_ctx.get("is_authenticated") is False
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_wrong_scheme(monkeypatch):
-    """Auth returns False and sends 401 if Authorization is not Bearer."""
+    """Auth returns False and sends 401 if Authorization is not Bearer and mcp_require_auth=True."""
 
     async def fake_verify(token):
         raise AssertionError("Should not be called")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    # Enable strict auth mode to test 401 behavior
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Basic foobar")])
     called = []
 
@@ -1018,12 +1048,14 @@ async def test_streamable_http_auth_wrong_scheme(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_streamable_http_auth_bearer_no_token(monkeypatch):
-    """Auth returns False and sends 401 if Bearer but no token."""
+    """Auth returns False and sends 401 if Bearer but no token and mcp_require_auth=True."""
 
     async def fake_verify(token):
         raise AssertionError("Should not be called")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    # Enable strict auth mode to test 401 behavior
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer")])
     called = []
 
@@ -1343,6 +1375,7 @@ async def test_stream_buffer_len():
 @pytest.mark.asyncio
 async def test_streamable_http_auth_sets_user_context_with_teams(monkeypatch):
     """Auth sets user context with email, teams, and is_admin from JWT payload."""
+    from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
         return {
@@ -1353,13 +1386,18 @@ async def test_streamable_http_auth_sets_user_context_with_teams(monkeypatch):
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
 
+    # Mock auth_cache to return valid membership (skip DB lookup)
+    mock_auth_cache = MagicMock()
+    mock_auth_cache.get_team_membership_valid_sync.return_value = True
+
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
     messages = []
 
     async def send(msg):
         messages.append(msg)
 
-    result = await streamable_http_auth(scope, None, send)
+    with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache):
+        result = await streamable_http_auth(scope, None, send)
 
     assert result is True
     assert len(messages) == 0  # Should not send 401
@@ -1375,6 +1413,7 @@ async def test_streamable_http_auth_sets_user_context_with_teams(monkeypatch):
 @pytest.mark.asyncio
 async def test_streamable_http_auth_normalizes_dict_teams(monkeypatch):
     """Auth normalizes team dicts to string IDs."""
+    from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
         return {
@@ -1385,12 +1424,17 @@ async def test_streamable_http_auth_normalizes_dict_teams(monkeypatch):
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
 
+    # Mock auth_cache to return valid membership (skip DB lookup)
+    mock_auth_cache = MagicMock()
+    mock_auth_cache.get_team_membership_valid_sync.return_value = True
+
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
 
     async def send(msg):
         pass
 
-    result = await streamable_http_auth(scope, None, send)
+    with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache):
+        result = await streamable_http_auth(scope, None, send)
 
     assert result is True
 
@@ -1430,6 +1474,7 @@ async def test_streamable_http_auth_handles_empty_teams(monkeypatch):
 @pytest.mark.asyncio
 async def test_streamable_http_auth_uses_email_field_fallback(monkeypatch):
     """Auth uses email field when sub is not present."""
+    from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
         return {
@@ -1439,12 +1484,17 @@ async def test_streamable_http_auth_uses_email_field_fallback(monkeypatch):
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
 
+    # Mock auth_cache to return valid membership (skip DB lookup)
+    mock_auth_cache = MagicMock()
+    mock_auth_cache.get_team_membership_valid_sync.return_value = True
+
     scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer good-token")])
 
     async def send(msg):
         pass
 
-    result = await streamable_http_auth(scope, None, send)
+    with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache):
+        result = await streamable_http_auth(scope, None, send)
 
     assert result is True
 
@@ -1475,6 +1525,85 @@ async def test_streamable_http_auth_handles_missing_teams_key(monkeypatch):
 
     user_ctx = tr.user_context_var.get()
     assert user_ctx.get("teams") is None  # None = unrestricted (legacy token without teams key)
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_rejects_removed_team_member(monkeypatch):
+    """Auth rejects tokens for users no longer in the team (cached rejection)."""
+    from unittest.mock import MagicMock, patch
+
+    async def fake_verify(token):
+        return {
+            "sub": "removed_user@example.com",
+            "teams": ["team_a"],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    # Mock auth_cache to return False (user was removed from team)
+    mock_auth_cache = MagicMock()
+    mock_auth_cache.get_team_membership_valid_sync.return_value = False
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer valid-but-stale-token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache):
+        result = await streamable_http_auth(scope, None, send)
+
+    # Should reject with 403
+    assert result is False
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 403
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_validates_team_membership_on_cache_miss(monkeypatch):
+    """Auth validates team membership via DB when cache misses."""
+    from unittest.mock import MagicMock, patch
+
+    async def fake_verify(token):
+        return {
+            "sub": "user@example.com",
+            "teams": ["team_a", "team_b"],
+        }
+
+    monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+
+    # Mock auth_cache to return None (cache miss)
+    mock_auth_cache = MagicMock()
+    mock_auth_cache.get_team_membership_valid_sync.return_value = None
+    mock_auth_cache.set_team_membership_valid_sync = MagicMock()
+
+    # Mock DB to return only team_a membership (missing team_b)
+    mock_db = MagicMock()
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = ["team_a"]  # Only member of team_a, not team_b
+    mock_execute = MagicMock()
+    mock_execute.scalars.return_value = mock_scalars
+    mock_db.execute.return_value = mock_execute
+
+    scope = _make_scope("/servers/1/mcp", headers=[(b"authorization", b"Bearer token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    with (
+        patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
+        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", return_value=mock_db),
+    ):
+        result = await streamable_http_auth(scope, None, send)
+
+    # Should reject with 403 because user is not in team_b
+    assert result is False
+    assert sent and sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 403
+
+    # Should have cached the negative result
+    mock_auth_cache.set_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team_a", "team_b"], False)
 
 
 @pytest.mark.asyncio

@@ -563,6 +563,76 @@ class ToolService:
             logger.debug("Failed to build PydanticGateway from cache payload: %s", exc)
             return None
 
+    async def _check_tool_access(
+        self,
+        db: Session,
+        tool_payload: Dict[str, Any],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Check if user has access to a tool based on visibility rules.
+
+        Implements the same access control logic as list_tools() for consistency.
+
+        Access Rules:
+        - Public tools: Accessible by all authenticated users
+        - Team tools: Accessible by team members (team_id in user's teams)
+        - Private tools: Accessible only by owner (owner_email matches)
+
+        Args:
+            db: Database session for team membership lookup if needed.
+            tool_payload: Tool data dict with visibility, team_id, owner_email.
+            user_email: Email of the requesting user (None = unauthenticated).
+            token_teams: List of team IDs from token.
+                - None = unrestricted admin access
+                - [] = public-only token
+                - [...] = team-scoped token
+
+        Returns:
+            True if access is allowed, False otherwise.
+        """
+        visibility = tool_payload.get("visibility", "public")
+        tool_team_id = tool_payload.get("team_id")
+        tool_owner_email = tool_payload.get("owner_email")
+
+        # Public tools are accessible by everyone
+        if visibility == "public":
+            return True
+
+        # Admin bypass: token_teams=None AND user_email=None means unrestricted admin
+        # This happens when is_admin=True and no team scoping in token
+        if token_teams is None and user_email is None:
+            return True
+
+        # No user context (but not admin) = deny access to non-public tools
+        if not user_email:
+            return False
+
+        # Public-only tokens (empty teams array) can ONLY access public tools
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token:
+            return False  # Already checked public above
+
+        # Owner can always access their own tools
+        if tool_owner_email and tool_owner_email == user_email:
+            return True
+
+        # Team tools: check team membership (matches list_tools behavior)
+        if tool_team_id:
+            # Use token_teams if provided, otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Team/public visibility allows access if user is in the team
+            if visibility in ["team", "public"] and tool_team_id in team_ids:
+                return True
+
+        return False
+
     def convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False, include_auth: bool = True) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
@@ -1619,9 +1689,13 @@ class ToolService:
             True
         """
         # Check cache for first page only (cursor=None)
-        # Skip caching when user_email is provided (team-filtered results are user-specific) or page based pagination
+        # Skip caching when:
+        # - user_email is provided (team-filtered results are user-specific)
+        # - token_teams is set (scoped access, e.g., public-only or team-scoped tokens)
+        # - page-based pagination is used
+        # This prevents cache poisoning where admin results could leak to public-only requests
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and page is None:
+        if cursor is None and user_email is None and token_teams is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
             cached = await cache.get("tools", filters_hash)
             if cached is not None:
@@ -1635,15 +1709,18 @@ class ToolService:
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbTool.enabled)
-        # Apply team-based access control if user_email is provided
-        if user_email:
+        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
+        # This ensures unauthenticated requests with token_teams=[] only see public tools
+        if user_email or token_teams is not None:
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
             if token_teams is not None:
                 team_ids = token_teams
-            else:
+            elif user_email:
                 team_service = TeamManagementService(db)
                 user_teams = await team_service.get_user_teams(user_email)
                 team_ids = [team.id for team in user_teams]
+            else:
+                team_ids = []
 
             # Check if this is a public-only token (empty teams array)
             # Public-only tokens can ONLY see public resources - no owner access
@@ -1657,7 +1734,7 @@ class ToolService:
                     and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
                 ]
                 # Only include owner access for non-public-only tokens
-                if not is_public_only_token:
+                if not is_public_only_token and user_email:
                     access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
                 query = query.where(or_(*access_conditions))
             else:
@@ -1665,8 +1742,8 @@ class ToolService:
                 access_conditions = [
                     DbTool.visibility == "public",
                 ]
-                # Only include owner access for non-public-only tokens
-                if not is_public_only_token:
+                # Only include owner access for non-public-only tokens with user_email
+                if not is_public_only_token and user_email:
                     access_conditions.append(DbTool.owner_email == user_email)
                 if team_ids:
                     access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
@@ -1726,8 +1803,9 @@ class ToolService:
 
         # Cursor-based format
 
-        # Cache first page results - only for non-user-specific queries
-        if cursor is None and user_email is None:
+        # Cache first page results - only for non-user-specific/non-scoped queries
+        # Must match the same conditions as cache lookup to prevent cache poisoning
+        if cursor is None and user_email is None and token_teams is None:
             try:
                 cache_data = {"tools": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("tools", cache_data, filters_hash)
@@ -1804,15 +1882,18 @@ class ToolService:
         if not include_inactive:
             query = query.where(DbTool.enabled)
 
-        # Add visibility filtering if user context provided
-        if user_email:
+        # Add visibility filtering if user context OR token_teams provided
+        # This ensures unauthenticated requests with token_teams=[] only see public tools
+        if user_email or token_teams is not None:
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
             if token_teams is not None:
                 team_ids = token_teams
-            else:
+            elif user_email:
                 team_service = TeamManagementService(db)
                 user_teams = await team_service.get_user_teams(user_email)
                 team_ids = [team.id for team in user_teams]
+            else:
+                team_ids = []
 
             # Check if this is a public-only token (empty teams array)
             # Public-only tokens can ONLY see public resources - no owner access
@@ -1821,8 +1902,8 @@ class ToolService:
             access_conditions = [
                 DbTool.visibility == "public",
             ]
-            # Only include owner access for non-public-only tokens
-            if not is_public_only_token:
+            # Only include owner access for non-public-only tokens with user_email
+            if not is_public_only_token and user_email:
                 access_conditions.append(DbTool.owner_email == user_email)
             if team_ids:
                 access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
@@ -2326,6 +2407,9 @@ class ToolService:
         arguments: Dict[str, Any],
         request_headers: Optional[Dict[str, str]] = None,
         app_user_email: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        server_id: Optional[str] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
     ) -> ToolResult:
@@ -2340,6 +2424,12 @@ class ToolService:
                 Defaults to None.
             app_user_email (Optional[str], optional): MCP Gateway user email for OAuth token retrieval.
                 Required for OAuth-protected gateways.
+            user_email (Optional[str], optional): User email for authorization checks.
+                None = unauthenticated request.
+            token_teams (Optional[List[str]], optional): Team IDs from JWT token for authorization.
+                None = unrestricted admin, [] = public-only, [...] = team-scoped.
+            server_id (Optional[str], optional): Virtual server ID for server scoping enforcement.
+                If provided, tool must be attached to this server.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
 
@@ -2347,7 +2437,7 @@ class ToolService:
             Tool invocation result.
 
         Raises:
-            ToolNotFoundError: If tool not found.
+            ToolNotFoundError: If tool not found or access denied.
             ToolInvocationError: If invocation fails.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin
@@ -2405,6 +2495,35 @@ class ToolService:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
         if tool_payload.get("reachable") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SECURITY: Check tool access based on visibility and team membership
+        # This enforces the same access control rules as list_tools()
+        # ═══════════════════════════════════════════════════════════════════════════
+        if not await self._check_tool_access(db, tool_payload, user_email, token_teams):
+            # Don't reveal tool existence - return generic "not found"
+            raise ToolNotFoundError(f"Tool not found: {name}")
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SECURITY: Enforce server scoping if server_id is provided
+        # Tool must be attached to the specified virtual server
+        # ═══════════════════════════════════════════════════════════════════════════
+        if server_id:
+            tool_id_for_check = tool_payload.get("id")
+            if not tool_id_for_check:
+                # Cannot verify server membership without tool ID - deny access
+                # This should not happen with properly cached tools, but fail safe
+                logger.warning(f"Tool '{name}' has no ID in payload, cannot verify server membership")
+                raise ToolNotFoundError(f"Tool not found: {name}")
+
+            server_match = db.execute(
+                select(server_tool_association.c.tool_id).where(
+                    server_tool_association.c.server_id == server_id,
+                    server_tool_association.c.tool_id == tool_id_for_check,
+                )
+            ).first()
+            if not server_match:
+                raise ToolNotFoundError(f"Tool not found: {name}")
 
         # Check if this is an A2A tool and route to A2A service
         tool_annotations = tool_payload.get("annotations") or {}

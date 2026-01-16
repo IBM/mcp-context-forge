@@ -828,7 +828,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=ANY)
+        mock_get.assert_called_once_with(ANY, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
@@ -907,7 +907,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=ANY)
+        mock_get.assert_called_once_with(ANY, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
@@ -1161,6 +1161,9 @@ class TestRPCEndpoints:
             arguments={"param": "value"},
             request_headers=ANY,
             app_user_email="test_user@example.com",  # Updated: now uses email from JWT/RBAC
+            user_email="test_user@example.com",
+            token_teams=[],
+            server_id=None,
             plugin_context_table=None,
             plugin_global_context=ANY,
         )
@@ -1185,7 +1188,16 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["result"]["messages"][0]["content"]["text"] == "Rendered prompt"
-        mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"}, plugin_context_table=None, plugin_global_context=ANY)
+        mock_get_prompt.assert_called_once_with(
+            ANY,  # db
+            "test_prompt",  # name
+            {"param": "value"},  # arguments
+            user="test_user@example.com",
+            server_id=None,
+            token_teams=[],
+            plugin_context_table=None,
+            plugin_global_context=ANY,
+        )
 
     @patch("mcpgateway.main.tool_service.list_tools")
     # @patch("mcpgateway.main.validate_request")

@@ -1506,10 +1506,15 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
+| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only | `false` | bool |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
 > 🔐 **MCP Client Auth**: When `MCP_CLIENT_AUTH_ENABLED=false`, you must set `TRUST_PROXY_AUTH=true` if using a trusted authentication proxy. This is a security-sensitive setting.
+
+> 🔒 **MCP Require Auth**: When `MCP_REQUIRE_AUTH=true`, all `/mcp` endpoint requests must include a valid Bearer token. When `false` (default), unauthenticated requests are allowed but can only access public tools, resources, and prompts.
+
+> ⚠️ **MCP Access Control Dependencies**: Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
 
 ### SSO (Single Sign-On) Configuration
 
