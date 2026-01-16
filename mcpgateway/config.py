@@ -25,6 +25,9 @@ Environment variables:
 - TOOL_TIMEOUT: Tool invocation timeout (default: 60)
 - PROMPT_CACHE_SIZE: Max cached prompts (default: 100)
 - HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 300)
+- REQUIRE_TOKEN_EXPIRATION: Require JWT tokens to have expiration (default: False)
+- REQUIRE_JTI: Require JTI claim in tokens for revocation (default: False)
+- REQUIRE_USER_IN_DB: Require all users to exist in database (default: False)
 
 Examples:
     >>> from mcpgateway.config import Settings
@@ -191,6 +194,10 @@ class Settings(BaseSettings):
 
     require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
     require_jti: bool = Field(default=False, description="Require JTI (JWT ID) claim in all tokens for revocation support")  # Default to flexible mode for backward compatibility
+    require_user_in_db: bool = Field(
+        default=False,
+        description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
+    )
 
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")

@@ -421,6 +421,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.REQUIRE_EMAIL_VERIFICATION_FOR_INVITES | string | `"true"` |  |
 | mcpContextForge.secret.REQUIRE_STRONG_SECRETS | string | `"false"` |  |
 | mcpContextForge.secret.REQUIRE_TOKEN_EXPIRATION | string | `"false"` |  |
+| mcpContextForge.secret.REQUIRE_JTI | string | `"false"` |  |
+| mcpContextForge.secret.REQUIRE_USER_IN_DB | string | `"false"` |  |
 | mcpContextForge.secret.SSO_AUTO_ADMIN_DOMAINS | string | `"[]"` |  |
 | mcpContextForge.secret.SSO_AUTO_CREATE_USERS | string | `"true"` |  |
 | mcpContextForge.secret.SSO_ENABLED | string | `"false"` |  |
