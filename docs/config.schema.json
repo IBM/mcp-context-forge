@@ -2568,7 +2568,8 @@
         "x-tenant-id",
         "x-user-id",
         "x-api-key",
-        "cookie"
+        "cookie",
+        "x-mcp-session-id"
       ],
       "items": {
         "type": "string"

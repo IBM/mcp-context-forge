@@ -624,8 +624,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             settings.health_check_interval,
             settings.mcp_session_pool_health_check_interval,
         )
+
+        max_sessions_per_key = settings.mcpgateway_session_affinity_max_sessions if settings.mcpgateway_session_affinity_enabled else settings.mcp_session_pool_max_per_key
         init_mcp_session_pool(
-            max_sessions_per_key=settings.mcp_session_pool_max_per_key,
+            max_sessions_per_key=max_sessions_per_key,
             session_ttl_seconds=settings.mcp_session_pool_ttl,
             health_check_interval_seconds=effective_health_check_interval,
             acquire_timeout_seconds=settings.mcp_session_pool_acquire_timeout,

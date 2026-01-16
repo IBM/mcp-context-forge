@@ -1240,6 +1240,14 @@ class SessionManagerWrapper:
         # Extract request headers from scope
         headers = dict(Headers(scope=scope))
         # Store headers in context for tool invocations
+
+        # Extract MCP session ID from client request and add as x-mcp-session-id for upstream session affinity
+        mcp_session_id = headers.get("mcp-session-id")
+        if mcp_session_id:
+            headers["x-mcp-session-id"] = mcp_session_id
+            logger.debug(f"Injected x-mcp-session-id: {mcp_session_id} for session affinity")
+
+        # Store headers in context for tool invocations
         request_headers_var.set(headers)
 
         if match:

@@ -1388,6 +1388,7 @@ class Settings(BaseSettings):
         "x-user-id",
         "x-api-key",
         "cookie",
+        "x-mcp-session-id"
     ]
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
@@ -1430,6 +1431,11 @@ class Settings(BaseSettings):
     # Lower values = faster recovery, but more orphaned tasks.
     # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
     anyio_cancel_delivery_max_iterations: int = 100
+
+    # Session Affinity
+    mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
+    mcpgateway_session_affinity_ttl: int = 3600  # Session affinity binding TTL
+    mcpgateway_session_affinity_max_sessions: int = 1  # Max sessions per identity for affinity
 
     # Prompts
     prompt_cache_size: int = 100
