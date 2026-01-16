@@ -969,9 +969,7 @@ def validate_security_configuration():
     if not getattr(settings, "require_user_in_db", False):
         is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
         if is_ephemeral:
-            logger.warning(
-                "Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production."
-            )
+            logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
 
     log_security_recommendations(security_status)
 
