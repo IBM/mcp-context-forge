@@ -74,6 +74,62 @@
         const parts = value.split("; " + name + "=");
         if (parts.length == 2) return parts.pop().split(";").shift();
       }
+
+      // Helper function to get pagination parameters from URL (namespaced per table)
+      function getPaginationParams(tableName) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const prefix = tableName + '_';
+        return {
+          page: parseInt(urlParams.get(prefix + 'page') || '1', 10),
+          perPage: parseInt(urlParams.get(prefix + 'size') || '10', 10),
+          includeInactive: urlParams.get(prefix + 'inactive')
+        };
+      }
+
+      // Helper function to build table URL with pagination params (namespaced per table)
+      // URL state takes precedence over checkbox state for shareability
+      function buildTableUrl(tableName, baseUrl, additionalParams = {}) {
+        const params = getPaginationParams(tableName);
+        const url = new URL(baseUrl, window.location.origin);
+        url.searchParams.set('page', params.page);
+        url.searchParams.set('per_page', params.perPage);
+
+        // Add additional parameters, but URL state takes precedence for include_inactive
+        for (const [key, value] of Object.entries(additionalParams)) {
+          if (key === 'include_inactive' && params.includeInactive !== null) {
+            // URL state overrides checkbox state for shareability
+            url.searchParams.set('include_inactive', params.includeInactive);
+          } else if (value !== null && value !== undefined && value !== '') {
+            url.searchParams.set(key, value);
+          }
+        }
+
+        // If include_inactive wasn't in additionalParams but is in URL, still use it
+        if (!additionalParams.hasOwnProperty('include_inactive') && params.includeInactive !== null) {
+          url.searchParams.set('include_inactive', params.includeInactive);
+        }
+
+        return url.pathname + url.search;
+      }
+
+      // Sync checkbox state from URL on page load (for shareable links)
+      function syncCheckboxFromUrl(tableName, checkboxId) {
+        const params = getPaginationParams(tableName);
+        if (params.includeInactive !== null) {
+          const checkbox = document.getElementById(checkboxId);
+          if (checkbox) {
+            checkbox.checked = params.includeInactive === 'true';
+          }
+        }
+      }
+
+      // Update URL when checkbox is toggled (namespaced)
+      function updateInactiveUrlState(tableName, checked) {
+        const browserUrl = new URL(window.location.href);
+        const prefix = tableName + '_';
+        browserUrl.searchParams.set(prefix + 'inactive', checked.toString());
+        window.history.replaceState({}, '', browserUrl.toString());
+      }
     </script>
 
     <!-- CodeMirror -->
@@ -2058,6 +2114,8 @@
               id="show-inactive-servers"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
+              @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50}"
               hx-target="#servers-table"
@@ -2122,7 +2180,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="servers-table"
-                 hx-get="{{ root_path }}/admin/servers/partial?page={{ page | default(1) }}&per_page={{ per_page | default(50) }}&include_inactive={{ 'true' if request.query_params.get('include_inactive') == 'true' else 'false' }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('servers', '{{ root_path }}/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
@@ -3029,6 +3087,8 @@
               id="show-inactive-tools"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              x-init="syncCheckboxFromUrl('tools', 'show-inactive-tools')"
+              @change="updateInactiveUrlState('tools', $el.checked)"
               hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50}"
               hx-target="#tools-table"
@@ -3073,7 +3133,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="tools-table"
-                 hx-get="{{ root_path }}/admin/tools/partial?page={{ page }}&per_page={{ per_page }}&include_inactive={{ 'true' if request.query_params.get('include_inactive') == 'true' else 'false' }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('tools', '{{ root_path }}/admin/tools/partial', {include_inactive: (document.getElementById('show-inactive-tools')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
@@ -4035,6 +4095,8 @@
               id="show-inactive-resources"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              x-init="syncCheckboxFromUrl('resources', 'show-inactive-resources')"
+              @change="updateInactiveUrlState('resources', $el.checked)"
               hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50}"
               hx-target="#resources-table"
@@ -4079,7 +4141,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/resources/partial -->
             <div id="resources-list-container"
-              hx-get="{{ root_path }}/admin/resources/partial?page={{ page }}&per_page={{ per_page }}&include_inactive={{ 'true' if request.query_params.get('include_inactive') == 'true' else 'false' }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              x-init="$el.setAttribute('hx-get', buildTableUrl('resources', '{{ root_path }}/admin/resources/partial', {include_inactive: (document.getElementById('show-inactive-resources')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4264,6 +4326,8 @@
               id="show-inactive-prompts"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              x-init="syncCheckboxFromUrl('prompts', 'show-inactive-prompts')"
+              @change="updateInactiveUrlState('prompts', $el.checked)"
               hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50}"
               hx-target="#prompts-table"
@@ -4308,7 +4372,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
-              hx-get="{{ root_path }}/admin/prompts/partial?page={{ page }}&per_page={{ per_page }}&include_inactive={{ 'true' if request.query_params.get('include_inactive') == 'true' else 'false' }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              x-init="$el.setAttribute('hx-get', buildTableUrl('prompts', '{{ root_path }}/admin/prompts/partial', {include_inactive: (document.getElementById('show-inactive-prompts')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
               hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4552,6 +4616,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               id="show-inactive-gateways"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
+              @change="updateInactiveUrlState('gateways', $el.checked)"
               hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50}"
               hx-target="#gateways-table"
@@ -4597,7 +4663,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
-                 hx-get="{{ root_path }}/admin/gateways/partial?page={{ page }}&per_page={{ per_page }}&include_inactive={{ 'true' if request.query_params.get('include_inactive') == 'true' else 'false' }}{% if selected_team_id%}&team_id={{ selected_team_id }}{% endif %}"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('gateways', '{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
@@ -6224,6 +6290,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               id="show-inactive-a2a-agents"
               class="mr-2 show-inactive-toggle"
               name="include_inactive"
+              x-init="syncCheckboxFromUrl('agents', 'show-inactive-a2a-agents')"
+              @change="updateInactiveUrlState('agents', $el.checked)"
               hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
               hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50}"
               hx-target="#agents-table"
@@ -6276,7 +6344,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="overflow-x-auto">
               <!-- Table will be loaded via HTMX -->
               <div id="agents-table"
-                   hx-get="{{ root_path }}/admin/a2a/partial?page={{ page }}&per_page={{ per_page }}&include_inactive={{ 'true' if request.query_params.get('include_inactive') == 'true' else 'false' }}{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                   x-init="$el.setAttribute('hx-get', buildTableUrl('agents', '{{ root_path }}/admin/a2a/partial', {include_inactive: (document.getElementById('show-inactive-a2a-agents')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#agents-loading">

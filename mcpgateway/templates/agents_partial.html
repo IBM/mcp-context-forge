@@ -96,6 +96,9 @@
   {% set base_url = root_path + '/admin/a2a/partial' %}
   {% set hx_target = '#agents-table' %}
   {% set hx_indicator = '#agents-loading' %}
+  {% set table_name = 'agents' %}
   {% set query_params = {'include_inactive': include_inactive} %}
+  {% autoescape false %}
   {% include 'pagination_controls.html' %}
+  {% endautoescape %}
 </div>

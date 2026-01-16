@@ -110,6 +110,9 @@
   {% set base_url = root_path + '/admin/gateways/partial' %}
   {% set hx_target = '#gateways-table' %}
   {% set hx_indicator = '#gateways-loading' %}
+  {% set table_name = 'gateways' %}
   {% set query_params = {'include_inactive': include_inactive} %}
+  {% autoescape false %}
   {% include 'pagination_controls.html' %}
+  {% endautoescape %}
 </div>
