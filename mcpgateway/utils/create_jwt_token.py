@@ -46,8 +46,8 @@ import argparse
 import asyncio
 import datetime as _dt
 import sys
-import uuid
 from typing import Any, Dict, List, Sequence
+import uuid
 
 # Third-Party
 import jwt  # PyJWT
