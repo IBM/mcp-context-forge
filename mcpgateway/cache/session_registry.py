@@ -1875,7 +1875,9 @@ class SessionRegistry(SessionBackend):
                     # Generate token using centralized token creation
                     token = await create_jwt_token(payload)
 
-                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                session_id = transport.session_id
+                
+                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "x-mcp-session-id": session_id}
                 # Extract root URL from base_url (remove /servers/{id} path)
                 parsed_url = urlparse(base_url)
                 # Preserve the path up to the root path (before /servers/{id})
