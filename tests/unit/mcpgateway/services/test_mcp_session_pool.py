@@ -545,7 +545,7 @@ class TestCircuitBreaker:
 
         assert pool._is_circuit_open("http://test:8080")
 
-        await asyncio.sleep(0.15)  # Wait for reset
+        await asyncio.sleep(0.25)  # Wait for reset (with margin for slow/busy systems)
 
         assert not pool._is_circuit_open("http://test:8080")
 

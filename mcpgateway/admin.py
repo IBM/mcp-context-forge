@@ -10615,10 +10615,23 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
         >>> # Restore original method
         >>> resource_service.read_resource = original_read_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_uri}")
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} requested details for resource ID {resource_uri}")
+
+    # For admin UI, pass user email and token_teams=None
+    # Since admin UI requires admin permissions, the user should have full access
+    # via the admin bypass (is_admin + token_teams=None)
+    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
 
     try:
-        resource_content = await resource_service.read_resource(db, resource_uri=resource_uri)
+        # Admin users get unrestricted access (user_email=None, token_teams=None)
+        # Non-admin users get team-based access (user_email=email, token_teams=None for lookup)
+        resource_content = await resource_service.read_resource(
+            db,
+            resource_uri=resource_uri,
+            user=None if is_admin else user_email,
+            token_teams=None,
+        )
         return {"content": resource_content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
