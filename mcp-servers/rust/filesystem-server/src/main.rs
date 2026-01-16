@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rmcp::transport;
 use tracing_subscriber::EnvFilter;
 mod server;
@@ -6,6 +6,11 @@ mod tools;
 use crate::server::FilesystemServer;
 use clap::Parser;
 mod sandbox;
+use once_cell::sync::OnceCell;
+use sandbox::Sandbox;
+use std::sync::Arc;
+
+static SANDBOX: OnceCell<Arc<Sandbox>> = OnceCell::new();
 
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()
@@ -26,7 +31,16 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     init_tracing();
     tracing::info!("---- Starting Filesystem MCP Server ----");
-    tracing::info!("Using root folders: {:?}", args.roots);
+    tracing::info!("Using root folders: {:?}", &args.roots);
+    let sandbox = Arc::new(
+        Sandbox::new(args.roots)
+            .await
+            .with_context(|| "Could not add root")?,
+    );
+
+    SANDBOX
+        .set(sandbox)
+        .map_err(|_| anyhow::anyhow!("Sandbox already initialized"))?;
 
     // Streamable http server
 

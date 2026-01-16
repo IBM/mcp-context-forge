@@ -1,3 +1,4 @@
+use crate::SANDBOX;
 use crate::tools::edit::Edit;
 use crate::tools::{edit, info, read, search, write};
 use rmcp::ErrorData as McpError;
@@ -296,7 +297,8 @@ impl FilesystemServer {
 
     #[tool(description = "Reveal sandbox roots")]
     async fn list_allowed_directories() -> Result<CallToolResult, McpError> {
-        let content = Content::json(["hardecoded", "hardcoded2"]).map_err(|e| {
+        let sandbox = SANDBOX.get().expect("Sandbox must be initialized");
+        let content = Content::json(sandbox.get_roots()).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file metadata to JSON: {}", e),
                 None,

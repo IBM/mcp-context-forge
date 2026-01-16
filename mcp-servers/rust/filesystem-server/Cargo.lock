@@ -359,6 +359,7 @@ dependencies = [
  "futures",
  "globset",
  "ignore",
+ "once_cell",
  "rmcp",
  "serde",
  "serde_json",
