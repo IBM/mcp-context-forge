@@ -130,10 +130,24 @@ document.addEventListener("DOMContentLoaded", function () {
     // Initialize checkbox states from URL parameter for inactive toggles
     const urlParams = new URLSearchParams(window.location.search);
     const includeInactive = urlParams.get("include_inactive") === "true";
-    const serversCheckbox = document.getElementById("show-inactive-servers");
-    const gatewaysCheckbox = document.getElementById("show-inactive-gateways");
-    if (serversCheckbox) serversCheckbox.checked = includeInactive;
-    if (gatewaysCheckbox) gatewaysCheckbox.checked = includeInactive;
+    const checkboxIds = [
+        "show-inactive-servers",
+        "show-inactive-gateways",
+        "show-inactive-tools",
+        "show-inactive-resources",
+        "show-inactive-prompts",
+        "show-inactive-a2a-agents",
+    ];
+    checkboxIds.forEach((id) => {
+        const checkbox = document.getElementById(id);
+        if (checkbox) {
+            checkbox.checked = includeInactive;
+            // Apply the filter after tables load
+            const type = id.replace("show-inactive-", "");
+            // Defer filter application until after HTMX loads tables
+            setTimeout(() => toggleInactiveItems(type), 500);
+        }
+    });
 
     initializeAddMembersForms();
 
@@ -10154,7 +10168,7 @@ function toggleInactiveItems(type) {
         return;
     }
 
-    // Update URL in address bar (no navigation) so state is reflected
+    // Update URL query string to reflect checkbox state
     try {
         const urlObj = new URL(window.location);
         if (checkbox.checked) {
@@ -10162,121 +10176,44 @@ function toggleInactiveItems(type) {
         } else {
             urlObj.searchParams.delete("include_inactive");
         }
-        // Use replaceState to avoid adding history entries for every toggle
         window.history.replaceState({}, document.title, urlObj.toString());
     } catch (e) {
-        // ignore (shouldn't happen)
+        // ignore
     }
 
-    // Try to find the HTMX container that loads this entity's partial
-    // Prefer an element with hx-get containing the admin partial endpoint
-    const selector = `[hx-get*="/admin/${type}/partial"]`;
-    let container = document.querySelector(selector);
+    // Find the table body containing rows
+    // Map type to actual tbody ID
+    const tbodyIdMap = {
+        tools: "tools-table-body",
+        servers: "servers-table-body",
+        gateways: "gateways-table-body",
+        prompts: "prompts-table-body",
+        resources: "resources-table-body",
+        "a2a-agents": "agents-table-body",
+    };
 
-    // Fallback to conventional id naming used in templates
-    // tools, servers, and gateways use "-table" suffix; others use "-list-container"
-    if (!container) {
-        const tableTypes = ["tools", "servers", "gateways"];
-        const fallbackId = tableTypes.includes(type)
-            ? `${type}-table`
-            : `${type}-list-container`;
-        container = document.getElementById(fallbackId);
-    }
+    const tbodyId = tbodyIdMap[type];
+    const tbody = tbodyId ? document.getElementById(tbodyId) : null;
 
-    if (!container) {
-        // If we couldn't find a container, fallback to full-page reload
-        const fallbackUrl = new URL(window.location);
-        if (checkbox.checked) {
-            fallbackUrl.searchParams.set("include_inactive", "true");
-        } else {
-            fallbackUrl.searchParams.delete("include_inactive");
-        }
-        window.location = fallbackUrl;
+    if (!tbody) {
+        console.warn(`[toggleInactiveItems] Table body not found for ${type}`);
         return;
     }
 
-    // Build request URL based on the hx-get attribute or container id
-    const base =
-        container.getAttribute("hx-get") ||
-        container.getAttribute("data-hx-get") ||
-        "";
-    let reqUrl;
-    try {
-        if (base) {
-            // base may already include query params; construct URL and set include_inactive/page
-            reqUrl = new URL(base, window.location.origin);
-            // reset to page 1 when toggling
-            reqUrl.searchParams.set("page", "1");
-            if (checkbox.checked) {
-                reqUrl.searchParams.set("include_inactive", "true");
-            } else {
-                reqUrl.searchParams.delete("include_inactive");
-            }
+    // Get all rows with data-enabled attribute
+    const rows = tbody.querySelectorAll("tr[data-enabled]");
+    const showInactive = checkbox.checked;
+
+    rows.forEach((row) => {
+        const isEnabled = row.getAttribute("data-enabled") === "true";
+
+        // Show row if: showInactive is true OR row is enabled
+        if (showInactive || isEnabled) {
+            row.style.display = "";
         } else {
-            // construct from known pattern, preserving URL params like team_id
-            const root = window.ROOT_PATH || "";
-            const currentUrl = new URL(window.location);
-            // Read per_page from pagination select (Alpine.js state), fall back to URL, then default
-            const paginationControls = document.getElementById(
-                `${type}-pagination-controls`,
-            );
-            const paginationSelect = paginationControls?.querySelector(
-                'select[x-model="perPage"]',
-            );
-            const perPage =
-                paginationSelect?.value ||
-                currentUrl.searchParams.get("per_page") ||
-                "20";
-            const teamId = currentUrl.searchParams.get("team_id");
-            reqUrl = new URL(
-                `${root}/admin/${type}/partial?page=1&per_page=${perPage}`,
-                window.location.origin,
-            );
-            if (teamId) {
-                reqUrl.searchParams.set("team_id", teamId);
-            }
-            if (checkbox.checked) {
-                reqUrl.searchParams.set("include_inactive", "true");
-            }
+            row.style.display = "none";
         }
-    } catch (e) {
-        // fallback to full reload
-        const fallbackUrl2 = new URL(window.location);
-        if (checkbox.checked) {
-            fallbackUrl2.searchParams.set("include_inactive", "true");
-        } else {
-            fallbackUrl2.searchParams.delete("include_inactive");
-        }
-        window.location = fallbackUrl2;
-        return;
-    }
-
-    // Determine indicator selector
-    const indicator =
-        container.getAttribute("hx-indicator") || `#${type}-loading`;
-
-    // Use HTMX to reload only the container (outerHTML swap)
-    if (window.htmx && typeof window.htmx.ajax === "function") {
-        try {
-            window.htmx.ajax("GET", reqUrl.toString(), {
-                target: container,
-                swap: "outerHTML",
-                indicator,
-            });
-            return;
-        } catch (e) {
-            // fall through to full reload
-        }
-    }
-
-    // Last resort: reload page with param
-    const finalUrl = new URL(window.location);
-    if (checkbox.checked) {
-        finalUrl.searchParams.set("include_inactive", "true");
-    } else {
-        finalUrl.searchParams.delete("include_inactive");
-    }
-    window.location = finalUrl;
+    });
 }
 
 function handleToggleSubmit(event, type) {
@@ -16104,21 +16041,8 @@ function filterServerTable(searchText) {
                 }
             });
 
-            const matchesSearch =
-                search === "" || textContent.toLowerCase().includes(search);
-
-            // Check if row should be visible based on inactive filter
-            const checkbox = document.getElementById("show-inactive-servers");
-            const showInactive = checkbox ? checkbox.checked : true;
-            const isEnabled = row.getAttribute("data-enabled") === "true";
-            const matchesFilter = showInactive || isEnabled;
-
-            // Only show row if it matches BOTH search AND filter
-            const shouldShow = matchesSearch && matchesFilter;
-
-            if (shouldShow) {
-                row.style.removeProperty("display");
-                row.style.removeProperty("visibility");
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
             } else {
                 row.style.display = "none";
             }
