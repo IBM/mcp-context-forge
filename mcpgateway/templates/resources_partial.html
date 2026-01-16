@@ -76,5 +76,7 @@
   {% set hx_target = '#resources-table' %}
   {% set hx_indicator = '#resources-loading' %}
   {% set query_params = {'include_inactive': include_inactive} %}
+  {% autoescape false %}
   {% include 'pagination_controls.html' %}
+  {% endautoescape %}
 </div>

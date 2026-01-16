@@ -54,6 +54,32 @@
         const parts = value.split("; " + name + "=");
         if (parts.length == 2) return parts.pop().split(";").shift();
       }
+
+      // Helper function to get pagination parameters from URL
+      function getPaginationParams() {
+        const urlParams = new URLSearchParams(window.location.search);
+        return {
+          page: parseInt(urlParams.get('page_number') || '1', 10),
+          perPage: parseInt(urlParams.get('page_size') || '10', 10)
+        };
+      }
+
+      // Helper function to build table URL with pagination params
+      function buildTableUrl(baseUrl, additionalParams = {}) {
+        const params = getPaginationParams();
+        const url = new URL(baseUrl, window.location.origin);
+        url.searchParams.set('page', params.page);
+        url.searchParams.set('per_page', params.perPage);
+
+        // Add any additional parameters
+        for (const [key, value] of Object.entries(additionalParams)) {
+          if (value !== null && value !== undefined && value !== '') {
+            url.searchParams.set(key, value);
+          }
+        }
+
+        return url.pathname + url.search;
+      }
     </script>
 
     <!-- CodeMirror -->
@@ -2096,7 +2122,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="servers-table"
-                 hx-get="{{ root_path }}/admin/servers/partial?page=1&per_page=20&include_inactive=true{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('{{ root_path }}/admin/servers/partial', {include_inactive: (document.getElementById('show-inactive-servers')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
@@ -2964,7 +2990,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="tools-table"
-                 hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&include_inactive=true{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('{{ root_path }}/admin/tools/partial', {include_inactive: (document.getElementById('show-inactive-tools')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
@@ -3968,7 +3994,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/resources/partial -->
             <div id="resources-list-container"
-              hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&include_inactive=true{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              x-init="$el.setAttribute('hx-get', buildTableUrl('{{ root_path }}/admin/resources/partial', {include_inactive: (document.getElementById('show-inactive-resources')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4191,7 +4217,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
-              hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&include_inactive=true{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              x-init="$el.setAttribute('hx-get', buildTableUrl('{{ root_path }}/admin/prompts/partial', {include_inactive: (document.getElementById('show-inactive-prompts')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
               hx-trigger="load, refreshUsers"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4474,7 +4500,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="gateways-table"
-                 hx-get="{{ root_path }}/admin/gateways/partial?page=1&per_page=20&include_inactive=true{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('{{ root_path }}/admin/gateways/partial', {include_inactive: (document.getElementById('show-inactive-gateways')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
@@ -6104,7 +6130,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="overflow-x-auto">
               <!-- Table will be loaded via HTMX -->
               <div id="agents-table"
-                   hx-get="{{ root_path }}/admin/a2a/partial?page=1&per_page=20&include_inactive=true{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+                   x-init="$el.setAttribute('hx-get', buildTableUrl('{{ root_path }}/admin/a2a/partial', {include_inactive: (document.getElementById('show-inactive-a2a-agents')?.checked ?? true).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
                    hx-trigger="load"
                    hx-swap="outerHTML"
                    hx-indicator="#agents-loading">
