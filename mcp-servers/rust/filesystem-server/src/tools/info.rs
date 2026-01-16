@@ -3,6 +3,8 @@ use std::os::unix::fs::PermissionsExt;
 use tokio::fs;
 use chrono::{DateTime, Local};
 
+use crate::SANDBOX;
+
 #[derive(Debug, serde::Serialize)]
 struct MetadataResults {
     permissions: String,
@@ -15,12 +17,20 @@ fn format_system_time(time: std::time::SystemTime) -> String {
     DateTime::<Local>::from(time).format("%b %d %H:%M").to_string()
 }
 
+
 pub async fn get_file_info(path: &str) -> Result<String> {
     tracing::info!(path = %path, "getting file metadata");
 
-    let metadata = fs::metadata(path)
+    let sandbox = SANDBOX
+        .get()
+        .expect("Sandbox must be initialized before use");
+
+    let canon_path = sandbox.resolve_path(path).await?;
+
+    let metadata = fs::metadata(&canon_path)
         .await
-        .with_context(|| format!("failed to read metadata for '{path}'"))?;
+        .with_context(|| format!("failed to read metadata for '{}'", canon_path.display()))?;
+
 
     let permissions = format!("{:o}", metadata.permissions().mode() & 0o777);
     let size = metadata.len();
