@@ -123,8 +123,8 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    // Initialize search functionality for all entity types
-    initializeSearchInputs();
+    // Initialize search functionality for all entity types (immediate, no debounce)
+    initializeSearchInputsMemoized();
     initializePasswordValidation();
     initializeAddMembersForms();
 
@@ -189,17 +189,31 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     // Re-initialize search inputs when HTMX content loads
+    // Only re-initialize if the swap affects search-related content
     document.body.addEventListener("htmx:afterSwap", function (event) {
-        setTimeout(() => {
-            initializeSearchInputs();
-        }, 200);
-    });
+        const target = event.detail.target;
+        const relevantPanels = [
+            "servers-panel",
+            "gateways-panel",
+            "tools-panel",
+            "resources-panel",
+            "prompts-panel",
+            "a2a-agents-panel",
+        ];
 
-    // Also listen for htmx:load event
-    document.body.addEventListener("htmx:load", function (event) {
-        setTimeout(() => {
-            initializeSearchInputs();
-        }, 200);
+        if (
+            target &&
+            relevantPanels.some(
+                (panelId) =>
+                    target.id === panelId || target.closest(`#${panelId}`),
+            )
+        ) {
+            console.log(
+                `📝 HTMX swap detected in ${target.id}, resetting search state`,
+            );
+            resetSearchInputsState();
+            initializeSearchInputsDebounced();
+        }
     });
 
     // Initialize search when switching tabs
@@ -208,9 +222,9 @@ document.addEventListener("DOMContentLoaded", function () {
             event.target.matches('[onclick*="showTab"]') ||
             event.target.closest('[onclick*="showTab"]')
         ) {
-            setTimeout(() => {
-                initializeSearchInputs();
-            }, 300);
+            console.log("🔄 Tab switch detected, resetting search state");
+            resetSearchInputsState();
+            initializeSearchInputsDebounced();
         }
     });
 });
@@ -484,6 +498,125 @@ function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
 
 // ===================================================================
 // UTILITY FUNCTIONS - Define these FIRST before anything else
+
+// ===================================================================
+// MEMOIZATION UTILITY - Generic pattern for initialization functions
+// ===================================================================
+
+/**
+ * Creates a memoized version of an initialization function with debouncing.
+ * Returns an object with the memoized function and a reset function.
+ *
+ * @param {Function} fn - The initialization function to memoize
+ * @param {number} debounceMs - Debounce delay in milliseconds (default: 300)
+ * @param {string} name - Name for logging purposes
+ * @returns {Object} Object with { init, debouncedInit, reset } functions
+ *
+ * @example
+ * const { init: initSearch, reset: resetSearch } = createMemoizedInit(
+ *     initializeSearchInputs,
+ *     300,
+ *     'SearchInputs'
+ * );
+ *
+ * // Use the memoized version
+ * initSearch();
+ *
+ * // Reset when needed (e.g., tab switch)
+ * resetSearch();
+ * initSearch();
+ */
+function createMemoizedInit(fn, debounceMs = 300, name = "Init") {
+    // Closure variables (private state)
+    let initialized = false;
+    let initializing = false;
+    let debounceTimeout = null;
+
+    /**
+     * Memoized initialization function with guards and debouncing
+     */
+    const memoizedInit = function (...args) {
+        // Guard: Prevent re-initialization if already initialized
+        if (initialized) {
+            console.log(`✓ ${name} already initialized, skipping...`);
+            return Promise.resolve();
+        }
+
+        // Guard: Prevent concurrent initialization
+        if (initializing) {
+            console.log(
+                `⏳ ${name} initialization already in progress, skipping...`,
+            );
+            return Promise.resolve();
+        }
+
+        // Clear any pending debounced call
+        if (debounceTimeout) {
+            clearTimeout(debounceTimeout);
+            debounceTimeout = null;
+        }
+
+        // Mark as initializing
+        initializing = true;
+        console.log(`🔍 Initializing ${name}...`);
+
+        try {
+            // Call the actual initialization function
+            const result = fn.apply(this, args);
+
+            // Mark as initialized
+            initialized = true;
+            console.log(`✅ ${name} initialization complete`);
+
+            return Promise.resolve(result);
+        } catch (error) {
+            console.error(`❌ Error initializing ${name}:`, error);
+            // Don't mark as initialized on error, allow retry
+            return Promise.reject(error);
+        } finally {
+            initializing = false;
+        }
+    };
+
+    /**
+     * Debounced version of the memoized init function
+     */
+    const debouncedInit = function (...args) {
+        // Clear any existing timeout
+        if (debounceTimeout) {
+            clearTimeout(debounceTimeout);
+        }
+
+        // Set new timeout
+        debounceTimeout = setTimeout(() => {
+            memoizedInit.apply(this, args);
+            debounceTimeout = null;
+        }, debounceMs);
+    };
+
+    /**
+     * Reset the initialization state
+     * Call this when you need to re-initialize (e.g., after destroying elements)
+     */
+    const reset = function () {
+        // Clear any pending debounced call
+        if (debounceTimeout) {
+            clearTimeout(debounceTimeout);
+            debounceTimeout = null;
+        }
+
+        initialized = false;
+        initializing = false;
+        console.log(`🔄 ${name} state reset`);
+    };
+
+    return {
+        init: memoizedInit,
+        debouncedInit,
+        reset,
+    };
+}
+
 // ===================================================================
 
 // Check for inative items
@@ -16597,26 +16730,7 @@ window.clearSearch = clearSearch;
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
 
-    // Remove existing event listeners to prevent duplicates
-    const searchInputs = [
-        "catalog-search-input",
-        "gateways-search-input",
-        "tools-search-input",
-        "resources-search-input",
-        "prompts-search-input",
-        "a2a-agents-search-input",
-    ];
-
-    searchInputs.forEach((inputId) => {
-        const input = document.getElementById(inputId);
-        if (input) {
-            // Clone the input to remove all event listeners, then replace it
-            const newInput = input.cloneNode(true);
-            input.parentNode.replaceChild(newInput, input);
-        }
-    });
-
-    // Get fresh references to all search inputs after cloning
+    // NOTE: No need to clone inputs anymore - memoization prevents duplicate initialization
 
     // Virtual Servers search
     const catalogSearchInput = document.getElementById("catalog-search-input");
@@ -16720,6 +16834,16 @@ function initializeSearchInputs() {
         console.log("✅ A2A Agents search initialized");
     }
 }
+
+/**
+ * Create memoized version of search inputs initialization
+ * This prevents repeated initialization and provides explicit reset capability
+ */
+const {
+    init: initializeSearchInputsMemoized,
+    debouncedInit: initializeSearchInputsDebounced,
+    reset: resetSearchInputsState,
+} = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
 
 function handleAuthTypeChange() {
     const authType = this.value;
