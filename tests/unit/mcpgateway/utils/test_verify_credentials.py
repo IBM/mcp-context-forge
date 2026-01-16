@@ -643,3 +643,76 @@ async def test_verify_jwt_token_require_jti_disabled_accepts_missing_jti(monkeyp
     assert payload["sub"] == "user-no-jti-allowed"
     # Verify warning was logged
     assert any("JWT token without JTI accepted" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Environment claim validation tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_verify_jwt_token_validate_environment_rejects_mismatch(monkeypatch):
+    """When validate_token_environment is enabled, tokens with mismatched env claim should be rejected."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "validate_token_environment", True, raising=False)
+    monkeypatch.setattr(vc.settings, "environment", "production", raising=False)
+
+    # Token with env claim for different environment
+    token = _token({"sub": "user@example.com", "env": "development"})
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.verify_jwt_token(token)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "environment mismatch" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_validate_environment_accepts_matching(monkeypatch):
+    """When validate_token_environment is enabled, tokens with matching env claim should be accepted."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "validate_token_environment", True, raising=False)
+    monkeypatch.setattr(vc.settings, "environment", "production", raising=False)
+
+    # Token with matching env claim
+    token = _token({"sub": "user@example.com", "env": "production"})
+
+    payload = await vc.verify_jwt_token(token)
+    assert payload["sub"] == "user@example.com"
+    assert payload["env"] == "production"
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_validate_environment_allows_missing(monkeypatch):
+    """When validate_token_environment is enabled, tokens without env claim should be allowed (backward compat)."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "validate_token_environment", True, raising=False)
+    monkeypatch.setattr(vc.settings, "environment", "production", raising=False)
+
+    # Token without env claim (legacy token or external IdP token)
+    token = _token({"sub": "user@example.com"})
+
+    payload = await vc.verify_jwt_token(token)
+    assert payload["sub"] == "user@example.com"
+    assert "env" not in payload
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_validate_environment_disabled_ignores_mismatch(monkeypatch):
+    """When validate_token_environment is disabled, mismatched env claims should be ignored."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "validate_token_environment", False, raising=False)
+    monkeypatch.setattr(vc.settings, "environment", "production", raising=False)
+
+    # Token with mismatched env claim - should be accepted when validation is disabled
+    token = _token({"sub": "user@example.com", "env": "development"})
+
+    payload = await vc.verify_jwt_token(token)
+    assert payload["sub"] == "user@example.com"
+    assert payload["env"] == "development"

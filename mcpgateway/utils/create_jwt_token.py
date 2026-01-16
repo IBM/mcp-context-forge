@@ -46,8 +46,8 @@ import argparse
 import asyncio
 import datetime as _dt
 import sys
-import uuid
 from typing import Any, Dict, List, Sequence
+import uuid
 
 # Third-Party
 import jwt  # PyJWT
@@ -124,6 +124,10 @@ def _create_jwt_token(
     payload["iss"] = settings.jwt_issuer  # Issuer
     payload["aud"] = settings.jwt_audience  # Audience
     payload["jti"] = payload.get("jti") or str(uuid.uuid4())  # JWT ID for revocation support
+
+    # Optionally embed environment claim for cross-environment isolation
+    if settings.embed_environment_in_tokens:
+        payload["env"] = settings.environment
 
     # Handle legacy username format - convert to sub for consistency
     if "username" in payload and "sub" not in payload:

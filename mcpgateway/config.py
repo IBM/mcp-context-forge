@@ -198,6 +198,8 @@ class Settings(BaseSettings):
         default=False,
         description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
     )
+    embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
+    validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
 
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")

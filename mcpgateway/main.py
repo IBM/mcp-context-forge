@@ -969,9 +969,14 @@ def validate_security_configuration():
     if not getattr(settings, "require_user_in_db", False):
         is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
         if is_ephemeral:
-            logger.warning(
-                "Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production."
-            )
+            logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
+
+    # Warn about default JWT issuer/audience in non-development environments
+    if settings.environment != "development":
+        if settings.jwt_issuer == "mcpgateway":
+            logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", settings.environment)
+        if settings.jwt_audience == "mcpgateway-api":
+            logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", settings.environment)
 
     log_security_recommendations(security_status)
 
