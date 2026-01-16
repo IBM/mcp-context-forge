@@ -14,7 +14,6 @@ refresh configuration:
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.engine.reflection import Inspector
 
 # revision identifiers, used by Alembic.
 revision = "a8f3b2c1d4e5"
