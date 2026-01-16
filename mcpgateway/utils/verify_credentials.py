@@ -22,6 +22,7 @@ Examples:
     ...     basic_auth_password = SecretStr('pass')
     ...     auth_required = True
     ...     require_token_expiration = False
+    ...     require_jti = False
     ...     docs_allow_basic_auth = False
     >>> vc.settings = DummySettings()
     >>> import jwt
@@ -122,6 +123,18 @@ async def verify_jwt_token(token: str) -> dict:
         if not settings.require_token_expiration and "exp" not in payload:
             logger.warning(f"JWT token without expiration accepted. Consider enabling REQUIRE_TOKEN_EXPIRATION for better security. Token sub: {payload.get('sub', 'unknown')}")
 
+        # Require JTI if configured
+        if settings.require_jti and "jti" not in payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token is missing required JTI claim. Set REQUIRE_JTI=false to allow.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Log warning for tokens without JTI (when not required)
+        if not settings.require_jti and "jti" not in payload:
+            logger.warning(f"JWT token without JTI accepted. Token cannot be revoked. Consider enabling REQUIRE_JTI for better security. Token sub: {payload.get('sub', 'unknown')}")
+
         return payload
 
     except jwt.MissingRequiredClaimError:
@@ -210,6 +223,7 @@ async def verify_credentials(token: str) -> dict:
         ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     require_token_expiration = False
+        ...     require_jti = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> import jwt
@@ -283,6 +297,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         ...     trust_proxy_auth = False
         ...     proxy_user_header = 'X-Authenticated-User'
         ...     require_token_expiration = False
+        ...     require_jti = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> import jwt
@@ -504,6 +519,7 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     require_token_expiration = False
+        ...     require_jti = False
         ...     docs_allow_basic_auth = True
         >>> vc.settings = DummySettings()
         >>> import base64, asyncio
@@ -636,6 +652,7 @@ async def require_docs_auth_override(
         ...     jwt_issuer_verification = True
         ...     docs_allow_basic_auth = False
         ...     require_token_expiration = False
+        ...     require_jti = False
         >>> vc.settings = DummySettings()
         >>> import jwt
         >>> import asyncio
@@ -723,6 +740,7 @@ async def require_auth_override(
         ...     trust_proxy_auth = False
         ...     proxy_user_header = 'X-Authenticated-User'
         ...     require_token_expiration = False
+        ...     require_jti = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
         >>> import jwt

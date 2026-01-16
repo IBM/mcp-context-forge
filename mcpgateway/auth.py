@@ -732,6 +732,11 @@ async def get_current_user(
                 # Handle platform admin case
                 if _batched_user is None:
                     if email == getattr(settings, "platform_admin_email", "admin@example.com"):
+                        logger.info(
+                            f"Platform admin bootstrap authentication for {email}. "
+                            "User authenticated via platform admin configuration.",
+                            extra={"security_event": "platform_admin_bootstrap", "user_id": email},
+                        )
                         _batched_user = EmailUser(
                             email=email,
                             password_hash="",  # nosec B106
@@ -845,6 +850,11 @@ async def get_current_user(
         # Special case for platform admin - if user doesn't exist but token is valid
         # and email matches platform admin, create a virtual admin user object
         if email == getattr(settings, "platform_admin_email", "admin@example.com"):
+            logger.info(
+                f"Platform admin bootstrap authentication for {email}. "
+                "User authenticated via platform admin configuration.",
+                extra={"security_event": "platform_admin_bootstrap", "user_id": email},
+            )
             # Create a virtual admin user for authentication purposes
             user = EmailUser(
                 email=email,

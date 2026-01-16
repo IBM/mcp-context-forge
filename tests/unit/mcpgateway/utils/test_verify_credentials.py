@@ -584,3 +584,62 @@ async def test_verify_jwt_token_cached_different_tokens(monkeypatch):
 
     # Cache should now hold token2
     assert request.state._jwt_verified_payload[0] == token2
+
+
+# ---------------------------------------------------------------------------
+# JTI (JWT ID) validation tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_verify_jwt_token_require_jti_enabled_rejects_missing_jti(monkeypatch):
+    """When require_jti is enabled, tokens without JTI should be rejected."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_jti", True, raising=False)
+
+    # Token without JTI claim
+    token = _token({"sub": "user-no-jti"})
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.verify_jwt_token(token)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "missing required JTI claim" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_require_jti_enabled_accepts_with_jti(monkeypatch):
+    """When require_jti is enabled, tokens with JTI should be accepted."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_jti", True, raising=False)
+
+    # Token with JTI claim
+    token_payload = {"sub": "user-with-jti", "jti": "test-jti-12345", "iss": "mcpgateway", "aud": "mcpgateway-api"}
+    token = jwt.encode(token_payload, SECRET, algorithm=ALGO)
+
+    payload = await vc.verify_jwt_token(token)
+    assert payload["sub"] == "user-with-jti"
+    assert payload["jti"] == "test-jti-12345"
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_require_jti_disabled_accepts_missing_jti(monkeypatch, caplog):
+    """When require_jti is disabled, tokens without JTI should be accepted with warning."""
+    import logging
+
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_jti", False, raising=False)
+
+    # Token without JTI claim
+    token = _token({"sub": "user-no-jti-allowed"})
+
+    with caplog.at_level(logging.WARNING):
+        payload = await vc.verify_jwt_token(token)
+
+    assert payload["sub"] == "user-no-jti-allowed"
+    # Verify warning was logged
+    assert any("JWT token without JTI accepted" in record.message for record in caplog.records)
