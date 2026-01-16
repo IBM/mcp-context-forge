@@ -167,6 +167,44 @@ volumes:
       defaultMode: 0600
 ```
 
+#### Environment Isolation
+
+When deploying MCP Gateway across multiple environments (DEV, UAT, PROD), you must configure unique JWT settings per environment to prevent tokens from one environment being accepted in another.
+
+**Required per-environment configuration:**
+
+| Setting | DEV | UAT | PROD |
+|---------|-----|-----|------|
+| `JWT_SECRET_KEY` (or keypair) | Unique | Unique | Unique |
+| `JWT_ISSUER` | `mcpgateway-dev` | `mcpgateway-uat` | `mcpgateway-prod` |
+| `JWT_AUDIENCE` | `mcpgateway-api-dev` | `mcpgateway-api-uat` | `mcpgateway-api-prod` |
+
+**Example production configuration:**
+
+```bash
+# Each environment MUST use different values
+JWT_SECRET_KEY="$(openssl rand -base64 32)"  # Or use separate keypairs
+JWT_ISSUER=mcpgateway-prod
+JWT_AUDIENCE=mcpgateway-api-prod
+JWT_ISSUER_VERIFICATION=true
+JWT_AUDIENCE_VERIFICATION=true
+ENVIRONMENT=production
+```
+
+!!! warning "Cross-Environment Token Acceptance"
+    If environments share the same JWT signing key and issuer/audience values, tokens created in DEV will be accepted in PROD. The gateway logs warnings at startup when default `JWT_ISSUER` or `JWT_AUDIENCE` values are detected in non-development environments.
+
+**Optional: Environment claim validation**
+
+For additional defense-in-depth, you can embed and validate an environment claim in tokens:
+
+```bash
+EMBED_ENVIRONMENT_IN_TOKENS=true   # Adds "env" claim to gateway-issued tokens
+VALIDATE_TOKEN_ENVIRONMENT=true    # Rejects tokens with mismatched "env" claim
+```
+
+This rejects tokens created for a different environment even if signing keys are accidentally shared. Tokens without an `env` claim are allowed for backward compatibility with existing tokens and external IdP tokens.
+
 ### 3. Token Scoping Security
 
 The gateway supports fine-grained token scoping to restrict token access to specific servers, permissions, IP ranges, and time windows. This provides defense-in-depth security for API access.

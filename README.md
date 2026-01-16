@@ -1261,6 +1261,8 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |
 | `REQUIRE_JTI`               | Require JTI (JWT ID) claim in all tokens for revocation support              | `false`             | bool        |
 | `REQUIRE_USER_IN_DB`        | Require all authenticated users to exist in the database                     | `false`             | bool        |
+| `EMBED_ENVIRONMENT_IN_TOKENS` | Embed environment claim in gateway-issued JWTs                             | `false`             | bool        |
+| `VALIDATE_TOKEN_ENVIRONMENT` | Reject tokens with mismatched environment claim                             | `false`             | bool        |
 | `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
