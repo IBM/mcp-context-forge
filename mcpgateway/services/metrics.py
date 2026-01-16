@@ -153,7 +153,7 @@ def setup_metrics(app):
                     http_pool_max_connections.set(stats.get("max_connections", 0))
                     http_pool_max_keepalive.set(stats.get("max_keepalive", 0))
                     # Note: httpx doesn't expose current connection count, only limits
-            except Exception:
+            except Exception:  # nosec B110
                 pass  # Silently skip if client not initialized or error occurs
 
         # Make the update function available at module level for lifespan calls
