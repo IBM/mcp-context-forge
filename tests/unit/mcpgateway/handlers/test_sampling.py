@@ -196,12 +196,14 @@ async def test_auth_all_ok(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_auth_failure(monkeypatch):
-    """When verify_credentials raises, auth func responds 401 and returns False."""
+    """When verify_credentials raises and mcp_require_auth=True, auth func responds 401 and returns False."""
 
     async def fake_verify(_):  # noqa: D401 - stub that always fails
         raise ValueError("bad token")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    # Enable strict auth mode to test 401 behavior
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
 
     sent = []
 
@@ -247,6 +249,8 @@ async def test_auth_invalid_token_raises(monkeypatch):
         raise ValueError("bad token")
 
     monkeypatch.setattr(tr, "verify_credentials", fake_verify)
+    # Enable strict auth mode to test 401 behavior
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
 
     sent = []
 

@@ -205,6 +205,99 @@ class A2AAgentService:
 
         return {team.id: team.name for team in teams}
 
+    def _check_agent_access(
+        self,
+        agent: DbA2AAgent,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Check if user has access to agent based on visibility rules.
+
+        Access rules (matching tools/resources/prompts):
+        - token_teams is None: Admin bypass (unrestricted access)
+        - public visibility: Always allowed
+        - team visibility: Allowed if agent.team_id in token_teams
+        - private visibility: Allowed if owner, BUT NOT for public-only tokens
+
+        Args:
+            agent: The agent to check access for
+            user_email: User's email for owner matching
+            token_teams: Teams from JWT. None = admin, [] = public-only (no owner access)
+
+        Returns:
+            True if access allowed, False otherwise.
+        """
+        # Admin bypass - token_teams is None means unrestricted access
+        if token_teams is None:
+            return True
+
+        if agent.visibility == "public":
+            return True
+
+        if agent.visibility == "team" and token_teams:
+            return agent.team_id in token_teams
+
+        # Private visibility: owner can access, BUT NOT for public-only tokens
+        # Public-only tokens (empty teams array) should NOT get owner access
+        is_public_only_token = len(token_teams) == 0
+        if agent.visibility == "private" and user_email and not is_public_only_token:
+            return agent.owner_email == user_email
+
+        return False
+
+    def _apply_visibility_filter(
+        self,
+        query,
+        user_email: Optional[str],
+        token_teams: List[str],
+        team_id: Optional[str] = None,
+    ) -> Any:
+        """Apply visibility-based access control to query.
+
+        Access rules (matching tools/resources/prompts):
+        - public: visible to all
+        - team: visible to team members (token_teams contains team_id)
+        - private: visible only to owner, BUT NOT for public-only tokens
+
+        Args:
+            query: SQLAlchemy query to filter
+            user_email: User's email for owner matching
+            token_teams: Teams from JWT. [] = public-only (no owner access)
+            team_id: Optional specific team filter
+
+        Returns:
+            Filtered query
+        """
+        # Check if this is a public-only token (empty teams array)
+        # Public-only tokens can ONLY see public resources - no owner access
+        is_public_only_token = len(token_teams) == 0
+
+        if team_id:
+            # User requesting specific team - verify access
+            if team_id not in token_teams:
+                # Return query that matches nothing (will return empty result)
+                return query.where(False)
+
+            access_conditions = [
+                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
+            ]
+            # Only include owner access for non-public-only tokens with user_email
+            if not is_public_only_token and user_email:
+                access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
+            return query.where(or_(*access_conditions))
+
+        # General access: public + team (+ owner if not public-only token)
+        access_conditions = [DbA2AAgent.visibility == "public"]
+
+        # Only include owner access for non-public-only tokens with user_email
+        if not is_public_only_token and user_email:
+            access_conditions.append(DbA2AAgent.owner_email == user_email)
+
+        if token_teams:
+            access_conditions.append(and_(DbA2AAgent.team_id.in_(token_teams), DbA2AAgent.visibility.in_(["team", "public"])))
+
+        return query.where(or_(*access_conditions))
+
     async def register_agent(
         self,
         db: Session,
@@ -303,7 +396,8 @@ class A2AAgentService:
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
                 team_id=getattr(agent_data, "team_id", None) or team_id,
                 owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
-                visibility=getattr(agent_data, "visibility", None) or visibility,
+                # Endpoint visibility parameter takes precedence over schema default
+                visibility=visibility if visibility is not None else getattr(agent_data, "visibility", "public"),
                 created_by=created_by,
                 created_from_ip=created_from_ip,
                 created_via=created_via,
@@ -417,6 +511,7 @@ class A2AAgentService:
         page: Optional[int] = None,
         per_page: Optional[int] = None,
         user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
     ) -> Union[tuple[List[A2AAgentRead], Optional[str]], Dict[str, Any]]:
@@ -430,9 +525,11 @@ class A2AAgentService:
             limit: Maximum number of agents to return. None for default, 0 for unlimited.
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
-            user_email: Email of user for team-based access control. None for no access control.
-            team_id: Optional team ID to filter by specific team (requires user_email).
-            visibility: Optional visibility filter (private, team, public) (requires user_email).
+            user_email: Email of user for owner matching in visibility checks.
+            token_teams: Teams from JWT token. None = admin (no filtering),
+                         [] = public-only, [...] = team-scoped access.
+            team_id: Optional team ID to filter by specific team.
+            visibility: Optional visibility filter (private, team, public).
 
         Returns:
             If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
@@ -473,9 +570,13 @@ class A2AAgentService:
             True
 
         """
-        # Check cache for first page only - skip when user_email provided or page based pagination
+        # ══════════════════════════════════════════════════════════════════════
+        # CACHE READ: Skip cache when ANY access filtering is applied
+        # This prevents leaking admin-level results to filtered requests
+        # Cache only when: user_email is None AND token_teams is None AND page is None
+        # ══════════════════════════════════════════════════════════════════════
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and page is None:
+        if cursor is None and user_email is None and token_teams is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
@@ -489,33 +590,27 @@ class A2AAgentService:
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbA2AAgent.enabled)
-        # Apply team-based access control if user_email is provided
-        if user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
 
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
-                    and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email),
-                ]
-                query = query.where(or_(*access_conditions))
+        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
+        # This ensures unauthenticated requests with token_teams=[] only see public agents
+        if user_email or token_teams is not None:
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                effective_teams = token_teams
+            elif user_email:
+                # Look up user's teams from DB (for admin UI / first-party access)
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                effective_teams = [team.id for team in user_teams]
             else:
-                # General access: user's agents + public agents + team agents
-                access_conditions = [
-                    DbA2AAgent.owner_email == user_email,
-                    DbA2AAgent.visibility == "public",
-                ]
-                if team_ids:
-                    access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
+                effective_teams = []
 
-            if visibility:
-                query = query.where(DbA2AAgent.visibility == visibility)
+            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
+
+        # IMPORTANT: Apply visibility filter AFTER access control
+        # This allows users to further filter by visibility within their allowed access
+        if visibility:
+            query = query.where(DbA2AAgent.visibility == visibility)
 
         # Add tag filtering if tags are provided
         if tags:
@@ -568,8 +663,11 @@ class A2AAgentService:
 
         # Cursor-based format
 
-        # Cache first page results - only for non-user-specific queries
-        if cursor is None and user_email is None:
+        # ══════════════════════════════════════════════════════════════════════
+        # CACHE WRITE: Only cache admin-level results (matches read guard)
+        # MUST check token_teams is None to prevent caching scoped responses
+        # ══════════════════════════════════════════════════════════════════════
+        if cursor is None and user_email is None and token_teams is None:
             try:
                 cache_data = {"agents": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("agents", cache_data, filters_hash)
@@ -664,19 +762,29 @@ class A2AAgentService:
         # Skip metrics to avoid N+1 queries in list operations
         return [self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map) for agent in agents]
 
-    async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
+    async def get_agent(
+        self,
+        db: Session,
+        agent_id: str,
+        include_inactive: bool = True,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
-            include_inactive: Whether to include inactive a2a agents
+            include_inactive: Whether to include inactive a2a agents.
+            user_email: User's email for owner matching in visibility checks.
+            token_teams: Teams from JWT token. None = admin (no filtering),
+                         [] = public-only, [...] = team-scoped access.
 
         Returns:
             Agent data.
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found.
+            A2AAgentNotFoundError: If the agent is not found or user lacks access.
 
         Examples:
             >>> from unittest.mock import MagicMock
@@ -750,16 +858,15 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        # if agent.enabled or include_inactive:
-        #    agent.team = self._get_team_name(db, getattr(agent, "team_id", None))
-        #    return A2AAgentRead.model_validate(self._prepare_a2a_agent_for_read(agent)).masked()
-
-        # raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
-
         if not agent.enabled and not include_inactive:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        # ✅ Delegate conversion and masking to convert_agent_to_read()
+        # SECURITY: Check visibility/team access
+        # Return 404 (not 403) to avoid leaking existence of private agents
+        if not self._check_agent_access(agent, user_email, token_teams):
+            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+        # Delegate conversion and masking to convert_agent_to_read()
         return self.convert_agent_to_read(agent, db=db)
 
     async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
@@ -1075,6 +1182,7 @@ class A2AAgentService:
         *,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Invoke an A2A agent.
 
@@ -1085,12 +1193,14 @@ class A2AAgentService:
             interaction_type: Type of interaction.
             user_id: Identifier of the user initiating the call.
             user_email: Email of the user initiating the call.
+            token_teams: Teams from JWT token. None = admin (no filtering),
+                         [] = public-only, [...] = team-scoped access.
 
         Returns:
             Agent response.
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found.
+            A2AAgentNotFoundError: If the agent is not found or user lacks access.
             A2AAgentError: If the agent is disabled or invocation fails.
         """
         # ═══════════════════════════════════════════════════════════════════════════
@@ -1107,6 +1217,13 @@ class A2AAgentService:
 
         agent = get_for_update(db, DbA2AAgent, agent_row)
         if not agent:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # SECURITY: Check visibility/team access WHILE ROW IS LOCKED
+        # Return 404 (not 403) to avoid leaking existence of private agents
+        # ═══════════════════════════════════════════════════════════════════════════
+        if not self._check_agent_access(agent, user_email, token_teams):
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
         if not agent.enabled:

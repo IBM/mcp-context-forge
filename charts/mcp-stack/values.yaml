@@ -576,6 +576,7 @@ mcpContextForge:
     BASIC_AUTH_USER: admin                 # username for basic-auth login
     BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
+    MCP_REQUIRE_AUTH: "false"              # require auth for /mcp endpoints (false = allow public-only access)
     JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
