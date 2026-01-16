@@ -664,6 +664,21 @@ async def get_current_user(
 
                     # Return user from cache
                     if cached_ctx.user:
+                        # When require_user_in_db is enabled, verify user still exists in DB
+                        # This prevents stale cache from bypassing strict mode
+                        if settings.require_user_in_db:
+                            db_user = await asyncio.to_thread(_get_user_by_email_sync, email)
+                            if db_user is None:
+                                logger.warning(
+                                    f"Authentication rejected for {email}: cached user not found in database. "
+                                    "REQUIRE_USER_IN_DB is enabled.",
+                                    extra={"security_event": "user_not_in_db_rejected", "user_id": email},
+                                )
+                                raise HTTPException(
+                                    status_code=status.HTTP_401_UNAUTHORIZED,
+                                    detail="User not found in database",
+                                    headers={"WWW-Authenticate": "Bearer"},
+                                )
                         return _user_from_cached_dict(cached_ctx.user)
 
                     # User not in cache but context was (shouldn't happen, but handle it)
@@ -729,8 +744,22 @@ async def get_current_user(
                 else:
                     _batched_user = None
 
-                # Handle platform admin case
+                # Handle user not found case
                 if _batched_user is None:
+                    # Check if strict user-in-DB mode is enabled
+                    if settings.require_user_in_db:
+                        logger.warning(
+                            f"Authentication rejected for {email}: user not found in database. "
+                            "REQUIRE_USER_IN_DB is enabled.",
+                            extra={"security_event": "user_not_in_db_rejected", "user_id": email},
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="User not found in database",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                    # Platform admin bootstrap (only when REQUIRE_USER_IN_DB=false)
                     if email == getattr(settings, "platform_admin_email", "admin@example.com"):
                         logger.info(
                             f"Platform admin bootstrap authentication for {email}. "
@@ -847,8 +876,22 @@ async def get_current_user(
     user = await asyncio.to_thread(_get_user_by_email_sync, email)
 
     if user is None:
-        # Special case for platform admin - if user doesn't exist but token is valid
-        # and email matches platform admin, create a virtual admin user object
+        # Check if strict user-in-DB mode is enabled
+        if settings.require_user_in_db:
+            logger.warning(
+                f"Authentication rejected for {email}: user not found in database. "
+                "REQUIRE_USER_IN_DB is enabled.",
+                extra={"security_event": "user_not_in_db_rejected", "user_id": email},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found in database",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Platform admin bootstrap (only when REQUIRE_USER_IN_DB=false)
+        # If user doesn't exist but token is valid and email matches platform admin,
+        # create a virtual admin user object
         if email == getattr(settings, "platform_admin_email", "admin@example.com"):
             logger.info(
                 f"Platform admin bootstrap authentication for {email}. "

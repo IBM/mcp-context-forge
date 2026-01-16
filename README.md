@@ -1259,6 +1259,8 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
 | `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
 | `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |
+| `REQUIRE_JTI`               | Require JTI (JWT ID) claim in all tokens for revocation support              | `false`             | bool        |
+| `REQUIRE_USER_IN_DB`        | Require all authenticated users to exist in the database                     | `false`             | bool        |
 | `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
