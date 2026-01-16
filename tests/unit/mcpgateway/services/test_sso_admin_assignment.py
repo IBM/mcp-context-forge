@@ -118,6 +118,39 @@ class TestSSOAdminAssignment:
         """Test that domain-based admin assignment has priority."""
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_auto_admin_domains = ["company.com"]
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+
+            user_info = {"full_name": "Test User", "provider": "github"}
+            # Domain-based should grant admin even without org membership
+            assert sso_service._should_user_be_admin("user@company.com", user_info, github_provider) == True
+
+    def test_should_user_be_admin_entra_groups(self, sso_service):
+        """Test EntraID group-based admin assignment."""
+        entra_provider = SSOProvider(id="entra", name="entra", display_name="Microsoft Entra ID")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = ["a1b2c3d4-1234-5678-90ab-cdef12345678", "Admin"]
+
+            # User with admin group (Object ID)
+            user_info = {"full_name": "Test User", "provider": "entra", "groups": ["a1b2c3d4-1234-5678-90ab-cdef12345678", "Developer"]}
+            assert sso_service._should_user_be_admin("user@company.com", user_info, entra_provider) == True
+
+            # User with admin role (App Role)
+            user_info_role = {"full_name": "Test User", "provider": "entra", "groups": ["Admin"]}
+            assert sso_service._should_user_be_admin("user@company.com", user_info_role, entra_provider) == True
+
+            # User without admin group
+            user_info_no_admin = {"full_name": "Test User", "provider": "entra", "groups": ["Developer", "Viewer"]}
+            assert sso_service._should_user_be_admin("user@company.com", user_info_no_admin, entra_provider) == False
+
+            # User with no groups
+            user_info_no_groups = {"full_name": "Test User", "provider": "entra", "groups": []}
+            assert sso_service._should_user_be_admin("user@company.com", user_info_no_groups, entra_provider) == False
             mock_settings.sso_github_admin_orgs = ["non-admin-org"]
 
             user_info = {
