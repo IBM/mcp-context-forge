@@ -351,6 +351,8 @@ JWT_ISSUER=mcpgateway
 JWT_AUDIENCE_VERIFICATION=true         # Set to false for Dynamic Client Registration
 JWT_ISSUER_VERIFICATION=true           # Set to false if issuer validation is not needed
 REQUIRE_TOKEN_EXPIRATION=true
+EMBED_ENVIRONMENT_IN_TOKENS=false      # Embed env claim in tokens for environment isolation
+VALIDATE_TOKEN_ENVIRONMENT=false       # Reject tokens with mismatched env claim
 
 # Basic Auth (Admin UI)
 BASIC_AUTH_USER=admin

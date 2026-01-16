@@ -10,6 +10,7 @@ for securing API endpoints. It supports authentication via Authorization
 headers and cookies.
 Examples:
     >>> from mcpgateway.utils import verify_credentials as vc
+    >>> from mcpgateway.utils import jwt_config_helper as jch
     >>> from pydantic import SecretStr
     >>> class DummySettings:
     ...     jwt_secret_key = 'secret'
@@ -18,13 +19,17 @@ Examples:
     ...     jwt_issuer = 'mcpgateway'
     ...     jwt_issuer_verification = True
     ...     jwt_audience_verification = True
+    ...     jwt_public_key_path = ''
+    ...     jwt_private_key_path = ''
     ...     basic_auth_user = 'user'
     ...     basic_auth_password = SecretStr('pass')
     ...     auth_required = True
     ...     require_token_expiration = False
     ...     require_jti = False
+    ...     validate_token_environment = False
     ...     docs_allow_basic_auth = False
     >>> vc.settings = DummySettings()
+    >>> jch.settings = DummySettings()
     >>> import jwt
     >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'secret', algorithm='HS256')
     >>> import asyncio
@@ -135,6 +140,16 @@ async def verify_jwt_token(token: str) -> dict:
         if not settings.require_jti and "jti" not in payload:
             logger.warning(f"JWT token without JTI accepted. Token cannot be revoked. Consider enabling REQUIRE_JTI for better security. Token sub: {payload.get('sub', 'unknown')}")
 
+        # Validate environment claim if configured (reject mismatched, allow missing for backward compatibility)
+        if settings.validate_token_environment:
+            token_env = payload.get("env")
+            if token_env is not None and token_env != settings.environment:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Token environment mismatch: token is for '{token_env}', server is '{settings.environment}'",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
         return payload
 
     except jwt.MissingRequiredClaimError:
@@ -211,6 +226,7 @@ async def verify_credentials(token: str) -> dict:
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from mcpgateway.utils import jwt_config_helper as jch
         >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
@@ -219,13 +235,17 @@ async def verify_credentials(token: str) -> dict:
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     jwt_issuer_verification = True
+        ...     jwt_public_key_path = ''
+        ...     jwt_private_key_path = ''
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     require_token_expiration = False
         ...     require_jti = False
+        ...     validate_token_environment = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
+        >>> jch.settings = DummySettings()
         >>> import jwt
         >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'secret', algorithm='HS256')
         >>> import asyncio
@@ -282,6 +302,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from mcpgateway.utils import jwt_config_helper as jch
         >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
@@ -290,6 +311,8 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     jwt_issuer_verification = True
+        ...     jwt_public_key_path = ''
+        ...     jwt_private_key_path = ''
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
@@ -298,8 +321,10 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         ...     proxy_user_header = 'X-Authenticated-User'
         ...     require_token_expiration = False
         ...     require_jti = False
+        ...     validate_token_environment = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
+        >>> jch.settings = DummySettings()
         >>> import jwt
         >>> from fastapi.security import HTTPAuthorizationCredentials
         >>> from fastapi import Request
@@ -520,6 +545,7 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         ...     auth_required = True
         ...     require_token_expiration = False
         ...     require_jti = False
+        ...     validate_token_environment = False
         ...     docs_allow_basic_auth = True
         >>> vc.settings = DummySettings()
         >>> import base64, asyncio
@@ -643,6 +669,7 @@ async def require_docs_auth_override(
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from mcpgateway.utils import jwt_config_helper as jch
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
         ...     jwt_algorithm = 'HS256'
@@ -650,10 +677,14 @@ async def require_docs_auth_override(
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     jwt_issuer_verification = True
+        ...     jwt_public_key_path = ''
+        ...     jwt_private_key_path = ''
         ...     docs_allow_basic_auth = False
         ...     require_token_expiration = False
         ...     require_jti = False
+        ...     validate_token_environment = False
         >>> vc.settings = DummySettings()
+        >>> jch.settings = DummySettings()
         >>> import jwt
         >>> import asyncio
 
@@ -725,6 +756,7 @@ async def require_auth_override(
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from mcpgateway.utils import jwt_config_helper as jch
         >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
@@ -733,6 +765,8 @@ async def require_auth_override(
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     jwt_issuer_verification = True
+        ...     jwt_public_key_path = ''
+        ...     jwt_private_key_path = ''
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
@@ -741,8 +775,10 @@ async def require_auth_override(
         ...     proxy_user_header = 'X-Authenticated-User'
         ...     require_token_expiration = False
         ...     require_jti = False
+        ...     validate_token_environment = False
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
+        >>> jch.settings = DummySettings()
         >>> import jwt
         >>> import asyncio
 
