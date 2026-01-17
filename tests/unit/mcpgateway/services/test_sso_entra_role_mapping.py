@@ -675,3 +675,208 @@ class TestProviderLevelSyncOptOut:
             # Should get platform_admin
             assert len(role_assignments) == 1
             assert role_assignments[0]["role_name"] == "platform_admin"
+
+
+class TestJWTClaimsDecoding:
+    """Test JWT claims decoding for id_token parsing."""
+
+    def test_decode_valid_jwt_claims(self, sso_service):
+        """Test decoding a valid JWT token."""
+        import base64
+
+        import orjson
+
+        # Create a valid JWT-like structure
+        header = base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').decode().rstrip("=")
+        payload_data = {"sub": "user123", "groups": ["admin", "developer"], "roles": ["Admin"]}
+        payload = base64.urlsafe_b64encode(orjson.dumps(payload_data)).decode().rstrip("=")
+        signature = "fake_signature"
+        token = f"{header}.{payload}.{signature}"
+
+        claims = sso_service._decode_jwt_claims(token)
+
+        assert claims is not None
+        assert claims["sub"] == "user123"
+        assert claims["groups"] == ["admin", "developer"]
+        assert claims["roles"] == ["Admin"]
+
+    def test_decode_jwt_with_padding_needed(self, sso_service):
+        """Test decoding JWT that needs base64 padding."""
+        import base64
+
+        import orjson
+
+        header = base64.urlsafe_b64encode(b'{"alg":"RS256"}').decode().rstrip("=")
+        # Short payload that will need padding
+        payload_data = {"sub": "x"}
+        payload = base64.urlsafe_b64encode(orjson.dumps(payload_data)).decode().rstrip("=")
+        token = f"{header}.{payload}.sig"
+
+        claims = sso_service._decode_jwt_claims(token)
+
+        assert claims is not None
+        assert claims["sub"] == "x"
+
+    def test_decode_invalid_jwt_format(self, sso_service):
+        """Test that invalid JWT format returns None."""
+        # Not enough parts
+        assert sso_service._decode_jwt_claims("invalid") is None
+        assert sso_service._decode_jwt_claims("only.two") is None
+
+    def test_decode_invalid_base64(self, sso_service):
+        """Test that invalid base64 in payload returns None."""
+        # Invalid base64 characters in payload
+        assert sso_service._decode_jwt_claims("header.!@#$.signature") is None
+
+    def test_decode_invalid_json(self, sso_service):
+        """Test that invalid JSON in payload returns None."""
+        import base64
+
+        header = base64.urlsafe_b64encode(b'{"alg":"RS256"}').decode().rstrip("=")
+        # Invalid JSON
+        payload = base64.urlsafe_b64encode(b"not json").decode().rstrip("=")
+        token = f"{header}.{payload}.sig"
+
+        assert sso_service._decode_jwt_claims(token) is None
+
+
+class TestIsAdminSyncOnLogin:
+    """Test is_admin synchronization on login for existing users."""
+
+    @pytest.mark.asyncio
+    async def test_is_admin_upgraded_when_user_gains_admin_group(self, sso_service, entra_provider):
+        """Test that existing non-admin user gets is_admin=True when added to admin group."""
+        # Create mock existing user WITHOUT admin
+        mock_user = MagicMock()
+        mock_user.email = "user@company.com"
+        mock_user.full_name = "Test User"
+        mock_user.is_admin = False  # Not admin initially
+        mock_user.auth_provider = "entra"
+        mock_user.email_verified = True
+        mock_user.get_teams.return_value = []
+
+        # Mock auth service to return existing user
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.get_provider = MagicMock(return_value=entra_provider)
+
+        # User info with admin group
+        user_info = {
+            "email": "user@company.com",
+            "full_name": "Test User",
+            "provider": "entra",
+            "groups": ["Admin"],  # User is now in admin group
+        }
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = ["Admin"]
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_sync_roles_on_login = True
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None
+
+            with patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+                mock_jwt.return_value = "mock_token"
+
+                await sso_service.authenticate_or_create_user(user_info)
+
+                # Verify is_admin was updated to True
+                assert mock_user.is_admin is True
+
+    @pytest.mark.asyncio
+    async def test_is_admin_preserved_when_user_loses_admin_group(self, sso_service, entra_provider):
+        """Test that existing admin user keeps is_admin=True even when removed from admin group.
+
+        This is intentional: SSO only UPGRADES is_admin, never downgrades.
+        Manual admin grants (via Admin UI/API) are preserved.
+        To revoke admin access, use the Admin UI/API directly.
+        """
+        # Create mock existing user WITH admin (e.g., manually granted)
+        mock_user = MagicMock()
+        mock_user.email = "user@company.com"
+        mock_user.full_name = "Test User"
+        mock_user.is_admin = True  # Admin initially (manual grant)
+        mock_user.auth_provider = "entra"
+        mock_user.email_verified = True
+        mock_user.get_teams.return_value = []
+
+        # Mock auth service to return existing user
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.get_provider = MagicMock(return_value=entra_provider)
+
+        # User info WITHOUT admin group
+        user_info = {
+            "email": "user@company.com",
+            "full_name": "Test User",
+            "provider": "entra",
+            "groups": ["Developer"],  # User no longer in admin group
+        }
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = ["Admin"]
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_sync_roles_on_login = True
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None
+
+            with patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+                mock_jwt.return_value = "mock_token"
+
+                await sso_service.authenticate_or_create_user(user_info)
+
+                # Verify is_admin was PRESERVED (not revoked) - manual grants are kept
+                assert mock_user.is_admin is True
+
+    @pytest.mark.asyncio
+    async def test_is_admin_unchanged_when_status_matches(self, sso_service, entra_provider):
+        """Test that is_admin is not changed when current status matches groups."""
+        # Create mock existing admin user
+        mock_user = MagicMock()
+        mock_user.email = "user@company.com"
+        mock_user.full_name = "Test User"
+        mock_user.is_admin = True  # Already admin
+        mock_user.auth_provider = "entra"
+        mock_user.email_verified = True
+        mock_user.get_teams.return_value = []
+
+        # Track if is_admin was set
+        is_admin_set_count = 0
+        original_is_admin = mock_user.is_admin
+
+        def track_is_admin_set(value):
+            nonlocal is_admin_set_count
+            is_admin_set_count += 1
+
+        type(mock_user).is_admin = property(lambda self: original_is_admin, track_is_admin_set)
+
+        # Mock auth service to return existing user
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.get_provider = MagicMock(return_value=entra_provider)
+
+        # User info with admin group (status should match)
+        user_info = {
+            "email": "user@company.com",
+            "full_name": "Test User",
+            "provider": "entra",
+            "groups": ["Admin"],  # Still in admin group
+        }
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = ["Admin"]
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_sync_roles_on_login = True
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None
+
+            with patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+                mock_jwt.return_value = "mock_token"
+
+                await sso_service.authenticate_or_create_user(user_info)
+
+                # is_admin should NOT have been set since it already matched
+                assert is_admin_set_count == 0

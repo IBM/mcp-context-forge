@@ -672,24 +672,27 @@ This is useful when:
 
 **IMPORTANT**: This step is required to enable automatic role assignment based on group memberships.
 
+> ⚠️ **Critical**: You MUST select **ID** token type when adding group claims. Microsoft's OIDC userinfo endpoint
+> does not return group claims. Context Forge extracts groups from the ID token, not the userinfo response.
+
 To include group memberships in tokens:
 
 1. In your app registration, go to **Token configuration**
 2. Click **+ Add groups claim**
 3. Select group types to include:
    - ✅ **Security groups** (recommended)
-   - Microsoft 365 groups
-   - Distribution groups
+   - Microsoft 365 groups (if needed)
+   - Distribution groups (if needed)
 4. Choose **Group ID** format (recommended for stability)
    - **Group ID**: Returns Object IDs (stable, won't change)
    - **sAMAccountName**: Returns group names (readable but can change)
-5. Select token types:
-   - ✅ **ID** (required for SSO)
-   - Access (optional)
-   - SAML (if using SAML)
+5. **Select token types** (CRITICAL):
+   - ✅ **ID** - **REQUIRED** for role mapping to work
+   - Access (optional, for API authorization)
+   - SAML (if using SAML federation)
 6. Click **Add**
 
-**Note**: Groups will appear in the `groups` claim in the ID token. You can configure role mappings in Step 5.5 below.
+**Note**: Groups will appear in the `groups` claim in the ID token. You can configure role mappings in Step 8.5 below.
 
 ## Step 9: Advanced Configuration
 

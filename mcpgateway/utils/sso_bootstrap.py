@@ -325,6 +325,26 @@ def bootstrap_sso_providers() -> None:
             else:
                 # Update existing provider with current configuration
                 existing_provider = existing_by_id or existing_by_name
+
+                # Smart merge for provider_metadata (see ADR-0003 for rationale):
+                # - Env config provides DEFAULTS for keys not in DB
+                # - DB values are PRESERVED (Admin API changes survive restarts)
+                # - New env keys introduced in upgrades APPLY automatically
+                #
+                # Trade-off: To change a key that exists in DB, use Admin API or reset provider.
+                # This prevents env config from unexpectedly overriding intentional Admin API changes.
+                #
+                # Example:
+                #   env:  {"groups_claim": "groups", "new_setting": "value"}
+                #   db:   {"groups_claim": "custom", "sync_roles": false}
+                #   result: {"groups_claim": "custom", "new_setting": "value", "sync_roles": false}
+                if "provider_metadata" in provider_config and existing_provider.provider_metadata:
+                    env_metadata = provider_config["provider_metadata"] or {}
+                    db_metadata = existing_provider.provider_metadata or {}
+                    # Env provides base, DB values override (preserving Admin API changes)
+                    merged_metadata = {**env_metadata, **db_metadata}
+                    provider_config["provider_metadata"] = merged_metadata
+
                 updated = sso_service.update_provider(existing_provider.id, provider_config)
                 if updated:
                     print(f"🔄 Updated SSO provider: {provider_config['display_name']} (ID: {existing_provider.id})")

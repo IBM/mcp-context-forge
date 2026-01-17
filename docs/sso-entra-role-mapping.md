@@ -45,22 +45,34 @@ Context Forge includes a comprehensive RBAC system with the following default ro
    - `sso_entra_default_role`: Default role for unmapped users
    - `sso_entra_sync_roles_on_login`: Sync roles on each login
 
-2. **Group Extraction** (`_normalize_user_info()`)
-   - Extracts groups from `groups` claim (Security Groups)
-   - Extracts roles from `roles` claim (App Roles)
-   - Deduplicates and returns normalized user info
+2. **Token Parsing** (`_get_user_info()` and `_decode_jwt_claims()`)
+   - Parses the `id_token` JWT to extract claims (Microsoft's userinfo endpoint doesn't return groups)
+   - Extracts `groups` claim (Security Groups as Object IDs)
+   - Extracts `roles` claim (App Roles)
+   - Falls back to userinfo for basic profile claims (email, name, etc.)
 
-3. **Role Mapping** (`_map_groups_to_roles()`)
+3. **Group Normalization** (`_normalize_user_info()`)
+   - Combines groups and roles from id_token
+   - Deduplicates and returns normalized user info
+   - Supports custom groups claim via provider metadata
+
+4. **Role Mapping** (`_map_groups_to_roles()`)
    - Maps EntraID groups to Context Forge roles
-   - Checks admin groups first
+   - Checks admin groups first (case-insensitive)
    - Applies role mappings from configuration
    - Assigns default role if no mappings found
 
-4. **Role Synchronization** (`_sync_user_roles()`)
+5. **Role Synchronization** (`_sync_user_roles()`)
    - Synchronizes roles on user creation and login
-   - Revokes roles no longer in groups
-   - Assigns new roles from current groups
+   - Revokes SSO-granted roles no longer in groups
+   - Assigns new roles based on current groups
+   - Preserves manually assigned roles
    - Maintains audit trail with `granted_by='sso_system'`
+
+6. **Admin Status Synchronization** (`authenticate_or_create_user()`)
+   - Upgrades `is_admin` flag when user gains admin group membership
+   - **Never downgrades** `is_admin` - manual admin grants via Admin UI/API are preserved
+   - To revoke admin access, use the Admin UI/API directly
 
 ## Configuration
 
@@ -68,11 +80,18 @@ Context Forge includes a comprehensive RBAC system with the following default ro
 
 #### Token Configuration (Azure Portal)
 
+> **Important**: Groups and roles must be configured in the **ID token**, not just the access token.
+> Microsoft's OIDC userinfo endpoint does not return group claims - Context Forge extracts them from the ID token.
+
 1. Navigate to **Azure Portal** → **App Registrations** → Your App
 2. Go to **Token Configuration**
-3. Add optional claims:
-   - **Groups claim**: Select "Security groups" or "All groups"
-   - **Roles claim**: Automatically included if App Roles are defined
+3. Click **+ Add groups claim**
+4. Select token types: **ID** (required), Access (optional)
+5. Select group types:
+   - **Security groups** (recommended for most use cases)
+   - Or **All groups** if you need Microsoft 365 groups
+6. Choose **Group ID** format for stability (Object IDs won't change)
+7. For App Roles: Go to **App Roles** and create roles (they are automatically included in tokens)
 
 #### App Roles (Recommended Approach)
 
@@ -253,11 +272,22 @@ EntraID can return groups in different formats:
 
 ### Token Size Considerations
 
-- EntraID has a token size limit (~200 groups)
-- For users with many groups, use:
-  - **Group filtering** in Azure Portal
-  - **App Roles** instead of Security Groups
-  - **Claims transformation** to reduce token size
+EntraID has a token size limit (~200 groups). When a user belongs to more groups than can fit in the token, EntraID returns a "group overage" indicator (`_claim_names`/`_claim_sources`) instead of the actual groups array.
+
+**Context Forge detects this condition and logs a warning:**
+```
+Group overage detected for user user@example.com - token contains too many groups (>200).
+Role mapping may be incomplete. Consider using App Roles or Azure group filtering.
+```
+
+**Solutions for group overage:**
+
+1. **Use App Roles** (Recommended) - App roles are always included in the token and not subject to overage limits
+2. **Azure group filtering** - In Azure Portal → App Registration → Token Configuration, filter groups to only include specific security groups
+3. **Claims transformation** - Use Azure claims mapping policies to reduce group claims
+4. **Direct group assignment** - Assign groups directly to the application instead of user-level membership
+
+**Reference:** [Microsoft Groups Overage Claim](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#groups-overage-claim)
 
 ## Security Considerations
 
@@ -324,6 +354,28 @@ grep "Assigned SSO role" /var/log/mcpgateway.log
 grep "Revoked SSO role" /var/log/mcpgateway.log
 ```
 
+### Issue: Group overage - user has too many groups
+
+**Symptoms:**
+- User doesn't receive expected roles
+- Application logs show: `Group overage detected for user ... token contains too many groups (>200)`
+
+**Cause:**
+User belongs to more than ~200 security groups. EntraID cannot fit all groups in the token and instead includes a "groups overage" indicator.
+
+**Solutions:**
+1. **Use App Roles** (Recommended) - Not subject to token size limits
+2. **Configure group filtering** - In Azure Portal, limit which groups are included in the token
+3. **Assign groups to the application** - Use application-assigned groups instead of user memberships
+
+**Debug:**
+```bash
+# Check for overage warnings in logs
+grep "Group overage detected" /var/log/mcpgateway.log
+```
+
+See [Token Size Considerations](#token-size-considerations) for detailed solutions.
+
 ## Migration Guide
 
 ### Migrating from Admin-Only to RBAC
@@ -362,7 +414,7 @@ If you previously used only the `is_admin` flag:
 | `sso_entra_groups_claim` | str | "groups" | JWT claim for groups |
 | `sso_entra_admin_groups` | list[str] | [] | Groups granting platform_admin |
 | `sso_entra_role_mappings` | dict[str,str] | {} | Map groups to roles |
-| `sso_entra_default_role` | str | "viewer" | Default role for unmapped users |
+| `sso_entra_default_role` | str | None | Default role for unmapped users (None = no automatic role) |
 | `sso_entra_sync_roles_on_login` | bool | true | Sync roles on each login |
 
 ### Methods
@@ -419,6 +471,65 @@ Synchronizes user's role assignments.
 - [ ] Group-to-team mapping
 - [ ] Conditional role assignment based on additional claims
 - [ ] Role assignment expiration based on group membership duration
+
+## Design Decisions
+
+This section documents key architectural decisions. See [ADR-034](../architecture/adr/034-sso-admin-sync-config-precedence.md) for full details.
+
+### Admin Status Synchronization
+
+**Behavior**: SSO can only **upgrade** `is_admin` to True, never downgrade.
+
+| Scenario | Behavior |
+|----------|----------|
+| User gains admin group | `is_admin` upgraded to True |
+| User loses admin group | `is_admin` **preserved** (not revoked) |
+| Manual admin grant | Preserved across all SSO logins |
+
+**Rationale**:
+- Manual admin grants via Admin UI/API are intentional decisions
+- RBAC roles (`platform_admin`) already handle group-based role sync with revocation
+- To revoke admin access, use the Admin UI/API explicitly
+
+**Note**: The `is_admin` flag provides a platform-level bypass. RBAC roles provide granular, auditable access control with proper `granted_by` tracking.
+
+### Configuration Precedence (Bootstrap)
+
+**Behavior**: Smart merge - environment provides defaults, database values preserved.
+
+| Key Source | Behavior |
+|------------|----------|
+| Only in env config | Applied (new features) |
+| Only in database | Preserved (Admin API changes) |
+| In both | **Database wins** |
+
+**Example**:
+```
+Env:    {"groups_claim": "groups", "new_feature": true}
+DB:     {"groups_claim": "custom", "sync_roles": false}
+Result: {"groups_claim": "custom", "new_feature": true, "sync_roles": false}
+```
+
+**To change a key that exists in database**:
+1. Use Admin API to update the provider
+2. Or delete the provider and restart (bootstrap recreates from env)
+
+### ID Token Trust Model
+
+Groups and roles are extracted from the `id_token` JWT received from the token endpoint. The token is trusted without signature validation because:
+
+- Received directly from IdP over HTTPS after valid code exchange
+- OAuth flow (state, PKCE) already validated
+- Consistent with standard OAuth client library behavior
+
+**Important**: Configure group claims in the **ID token** in Azure Portal. The OIDC userinfo endpoint does not return groups.
+
+## References
+
+- [Microsoft identity platform UserInfo endpoint](https://learn.microsoft.com/en-us/entra/identity-platform/userinfo) - Why groups aren't in userinfo
+- [Configure optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims) - Group limits and token configuration
+- [ID token claims reference](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference) - Groups overage claim details
+- [Configure group claims for applications](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/how-to-connect-fed-group-claims) - Advanced group claim configuration
 
 ## Support
 

@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
 # Third-Party
+import orjson
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
@@ -87,6 +88,51 @@ class SSOService:
             return decrypted
 
         return None
+
+    def _decode_jwt_claims(self, token: str) -> Optional[Dict[str, Any]]:
+        """Decode JWT token payload without verification.
+
+        This is used to extract claims from ID tokens where we've already
+        validated the OAuth flow. The token signature is not verified here
+        because the token was received directly from the trusted token endpoint.
+
+        Args:
+            token: JWT token string
+
+        Returns:
+            Decoded payload dict or None if decoding fails
+
+        Examples:
+            >>> from unittest.mock import Mock
+            >>> service = SSOService(Mock())
+            >>> # Valid JWT structure (header.payload.signature)
+            >>> import base64
+            >>> payload = base64.urlsafe_b64encode(b'{"sub":"123","groups":["admin"]}').decode().rstrip('=')
+            >>> token = f"eyJhbGciOiJSUzI1NiJ9.{payload}.signature"
+            >>> claims = service._decode_jwt_claims(token)
+            >>> claims is not None
+            True
+        """
+        try:
+            # JWT format: header.payload.signature
+            parts = token.split(".")
+            if len(parts) != 3:
+                logger.warning("Invalid JWT format: expected 3 parts")
+                return None
+
+            # Decode payload (middle part) - add padding if needed
+            payload_b64 = parts[1]
+            # Add padding for base64 decoding
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += "=" * padding
+
+            payload_bytes = base64.urlsafe_b64decode(payload_b64)
+            return orjson.loads(payload_bytes)
+
+        except (ValueError, orjson.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.warning(f"Failed to decode JWT claims: {e}")
+            return None
 
     def list_enabled_providers(self) -> List[SSOProvider]:
         """Get list of enabled SSO providers.
@@ -366,8 +412,8 @@ class SSOService:
             >>> svc.db.execute.return_value.scalar_one_or_none.return_value = auth_session
             >>> # Patch token exchange and user info retrieval
             >>> async def _ex(p, sess, c):
-            ...     return {'access_token': 'tok'}
-            >>> async def _ui(p, access):
+            ...     return {'access_token': 'tok', 'id_token': 'id_tok'}
+            >>> async def _ui(p, access, token_data=None):
             ...     return {'email': 'user@example.com'}
             >>> svc._exchange_code_for_tokens = _ex
             >>> svc._get_user_info = _ui
@@ -416,8 +462,8 @@ class SSOService:
                 return None
             logger.info(f"Token exchange successful for provider {provider_id}")
 
-            # Get user info from provider
-            user_info = await self._get_user_info(provider, token_data["access_token"])
+            # Get user info from provider (pass full token_data for id_token parsing)
+            user_info = await self._get_user_info(provider, token_data["access_token"], token_data)
             if not user_info:
                 logger.error(f"Failed to get user info for provider {provider_id}")
                 return None
@@ -468,12 +514,13 @@ class SSOService:
 
         return None
 
-    async def _get_user_info(self, provider: SSOProvider, access_token: str) -> Optional[Dict[str, Any]]:
+    async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """Get user information from provider using access token.
 
         Args:
             provider: SSO provider configuration
             access_token: OAuth access token
+            token_data: Optional full token response containing id_token for OIDC providers
 
         Returns:
             User info dict or None if failed
@@ -500,6 +547,48 @@ class SSOService:
                 except Exception as e:
                     logger.warning(f"Error fetching GitHub organizations: {e}")
                     user_data["organizations"] = []
+
+            # For Entra ID, extract groups/roles from id_token since userinfo doesn't include them
+            # Microsoft's /oidc/userinfo endpoint only returns basic claims (sub, name, email, picture)
+            # Groups and roles are included in the id_token when configured in Azure Portal
+            if provider.id == "entra" and token_data and "id_token" in token_data:
+                id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+                if id_token_claims:
+                    # Detect group overage - when user has too many groups (>200), EntraID returns
+                    # _claim_names/_claim_sources instead of the actual groups array.
+                    # See: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
+                    claim_names = id_token_claims.get("_claim_names", {})
+                    if isinstance(claim_names, dict) and "groups" in claim_names:
+                        user_email = user_data.get("email") or user_data.get("preferred_username") or "unknown"
+                        logger.warning(
+                            f"Group overage detected for user {user_email} - token contains too many groups (>200). "
+                            f"Role mapping may be incomplete. Consider using App Roles or Azure group filtering. "
+                            f"See docs/sso-entra-role-mapping.md#token-size-considerations"
+                        )
+
+                    # Extract groups from id_token (Security Groups as Object IDs)
+                    if "groups" in id_token_claims:
+                        user_data["groups"] = id_token_claims["groups"]
+                        logger.debug(f"Extracted {len(id_token_claims['groups'])} groups from Entra ID token")
+
+                    # Extract roles from id_token (App Roles)
+                    if "roles" in id_token_claims:
+                        user_data["roles"] = id_token_claims["roles"]
+                        logger.debug(f"Extracted {len(id_token_claims['roles'])} roles from Entra ID token")
+
+                    # Also extract any missing basic claims from id_token
+                    for claim in ["email", "name", "preferred_username", "oid", "sub"]:
+                        if claim not in user_data and claim in id_token_claims:
+                            user_data[claim] = id_token_claims[claim]
+
+            # For Keycloak, also extract groups/roles from id_token if available
+            if provider.id == "keycloak" and token_data and "id_token" in token_data:
+                id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+                if id_token_claims:
+                    # Keycloak includes realm_access, resource_access, and groups in id_token
+                    for claim in ["realm_access", "resource_access", "groups"]:
+                        if claim in id_token_claims and claim not in user_data:
+                            user_data[claim] = id_token_claims[claim]
 
             # Normalize user info across providers
             return self._normalize_user_info(provider, user_data)
@@ -681,10 +770,18 @@ class SSOService:
             user.email_verified = True
             user.last_login = utc_now()
 
-            self.db.commit()
-
-            # Synchronize roles on login if enabled (handles groups, default role, and revocation)
+            # Synchronize is_admin status based on current group membership
+            # NOTE: Only UPGRADE is_admin via SSO, never downgrade
+            # This preserves manual admin grants made via Admin UI/API
+            # To revoke admin access, use the Admin UI/API directly
             provider = self.get_provider(user_info.get("provider"))
+            if provider:
+                should_be_admin = self._should_user_be_admin(email, user_info, provider)
+                if should_be_admin and not user.is_admin:
+                    logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
+                    user.is_admin = True
+
+            self.db.commit()
 
             # Determine if syncing should happen (default True, respect provider-level and Entra setting)
             should_sync = True
