@@ -94,6 +94,7 @@ class TestEntraIDNormalization:
             "sub": "abc123",
             "oid": "def456",
             "picture": "https://graph.microsoft.com/photo.jpg",
+            "groups": ["a1b2c3d4-1234-5678-90ab-cdef12345678"],
         }
 
         normalized = sso_service._normalize_user_info(entra_provider, user_data)
@@ -389,7 +390,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "master",
                 "map_realm_roles": True,
                 "map_client_roles": False,
@@ -427,7 +428,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "master",
                 "map_realm_roles": False,
                 "map_client_roles": True,
@@ -460,7 +461,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "master",
                 "map_realm_roles": True,
                 "map_client_roles": True,
@@ -496,7 +497,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
+            provider_metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
         )
 
         user_data = {
@@ -519,7 +520,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "custom-realm",
                 "map_realm_roles": True,
                 "map_client_roles": False,
@@ -554,7 +555,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
+            provider_metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
         )
 
         user_data = {
@@ -577,7 +578,7 @@ class TestKeycloakNormalization:
             name="keycloak",
             display_name="Keycloak",
             provider_type="oidc",
-            metadata={
+            provider_metadata={
                 "realm": "master",
                 "map_realm_roles": True,
                 "map_client_roles": True,
