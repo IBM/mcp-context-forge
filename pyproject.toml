@@ -157,6 +157,9 @@ dev = [
     "vulture>=2.14",
     "websockets>=15.0.1",
     "yamllint>=1.37.1",
+    # Required by other packages but here for security version control (CVEs)
+    # Can be removed once the associated packages update their dependencies
+    "pyasn1>=0.6.2", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
 ]
 
 # ----------------------------------------------------------------
