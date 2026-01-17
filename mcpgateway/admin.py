@@ -1970,6 +1970,14 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+            else:
+                # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
+                LOGGER.warning(
+                    "OAuth was enabled for server '%s' but no authorization server was provided; disabling OAuth for this server.",
+                    form.get("name"),
+                )
+                oauth_enabled = False
+                oauth_config = None
 
         server = ServerCreate(
             id=form.get("id") or None,
