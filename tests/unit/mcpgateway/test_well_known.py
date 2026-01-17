@@ -578,6 +578,7 @@ class TestServerRouterOAuthProtectedResource:
 
         # First-Party
         # main.py defines its own get_db locally, not imported from mcpgateway.db
+        from mcpgateway.db import get_db as db_get_db
         from mcpgateway.main import get_db
 
         def _create_mock(server_data):
@@ -590,10 +591,12 @@ class TestServerRouterOAuthProtectedResource:
                     setattr(mock_server, key, value)
                 mock_db.get.return_value = mock_server
             app.dependency_overrides[get_db] = lambda: mock_db
+            app.dependency_overrides[db_get_db] = lambda: mock_db  # Also override db module's get_db
             return mock_db
 
         yield _create_mock
         app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(db_get_db, None)
 
     def test_server_oauth_protected_resource_not_found(self, client, mock_db_with_server):
         """Test server OAuth protected resource returns 404 for non-existent server."""
