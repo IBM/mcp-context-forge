@@ -1,15 +1,46 @@
-use std::io::Write;
+use crate::SANDBOX;
 use anyhow::{Context, Result};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
+use std::{io::Write, path::Path};
 use tempfile::NamedTempFile;
 use tokio::fs;
 
-pub async fn move_file(source: &str, destination: &str) -> Result<()> {
-    fs::rename(source, destination)
+pub async fn move_file(source: &str, destination: &str) -> anyhow::Result<()> {
+    let sandbox = SANDBOX
+        .get()
+        .expect("Sandbox must be initialized before use");
+
+    let source_canon_path = sandbox.resolve_path(source).await?;
+
+    let dest_path = Path::new(destination);
+    let dest_filename = dest_path
+        .file_name()
+        .with_context(|| format!("Could not get filename from path: '{:?}'", dest_path))?;
+
+    let dest_parent = dest_path
+        .parent()
+        .context("Invalid path: no parent directory")?;
+
+    let dest_canon_parent = sandbox
+        .resolve_path(
+            dest_parent
+                .to_str()
+                .context("Invalid destination parent path")?,
+        )
+        .await?;
+
+    tokio::fs::rename(&source_canon_path, dest_canon_parent.join(dest_filename))
         .await
-        .with_context(|| format!("Could not move '{}' to '{}'", source, destination))?;
+        .with_context(|| {
+            format!(
+                "Could not move '{}' to '{}'",
+                source_canon_path.display(),
+                dest_filename.display()
+            )
+        })?;
+
     Ok(())
 }
 
@@ -51,19 +82,29 @@ pub struct EditResult {
 }
 
 pub async fn edit_file(path: &str, edits: Vec<Edit>, dry_run: bool) -> Result<EditResult> {
-    let original = fs::read_to_string(path).await?;
+    let sandbox = SANDBOX.get().expect("Sandbox must be initialized");
+    let canon_path = sandbox.resolve_path(path).await?;
+
+    let original = fs::read_to_string(&canon_path)
+        .await
+        .with_context(|| format!("Could not read file '{}'", canon_path.display()))?;
+
     let new_content = apply_edits(original.clone(), edits);
     let diff = get_diffs(&original, &new_content).join("");
 
     if !dry_run {
-        tracing::info!("Writing edits to file, '{}'", path);
-        let dir = std::path::Path::new(path)
+        let dir = canon_path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
-        let mut tmp = NamedTempFile::new_in(dir)?;
-        std::io::Write::write_all(&mut tmp, new_content.as_bytes())?;
+        let mut tmp = NamedTempFile::new_in(dir)
+            .with_context(|| format!("Could not create temp file in '{}'", dir.display()))?;
+
+        std::io::Write::write_all(&mut tmp, new_content.as_bytes())
+            .with_context(|| format!("Could not write to temp file in '{}'", dir.display()))?;
         tmp.flush()?;
-        tmp.persist(path)?;
+
+        tmp.persist(&canon_path)
+            .with_context(|| format!("Could not persist edits to '{}'", canon_path.display()))?;
     }
 
     Ok(EditResult {
