@@ -1,7 +1,7 @@
 """add_oauth_fields_to_servers
 
 Revision ID: 43c07ed25a24
-Revises: 77243f5bfce5
+Revises: b9e496e91e71
 Create Date: 2026-01-11 10:30:26.832065
 
 Add OAuth 2.0 configuration fields to the servers table for RFC 9728
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "43c07ed25a24"
-down_revision: Union[str, Sequence[str], None] = "77243f5bfce5"
+down_revision: Union[str, Sequence[str], None] = "b9e496e91e71"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
