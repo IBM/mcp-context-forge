@@ -40,6 +40,7 @@ class SSOProviderCreateRequest(BaseModel):
     trusted_domains: List[str] = []
     auto_create_users: bool = True
     team_mapping: Dict = {}
+    provider_metadata: Dict = {}  # Role mappings, groups_claim config, etc.
 
 
 class SSOProviderUpdateRequest(BaseModel):
@@ -58,6 +59,7 @@ class SSOProviderUpdateRequest(BaseModel):
     trusted_domains: Optional[List[str]] = None
     auto_create_users: Optional[bool] = None
     team_mapping: Optional[Dict] = None
+    provider_metadata: Optional[Dict] = None  # Role mappings, groups_claim config, etc.
     is_enabled: Optional[bool] = None
 
 
