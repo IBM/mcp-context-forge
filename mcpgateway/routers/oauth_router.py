@@ -84,6 +84,11 @@ async def initiate_oauth_flow(
 
         oauth_config = gateway.oauth_config.copy()  # Work with a copy to avoid mutating the original
 
+        # RFC 8707: Set resource to the MCP server URL (the actual resource being accessed)
+        # This tells the OAuth server to mint a JWT token for this audience
+        if not oauth_config.get("resource"):
+            oauth_config["resource"] = gateway.url
+
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
         issuer = oauth_config.get("issuer")
@@ -284,7 +289,14 @@ async def oauth_callback(
         # Complete OAuth flow
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
 
-        result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, gateway.oauth_config)
+        # RFC 8707: Add resource parameter for JWT access tokens
+        # Must be set here in callback, not just in /authorize, because complete_authorization_code_flow
+        # needs it for the token exchange request
+        oauth_config_with_resource = gateway.oauth_config.copy()
+        if not oauth_config_with_resource.get("resource"):
+            oauth_config_with_resource["resource"] = gateway.url
+
+        result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)
 
         logger.info(f"Completed OAuth flow for gateway {gateway_id}, user {result.get('user_id')}")
 

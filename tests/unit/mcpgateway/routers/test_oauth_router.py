@@ -48,6 +48,7 @@ class TestOAuthRouter:
         gateway = Mock(spec=Gateway)
         gateway.id = "gateway123"
         gateway.name = "Test Gateway"
+        gateway.url = "https://mcp.example.com"  # MCP server URL
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test_client",
@@ -100,7 +101,14 @@ class TestOAuthRouter:
                 assert result.headers["location"] == auth_data["authorization_url"]
 
                 mock_oauth_manager_class.assert_called_once_with(token_storage=mock_token_storage)
-                mock_oauth_manager.initiate_authorization_code_flow.assert_called_once_with("gateway123", mock_gateway.oauth_config, app_user_email=mock_current_user.get("email"))
+
+                # Verify the oauth_config includes the resource parameter (RFC 8707)
+                call_args = mock_oauth_manager.initiate_authorization_code_flow.call_args
+                assert call_args[0][0] == "gateway123"
+                assert call_args[1]["app_user_email"] == mock_current_user.get("email")
+                # oauth_config should have resource set to gateway.url
+                oauth_config_passed = call_args[0][1]
+                assert oauth_config_passed["resource"] == mock_gateway.url
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_gateway_not_found(self, mock_db, mock_request, mock_current_user):
