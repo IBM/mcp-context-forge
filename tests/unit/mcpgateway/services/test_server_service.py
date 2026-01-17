@@ -1433,10 +1433,9 @@ class TestServerService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Mock name conflict check
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = None
-        test_db.execute = Mock(return_value=mock_scalar)
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
 
         # Define new OAuth configuration
         new_oauth_config = {
@@ -1478,7 +1477,8 @@ class TestServerService:
         )
 
         test_user_email = "user@example.com"
-        result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
 
         # Verify OAuth config was updated
         assert mock_server.oauth_enabled is True
@@ -1498,10 +1498,9 @@ class TestServerService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Mock name conflict check
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = None
-        test_db.execute = Mock(return_value=mock_scalar)
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
 
         server_service._notify_server_updated = AsyncMock()
         server_service.convert_server_to_read = Mock(
@@ -1537,7 +1536,8 @@ class TestServerService:
         )
 
         test_user_email = "user@example.com"
-        result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
 
         # Verify OAuth was disabled
         assert mock_server.oauth_enabled is False

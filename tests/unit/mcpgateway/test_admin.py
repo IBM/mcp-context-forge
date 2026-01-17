@@ -245,11 +245,9 @@ class TestAdminServerRoutes:
         mock_server_active.model_dump.return_value = {"id": 1, "name": "Active Server", "is_active": True, "associated_tools": ["tool1", "tool2"], "metrics": {"total_executions": 50}}
 
         # Mock server_service.list_servers to return paginated response
-        mock_server_service.list_servers = AsyncMock(return_value={
-            "data": [mock_server_active],
-            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-            "links": None
-        })
+        mock_server_service.list_servers = AsyncMock(
+            return_value={"data": [mock_server_active], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
+        )
 
         # Test with include_inactive=False
         result = await admin_list_servers(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
@@ -374,11 +372,9 @@ class TestAdminToolRoutes:
 
         # Test empty list
         # Mock tool_service.list_tools to return empty paginated response
-        mock_tool_service.list_tools = AsyncMock(return_value={
-            "data": [],
-            "pagination": PaginationMeta(page=1, per_page=50, total_items=0, total_pages=0, has_next=False, has_prev=False),
-            "links": None
-        })
+        mock_tool_service.list_tools = AsyncMock(
+            return_value={"data": [], "pagination": PaginationMeta(page=1, per_page=50, total_items=0, total_pages=0, has_next=False, has_prev=False), "links": None}
+        )
 
         # Call the function with explicit pagination params
         result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
@@ -809,24 +805,15 @@ class TestAdminResourceRoutes:
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
             metrics=ResourceMetrics(
-                total_executions=100,
-                successful_executions=100,
-                failed_executions=0,
-                failure_rate=0.0,
-                min_response_time=0.1,
-                max_response_time=0.5,
-                avg_response_time=0.3,
-                last_execution_time=None
+                total_executions=100, successful_executions=100, failed_executions=0, failure_rate=0.0, min_response_time=0.1, max_response_time=0.5, avg_response_time=0.3, last_execution_time=None
             ),
-            tags=[]
+            tags=[],
         )
 
         # Mock resource_service.list_resources to return paginated response
-        mock_resource_service.list_resources = AsyncMock(return_value={
-            "data": [resource_read],
-            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-            "links": None
-        })
+        mock_resource_service.list_resources = AsyncMock(
+            return_value={"data": [resource_read], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
+        )
 
         result = await admin_list_resources(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
@@ -850,19 +837,11 @@ class TestAdminResourceRoutes:
         assert result["resource"]["id"] == 1
         mock_read_resource.assert_not_called()
 
-
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):
         """Test adding resource with valid MIME type."""
         # Use a valid MIME type
-        form_data = FakeForm(
-            {
-                        "uri": "greetme://morning/{name}",
-                        "name": "test_doc",
-                        "content": "Test content",
-                        "mimeType": "text/plain"
-            }
-        )
+        form_data = FakeForm({"uri": "greetme://morning/{name}", "name": "test_doc", "content": "Test content", "mimeType": "text/plain"})
 
         mock_request.form = AsyncMock(return_value=form_data)
 
@@ -925,13 +904,9 @@ class TestAdminPromptRoutes:
 
     @patch("mcpgateway.admin.prompt_service")
     @patch("mcpgateway.admin.TeamManagementService")
-    async def test_admin_list_prompts_with_complex_arguments(
-        self, mock_team_service_class, mock_prompt_service, mock_db
-    ):
+    async def test_admin_list_prompts_with_complex_arguments(self, mock_team_service_class, mock_prompt_service, mock_db):
         """Test listing prompts with complex argument structures."""
         from mcpgateway.schemas import PaginationMeta
-        from mcpgateway.db import Prompt as DbPrompt
-        from datetime import datetime, timezone
 
         # Mock team service
         mock_team_service = AsyncMock()
@@ -952,11 +927,9 @@ class TestAdminPromptRoutes:
         }
 
         # Mock prompt_service.list_prompts to return paginated response
-        mock_prompt_service.list_prompts = AsyncMock(return_value={
-            "data": [mock_prompt],
-            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-            "links": None
-        })
+        mock_prompt_service.list_prompts = AsyncMock(
+            return_value={"data": [mock_prompt], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
+        )
 
         result = await admin_list_prompts(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
@@ -1132,15 +1105,13 @@ class TestAdminGatewayRoutes:
             "authValue": "Some value",
             "slug": "secure-gateway",
             "capabilities": {},
-            "reachable": True
+            "reachable": True,
         }
 
         # Mock gateway_service.list_gateways to return paginated response
-        mock_gateway_service.list_gateways = AsyncMock(return_value={
-            "data": [mock_gateway],
-            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
-            "links": None
-        })
+        mock_gateway_service.list_gateways = AsyncMock(
+            return_value={"data": [mock_gateway], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
+        )
 
         result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
@@ -1303,7 +1274,7 @@ class TestAdminRootRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_root(mock_request, "test-user")
+        await admin_add_root(mock_request, "test-user")
 
         mock_add_root.assert_called_once_with("/test/root-with-dashes_and_underscores", "Special-Root_Name")
 
@@ -1318,7 +1289,7 @@ class TestAdminRootRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_root(mock_request, "test-user")
+        await admin_add_root(mock_request, "test-user")
 
         mock_add_root.assert_called_once_with("/nameless/root", None)
 
@@ -1381,8 +1352,7 @@ class TestAdminMetricsRoutes:
         mock_server_top.return_value = []
         mock_prompt_top.return_value = []
 
-        # result = await admin_get_metrics(mock_db, "test-user")
-        result = await get_aggregated_metrics(mock_db)
+        result = await get_aggregated_metrics(mock_db, _user={"email": "test-user@example.com", "db": mock_db})
 
         assert result["tools"].total_executions == 0
         assert result["resources"].total_executions == 100
@@ -1407,7 +1377,7 @@ class TestAdminMetricsRoutes:
 
         # Should raise the exception
         with pytest.raises(Exception) as excinfo:
-            await admin_reset_metrics(mock_db, "test-user")
+            await admin_reset_metrics(mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert "Resource metrics locked" in str(excinfo.value)
 
@@ -1622,7 +1592,7 @@ class TestAdminUIRoute:
             mock_settings.app_root_path = "/custom/root"
             mock_settings.gateway_tool_name_separator = "__"
 
-            response = await admin_ui(
+            await admin_ui(
                 request=mock_request,
                 team_id=None,
                 include_inactive=True,
@@ -2071,7 +2041,7 @@ class TestExportImportEndpoints:
         # First-Party
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_export_logs(export_format="xml", level=None, start_time=None, end_time=None, user="test-user")
+            await admin_export_logs(export_format="xml", level=None, start_time=None, end_time=None, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 400
         assert "Invalid format: xml" in str(excinfo.value.detail)
@@ -2194,7 +2164,7 @@ class TestLoggingEndpoints:
         mock_settings.log_file = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user="test-user")
+            await admin_get_log_file(filename=None, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 404
         assert "File logging is not enabled" in str(excinfo.value.detail)
@@ -2500,7 +2470,7 @@ class TestImportConfigurationEndpoints:
         request_body = {"import_data": import_data, "conflict_strategy": "update", "dry_run": False, "selected_entities": {"servers": True, "tools": True}}
         mock_request.json = AsyncMock(return_value=request_body)
 
-        result = await admin_import_configuration(mock_request, mock_db, "test-user")
+        result = await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2517,7 +2487,7 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, "test-user")
+            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 500
         assert "Import failed" in str(excinfo.value.detail)
@@ -2530,7 +2500,7 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, "test-user")
+            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 500
         assert "Import failed" in str(excinfo.value.detail)
@@ -2546,7 +2516,7 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, "test-user")
+            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 400
         assert "Import validation failed" in str(excinfo.value.detail)
@@ -2563,10 +2533,10 @@ class TestImportConfigurationEndpoints:
         request_body = {"import_data": {"version": "1.0"}, "conflict_strategy": "update"}
         mock_request.json = AsyncMock(return_value=request_body)
 
-        # User as dict instead of string
-        user_dict = {"username": "dict-user", "token": "jwt-token"}
+        # User as dict instead of string - need email and db keys for RBAC
+        user_dict = {"email": "dict-user@example.com", "db": mock_db, "username": "dict-user", "token": "jwt-token"}
 
-        result = await admin_import_configuration(mock_request, mock_db, user_dict)
+        result = await admin_import_configuration(mock_request, mock_db, user=user_dict)
 
         assert isinstance(result, JSONResponse)
         # Verify the username was extracted correctly
@@ -2583,7 +2553,7 @@ class TestImportConfigurationEndpoints:
         mock_status.to_dict.return_value = {"import_id": "import-123", "status": "in_progress", "progress": {"total": 10, "completed": 5, "errors": 0}}
         mock_get_status.return_value = mock_status
 
-        result = await admin_get_import_status("import-123", "test-user")
+        result = await admin_get_import_status("import-123", user={"email": "test-user@example.com", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2599,7 +2569,7 @@ class TestImportConfigurationEndpoints:
         mock_get_status.return_value = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_import_status("nonexistent", "test-user")
+            await admin_get_import_status("nonexistent", user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 404
         assert "Import nonexistent not found" in str(excinfo.value.detail)
@@ -2615,7 +2585,7 @@ class TestImportConfigurationEndpoints:
         mock_status2.to_dict.return_value = {"import_id": "import-2", "status": "failed"}
         mock_list_statuses.return_value = [mock_status1, mock_status2]
 
-        result = await admin_list_import_statuses("test-user")
+        result = await admin_list_import_statuses(user={"email": "test-user@example.com", "db": mock_db})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2645,7 +2615,7 @@ class TestAdminUIMainEndpoint:
         mock_gateways.return_value = []
         mock_roots.return_value = []
 
-        response = await admin_ui(
+        await admin_ui(
             request=mock_request,
             team_id=None,
             include_inactive=False,
@@ -2838,21 +2808,21 @@ class TestEdgeCasesAndErrorHandling:
                 MagicMock(name="Tool1", execution_count=10),
                 MagicMock(name="Tool2", execution_count=5),
             ]
-            result = await admin_metrics_partial_html(mock_request, "tools", 1, 10, mock_db, "test-user")
+            result = await admin_metrics_partial_html(mock_request, "tools", 1, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
 
     async def test_admin_metrics_partial_html_invalid_entity(self, mock_request, mock_db):
         """Test admin metrics partial HTML endpoint with invalid entity type."""
         with pytest.raises(HTTPException) as exc_info:
-            await admin_metrics_partial_html(mock_request, "invalid", 1, 10, mock_db, "test-user")
+            await admin_metrics_partial_html(mock_request, "invalid", 1, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
         assert exc_info.value.status_code == 400
 
     async def test_admin_metrics_partial_html_resources(self, mock_request, mock_db):
         """Test admin metrics partial HTML endpoint for resources."""
         with patch("mcpgateway.services.resource_service.ResourceService.get_top_resources", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = []
-            result = await admin_metrics_partial_html(mock_request, "resources", 1, 10, mock_db, "test-user")
+            result = await admin_metrics_partial_html(mock_request, "resources", 1, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
 
@@ -2860,6 +2830,6 @@ class TestEdgeCasesAndErrorHandling:
         """Test admin metrics partial HTML endpoint with pagination."""
         with patch("mcpgateway.services.prompt_service.PromptService.get_top_prompts", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = [MagicMock(name=f"Prompt{i}") for i in range(25)]
-            result = await admin_metrics_partial_html(mock_request, "prompts", 2, 10, mock_db, "test-user")
+            result = await admin_metrics_partial_html(mock_request, "prompts", 2, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
