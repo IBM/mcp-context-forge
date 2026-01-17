@@ -4,6 +4,8 @@ use ignore::WalkBuilder;
 use std::path::Path;
 use tokio::fs;
 
+use crate::SANDBOX;
+
 pub async fn search_files(
     path: &str,
     pattern: &str,
@@ -80,14 +82,22 @@ fn build_patterns(pattern: &str, exclude_patterns: Vec<String>) -> Result<Patter
 pub async fn list_directory(path: &str) -> Result<Vec<String>> {
     // List content of a folder and return the files and folders inside alfabetically
     tracing::info!("Running list directory for {}", path);
-    let mut entries = fs::read_dir(path)
-        .await
-        .context(format!("Failed to read directory: {}", path))?;
+
+    let sandbox = SANDBOX
+        .get()
+        .expect("Sandbox must be initialized before use");
+
+    // Resolve the path to its canonical form inside the sandbox
+    let canon_path = sandbox.resolve_path(path).await?;
+
+    let mut entries = fs::read_dir(&canon_path).await.context(format!(
+        "Failed to read directory: {}",
+        canon_path.display()
+    ))?;
 
     let mut results = Vec::new();
 
     while let Some(entry) = entries.next_entry().await? {
-
         let mut name = entry.file_name().to_string_lossy().to_string();
 
         let file_type = entry.file_type().await?;

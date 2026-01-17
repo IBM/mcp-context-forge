@@ -2,7 +2,7 @@ release:
     cargo build --release
 
 run:
-    cargo run -- --roots tmp & npx @modelcontextprotocol/inspector >/dev/null 2>&1
+    cargo run -- --roots /tmp & npx @modelcontextprotocol/inspector >/dev/null 2>&1
 
 mcp-stdio: release
     npx @modelcontextprotocol/inspector ./target/release/filesystem-server
