@@ -1381,7 +1381,8 @@ class SessionRegistry(SessionBackend):
         if server_id:
             try:
                 # First-Party
-                from mcpgateway.db import Server as DbServer, SessionLocal  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import SessionLocal
 
                 db = SessionLocal()
                 try:
