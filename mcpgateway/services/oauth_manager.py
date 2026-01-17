@@ -987,6 +987,12 @@ class OAuthManager:
         if scopes:
             params["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
 
+        # Add resource parameter for JWT access token (RFC 8707)
+        # The resource is the MCP server URL, set by oauth_router.py
+        resource = credentials.get("resource")
+        if resource:
+            params["resource"] = resource
+
         # Build full URL
         query_string = urlencode(params)
         return f"{authorization_url}?{query_string}"
@@ -1039,6 +1045,12 @@ class OAuthManager:
         # Add PKCE code_verifier if present (RFC 7636)
         if code_verifier:
             token_data["code_verifier"] = code_verifier
+
+        # Add resource parameter to request JWT access token (RFC 8707)
+        # The resource identifies the MCP server (resource server), not the OAuth server
+        resource = credentials.get("resource")
+        if resource:
+            token_data["resource"] = resource
 
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
