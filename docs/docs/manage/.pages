@@ -26,6 +26,7 @@ nav:
   - sso-google-tutorial.md
   - sso-ibm-tutorial.md
   - sso-microsoft-entra-id-tutorial.md
+  - sso-entra-role-mapping.md
   - sso-keycloak-tutorial.md
   - sso-okta-tutorial.md
   - sso-generic-oidc-tutorial.md

@@ -165,7 +165,7 @@ Delete the provider via Admin API, then restart the application. Bootstrap will 
 - Microsoft UserInfo endpoint docs: https://learn.microsoft.com/en-us/entra/identity-platform/userinfo
 - `mcpgateway/services/sso_service.py` - Admin sync implementation
 - `mcpgateway/utils/sso_bootstrap.py` - Config merge implementation
-- `docs/sso-entra-role-mapping.md` - Feature documentation
+- `docs/docs/manage/sso-entra-role-mapping.md` - Feature documentation
 
 ## Status
 

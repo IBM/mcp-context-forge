@@ -563,7 +563,7 @@ class SSOService:
                         logger.warning(
                             f"Group overage detected for user {user_email} - token contains too many groups (>200). "
                             f"Role mapping may be incomplete. Consider using App Roles or Azure group filtering. "
-                            f"See docs/sso-entra-role-mapping.md#token-size-considerations"
+                            f"See docs/docs/manage/sso-entra-role-mapping.md#token-size-considerations"
                         )
 
                     # Extract groups from id_token (Security Groups as Object IDs)

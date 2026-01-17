@@ -35,3 +35,4 @@ nav:
   - 31 Parallel Session Cleanup: 031-parallel-session-cleanup.md
   - 32 MCP Session Pool: 032-mcp-session-pool.md
   - 33 Tool Lookup Cache: 033-tool-lookup-cache.md
+  - 34 SSO Admin Sync & Config Precedence: 034-sso-admin-sync-config-precedence.md

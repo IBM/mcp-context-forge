@@ -3650,43 +3650,63 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
 
 
-@admin_router.post("/logout")
-async def admin_logout(request: Request) -> RedirectResponse:
+@admin_router.api_route("/logout", methods=["GET", "POST"])
+async def admin_logout(request: Request) -> Response:
     """
     Handle admin logout by clearing authentication cookies.
 
-    This endpoint clears the JWT authentication cookie and redirects
-    the user to a login page or back to the admin page (which will
-    trigger authentication).
+    Supports both GET and POST methods:
+    - POST: User-initiated logout from the UI (redirects to login page)
+    - GET: OIDC front-channel logout from identity provider (returns 200 OK)
+
+    For OIDC front-channel logout, Microsoft Entra ID sends GET requests to notify
+    the application that the user has logged out from the IdP. The application
+    should clear the session and return HTTP 200.
 
     Args:
         request (Request): FastAPI request object.
 
     Returns:
-        RedirectResponse: Redirect to admin page with cleared cookies.
+        Response: RedirectResponse for POST, or Response with 200 for GET (front-channel logout).
 
     Examples:
         >>> from fastapi import Request
-        >>> from fastapi.responses import RedirectResponse
+        >>> from fastapi.responses import RedirectResponse, Response
         >>> from unittest.mock import MagicMock
         >>>
-        >>> # Mock request
+        >>> # Mock POST request (user-initiated)
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
+        >>> mock_request.method = "POST"
         >>>
         >>> import asyncio
-        >>> async def test_logout():
+        >>> async def test_logout_post():
         ...     response = await admin_logout(mock_request)
         ...     return isinstance(response, RedirectResponse) and response.status_code == 303
         >>>
-        >>> asyncio.run(test_logout())
+        >>> asyncio.run(test_logout_post())
+        True
+
+        >>> # Mock GET request (front-channel logout)
+        >>> mock_request.method = "GET"
+        >>> async def test_logout_get():
+        ...     response = await admin_logout(mock_request)
+        ...     return response.status_code == 200
+        >>>
+        >>> asyncio.run(test_logout_get())
         True
     """
-    LOGGER.info("Admin user logging out")
+    LOGGER.info(f"Admin user logging out (method: {request.method})")
     root_path = request.scope.get("root_path", "")
 
-    # Create redirect response to login page
-    response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+    # For GET requests (OIDC front-channel logout), return 200 OK per OIDC spec
+    # For POST requests (user-initiated), redirect to login page
+    if request.method == "GET":
+        # Front-channel logout: clear cookie and return 200
+        response = Response(content="Logged out", status_code=200)
+    else:
+        # User-initiated logout: clear cookie and redirect to login
+        response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
     # Clear JWT token cookie
     response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")

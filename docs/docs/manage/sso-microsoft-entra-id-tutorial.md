@@ -4,10 +4,47 @@ This tutorial walks you through setting up Microsoft Entra ID (formerly Azure AD
 
 ## Prerequisites
 
-- MCP Gateway installed and running
-- Microsoft Entra ID tenant with admin access
+- Context Forge installed and running
+- Microsoft Entra ID tenant with admin access (see below for free options)
 - Azure portal access with appropriate permissions
 - Access to your gateway's environment configuration
+
+## Getting a Free Microsoft Entra ID Account
+
+If you don't have access to Microsoft Entra ID, you can get a free developer account.
+
+### Option A: Microsoft 365 Developer Program (Recommended)
+
+This provides a full E5 sandbox with **Microsoft Entra ID P2** licenses (25 users).
+
+1. Go to [Microsoft 365 Developer Program](https://developer.microsoft.com/microsoft-365/dev-program)
+2. Click **Join now** and sign in with your Microsoft account
+3. Fill in the signup form (email, country, company)
+4. Accept terms and click **Join**
+5. Click **Set up E5 subscription** on your dashboard
+6. Choose **Instant sandbox** (recommended)
+7. Create your admin account:
+   - Username: e.g., `admin`
+   - Domain: e.g., `yourname.onmicrosoft.com`
+   - Password: Create a strong password
+8. Complete phone verification
+9. Wait for provisioning (~1 minute)
+
+**Result**: You now have a Microsoft 365 E5 tenant with Entra ID P2 at `admin@yourname.onmicrosoft.com`.
+
+### Option B: Free Azure Account
+
+For basic Entra ID features:
+
+1. Go to [Azure Free Account](https://azure.microsoft.com/free/)
+2. Click **Start free** and complete verification
+3. You get Entra ID Free tier included
+
+### Option C: Use Existing Organization Tenant
+
+Contact your IT administrator to request access to create App Registrations.
+
+---
 
 ## Step 1: Register Application in Azure Portal
 
@@ -112,17 +149,22 @@ If your organization requires admin consent for permissions:
 1. Go to **Authentication** in the left sidebar
 2. Under **Platform configurations** → **Web**, verify:
    - ✅ Redirect URIs are correct
-   - ✅ **ID tokens** checkbox is checked (required for OIDC)
-3. Under **Advanced settings**:
+3. Under **Implicit grant and hybrid flows**:
+   - Leave checkboxes **unchecked** (Context Forge uses authorization code flow, not implicit)
+4. Under **Advanced settings**:
    - **Allow public client flows**: No (keep default)
    - **Live SDK support**: No (keep default)
-4. Click **Save** if you made changes
+5. Click **Save** if you made changes
 
 ### 4.3 Configure Front-channel Logout (Optional)
 
+Front-channel logout enables automatic session clearing when users log out from Microsoft Entra ID.
+
 1. Under **Authentication** → **Front-channel logout URL**:
-   - Set to: `https://gateway.yourcompany.com/admin/login`
-2. This enables proper logout redirection
+   - Production: `https://gateway.yourcompany.com/admin/logout`
+   - Development: `http://localhost:8000/admin/logout`
+2. When users log out from Microsoft, Entra ID sends a GET request to this URL
+3. Context Forge clears the session cookie and returns HTTP 200
 
 ## Step 5: Configure MCP Gateway Environment
 
@@ -255,14 +297,26 @@ curl -X GET http://localhost:8000/auth/sso/providers
 
 ### 6.3 Check Startup Logs
 
-Verify no errors in the logs:
+Verify SSO provider was created during startup. Check the startup output for:
 
+```
+✅ Created SSO provider: Microsoft Entra ID
+```
+
+Or if updating an existing provider:
+
+```
+🔄 Updated SSO provider: Microsoft Entra ID (ID: entra)
+```
+
+**For Docker deployments:**
 ```bash
-# Look for SSO initialization messages
-tail -f logs/gateway.log | grep -i entra
+docker-compose logs mcpgateway | grep -i "SSO provider"
+```
 
-# Should see:
-# INFO: SSO provider 'entra' initialized successfully
+**For systemd deployments:**
+```bash
+journalctl -u mcpgateway | grep -i "SSO provider"
 ```
 
 ## Step 7: Test Microsoft Entra ID SSO Login
@@ -292,7 +346,7 @@ Check that a user was created in the gateway:
 ```bash
 # Using the admin API (requires admin token)
 curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-  http://localhost:8000/auth/users
+  http://localhost:8000/auth/email/admin/users
 
 # Look for your Microsoft email in the user list
 ```
@@ -304,7 +358,7 @@ Check that user attributes were imported correctly:
 ```bash
 # Get user details
 curl -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-  http://localhost:8000/auth/users/{user_id}
+  http://localhost:8000/auth/email/admin/users/your@company.com
 
 # Verify fields are populated:
 # - email: your@company.com
@@ -342,7 +396,40 @@ Configure MFA enforcement:
 
 Control who can access the application:
 
-## Step 8.5: Configure Role Mapping (New Feature)
+1. Go to your app registration → **Enterprise applications**
+2. Find your MCP Gateway application
+3. Go to **Users and groups**
+4. Click **+ Add user/group**
+5. Select users or security groups who should have access
+6. Assign appropriate roles
+
+### 8.4 Group Claims Configuration (Required for Role Mapping)
+
+**IMPORTANT**: This step is required to enable automatic role assignment based on group memberships.
+
+> **Critical**: You MUST select **ID** token type when adding group claims. Microsoft's OIDC userinfo endpoint
+> does not return group claims. Context Forge extracts groups from the ID token, not the userinfo response.
+
+To include group memberships in tokens:
+
+1. In your app registration, go to **Token configuration**
+2. Click **+ Add groups claim**
+3. Select group types to include:
+   - **Security groups** (recommended)
+   - Microsoft 365 groups (if needed)
+   - Distribution groups (if needed)
+4. Choose **Group ID** format (recommended for stability)
+   - **Group ID**: Returns Object IDs (stable, won't change)
+   - **sAMAccountName**: Returns group names (readable but can change)
+5. **Select token types** (CRITICAL):
+   - **ID** - **REQUIRED** for role mapping to work
+   - Access (optional, for API authorization)
+   - SAML (if using SAML federation)
+6. Click **Add**
+
+**Note**: Groups will appear in the `groups` claim in the ID token. You can configure role mappings in Step 8.5 below.
+
+### 8.5 Configure Role Mapping
 
 ### Overview
 
@@ -357,9 +444,9 @@ Context Forge includes these default roles:
 3. **`developer`** (team scope) - Tool execution and resource access
 4. **`viewer`** (team scope) - Read-only access
 
-### 8.5.1 Configure Group Claims (Required)
+### 8.5.1 Prerequisites
 
-**This must be completed in Step 8.4 above** - ensure groups are included in ID tokens.
+Ensure you have completed **Step 8.4 Group Claims Configuration** above - groups must be included in ID tokens for role mapping to work.
 
 ### 8.5.2 Identify Group Object IDs
 
@@ -389,12 +476,8 @@ SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
 # Admin Groups (grants platform_admin role)
 SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
 
-# Group to Role Mapping (JSON format)
-SSO_ENTRA_ROLE_MAPPINGS={
-  "e5f6g7h8-1234-5678-90ab-cdef12345678": "developer",
-  "i9j0k1l2-1234-5678-90ab-cdef12345678": "team_admin",
-  "m3n4o5p6-1234-5678-90ab-cdef12345678": "viewer"
-}
+# Group to Role Mapping (single-line JSON required for .env files)
+SSO_ENTRA_ROLE_MAPPINGS={"e5f6g7h8-1234-5678-90ab-cdef12345678":"developer","i9j0k1l2-1234-5678-90ab-cdef12345678":"team_admin","m3n4o5p6-1234-5678-90ab-cdef12345678":"viewer"}
 ```
 
 **Configuration Options:**
@@ -454,11 +537,7 @@ SSO_ENTRA_GROUPS_CLAIM=roles
 
 # Map App Role values to Context Forge roles
 SSO_ENTRA_ADMIN_GROUPS=["Admin"]
-SSO_ENTRA_ROLE_MAPPINGS={
-  "Developer": "developer",
-  "TeamAdmin": "team_admin",
-  "Viewer": "viewer"
-}
+SSO_ENTRA_ROLE_MAPPINGS={"Developer":"developer","TeamAdmin":"team_admin","Viewer":"viewer"}
 ```
 
 **Benefits of App Roles:**
@@ -556,7 +635,7 @@ Debug:
 ```bash
 # Check user's admin status
 curl -H "Authorization: Bearer ADMIN_TOKEN" \
-  http://localhost:8000/auth/users/{user_email}
+  http://localhost:8000/auth/email/admin/users/user@company.com
 
 # Look for: "is_admin": true
 ```
@@ -585,11 +664,7 @@ tail -f logs/gateway.log | grep "sync"
 ```bash
 SSO_ENTRA_GROUPS_CLAIM=groups
 SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
-SSO_ENTRA_ROLE_MAPPINGS={
-  "e5f6g7h8-1234-5678-90ab-cdef12345678": "developer",
-  "i9j0k1l2-1234-5678-90ab-cdef12345678": "team_admin",
-  "m3n4o5p6-1234-5678-90ab-cdef12345678": "viewer"
-}
+SSO_ENTRA_ROLE_MAPPINGS={"e5f6g7h8-1234-5678-90ab-cdef12345678":"developer","i9j0k1l2-1234-5678-90ab-cdef12345678":"team_admin","m3n4o5p6-1234-5678-90ab-cdef12345678":"viewer"}
 SSO_ENTRA_DEFAULT_ROLE=viewer
 ```
 
@@ -598,11 +673,7 @@ SSO_ENTRA_DEFAULT_ROLE=viewer
 ```bash
 SSO_ENTRA_GROUPS_CLAIM=roles
 SSO_ENTRA_ADMIN_GROUPS=["Admin"]
-SSO_ENTRA_ROLE_MAPPINGS={
-  "Developer": "developer",
-  "TeamAdmin": "team_admin",
-  "Viewer": "viewer"
-}
+SSO_ENTRA_ROLE_MAPPINGS={"Developer":"developer","TeamAdmin":"team_admin","Viewer":"viewer"}
 SSO_ENTRA_DEFAULT_ROLE=viewer
 ```
 
@@ -611,10 +682,7 @@ SSO_ENTRA_DEFAULT_ROLE=viewer
 ```bash
 SSO_ENTRA_GROUPS_CLAIM=groups
 SSO_ENTRA_ADMIN_GROUPS=["Admin","a1b2c3d4-1234-5678-90ab-cdef12345678"]
-SSO_ENTRA_ROLE_MAPPINGS={
-  "Developer": "developer",
-  "e5f6g7h8-1234-5678-90ab-cdef12345678": "team_admin"
-}
+SSO_ENTRA_ROLE_MAPPINGS={"Developer":"developer","e5f6g7h8-1234-5678-90ab-cdef12345678":"team_admin"}
 ```
 
 ### 8.5.9 Provider-Level Sync Control
@@ -660,40 +728,6 @@ This is useful when:
 - ✅ Consider token size limits (~200 groups)
 - ✅ Use App Roles for large organizations
 
-
-1. Go to your app registration → **Enterprise applications**
-2. Find your MCP Gateway application
-3. Go to **Users and groups**
-4. Click **+ Add user/group**
-5. Select users or security groups who should have access
-6. Assign appropriate roles
-
-### 8.4 Group Claims Configuration (Required for Role Mapping)
-
-**IMPORTANT**: This step is required to enable automatic role assignment based on group memberships.
-
-> ⚠️ **Critical**: You MUST select **ID** token type when adding group claims. Microsoft's OIDC userinfo endpoint
-> does not return group claims. Context Forge extracts groups from the ID token, not the userinfo response.
-
-To include group memberships in tokens:
-
-1. In your app registration, go to **Token configuration**
-2. Click **+ Add groups claim**
-3. Select group types to include:
-   - ✅ **Security groups** (recommended)
-   - Microsoft 365 groups (if needed)
-   - Distribution groups (if needed)
-4. Choose **Group ID** format (recommended for stability)
-   - **Group ID**: Returns Object IDs (stable, won't change)
-   - **sAMAccountName**: Returns group names (readable but can change)
-5. **Select token types** (CRITICAL):
-   - ✅ **ID** - **REQUIRED** for role mapping to work
-   - Access (optional, for API authorization)
-   - SAML (if using SAML federation)
-6. Click **Add**
-
-**Note**: Groups will appear in the `groups` claim in the ID token. You can configure role mappings in Step 8.5 below.
-
 ## Step 9: Advanced Configuration
 
 ### 9.1 Custom Branding
@@ -719,15 +753,18 @@ Define custom application roles:
    - **Description**: Administrator role for MCP Gateway
 4. Assign roles to users in **Enterprise applications** → **Users and groups**
 
-### 9.3 Certificate-Based Authentication
+### 9.3 Certificate-Based Authentication (Future)
 
-For enhanced security, use certificates instead of client secrets:
+> **Note**: Certificate-based authentication is not currently supported by Context Forge. Use client secrets for now. This section documents the Azure configuration for future reference.
+
+For enhanced security, certificates can be used instead of client secrets:
 
 1. In **Certificates & secrets** → **Certificates** tab
 2. Click **Upload certificate**
 3. Upload .cer, .pem, or .crt file
-4. Configure gateway to use certificate authentication
-5. More secure than client secrets (no expiration concerns)
+4. Benefits: No expiration concerns, more secure than secrets
+
+**Current limitation**: Context Forge uses client secrets (`SSO_ENTRA_CLIENT_SECRET`). Certificate authentication support is planned for a future release.
 
 ### 9.4 Admin Consent Workflow
 
@@ -961,11 +998,19 @@ After Microsoft Entra ID SSO is working:
 
 ## Support and Resources
 
+### Context Forge Documentation
+
+- [EntraID Role Mapping Feature Guide](sso-entra-role-mapping.md) - Detailed role mapping configuration
+- [ADR-034: SSO Admin Sync & Config Precedence](../architecture/adr/034-sso-admin-sync-config-precedence.md) - Design decisions
+
 ### Microsoft Documentation
 
+- [Microsoft 365 Developer Program](https://developer.microsoft.com/microsoft-365/dev-program) - Free developer tenant
 - [Microsoft identity platform documentation](https://learn.microsoft.com/en-us/azure/active-directory/develop/)
 - [Microsoft Entra ID authentication scenarios](https://learn.microsoft.com/en-us/azure/active-directory/develop/authentication-scenarios)
 - [OAuth 2.0 and OpenID Connect protocols](https://learn.microsoft.com/en-us/azure/active-directory/develop/active-directory-v2-protocols)
+- [Configure optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims) - Group limits and token configuration
+- [ID token claims reference](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference) - Groups overage claim details
 
 ### Troubleshooting Resources
 
