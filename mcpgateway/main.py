@@ -81,6 +81,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -2635,48 +2636,6 @@ async def server_get_prompts(
         token_teams = []  # Non-admin without teams = public-only (secure default)
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
-
-
-@server_router.get("/{server_id}/.well-known/oauth-protected-resource")
-async def server_oauth_protected_resource(
-    request: Request,
-    server_id: str,
-    db: Session = Depends(get_db),
-) -> JSONResponse:
-    """
-    RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint for a specific server.
-
-    Returns OAuth configuration for the server per RFC 9728, enabling MCP clients
-    to discover OAuth authorization servers and authenticate using browser-based SSO.
-    This endpoint does not require authentication per RFC 9728 requirements.
-
-    Args:
-        request: FastAPI request object for building resource URL.
-        server_id: The ID of the server to get OAuth configuration for.
-        db: Database session dependency.
-
-    Returns:
-        JSONResponse with RFC 9728 Protected Resource Metadata.
-
-    Raises:
-        HTTPException: 404 if server not found, disabled, non-public, OAuth not enabled, or not configured.
-    """
-    # Build resource URL using proper protocol detection for proxies
-    # Note: update_url_protocol uses request.base_url which already includes root_path
-    base_url = update_url_protocol(request)
-    resource_url = f"{base_url}/servers/{server_id}"
-
-    try:
-        response_data = server_service.get_oauth_protected_resource_metadata(db, server_id, resource_url)
-    except ServerNotFoundError:
-        raise HTTPException(status_code=404, detail="Server not found")
-    except ServerError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    # Add cache headers
-    headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
-
-    return JSONResponse(content=response_data, headers=headers)
 
 
 ##################
@@ -6070,6 +6029,7 @@ app.include_router(gateway_router)
 app.include_router(root_router)
 app.include_router(utility_router)
 app.include_router(server_router)
+app.include_router(server_well_known_router, prefix="/servers")
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)

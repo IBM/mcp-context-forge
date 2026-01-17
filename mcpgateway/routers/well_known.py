@@ -43,7 +43,7 @@ WELL_KNOWN_REGISTRY = {
 }
 
 
-def _get_base_url_with_protocol(request: Request) -> str:
+def get_base_url_with_protocol(request: Request) -> str:
     """
     Build base URL with correct protocol based on proxy headers.
 
@@ -57,6 +57,11 @@ def _get_base_url_with_protocol(request: Request) -> str:
 
     Returns:
         Base URL string with correct protocol, without trailing slash.
+
+    Examples:
+        >>> from mcpgateway.routers.well_known import get_base_url_with_protocol
+        >>> callable(get_base_url_with_protocol)
+        True
     """
     forwarded_proto = request.headers.get("x-forwarded-proto")
     if forwarded_proto:
@@ -168,8 +173,8 @@ async def get_oauth_protected_resource(
         raise HTTPException(status_code=404, detail="OAuth not configured for this server")
 
     # Build RFC 9728 Protected Resource Metadata response
-    # Note: _get_base_url_with_protocol uses request.base_url which already includes root_path
-    base_url = _get_base_url_with_protocol(request)
+    # Note: get_base_url_with_protocol uses request.base_url which already includes root_path
+    base_url = get_base_url_with_protocol(request)
     resource_url = f"{base_url}/servers/{server_id}"
 
     # Extract authorization server(s) - support both list and single value
@@ -200,30 +205,32 @@ async def get_oauth_protected_resource(
     return JSONResponse(content=response_data, headers=headers)
 
 
-@router.get("/.well-known/{filename:path}", include_in_schema=False)
-async def get_well_known_file(filename: str, response: Response, request: Request):
+def get_well_known_file_content(filename: str) -> PlainTextResponse:
     """
-    Serve well-known URI files.
+    Get the response for a well-known URI file.
+
+    This is a shared helper function used by both the root-level and
+    virtual server well-known endpoints.
 
     Supports:
     - robots.txt: Robot exclusion (default: disallow all)
     - security.txt: Security contact information (if configured)
+    - ai.txt: AI usage policies (if configured)
+    - dnt-policy.txt: Do Not Track policy (if configured)
     - Custom files: Additional well-known files via configuration
 
     Args:
-        filename: The well-known filename requested
-        response: FastAPI response object for headers
-        request: FastAPI request object for logging
+        filename: The well-known filename requested (without path prefix).
 
     Returns:
-        Plain text content of the requested file
+        PlainTextResponse with the file content.
 
     Raises:
-        HTTPException: 404 if file not found or well-known disabled
+        HTTPException: 404 if file not found, not configured, or well-known disabled.
 
     Examples:
-        >>> import asyncio
-        >>> asyncio.iscoroutinefunction(get_well_known_file)
+        >>> from mcpgateway.routers.well_known import get_well_known_file_content
+        >>> callable(get_well_known_file_content)
         True
     """
     if not settings.well_known_enabled:
@@ -251,7 +258,7 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
 
         return PlainTextResponse(content=content, media_type="text/plain; charset=utf-8", headers=common_headers)
 
-    # Handle custom files
+    # Handle custom files (includes ai.txt, dnt-policy.txt if configured)
     elif filename in settings.custom_well_known_files:
         content = settings.custom_well_known_files[filename]
 
@@ -269,6 +276,37 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
             raise HTTPException(status_code=404, detail=f"{filename} is not configured. This is a {WELL_KNOWN_REGISTRY[filename]['description']} file.")
         else:
             raise HTTPException(status_code=404, detail="Not found")
+
+
+@router.get("/.well-known/{filename:path}", include_in_schema=False)
+async def get_well_known_file(filename: str, response: Response, request: Request):
+    """
+    Serve well-known URI files at the root level.
+
+    Supports:
+    - robots.txt: Robot exclusion (default: disallow all)
+    - security.txt: Security contact information (if configured)
+    - ai.txt: AI usage policies (if configured)
+    - dnt-policy.txt: Do Not Track policy (if configured)
+    - Custom files: Additional well-known files via configuration
+
+    Args:
+        filename: The well-known filename requested
+        response: FastAPI response object for headers
+        request: FastAPI request object for logging
+
+    Returns:
+        Plain text content of the requested file
+
+    Raises:
+        HTTPException: 404 if file not found or well-known disabled
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_well_known_file)
+        True
+    """
+    return get_well_known_file_content(filename)
 
 
 @router.get("/admin/well-known", response_model=dict)
