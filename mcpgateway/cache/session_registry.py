@@ -1317,6 +1317,51 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"Error in memory cleanup task: {e}")
                 await asyncio.sleep(300)  # Sleep longer on error
 
+    def _get_oauth_experimental_config(self, server_id: str) -> Optional[Dict[str, Dict[str, Any]]]:
+        """Query OAuth configuration for a server (synchronous, run in threadpool).
+
+        This method queries the database for OAuth configuration and returns
+        RFC 9728-safe fields for advertising in MCP capabilities.
+
+        Args:
+            server_id: The server ID to query OAuth configuration for.
+
+        Returns:
+            Dict with 'oauth' key containing safe OAuth config, or None if not configured.
+        """
+        # First-Party
+        from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+
+        db = SessionLocal()
+        try:
+            server = db.get(DbServer, server_id)
+            if server and getattr(server, "oauth_enabled", False) and getattr(server, "oauth_config", None):
+                # Filter oauth_config to RFC 9728-safe fields only (never expose secrets)
+                oauth_config = server.oauth_config
+                safe_oauth: Dict[str, Any] = {}
+
+                # Extract authorization servers
+                if oauth_config.get("authorization_servers"):
+                    safe_oauth["authorization_servers"] = oauth_config["authorization_servers"]
+                elif oauth_config.get("authorization_server"):
+                    safe_oauth["authorization_servers"] = [oauth_config["authorization_server"]]
+
+                # Extract scopes
+                scopes = oauth_config.get("scopes_supported") or oauth_config.get("scopes")
+                if scopes:
+                    safe_oauth["scopes_supported"] = scopes
+
+                # Add bearer methods
+                safe_oauth["bearer_methods_supported"] = oauth_config.get("bearer_methods_supported", ["header"])
+
+                if safe_oauth.get("authorization_servers"):
+                    logger.debug(f"Advertising OAuth capability for server {server_id}")
+                    return {"oauth": safe_oauth}
+            return None
+        finally:
+            db.close()
+
     # Handle initialize logic
     async def handle_initialize_logic(self, body: Dict[str, Any], session_id: Optional[str] = None, server_id: Optional[str] = None) -> InitializeResult:
         """Process MCP protocol initialization request.
@@ -1380,37 +1425,8 @@ class SessionRegistry(SessionBackend):
         # Query OAuth configuration if server_id is provided
         if server_id:
             try:
-                # First-Party
-                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
-                from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
-
-                db = SessionLocal()
-                try:
-                    server = db.get(DbServer, server_id)
-                    if server and getattr(server, "oauth_enabled", False) and getattr(server, "oauth_config", None):
-                        # Filter oauth_config to RFC 9728-safe fields only (never expose secrets)
-                        oauth_config = server.oauth_config
-                        safe_oauth: Dict[str, Any] = {}
-
-                        # Extract authorization servers
-                        if oauth_config.get("authorization_servers"):
-                            safe_oauth["authorization_servers"] = oauth_config["authorization_servers"]
-                        elif oauth_config.get("authorization_server"):
-                            safe_oauth["authorization_servers"] = [oauth_config["authorization_server"]]
-
-                        # Extract scopes
-                        scopes = oauth_config.get("scopes_supported") or oauth_config.get("scopes")
-                        if scopes:
-                            safe_oauth["scopes_supported"] = scopes
-
-                        # Add bearer methods
-                        safe_oauth["bearer_methods_supported"] = oauth_config.get("bearer_methods_supported", ["header"])
-
-                        if safe_oauth.get("authorization_servers"):
-                            experimental = {"oauth": safe_oauth}
-                            logger.debug(f"Advertising OAuth capability for server {server_id}")
-                finally:
-                    db.close()
+                # Run synchronous DB query in threadpool to avoid blocking the event loop
+                experimental = await asyncio.to_thread(self._get_oauth_experimental_config, server_id)
             except Exception as e:
                 logger.warning(f"Failed to query OAuth config for server {server_id}: {e}")
 

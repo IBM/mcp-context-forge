@@ -26,7 +26,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Add OAuth configuration fields to servers table."""
     # Add oauth_enabled column with default False
-    op.add_column("servers", sa.Column("oauth_enabled", sa.Boolean(), nullable=False, server_default="0"))
+    # Use sa.false() for cross-database compatibility (SQLite, PostgreSQL)
+    op.add_column("servers", sa.Column("oauth_enabled", sa.Boolean(), nullable=False, server_default=sa.false()))
 
     # Add oauth_config column for storing OAuth configuration as JSON
     op.add_column("servers", sa.Column("oauth_config", sa.JSON(), nullable=True))
