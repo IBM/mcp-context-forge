@@ -148,6 +148,31 @@ class TestCORSConfiguration:
                 assert "Content-Length" in exposed_headers
                 assert "X-Request-ID" in exposed_headers
 
+    def test_cors_preflight_on_mcp_endpoints(self, client: TestClient):
+        """Test CORS preflight (OPTIONS) works on /servers/{id}/mcp endpoints.
+
+        Browser-based MCP clients send preflight requests before connecting.
+        CORSMiddleware must intercept these and respond with proper headers.
+        """
+        with patch.object(settings, "allowed_origins", {"http://localhost:3000"}):
+            # Send a CORS preflight request (OPTIONS with Origin and Access-Control-Request-Method)
+            response = client.options(
+                "/servers/test-server-id/mcp",
+                headers={
+                    "Origin": "http://localhost:3000",
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "Authorization, Content-Type",
+                },
+            )
+
+            # Preflight should succeed (200 from CORSMiddleware)
+            assert response.status_code == 200
+
+            # CORS headers must be present
+            assert response.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
+            assert "POST" in response.headers.get("Access-Control-Allow-Methods", "")
+            assert response.headers.get("Access-Control-Allow-Credentials") == "true"
+
 
 class TestProductionSecurity:
     """Test security configuration in production environment."""

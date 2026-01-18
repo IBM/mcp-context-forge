@@ -1410,15 +1410,15 @@ class MCPPathRewriteMiddleware:
             >>> app_mock = AsyncMock()
             >>> middleware = MCPPathRewriteMiddleware(app_mock)
 
-            >>> # Test path rewriting for /servers/123/mcp with headers in scope
+            >>> # Test path rewriting for /servers/123/mcp
             >>> scope = { "type": "http", "path": "/servers/123/mcp", "headers": [(b"host", b"example.com")] }
             >>> receive = AsyncMock()
             >>> send = AsyncMock()
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
-            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
-            ...         asyncio.run(middleware(scope, receive, send))
-            ...         scope["path"]
-            '/mcp'
+            ...     asyncio.run(middleware(scope, receive, send))
+            >>> scope["path"]
+            '/mcp/'
+            >>> app_mock.assert_called()
 
             >>> # Test regular path (no rewrite)
             >>> scope = { "type": "http","path": "/tools","headers": [(b"host", b"example.com")] }
@@ -1464,8 +1464,8 @@ class MCPPathRewriteMiddleware:
         """
         Handles the streamable HTTP request after authentication and path rewriting.
 
-        - If authentication is successful and the path is rewritten, this method processes the request
-          using the `streamable_http_session` handler.
+        If auth succeeds and path ends with /mcp, rewrites to /mcp/ and calls self.application
+        (continuing through middleware stack including CORSMiddleware).
 
         Args:
             scope (dict): The ASGI connection scope containing request metadata.
@@ -1481,10 +1481,8 @@ class MCPPathRewriteMiddleware:
             >>> receive = AsyncMock()
             >>> send = AsyncMock()
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
-            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
-            ...         asyncio.run(middleware._call_streamable_http(scope, receive, send))
-            >>> mock_handler.assert_called_once_with(scope, receive, send)
-            >>> # The streamable HTTP session handler was called after path rewriting.
+            ...     asyncio.run(middleware._call_streamable_http(scope, receive, send))
+            >>> app_mock.assert_called_once_with(scope, receive, send)
         """
         # Auth check first
         auth_ok = await streamable_http_auth(scope, receive, send)
@@ -1494,9 +1492,9 @@ class MCPPathRewriteMiddleware:
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
         if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
-            # Rewrite path so mounted app at /mcp handles it
-            scope["path"] = "/mcp"
-            await streamable_http_session.handle_streamable_http(scope, receive, send)
+            # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
+            scope["path"] = "/mcp/"
+            await self.application(scope, receive, send)
             return
         await self.application(scope, receive, send)
 
