@@ -322,11 +322,12 @@ impl FilesystemServer {
 
     #[tool(description = "Reveal sandbox roots")]
     async fn list_allowed_directories(&self) -> Result<CallToolResult, McpError> {
+        tracing::info!("List allowed directories");
         let roots = self.ctx.sandbox.get_roots();
         let content = Content::json(&roots).map_err(|e| {
             McpError::internal_error(format!("Error converting roots to JSON: {}", e), None)
         })?;
-
+        tracing::info!("Success: Allowed directories {:?}", roots);
         Ok(CallToolResult::success(vec![content]))
     }
 }
@@ -340,16 +341,16 @@ impl ServerHandler for FilesystemServer {
             server_info: Implementation::from_build_env(),
             instructions: Some(
                 "I manage a filesystem sandbox. Available actions:
-- list_directory
-- search_files
-- read_file
-- move_file
-- read_multiple_files
-- get_file_info
-- write_file
-- edit_file
-- create_directory
-- list_allowed_directories"
+                - list_directory
+                - search_files
+                - read_file
+                - move_file
+                - read_multiple_files
+                - get_file_info
+                - write_file
+                - edit_file
+                - create_directory
+                - list_allowed_directories"
                     .to_string(),
             ),
         }
