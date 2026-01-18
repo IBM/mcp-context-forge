@@ -220,6 +220,11 @@ class TestOAuthRouter:
                 assert "✅ OAuth Authorization Successful" in result.body.decode()
                 assert "oauth_user_123" in result.body.decode()
 
+                # Verify the oauth_config includes the resource parameter (RFC 8707)
+                call_args = mock_oauth_manager.complete_authorization_code_flow.call_args
+                oauth_config_passed = call_args[0][3]  # 4th positional arg is credentials
+                assert oauth_config_passed["resource"] == "https://mcp.example.com"  # Normalized URL
+
     @pytest.mark.asyncio
     async def test_oauth_callback_legacy_state_format(self, mock_db, mock_request, mock_gateway):
         """Test OAuth callback handling with legacy state format."""
@@ -486,3 +491,55 @@ class TestOAuthRouter:
             # Assert
             assert result["success"] is True
             assert "Successfully fetched and created 0 tools" in result["message"]
+
+
+class TestRFC8707ResourceNormalization:
+    """Test cases for RFC 8707 resource URL normalization."""
+
+    def test_normalize_resource_url_removes_fragment(self):
+        """Test that URL fragments are removed per RFC 8707."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        url = "https://mcp.example.com/api#section"
+        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
+
+    def test_normalize_resource_url_removes_query(self):
+        """Test that URL query strings are removed per RFC 8707."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        url = "https://mcp.example.com/api?token=abc"
+        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
+
+    def test_normalize_resource_url_removes_both(self):
+        """Test that both fragment and query are removed."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        url = "https://mcp.example.com/api?token=abc#section"
+        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
+
+    def test_normalize_resource_url_clean_url_unchanged(self):
+        """Test that clean URLs remain unchanged."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        url = "https://mcp.example.com/api"
+        assert _normalize_resource_url(url) == "https://mcp.example.com/api"
+
+    def test_normalize_resource_url_preserves_path(self):
+        """Test that URL paths are preserved."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        url = "https://mcp.example.com/api/v1/tools"
+        assert _normalize_resource_url(url) == "https://mcp.example.com/api/v1/tools"
+
+    def test_normalize_resource_url_handles_empty(self):
+        """Test that empty/None URLs are handled gracefully."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        assert _normalize_resource_url("") == ""
+        assert _normalize_resource_url(None) is None

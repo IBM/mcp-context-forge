@@ -15,6 +15,7 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 # Standard
 import logging
 from typing import Any, Dict
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -32,6 +33,29 @@ from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_resource_url(url: str) -> str:
+    """Normalize URL for use as RFC 8707 resource parameter.
+
+    Per RFC 8707 Section 2:
+    - resource MUST be an absolute URI
+    - resource MUST NOT include a fragment component
+    - resource SHOULD NOT include a query component
+
+    Args:
+        url: The gateway URL to normalize
+
+    Returns:
+        Normalized URL suitable for RFC 8707 resource parameter
+    """
+    if not url:
+        return url
+    parsed = urlparse(url)
+    # Remove fragment (required) and query (recommended) per RFC 8707
+    normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    return normalized
+
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
@@ -86,8 +110,8 @@ async def initiate_oauth_flow(
 
         # RFC 8707: Set resource to the MCP server URL (the actual resource being accessed)
         # This tells the OAuth server to mint a JWT token for this audience
-        if not oauth_config.get("resource"):
-            oauth_config["resource"] = gateway.url
+        # Always recompute from gateway.url to handle URL changes (don't rely on stale stored value)
+        oauth_config["resource"] = _normalize_resource_url(gateway.url)
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
@@ -292,9 +316,9 @@ async def oauth_callback(
         # RFC 8707: Add resource parameter for JWT access tokens
         # Must be set here in callback, not just in /authorize, because complete_authorization_code_flow
         # needs it for the token exchange request
+        # Always recompute from gateway.url to handle URL changes (don't rely on stale stored value)
         oauth_config_with_resource = gateway.oauth_config.copy()
-        if not oauth_config_with_resource.get("resource"):
-            oauth_config_with_resource["resource"] = gateway.url
+        oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
 
         result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)
 

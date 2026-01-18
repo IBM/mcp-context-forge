@@ -214,6 +214,16 @@ class TokenStorageService:
                         # If decryption fails, assume it's already plain text - intentional fallback
                         pass
 
+            # RFC 8707: Set resource parameter for JWT access tokens during refresh
+            # Always derive from current gateway.url to handle URL changes
+            if gateway.url:
+                # Standard
+                from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
+
+                parsed = urlparse(gateway.url)
+                # Remove fragment (required) and query (recommended) per RFC 8707
+                oauth_config["resource"] = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
             # Use OAuthManager to refresh the token
             # First-Party
             from mcpgateway.services.oauth_manager import OAuthManager  # pylint: disable=import-outside-toplevel

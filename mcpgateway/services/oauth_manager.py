@@ -991,10 +991,14 @@ class OAuthManager:
         # The resource is the MCP server URL, set by oauth_router.py
         resource = credentials.get("resource")
         if resource:
-            params["resource"] = resource
+            # RFC 8707 allows multiple resource parameters
+            if isinstance(resource, list):
+                params["resource"] = resource  # urlencode with doseq=True handles lists
+            else:
+                params["resource"] = resource
 
-        # Build full URL
-        query_string = urlencode(params)
+        # Build full URL (doseq=True handles list values like multiple resource params)
+        query_string = urlencode(params, doseq=True)
         return f"{authorization_url}?{query_string}"
 
     async def _exchange_code_for_tokens(self, credentials: Dict[str, Any], code: str, code_verifier: str = None) -> Dict[str, Any]:
@@ -1050,6 +1054,7 @@ class OAuthManager:
         # The resource identifies the MCP server (resource server), not the OAuth server
         resource = credentials.get("resource")
         if resource:
+            # RFC 8707 allows multiple resource parameters; httpx handles lists in form data
             token_data["resource"] = resource
 
         # Exchange code for token with retries
@@ -1130,6 +1135,17 @@ class OAuthManager:
         # Add client_secret if available (some providers require it)
         if client_secret:
             token_data["client_secret"] = client_secret
+
+        # Add resource parameter for JWT access token (RFC 8707)
+        # Must be included in refresh requests to maintain JWT token type
+        resource = credentials.get("resource")
+        if resource:
+            # Handle both string and list values per RFC 8707
+            if isinstance(resource, list):
+                # For refresh, use the first resource if multiple are specified
+                token_data["resource"] = resource[0] if resource else None
+            else:
+                token_data["resource"] = resource
 
         # Attempt token refresh with retries
         for attempt in range(self.max_retries):
