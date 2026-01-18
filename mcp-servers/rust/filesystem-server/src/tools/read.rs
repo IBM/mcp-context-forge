@@ -1,17 +1,13 @@
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use tokio::{fs, io::AsyncReadExt};
+use crate::sandbox::Sandbox;
 
-use crate::SANDBOX;
 
 static MAX_FILE_SIZE: u64 = 1 * 1024 * 1024; // 1 MiB
 
-pub async fn read_file(path: &str) -> Result<String> {
+pub async fn read_file(sandbox: &Sandbox, path: &str) -> Result<String> {
     tracing::info!("Starting read file for {}", path);
-
-    let sandbox = SANDBOX
-        .get()
-        .expect("Sandbox must be initialized before use");
 
     // Resolve the path to its canonical form inside the sandbox
     let canon_path = sandbox.resolve_path(path).await?;
@@ -51,9 +47,9 @@ pub async fn read_file(path: &str) -> Result<String> {
     Ok(contents)
 }
 
-pub async fn read_multiple_files(paths: Vec<String>) -> Result<Vec<String>> {
+pub async fn read_multiple_files(sandbox: &Sandbox, paths: Vec<String>) -> Result<Vec<String>> {
     tracing::info!("Starting reading multiple files for {:?}", paths);
-    let futures: Vec<_> = paths.iter().map(|item| read_file(item)).collect();
+    let futures: Vec<_> = paths.iter().map(|item| read_file(sandbox, item)).collect();
     let future_results = join_all(futures).await;
 
     let mut results: Vec<String> = Vec::new();

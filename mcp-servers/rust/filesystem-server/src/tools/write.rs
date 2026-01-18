@@ -2,15 +2,11 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use tokio::fs;
 use uuid::Uuid;
+use crate::sandbox::Sandbox;
 
-use crate::SANDBOX;
 
-pub async fn write_file(path: &str, content: String) -> Result<()> {
+pub async fn write_file(sandbox: &Sandbox, path: &str, content: String) -> Result<()> {
     tracing::info!("Running write_file {}", path);
-
-    let sandbox = SANDBOX
-        .get()
-        .expect("Sandbox must be initialized before use");
 
     let pathname = Path::new(path);
     let filename = pathname
@@ -44,11 +40,9 @@ pub async fn write_file(path: &str, content: String) -> Result<()> {
     Ok(())
 }
 
-pub async fn create_directory(path: &str) -> Result<String> {
+
+pub async fn create_directory(sandbox: &Sandbox, path: &str) -> Result<String> {
     tracing::info!("Running create_directory '{}'", path);
-    let sandbox = SANDBOX
-        .get()
-        .expect("Sandbox must be initialized before use");
 
     if !Path::new(&path).exists() && sandbox.check_new_folders(path).await? {
         fs::create_dir_all(path)

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Sandbox {
     roots: Vec<PathBuf>,
 }

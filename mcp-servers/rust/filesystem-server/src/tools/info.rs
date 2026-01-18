@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use std::os::unix::fs::PermissionsExt;
 use tokio::fs;
 use chrono::{DateTime, Local};
+use crate::sandbox::Sandbox;
 
-use crate::SANDBOX;
 
 #[derive(Debug, serde::Serialize)]
 struct MetadataResults {
@@ -18,19 +18,14 @@ fn format_system_time(time: std::time::SystemTime) -> String {
 }
 
 
-pub async fn get_file_info(path: &str) -> Result<String> {
+pub async fn get_file_info(sandbox: &Sandbox, path: &str) -> Result<String> {
     tracing::info!(path = %path, "getting file metadata");
-
-    let sandbox = SANDBOX
-        .get()
-        .expect("Sandbox must be initialized before use");
 
     let canon_path = sandbox.resolve_path(path).await?;
 
     let metadata = fs::metadata(&canon_path)
         .await
         .with_context(|| format!("failed to read metadata for '{}'", canon_path.display()))?;
-
 
     let permissions = format!("{:o}", metadata.permissions().mode() & 0o777);
     let size = metadata.len();

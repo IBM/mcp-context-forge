@@ -1,4 +1,3 @@
-use crate::SANDBOX;
 use crate::tools::edit::Edit;
 use crate::tools::{edit, info, read, search, write};
 use rmcp::ErrorData as McpError;
@@ -12,10 +11,19 @@ use rmcp::{
     schemars, tool, tool_handler, tool_router,
 };
 use serde::Deserialize;
+use std::sync::Arc;
+use crate::sandbox::Sandbox;
+
 
 #[derive(Clone)]
 pub struct FilesystemServer {
     tool_router: ToolRouter<Self>,
+    ctx: Arc<AppContext>,
+}
+
+#[derive(Clone)]
+pub struct AppContext {
+    pub sandbox: Arc<Sandbox>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -80,10 +88,8 @@ pub struct MoveFileParameters {
 pub struct EditFileParameters {
     #[schemars(description = "Source file path")]
     path: String,
-
     #[schemars(description = "Edits with old and new edits")]
     edits: Vec<Edit>,
-
     #[schemars(description = "Dry-run edit returns diff")]
     dry_run: bool,
 }
@@ -91,20 +97,24 @@ pub struct EditFileParameters {
 // SERVER ROUTER
 #[tool_router]
 impl FilesystemServer {
-    pub fn new() -> Self {
+    pub fn new(ctx: Arc<AppContext>) -> Self {
         Self {
             tool_router: Self::tool_router(),
+            ctx,
         }
     }
+
 
     #[tool(description = "List files and subdirectories in a directory")]
     async fn list_directory(
         &self,
         Parameters(ReadFolderParameters { path }): Parameters<ReadFolderParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let dir_entries = search::list_directory(&path).await.map_err(|e| {
-            McpError::internal_error(format!("Error listing directory '{}': {}", path, e), None)
-        })?;
+        let dir_entries = search::list_directory(&self.ctx.sandbox, &path)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Error listing directory '{}': {}", path, e), None)
+            })?;
 
         let content = Content::json(&dir_entries).map_err(|e| {
             McpError::internal_error(
@@ -125,14 +135,14 @@ impl FilesystemServer {
             exclude_pattern,
         }): Parameters<SearchFolderParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let files_found = search::search_files(&path, &pattern, exclude_pattern)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("Error searching files in '{}': {}", path, e),
-                    None,
-                )
-            })?;
+        let files_found = search::search_files(&self.ctx.sandbox, &path, &pattern, exclude_pattern)
+                .await
+                .map_err(|e| {
+                    McpError::internal_error(
+                        format!("Error searching files in '{}': {}", path, e),
+                        None,
+                    )
+                })?;
 
         let content = Content::json(&files_found).map_err(|e| {
             McpError::internal_error(
@@ -149,9 +159,11 @@ impl FilesystemServer {
         &self,
         Parameters(ReadFileParameters { path }): Parameters<ReadFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let file_content = read::read_file(&path).await.map_err(|e| {
-            McpError::internal_error(format!("Error reading file '{}': {}", path, e), None)
-        })?;
+        let file_content = read::read_file(&self.ctx.sandbox, &path)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Error reading file '{}': {}", path, e), None)
+            })?;
 
         let content = Content::json(&file_content).map_err(|e| {
             McpError::internal_error(
@@ -163,14 +175,16 @@ impl FilesystemServer {
         Ok(CallToolResult::success(vec![content]))
     }
 
-    #[tool(description = "Create or ovewrite a file")]
+    #[tool(description = "Create or overwrite a file")]
     async fn write_file(
         &self,
         Parameters(CreateFileParameters { path, content }): Parameters<CreateFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = write::write_file(&path, content).await.map_err(|e| {
-            McpError::internal_error(format!("Error writing file'{}': {}", path, e), None)
-        })?;
+        let result = write::write_file(&self.ctx.sandbox, &path, content)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Error writing file '{}': {}", path, e), None)
+            })?;
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -191,9 +205,11 @@ impl FilesystemServer {
             dry_run,
         }): Parameters<EditFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = edit::edit_file(&path, edits, dry_run).await.map_err(|e| {
-            McpError::internal_error(format!("Error editing file'{}': {}", path, e), None)
-        })?;
+        let result = edit::edit_file(&self.ctx.sandbox, &path, edits, dry_run)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Error editing file '{}': {}", path, e), None)
+            })?;
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -213,15 +229,14 @@ impl FilesystemServer {
             destination,
         }): Parameters<MoveFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = edit::move_file(&source, &destination).await.map_err(|e| {
-            McpError::internal_error(
-                format!(
-                    "Error moving file from '{}' to {}: {}",
-                    source, destination, e
-                ),
-                None,
-            )
-        })?;
+        let result = edit::move_file(&self.ctx.sandbox, &source, &destination)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("Error moving file from '{}' to '{}': {}", source, destination, e),
+                    None,
+                )
+            })?;
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -238,9 +253,11 @@ impl FilesystemServer {
         &self,
         Parameters(CreateDirectoryParameter { path }): Parameters<CreateDirectoryParameter>,
     ) -> Result<CallToolResult, McpError> {
-        let result = write::create_directory(&path).await.map_err(|e| {
-            McpError::internal_error(format!("Error creating directory '{}': {}", path, e), None)
-        })?;
+        let result = write::create_directory(&self.ctx.sandbox, &path)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Error creating directory '{}': {}", path, e), None)
+            })?;
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -257,9 +274,12 @@ impl FilesystemServer {
         &self,
         Parameters(ReadMultipleFileParameters { paths }): Parameters<ReadMultipleFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let files_content = read::read_multiple_files(paths).await.map_err(|e| {
-            McpError::internal_error(format!("Error reading multiple files: {}", e), None)
-        })?;
+
+        let files_content = read::read_multiple_files(&self.ctx.sandbox, paths)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("Error reading multiple files: {}", e), None)
+            })?;
 
         let content = Content::json(&files_content).map_err(|e| {
             McpError::internal_error(
@@ -278,12 +298,14 @@ impl FilesystemServer {
         &self,
         Parameters(GetFileInfoParameters { path }): Parameters<GetFileInfoParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let file_info = info::get_file_info(&path).await.map_err(|e| {
-            McpError::internal_error(
-                format!("Error retrieving file info for '{}': {}", path, e),
-                None,
-            )
-        })?;
+        let file_info = info::get_file_info(&self.ctx.sandbox, &path)
+            .await
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("Error retrieving file info for '{}': {}", path, e),
+                    None,
+                )
+            })?;
 
         let content = Content::json(&file_info).map_err(|e| {
             McpError::internal_error(
@@ -296,11 +318,11 @@ impl FilesystemServer {
     }
 
     #[tool(description = "Reveal sandbox roots")]
-    async fn list_allowed_directories() -> Result<CallToolResult, McpError> {
-        let sandbox = SANDBOX.get().expect("Sandbox must be initialized");
-        let content = Content::json(sandbox.get_roots()).map_err(|e| {
+    async fn list_allowed_directories(&self) -> Result<CallToolResult, McpError> {
+        let roots = self.ctx.sandbox.get_roots();
+        let content = Content::json(&roots).map_err(|e| {
             McpError::internal_error(
-                format!("Error converting file metadata to JSON: {}", e),
+                format!("Error converting roots to JSON: {}", e),
                 None,
             )
         })?;
@@ -309,34 +331,32 @@ impl FilesystemServer {
     }
 }
 
-#[tool_handler] // Macro that will generate a tool handler
+#[tool_handler]
 impl ServerHandler for FilesystemServer {
-    fn get_info(&self) -> rmcp::model::ServerInfo {
+    fn get_info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_06_18,
             capabilities: ServerCapabilities::builder()
-                .enable_tools() // Only enable tools
+                .enable_tools()
                 .build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                "I manage a list of TODOs. That are stored behind an API server.
-
-        The available actions are:
-        - list_directory: List files and subdirectories in a directory
-        - search_files: Recursively search for files under a directory matching glob patterns
-        - read_file: Read a file from a given filepath
-        - move_file: Move a file from a source path to a destination path
-        - read_multiple_files: Read several files from a list of filepaths
-        - get_file_info: Return metadata for a given file path, including size, permissions, creation time, and last modified time
-        - write_file: Create or ovewrite a file
-        - edit_file: Edit file with dry run
-        - create_directory: Create new directory
-        - list_allowed_directories: Returns array of allowed roots
-        "
-                .to_string(),
+                "I manage a filesystem sandbox. Available actions:
+- list_directory
+- search_files
+- read_file
+- move_file
+- read_multiple_files
+- get_file_info
+- write_file
+- edit_file
+- create_directory
+- list_allowed_directories"
+                    .to_string(),
             ),
         }
     }
+
     async fn initialize(
         &self,
         _request: rmcp::model::InitializeRequestParam,

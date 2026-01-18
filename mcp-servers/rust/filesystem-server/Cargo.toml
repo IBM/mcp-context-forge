@@ -25,7 +25,6 @@ uuid = "1.19.0"
 
 [dev-dependencies]
 tokio-test = "0.4.5"
-tempfile = "3"
 
 
 [profile.release]

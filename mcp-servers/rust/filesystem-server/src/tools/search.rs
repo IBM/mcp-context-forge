@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
-use std::path::Path;
 use tokio::fs;
 
-use crate::SANDBOX;
+use crate::sandbox::Sandbox;
 
+/// Recursively search files under a directory with include/exclude glob patterns
 pub async fn search_files(
+    sandbox: &Sandbox,
     path: &str,
     pattern: &str,
     exclude_patterns: Vec<String>,
@@ -18,48 +19,84 @@ pub async fn search_files(
         "starting directory search"
     );
 
-    let mut files = Vec::new();
-    let path = Path::new(path);
-    let patterns = build_patterns(pattern, exclude_patterns)
-        .with_context(|| format!("Failed to build search patterns"))?;
+    // Resolve path within sandbox
+    let canon_path = sandbox.resolve_path(path).await?;
 
-    // Build a walk builder
-    let walker = WalkBuilder::new(path).follow_links(false).standard_filters(false).hidden(true).build();
+    let mut files = Vec::new();
+    let patterns = build_patterns(pattern, exclude_patterns)
+        .with_context(|| "Failed to build search patterns")?;
+
+    let walker = WalkBuilder::new(&canon_path)
+        .follow_links(false)
+        .standard_filters(false)
+        .hidden(true)
+        .build();
 
     for entry in walker {
         match entry {
             Ok(entry) => {
-                let file_type = entry.file_type();
-                if file_type.map(|ft| ft.is_file()).unwrap_or(false) {
-                    let file_name = &entry.file_name().to_string_lossy().to_string().to_lowercase();
-                    // Match *.rs and exclude files with "test" in name
-                    if patterns.include.is_match(file_name) && !patterns.exclude.is_match(file_name)
+                if entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
+                    let file_name = entry.file_name().to_string_lossy().to_lowercase();
+                    if patterns.include.is_match(&file_name) && !patterns.exclude.is_match(&file_name)
                     {
-                        files.push(String::from(entry.path().to_str().unwrap_or_default()));
+                        files.push(entry.path().to_string_lossy().to_string());
                     }
                 }
             }
-            Err(why) => {
-                tracing::warn!("{}", why);
+            Err(err) => {
+                tracing::warn!("{}", err);
                 continue;
             }
         }
     }
+
     files.sort();
     Ok(files)
 }
 
+/// List immediate directory contents alphabetically
+pub async fn list_directory(sandbox: &Sandbox, path: &str) -> Result<Vec<String>> {
+    tracing::info!("Running list directory for {}", path);
+
+    let canon_path = sandbox.resolve_path(path).await?;
+
+    let mut entries = fs::read_dir(&canon_path)
+        .await
+        .context(format!("Failed to read directory: {}", canon_path.display()))?;
+
+    let mut results = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        let mut name = entry.file_name().to_string_lossy().to_string();
+
+        let file_type = entry.file_type().await?;
+        if file_type.is_symlink() {
+            tracing::warn!("Skipping symlink {:?}", entry.path());
+            continue;
+        }
+        if file_type.is_dir() {
+            name.push('/');
+        }
+        results.push(name);
+    }
+
+    results.sort();
+    Ok(results)
+}
+
+/// Helper struct to store compiled glob patterns
 struct Patterns {
     include: GlobSet,
     exclude: GlobSet,
 }
 
+/// Compile include/exclude glob patterns
 fn build_patterns(pattern: &str, exclude_patterns: Vec<String>) -> Result<Patterns> {
     let mut include_builder = GlobSetBuilder::new();
     let mut exclude_builder = GlobSetBuilder::new();
 
     include_builder.add(
-        Glob::new(&pattern.to_lowercase()).with_context(|| format!("invalid include glob pattern: '{pattern}'"))?,
+        Glob::new(&pattern.to_lowercase())
+            .with_context(|| format!("invalid include glob pattern: '{pattern}'"))?,
     );
 
     for exclude in exclude_patterns {
@@ -70,47 +107,7 @@ fn build_patterns(pattern: &str, exclude_patterns: Vec<String>) -> Result<Patter
     }
 
     Ok(Patterns {
-        include: include_builder
-            .build()
-            .context("failed to build include glob set")?,
-        exclude: exclude_builder
-            .build()
-            .context("failed to build exclude glob set")?,
+        include: include_builder.build().context("failed to build include glob set")?,
+        exclude: exclude_builder.build().context("failed to build exclude glob set")?,
     })
-}
-
-pub async fn list_directory(path: &str) -> Result<Vec<String>> {
-    // List content of a folder and return the files and folders inside alfabetically
-    tracing::info!("Running list directory for {}", path);
-
-    let sandbox = SANDBOX
-        .get()
-        .expect("Sandbox must be initialized before use");
-
-    // Resolve the path to its canonical form inside the sandbox
-    let canon_path = sandbox.resolve_path(path).await?;
-
-    let mut entries = fs::read_dir(&canon_path).await.context(format!(
-        "Failed to read directory: {}",
-        canon_path.display()
-    ))?;
-
-    let mut results = Vec::new();
-
-    while let Some(entry) = entries.next_entry().await? {
-        let mut name = entry.file_name().to_string_lossy().to_string();
-
-        let file_type = entry.file_type().await?;
-        if file_type.is_symlink() {
-            tracing::warn!("Scaping symlink {:?}", &entry.path());
-            continue;
-        }
-        if file_type.is_dir() {
-            name.push('/');
-        }
-        results.push(name);
-    }
-    results.sort();
-
-    Ok(results)
 }
