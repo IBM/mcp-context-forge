@@ -55,11 +55,11 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
-from starlette_compress import CompressMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
@@ -1364,13 +1364,14 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
 class MCPPathRewriteMiddleware:
     """
-    Middleware that rewrites paths ending with '/mcp' to '/mcp', after performing authentication.
+    Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
 
-    - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp'.
-    - Only paths ending with '/mcp' (but not exactly '/mcp') are rewritten.
+    - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
+    - Only paths ending with '/mcp' or '/mcp/' (but not exactly '/mcp' or '/mcp/') are rewritten.
     - Authentication is performed before any path rewriting.
     - If authentication fails, the request is not processed further.
     - All other requests are passed through without change.
+    - Routes through the middleware stack (including CORSMiddleware) for proper CORS preflight handling.
 
     Attributes:
         application (Callable): The next ASGI application to process the request.
@@ -1410,15 +1411,15 @@ class MCPPathRewriteMiddleware:
             >>> app_mock = AsyncMock()
             >>> middleware = MCPPathRewriteMiddleware(app_mock)
 
-            >>> # Test path rewriting for /servers/123/mcp with headers in scope
+            >>> # Test path rewriting for /servers/123/mcp
             >>> scope = { "type": "http", "path": "/servers/123/mcp", "headers": [(b"host", b"example.com")] }
             >>> receive = AsyncMock()
             >>> send = AsyncMock()
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
-            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
-            ...         asyncio.run(middleware(scope, receive, send))
-            ...         scope["path"]
-            '/mcp'
+            ...     asyncio.run(middleware(scope, receive, send))
+            >>> scope["path"]
+            '/mcp/'
+            >>> app_mock.assert_called()
 
             >>> # Test regular path (no rewrite)
             >>> scope = { "type": "http","path": "/tools","headers": [(b"host", b"example.com")] }
@@ -1464,8 +1465,8 @@ class MCPPathRewriteMiddleware:
         """
         Handles the streamable HTTP request after authentication and path rewriting.
 
-        - If authentication is successful and the path is rewritten, this method processes the request
-          using the `streamable_http_session` handler.
+        If auth succeeds and path ends with /mcp, rewrites to /mcp/ and calls self.application
+        (continuing through middleware stack including CORSMiddleware).
 
         Args:
             scope (dict): The ASGI connection scope containing request metadata.
@@ -1481,10 +1482,8 @@ class MCPPathRewriteMiddleware:
             >>> receive = AsyncMock()
             >>> send = AsyncMock()
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
-            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
-            ...         asyncio.run(middleware._call_streamable_http(scope, receive, send))
-            >>> mock_handler.assert_called_once_with(scope, receive, send)
-            >>> # The streamable HTTP session handler was called after path rewriting.
+            ...     asyncio.run(middleware._call_streamable_http(scope, receive, send))
+            >>> app_mock.assert_called_once_with(scope, receive, send)
         """
         # Auth check first
         auth_ok = await streamable_http_auth(scope, receive, send)
@@ -1494,9 +1493,9 @@ class MCPPathRewriteMiddleware:
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
         if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
-            # Rewrite path so mounted app at /mcp handles it
-            scope["path"] = "/mcp"
-            await streamable_http_session.handle_streamable_http(scope, receive, send)
+            # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
+            scope["path"] = "/mcp/"
+            await self.application(scope, receive, send)
             return
         await self.application(scope, receive, send)
 
@@ -1523,16 +1522,18 @@ app.add_middleware(
 # Automatically negotiates compression algorithm based on client Accept-Encoding header
 # Priority: Brotli (best compression) > Zstd (fast) > GZip (universal fallback)
 # Only compress responses larger than minimum_size to avoid overhead
+# NOTE: When json_response_enabled=False (SSE mode), /mcp paths are excluded from
+# compression to prevent buffering/breaking of streaming responses. See middleware/compression.py.
 if settings.compression_enabled:
     app.add_middleware(
-        CompressMiddleware,
-        minimum_size=settings.compression_minimum_size,  # Only compress responses > N bytes
-        gzip_level=settings.compression_gzip_level,  # GZip: 1=fastest, 9=best (default: 6)
-        brotli_quality=settings.compression_brotli_quality,  # Brotli: 0-3=fast, 4-9=balanced, 10-11=max (default: 4)
-        zstd_level=settings.compression_zstd_level,  # Zstd: 1-3=fast, 4-9=balanced, 10+=slow (default: 3)
+        SSEAwareCompressMiddleware,
+        minimum_size=settings.compression_minimum_size,
+        gzip_level=settings.compression_gzip_level,
+        brotli_quality=settings.compression_brotli_quality,
+        zstd_level=settings.compression_zstd_level,
     )
     logger.info(
-        f"🗜️  Response compression enabled: minimum_size={settings.compression_minimum_size}B, "
+        f"🗜️  Response compression enabled (SSE-aware): minimum_size={settings.compression_minimum_size}B, "
         f"gzip_level={settings.compression_gzip_level}, "
         f"brotli_quality={settings.compression_brotli_quality}, "
         f"zstd_level={settings.compression_zstd_level}"
