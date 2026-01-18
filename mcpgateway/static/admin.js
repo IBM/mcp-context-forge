@@ -20620,6 +20620,10 @@ function resetTeamCreateForm() {
     if (form) {
         form.reset();
     }
+    const errorEl = document.getElementById("create-team-error");
+    if (errorEl) {
+        errorEl.innerHTML = "";
+    }
 }
 
 // Normalize team ID from element IDs like "add-members-form-<id>"
