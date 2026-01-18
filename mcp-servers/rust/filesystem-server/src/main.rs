@@ -3,7 +3,7 @@ use rmcp::transport;
 use tracing_subscriber::EnvFilter;
 mod server;
 mod tools;
-use crate::server::{FilesystemServer, AppContext};
+use crate::server::{AppContext, FilesystemServer};
 use clap::Parser;
 mod sandbox;
 use sandbox::Sandbox;

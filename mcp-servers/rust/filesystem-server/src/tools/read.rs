@@ -1,8 +1,7 @@
+use crate::sandbox::Sandbox;
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use tokio::{fs, io::AsyncReadExt};
-use crate::sandbox::Sandbox;
-
 
 static MAX_FILE_SIZE: u64 = 1 * 1024 * 1024; // 1 MiB
 
@@ -59,7 +58,7 @@ pub async fn read_multiple_files(sandbox: &Sandbox, paths: Vec<String>) -> Resul
             Ok(value) => results.push(value.clone()),
             Err(err) => {
                 tracing::warn!("Error reading {}: {}", path, err);
-            },
+            }
         }
     }
 

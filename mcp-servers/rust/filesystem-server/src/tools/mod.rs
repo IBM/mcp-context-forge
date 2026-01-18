@@ -1,5 +1,5 @@
-pub mod search;
-pub mod read;
-pub mod info;
-pub mod write;
 pub mod edit;
+pub mod info;
+pub mod read;
+pub mod search;
+pub mod write;

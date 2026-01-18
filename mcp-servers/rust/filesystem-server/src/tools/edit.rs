@@ -1,3 +1,4 @@
+use crate::Sandbox;
 use anyhow::{Context, Result};
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
@@ -5,10 +6,8 @@ use similar::{ChangeTag, TextDiff};
 use std::{io::Write, path::Path};
 use tempfile::NamedTempFile;
 use tokio::fs;
-use crate::Sandbox;
 
 pub async fn move_file(sandbox: &Sandbox, source: &str, destination: &str) -> anyhow::Result<()> {
-
     let source_canon_path = sandbox.resolve_path(source).await?;
 
     let dest_path = Path::new(destination);
@@ -78,8 +77,12 @@ pub struct EditResult {
     pub applied: bool,
 }
 
-pub async fn edit_file(sandbox: &Sandbox, path: &str, edits: Vec<Edit>, dry_run: bool) -> Result<EditResult> {
-
+pub async fn edit_file(
+    sandbox: &Sandbox,
+    path: &str,
+    edits: Vec<Edit>,
+    dry_run: bool,
+) -> Result<EditResult> {
     let canon_path = sandbox.resolve_path(path).await?;
 
     let original: String = fs::read_to_string(&canon_path)

@@ -1,3 +1,4 @@
+use crate::sandbox::Sandbox;
 use crate::tools::edit::Edit;
 use crate::tools::{edit, info, read, search, write};
 use rmcp::ErrorData as McpError;
@@ -12,8 +13,6 @@ use rmcp::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use crate::sandbox::Sandbox;
-
 
 #[derive(Clone)]
 pub struct FilesystemServer {
@@ -104,7 +103,6 @@ impl FilesystemServer {
         }
     }
 
-
     #[tool(description = "List files and subdirectories in a directory")]
     async fn list_directory(
         &self,
@@ -136,13 +134,13 @@ impl FilesystemServer {
         }): Parameters<SearchFolderParameters>,
     ) -> Result<CallToolResult, McpError> {
         let files_found = search::search_files(&self.ctx.sandbox, &path, &pattern, exclude_pattern)
-                .await
-                .map_err(|e| {
-                    McpError::internal_error(
-                        format!("Error searching files in '{}': {}", path, e),
-                        None,
-                    )
-                })?;
+            .await
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("Error searching files in '{}': {}", path, e),
+                    None,
+                )
+            })?;
 
         let content = Content::json(&files_found).map_err(|e| {
             McpError::internal_error(
@@ -233,7 +231,10 @@ impl FilesystemServer {
             .await
             .map_err(|e| {
                 McpError::internal_error(
-                    format!("Error moving file from '{}' to '{}': {}", source, destination, e),
+                    format!(
+                        "Error moving file from '{}' to '{}': {}",
+                        source, destination, e
+                    ),
                     None,
                 )
             })?;
@@ -256,7 +257,10 @@ impl FilesystemServer {
         let result = write::create_directory(&self.ctx.sandbox, &path)
             .await
             .map_err(|e| {
-                McpError::internal_error(format!("Error creating directory '{}': {}", path, e), None)
+                McpError::internal_error(
+                    format!("Error creating directory '{}': {}", path, e),
+                    None,
+                )
             })?;
 
         let content = Content::json(&result).map_err(|e| {
@@ -274,7 +278,6 @@ impl FilesystemServer {
         &self,
         Parameters(ReadMultipleFileParameters { paths }): Parameters<ReadMultipleFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-
         let files_content = read::read_multiple_files(&self.ctx.sandbox, paths)
             .await
             .map_err(|e| {
@@ -321,10 +324,7 @@ impl FilesystemServer {
     async fn list_allowed_directories(&self) -> Result<CallToolResult, McpError> {
         let roots = self.ctx.sandbox.get_roots();
         let content = Content::json(&roots).map_err(|e| {
-            McpError::internal_error(
-                format!("Error converting roots to JSON: {}", e),
-                None,
-            )
+            McpError::internal_error(format!("Error converting roots to JSON: {}", e), None)
         })?;
 
         Ok(CallToolResult::success(vec![content]))
@@ -336,9 +336,7 @@ impl ServerHandler for FilesystemServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             protocol_version: ProtocolVersion::V_2025_06_18,
-            capabilities: ServerCapabilities::builder()
-                .enable_tools()
-                .build(),
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
                 "I manage a filesystem sandbox. Available actions:

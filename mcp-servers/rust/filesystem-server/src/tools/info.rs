@@ -1,9 +1,8 @@
+use crate::sandbox::Sandbox;
 use anyhow::{Context, Result};
+use chrono::{DateTime, Local};
 use std::os::unix::fs::PermissionsExt;
 use tokio::fs;
-use chrono::{DateTime, Local};
-use crate::sandbox::Sandbox;
-
 
 #[derive(Debug, serde::Serialize)]
 struct MetadataResults {
@@ -14,9 +13,10 @@ struct MetadataResults {
 }
 
 fn format_system_time(time: std::time::SystemTime) -> String {
-    DateTime::<Local>::from(time).format("%b %d %H:%M").to_string()
+    DateTime::<Local>::from(time)
+        .format("%b %d %H:%M")
+        .to_string()
 }
-
 
 pub async fn get_file_info(sandbox: &Sandbox, path: &str) -> Result<String> {
     tracing::info!(path = %path, "getting file metadata");
@@ -40,6 +40,5 @@ pub async fn get_file_info(sandbox: &Sandbox, path: &str) -> Result<String> {
         modified,
     };
 
-    Ok(serde_json::to_string(&result)
-        .context("failed to serialize file metadata to JSON")?)
+    Ok(serde_json::to_string(&result).context("failed to serialize file metadata to JSON")?)
 }
