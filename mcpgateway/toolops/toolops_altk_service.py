@@ -20,7 +20,6 @@ Structure:
 """
 
 # Standard
-import os
 from typing import Any
 
 # Third-Party
@@ -50,7 +49,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.schemas import ToolRead, ToolUpdate
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_client_chat_service import LLMConfig, MCPChatService, MCPClientConfig, MCPServerConfig
+from mcpgateway.services.mcp_client_chat_service import MCPChatService, MCPClientConfig, MCPServerConfig
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.toolops.utils.db_util import populate_testcases_table, query_testcases_table, query_tool_auth
 from mcpgateway.toolops.utils.format_conversion import convert_to_toolops_spec, post_process_nl_test_cases
@@ -58,20 +57,6 @@ from mcpgateway.toolops.utils.llm_util import get_llm_instance
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
-
-
-toolops_llm_provider = os.getenv("LLM_PROVIDER")
-toolops_llm, toolops_llm_provider_config = get_llm_instance()
-if toolops_llm is not None and toolops_llm_provider_config is not None:
-    TOOLOPS_LLM_CONFIG = LLMConfig(provider=toolops_llm_provider, config=toolops_llm_provider_config)
-else:
-    logger.error("Error in obtaining LLM instance for Toolops services")
-    TOOLOPS_LLM_CONFIG = None
-
-LLM_MODEL_ID = os.getenv("OPENAI_MODEL", "")
-provider = os.getenv("OPENAI_BASE_URL", "")
-LLM_PLATFORM = "OpenAIProvider - " + provider
-
 
 # ---------------
 # IMPORTANT NOTE:
@@ -81,6 +66,7 @@ LLM_PLATFORM = "OpenAIProvider - " + provider
 # i.e; `execute_prompt` method used in different ALTK toolops modules is overrided with custom execute prompt
 # that uses MCP context forge LLM inferencing modules.
 
+TOOLOPS_MODEL_ID = None
 
 #  custom execute prompt to support MCP-CF LLM providers
 def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=None, max_new_tokens=600, stop_sequences=None):
@@ -103,7 +89,7 @@ def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=
         # To suppress pylint errors creating dummy altk params and asserting
         altk_dummy_params = {"client": client, "gen_mode": gen_mode, "parameters": parameters, "max_new_tokens": max_new_tokens, "stop_sequences": stop_sequences}
         logger.debug(altk_dummy_params)
-        chat_llm_instance, _ = get_llm_instance(model_type="chat")
+        chat_llm_instance, _ = get_llm_instance(model_id=TOOLOPS_MODEL_ID)
         llm_response = chat_llm_instance.invoke(prompt)
         response = llm_response.content
         return response
@@ -127,11 +113,12 @@ if prompt_utils:
 
 
 # Test case generation service method
-async def validation_generate_test_cases(tool_id, tool_service: ToolService, db: Session, number_of_test_cases=2, number_of_nl_variations=1, mode="generate"):
+async def validation_generate_test_cases(model_id, tool_id, tool_service: ToolService, db: Session, number_of_test_cases=2, number_of_nl_variations=1, mode="generate"):
     """
     Method for the service to generate tool test cases using toolops modules
 
     Args:
+        model_id : LLM model used for toolops functionality
         tool_id: Unique tool id in MCP-CF
         tool_service (ToolService): Tool service to obtain the tool from database
         db (Session): DB session to connect with database
@@ -146,6 +133,8 @@ async def validation_generate_test_cases(tool_id, tool_service: ToolService, db:
         test_cases: list of tool test cases
     """
     test_cases = []
+    global TOOLOPS_MODEL_ID
+    TOOLOPS_MODEL_ID = model_id
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
         # check if test case generation is required
@@ -188,11 +177,12 @@ async def validation_generate_test_cases(tool_id, tool_service: ToolService, db:
     return test_cases
 
 
-async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: ToolService, db: Session):
+async def execute_tool_nl_test_cases(model_id, tool_id, tool_nl_test_cases, tool_service: ToolService, db: Session):
     """
     Method for the service to execute tool nl test cases with MCP server using agent.
 
     Args:
+        model_id : LLM model used for toolops functionality
         tool_id: Unique tool id in MCP-CF
         tool_nl_test_cases: List of tool invoking utternaces for testing the tool with Agent
         tool_service: Tool service to obtain the tool from database
@@ -205,6 +195,7 @@ async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: 
     mcp_cf_tool = tool_schema.to_dict(use_alias=True)
     tool_url = mcp_cf_tool.get("url")
     tool_auth = query_tool_auth(tool_id, db)
+    _,TOOLOPS_LLM_CONFIG = get_llm_instance(model_id=model_id)
     # handling transport based on protocol type
     if "/mcp" in tool_url:
         config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="streamable_http", headers=tool_auth), llm=TOOLOPS_LLM_CONFIG)
@@ -230,11 +221,12 @@ async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: 
     return tool_test_case_outputs
 
 
-async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> tuple[str, ToolRead]:
+async def enrich_tool(model_id:str, tool_id: str, tool_service: ToolService, db: Session) -> tuple[str, ToolRead]:
     """
     Method for the service to enrich tool meta data such as tool description
 
     Args:
+        model_id : LLM model used for toolops functionality
         tool_id: Unique tool id in MCP-CF
         tool_service: Tool service to obtain the tool from database
         db: DB session to connect with database
@@ -243,6 +235,8 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> t
         enriched_description: Enriched tool description
         tool_schema: Updated tool schema in MCP-CF ToolRead format
     """
+    global TOOLOPS_MODEL_ID
+    TOOLOPS_MODEL_ID = model_id
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
         mcp_cf_tool = tool_schema.to_dict(use_alias=True)
@@ -268,27 +262,28 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> t
     return enriched_description, tool_schema
 
 
-# if __name__ == "__main__":
-#     # Standard
-#     import asyncio
+if __name__ == "__main__":
+    # Standard
+    import asyncio
 
-#     # First-Party
-#     from mcpgateway.db import SessionLocal
-#     from mcpgateway.services.tool_service import ToolService
+    # First-Party
+    from mcpgateway.db import SessionLocal
+    from mcpgateway.services.tool_service import ToolService
 
-#     tool_id = "69df98bcab6b4895a0345a20aeb038b2"
-#     tool_service = ToolService()
-#     db = SessionLocal()
-#     # tool_test_cases = asyncio.run(validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases=2, number_of_nl_variations=2, mode="generate"))
-#     # print("#" * 30)
-#     # print("tool_test_cases")
-#     # print(tool_test_cases)
-#     # enrich_output = asyncio.run(enrich_tool(tool_id, tool_service, db))
-#     # print("#" * 30)
-#     # print("enrich_output")
-#     # print(enrich_output)
-#     tool_nl_test_cases = ["add 3 and 10","please add 4 and 6"]
-#     tool_outputs = asyncio.run(execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db))
-#     print("#" * 30)
-#     print("len - tool_outputs", len(tool_outputs))
-#     print(tool_outputs)
+    tool_id = "906ba4f23dd344e784e723c58f678d21"
+    model_id = "global/meta-llama/llama-3-3-70b-instruct"
+    tool_service = ToolService()
+    db = SessionLocal()
+    tool_test_cases = asyncio.run(validation_generate_test_cases(model_id, tool_id, tool_service, db, number_of_test_cases=2, number_of_nl_variations=2, mode="generate"))
+    print("#" * 30)
+    print("tool_test_cases")
+    print(tool_test_cases)
+    enrich_output = asyncio.run(enrich_tool(model_id, tool_id, tool_service, db))
+    print("#" * 30)
+    print("enrich_output")
+    print(enrich_output)
+    tool_nl_test_cases = ["add 3 and 10","please add 4 and 6"]
+    tool_outputs = asyncio.run(execute_tool_nl_test_cases(model_id, tool_id, tool_nl_test_cases, tool_service, db))
+    print("#" * 30)
+    print("len - tool_outputs", len(tool_outputs))
+    print(tool_outputs)
