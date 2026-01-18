@@ -1038,9 +1038,6 @@ class SecurityValidator:
         # Check for dangerous HTML tags
         if re.search(cls.DANGEROUS_HTML_PATTERN, value, re.IGNORECASE):
             raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
-        # Check for dangerous JavaScript patterns (javascript:, on*=, etc.)
-        if re.search(cls.DANGEROUS_JS_PATTERN, value, re.IGNORECASE):
-            raise ValueError(f"{field_name} contains script patterns that may cause security issues")
 
     @classmethod
     def validate_json_depth(

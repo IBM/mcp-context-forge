@@ -5321,6 +5321,8 @@ class TeamCreateRequest(BaseModel):
         if not re.match(settings.validation_name_pattern, v):
             raise ValueError("Team name can only contain letters, numbers, spaces, underscores, periods, and dashes")
         SecurityValidator.validate_no_xss(v, "Team name")
+        if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, v, re.IGNORECASE):
+            raise ValueError("Team name contains script patterns that may cause security issues")
         return v
 
     @field_validator("description")
@@ -5341,6 +5343,8 @@ class TeamCreateRequest(BaseModel):
             v = v.strip()
             if v:
                 SecurityValidator.validate_no_xss(v, "Team description")
+                if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, v, re.IGNORECASE):
+                    raise ValueError("Team description contains script patterns that may cause security issues")
         return v if v else None
 
     @field_validator("slug")
@@ -5413,6 +5417,8 @@ class TeamUpdateRequest(BaseModel):
             if not re.match(settings.validation_name_pattern, v):
                 raise ValueError("Team name can only contain letters, numbers, spaces, underscores, periods, and dashes")
             SecurityValidator.validate_no_xss(v, "Team name")
+            if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, v, re.IGNORECASE):
+                raise ValueError("Team name contains script patterns that may cause security issues")
             return v
         return v
 
@@ -5434,6 +5440,8 @@ class TeamUpdateRequest(BaseModel):
             v = v.strip()
             if v:
                 SecurityValidator.validate_no_xss(v, "Team description")
+                if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, v, re.IGNORECASE):
+                    raise ValueError("Team description contains script patterns that may cause security issues")
         return v if v else None
 
 

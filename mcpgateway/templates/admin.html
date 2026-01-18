@@ -37,9 +37,20 @@
     {% endif %}
     <script>
       // Configure HTMX to swap content on 4xx responses (for inline error display)
-      document.body.addEventListener('htmx:beforeSwap', function(evt) {
-        // Allow swapping for 400 responses so validation errors display inline
-        if (evt.detail.xhr.status === 400) {
+      document.addEventListener("htmx:beforeSwap", function (evt) {
+        const xhr = evt.detail.xhr;
+        if (!xhr || xhr.status < 400 || xhr.status >= 500) {
+          return;
+        }
+        const triggerEl = evt.detail.elt;
+        const requestEl = evt.detail.requestConfig?.elt;
+        const isTeamForm =
+          (triggerEl &&
+            triggerEl.closest('[data-team-validation="true"]')) ||
+          (requestEl &&
+            requestEl.closest('[data-team-validation="true"]'));
+        const hasRetarget = !!xhr.getResponseHeader("HX-Retarget");
+        if (isTeamForm || hasRetarget) {
           evt.detail.shouldSwap = true;
           evt.detail.isError = false;
         }
@@ -13596,6 +13607,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               hx-post="{{ root_path }}/admin/teams"
               hx-target="#unified-teams-list"
               hx-swap="afterbegin"
+              data-team-validation="true"
             >
               <div id="create-team-error" class="mb-4"></div>
               <div class="space-y-4">

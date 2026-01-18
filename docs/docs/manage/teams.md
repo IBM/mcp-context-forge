@@ -95,7 +95,7 @@ Find affected teams:
 ```sql
 -- SQLite
 SELECT id, name FROM email_teams
-WHERE name GLOB '*[^a-zA-Z0-9_.@ -]*';
+WHERE name GLOB '*[^a-zA-Z0-9_. -]*';
 
 -- PostgreSQL
 SELECT id, name FROM email_teams

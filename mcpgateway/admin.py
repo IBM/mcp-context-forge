@@ -4568,7 +4568,11 @@ async def admin_create_team(
         HTTPException: If email auth is disabled or validation fails
     """
     if not getattr(settings, "email_auth_enabled", False):
-        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+        error_content = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Email authentication is disabled</div>'
+        response = HTMLResponse(content=error_content, status_code=403)
+        response.headers["HX-Retarget"] = "#create-team-error"
+        response.headers["HX-Reswap"] = "innerHTML"
+        return response
 
     try:
         # Get root path for URL construction
@@ -4581,7 +4585,13 @@ async def admin_create_team(
         visibility = form.get("visibility", "private")
 
         if not name:
-            return HTMLResponse(content='<div class="text-red-500">Team name is required</div>', status_code=400)
+            response = HTMLResponse(
+                content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Team name is required</div>',
+                status_code=400,
+            )
+            response.headers["HX-Retarget"] = "#create-team-error"
+            response.headers["HX-Reswap"] = "innerHTML"
+            return response
 
         # Create team
         # First-Party
@@ -4635,7 +4645,6 @@ async def admin_create_team(
         # Extract user-friendly error message from Pydantic validation error
         error_messages = []
         for error in e.errors():
-            field = error.get("loc", ["unknown"])[-1]
             msg = error.get("msg", "Invalid value")
             # Clean up common Pydantic prefixes
             if msg.startswith("Value error, "):
@@ -4699,7 +4708,13 @@ async def admin_view_team_members(
         HTMLResponse: Rendered unified team members management view
     """
     if not settings.email_auth_enabled:
-        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+        response = HTMLResponse(
+            content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Email authentication is disabled</div>',
+            status_code=403,
+        )
+        response.headers["HX-Retarget"] = "#edit-team-error"
+        response.headers["HX-Reswap"] = "innerHTML"
+        return response
 
     try:
         # Get root_path from request
@@ -4991,7 +5006,7 @@ async def admin_get_team_edit(
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
             <div id="edit-team-error"></div>
-            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4">
+            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4" data-team-validation="true">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
                     <input type="text" name="name" value="{safe_team_name}" required
@@ -5077,7 +5092,13 @@ async def admin_update_team(
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
             if is_htmx:
-                return HTMLResponse(content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team name is required</div>', status_code=400)
+                response = HTMLResponse(
+                    content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team name is required</div>',
+                    status_code=400,
+                )
+                response.headers["HX-Retarget"] = "#edit-team-error"
+                response.headers["HX-Reswap"] = "innerHTML"
+                return response
             error_msg = urllib.parse.quote("Team name is required")
             return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
@@ -5085,18 +5106,34 @@ async def admin_update_team(
         if not re.match(settings.validation_name_pattern, name):
             is_htmx = request.headers.get("HX-Request") == "true"
             if is_htmx:
-                return HTMLResponse(content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team name can only contain letters, numbers, spaces, underscores, periods, and dashes</div>', status_code=400)
+                response = HTMLResponse(
+                    content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team name can only contain letters, numbers, spaces, underscores, periods, and dashes</div>',
+                    status_code=400,
+                )
+                response.headers["HX-Retarget"] = "#edit-team-error"
+                response.headers["HX-Reswap"] = "innerHTML"
+                return response
             error_msg = urllib.parse.quote("Team name contains invalid characters")
             return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         try:
             SecurityValidator.validate_no_xss(name, "Team name")
+            if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, name, re.IGNORECASE):
+                raise ValueError("Team name contains script patterns that may cause security issues")
             if description:
                 SecurityValidator.validate_no_xss(description, "Team description")
+                if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, description, re.IGNORECASE):
+                    raise ValueError("Team description contains script patterns that may cause security issues")
         except ValueError as ve:
             is_htmx = request.headers.get("HX-Request") == "true"
             if is_htmx:
-                return HTMLResponse(content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">{html.escape(str(ve))}</div>', status_code=400)
+                response = HTMLResponse(
+                    content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">{html.escape(str(ve))}</div>',
+                    status_code=400,
+                )
+                response.headers["HX-Retarget"] = "#edit-team-error"
+                response.headers["HX-Reswap"] = "innerHTML"
+                return response
             error_msg = urllib.parse.quote(str(ve))
             return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
