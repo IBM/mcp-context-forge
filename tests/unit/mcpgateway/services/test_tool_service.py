@@ -1775,7 +1775,7 @@ class TestToolService:
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"})
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None)
 
         # Our ToolResult bubbled back out
         assert result.content[0].text == "MCP response"
@@ -1999,7 +1999,7 @@ class TestToolService:
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"})
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None)
 
         sse_ctx.__aenter__.assert_awaited_once()
 
