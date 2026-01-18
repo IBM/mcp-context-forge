@@ -2275,7 +2275,7 @@ async def admin_toggle_server(
         >>>
         >>> async def test_admin_toggle_server_activate():
         ...     result = await admin_toggle_server(server_id, mock_request_activate, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#catalog" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/#catalog" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_toggle_server_activate())
         True
@@ -2394,7 +2394,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         >>>
         >>> async def test_admin_delete_server_success():
         ...     result = await admin_delete_server(server_id, mock_request_delete, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#catalog" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/#catalog" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_delete_server_success())
         True
@@ -2781,7 +2781,7 @@ async def admin_toggle_gateway(
         >>>
         >>> async def test_admin_toggle_gateway_activate():
         ...     result = await admin_toggle_gateway(gateway_id, mock_request_activate, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#gateways" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/#gateways" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_toggle_gateway_activate())
         True
@@ -9852,7 +9852,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         >>>
         >>> async def test_admin_delete_tool_success():
         ...     result = await admin_delete_tool(tool_id, mock_request_delete, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#tools" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/#tools" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_delete_tool_success())
         True
@@ -9962,7 +9962,7 @@ async def admin_toggle_tool(
         >>>
         >>> async def test_admin_toggle_tool_activate():
         ...     result = await admin_toggle_tool(tool_id, mock_request_activate, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#tools" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/#tools" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_toggle_tool_activate())
         True
@@ -10777,7 +10777,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>>
         >>> async def test_admin_delete_gateway_success():
         ...     result = await admin_delete_gateway(gateway_id, mock_request_delete, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#gateways" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/#gateways" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_delete_gateway_success())
         True
