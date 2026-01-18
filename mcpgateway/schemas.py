@@ -5312,11 +5312,36 @@ class TeamCreateRequest(BaseModel):
             str: Validated and stripped team name
 
         Raises:
-            ValueError: If team name is empty
+            ValueError: If team name is empty or contains invalid characters
         """
         if not v.strip():
             raise ValueError("Team name cannot be empty")
-        return v.strip()
+        v = v.strip()
+        # Strict validation: only alphanumeric, underscore, period, dash, and spaces
+        if not re.match(settings.validation_name_pattern, v):
+            raise ValueError("Team name can only contain letters, numbers, spaces, underscores, periods, and dashes")
+        SecurityValidator.validate_no_xss(v, "Team name")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Validate team description for XSS.
+
+        Args:
+            v: Team description to validate
+
+        Returns:
+            Optional[str]: Validated description or None
+
+        Raises:
+            ValueError: If description contains dangerous patterns
+        """
+        if v is not None:
+            v = v.strip()
+            if v:
+                SecurityValidator.validate_no_xss(v, "Team description")
+        return v if v else None
 
     @field_validator("slug")
     @classmethod
@@ -5378,13 +5403,38 @@ class TeamUpdateRequest(BaseModel):
             Optional[str]: Validated and stripped team name or None
 
         Raises:
-            ValueError: If team name is empty
+            ValueError: If team name is empty or contains invalid characters
         """
         if v is not None:
             if not v.strip():
                 raise ValueError("Team name cannot be empty")
-            return v.strip()
+            v = v.strip()
+            # Strict validation: only alphanumeric, underscore, period, dash, and spaces
+            if not re.match(settings.validation_name_pattern, v):
+                raise ValueError("Team name can only contain letters, numbers, spaces, underscores, periods, and dashes")
+            SecurityValidator.validate_no_xss(v, "Team name")
+            return v
         return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Validate team description for XSS.
+
+        Args:
+            v: Team description to validate
+
+        Returns:
+            Optional[str]: Validated description or None
+
+        Raises:
+            ValueError: If description contains dangerous patterns
+        """
+        if v is not None:
+            v = v.strip()
+            if v:
+                SecurityValidator.validate_no_xss(v, "Team description")
+        return v if v else None
 
 
 class TeamResponse(BaseModel):

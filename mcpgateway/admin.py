@@ -62,6 +62,7 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam, extract_json_field
@@ -4597,15 +4598,17 @@ async def admin_create_team(
 
         # Return HTML for the new team
         member_count = 1  # Creator is automatically a member
+        safe_team_name = html.escape(team.name)
+        safe_description = html.escape(team.description) if team.description else ""
         team_html = f"""
         <div id="team-card-{team.id}" class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
             <div class="flex justify-between items-start">
                 <div>
-                    <h4 class="text-lg font-medium text-gray-900 dark:text-white">{team.name}</h4>
+                    <h4 class="text-lg font-medium text-gray-900 dark:text-white">{safe_team_name}</h4>
                     <p class="text-sm text-gray-600 dark:text-gray-400">Slug: {team.slug}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400">Visibility: {team.visibility}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400">Members: {member_count}</p>
-                    {f'<p class="text-sm text-gray-600 dark:text-gray-400">{team.description}</p>' if team.description else ""}
+                    {f'<p class="text-sm text-gray-600 dark:text-gray-400">{safe_description}</p>' if team.description else ""}
                 </div>
                 <div class="flex space-x-2">
                     <button
@@ -4627,15 +4630,45 @@ async def admin_create_team(
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"resetTeamCreateForm": True, "delayMs": 500}}).decode()
         return response
 
+    except (ValidationError, CoreValidationError) as e:
+        LOGGER.warning(f"Validation error creating team: {e}")
+        # Extract user-friendly error message from Pydantic validation error
+        error_messages = []
+        for error in e.errors():
+            field = error.get("loc", ["unknown"])[-1]
+            msg = error.get("msg", "Invalid value")
+            # Clean up common Pydantic prefixes
+            if msg.startswith("Value error, "):
+                msg = msg[13:]
+            error_messages.append(f"{msg}")
+        error_text = "; ".join(error_messages) if error_messages else "Invalid input"
+        response = HTMLResponse(
+            content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">{html.escape(error_text)}</div>',
+            status_code=400,
+        )
+        # Retarget to error container instead of teams list
+        response.headers["HX-Retarget"] = "#create-team-error"
+        response.headers["HX-Reswap"] = "innerHTML"
+        return response
     except IntegrityError as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
         if "UNIQUE constraint failed: email_teams.slug" in str(e):
-            return HTMLResponse(content='<div class="text-red-500">A team with this name already exists. Please choose a different name.</div>', status_code=400)
-
-        return HTMLResponse(content=f'<div class="text-red-500">Database error creating team: {html.escape(str(e))}</div>', status_code=400)
+            error_content = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">A team with this name already exists. Please choose a different name.</div>'
+        else:
+            error_content = f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Database error: {html.escape(str(e))}</div>'
+        response = HTMLResponse(content=error_content, status_code=400)
+        response.headers["HX-Retarget"] = "#create-team-error"
+        response.headers["HX-Reswap"] = "innerHTML"
+        return response
     except Exception as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error creating team: {html.escape(str(e))}</div>', status_code=400)
+        response = HTMLResponse(
+            content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Error creating team: {html.escape(str(e))}</div>',
+            status_code=400,
+        )
+        response.headers["HX-Retarget"] = "#create-team-error"
+        response.headers["HX-Reswap"] = "innerHTML"
+        return response
 
 
 @admin_router.get("/teams/{team_id}/members")
@@ -4952,14 +4985,18 @@ async def admin_get_team_edit(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
+        safe_team_name = html.escape(team.name, quote=True)
+        safe_description = html.escape(team.description or "")
         edit_form = rf"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
-            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#team-edit-modal-content" class="space-y-4">
+            <div id="edit-team-error"></div>
+            <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#edit-team-error" hx-swap="innerHTML" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name</label>
-                    <input type="text" name="name" value="{team.name}" required
+                    <input type="text" name="name" value="{safe_team_name}" required
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Letters, numbers, spaces, underscores, periods, and dashes only</p>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Slug</label>
@@ -4970,7 +5007,7 @@ async def admin_get_team_edit(
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
                     <textarea name="description" rows="3"
-                              class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">{team.description or ""}</textarea>
+                              class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">{safe_description}</textarea>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Visibility</label>
@@ -5032,15 +5069,35 @@ async def admin_update_team(
         name_val = form.get("name")
         desc_val = form.get("description")
         vis_val = form.get("visibility", "private")
-        name = name_val if isinstance(name_val, str) else None
-        description = desc_val if isinstance(desc_val, str) and desc_val != "" else None
+        # Trim before presence check for consistent error messages
+        name = name_val.strip() if isinstance(name_val, str) else None
+        description = desc_val.strip() if isinstance(desc_val, str) and desc_val.strip() != "" else None
         visibility = vis_val if isinstance(vis_val, str) else "private"
 
         if not name:
             is_htmx = request.headers.get("HX-Request") == "true"
             if is_htmx:
-                return HTMLResponse(content='<div class="text-red-500">Team name is required</div>', status_code=400)
+                return HTMLResponse(content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team name is required</div>', status_code=400)
             error_msg = urllib.parse.quote("Team name is required")
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+
+        # Validate name and description for XSS (same validation as schema)
+        if not re.match(settings.validation_name_pattern, name):
+            is_htmx = request.headers.get("HX-Request") == "true"
+            if is_htmx:
+                return HTMLResponse(content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">Team name can only contain letters, numbers, spaces, underscores, periods, and dashes</div>', status_code=400)
+            error_msg = urllib.parse.quote("Team name contains invalid characters")
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
+
+        try:
+            SecurityValidator.validate_no_xss(name, "Team name")
+            if description:
+                SecurityValidator.validate_no_xss(description, "Team description")
+        except ValueError as ve:
+            is_htmx = request.headers.get("HX-Request") == "true"
+            if is_htmx:
+                return HTMLResponse(content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md mb-4">{html.escape(str(ve))}</div>', status_code=400)
+            error_msg = urllib.parse.quote(str(ve))
             return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         # Update team
@@ -5109,9 +5166,10 @@ async def admin_delete_team(
         await team_service.delete_team(team_id, deleted_by=user_email)
 
         # Return success message with script to refresh teams list
+        safe_team_name = html.escape(team_name)
         success_html = f"""
         <div class="text-green-500 text-center p-4">
-            <p>Team "{team_name}" deleted successfully</p>
+            <p>Team "{safe_team_name}" deleted successfully</p>
         </div>
         """
         response = HTMLResponse(content=success_html)
@@ -5746,13 +5804,16 @@ async def admin_list_join_requests(
 
         requests_html = ""
         for req in join_requests:
+            safe_email = html.escape(req.user_email)
+            safe_message = html.escape(req.message) if req.message else ""
+            safe_status = html.escape(req.status.upper())
             requests_html += f"""
             <div class="flex justify-between items-center p-4 border border-gray-200 dark:border-gray-600 rounded-lg mb-3">
                 <div>
-                    <p class="font-medium text-gray-900 dark:text-white">{req.user_email}</p>
+                    <p class="font-medium text-gray-900 dark:text-white">{safe_email}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400">Requested: {req.requested_at.strftime("%Y-%m-%d %H:%M") if req.requested_at else "Unknown"}</p>
-                    {f'<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Message: {req.message}</p>' if req.message else ""}
-                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">{req.status.upper()}</span>
+                    {f'<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Message: {safe_message}</p>' if req.message else ""}
+                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">{safe_status}</span>
                 </div>
                 <div class="flex gap-2">
                     <button onclick="approveJoinRequest('{team_id}', '{req.id}')"
@@ -5767,10 +5828,11 @@ async def admin_list_join_requests(
             </div>
             """
 
+        safe_team_name = html.escape(team.name)
         return HTMLResponse(
             content=f"""
         <div class="space-y-4">
-            <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Join Requests for {team.name}</h3>
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Join Requests for {safe_team_name}</h3>
             {requests_html}
         </div>
         """,

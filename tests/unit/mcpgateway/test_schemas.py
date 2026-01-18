@@ -59,6 +59,8 @@ from mcpgateway.schemas import (
     ServerUpdate,
     StatusToggleRequest,
     StatusToggleResponse,
+    TeamCreateRequest,
+    TeamUpdateRequest,
 )
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
@@ -890,3 +892,77 @@ def test_resource_create_with_dangerous_html_bytes():
 def test_resource_create_with_non_utf8_bytes():
     with pytest.raises(ValueError, match="Content must be UTF-8 decodable"):
         ResourceCreate(uri="some-uri", name="nonutf8.bin", content=NON_UTF8_BYTES)
+
+
+class TestTeamXSSValidation:
+    """Test XSS prevention in team schemas."""
+
+    def test_team_name_blocks_script_tag(self):
+        """Script tags in team name should be rejected (via strict pattern)."""
+        with pytest.raises(ValidationError, match="can only contain"):
+            TeamCreateRequest(name="<script>alert(1)</script>", description="test")
+
+    def test_team_name_blocks_img_onerror(self):
+        """Event handlers in team name should be rejected (via strict pattern)."""
+        with pytest.raises(ValidationError, match="can only contain"):
+            TeamCreateRequest(name="<img src=x onerror=alert(1)>", description="test")
+
+    def test_team_name_blocks_iframe(self):
+        """Iframe tags in team name should be rejected (via strict pattern)."""
+        with pytest.raises(ValidationError, match="can only contain"):
+            TeamCreateRequest(name="<iframe src='evil.com'></iframe>", description="test")
+
+    def test_team_description_blocks_script(self):
+        """Script tags in description should be rejected."""
+        with pytest.raises(ValidationError, match="contains HTML tags"):
+            TeamCreateRequest(name="Valid Team", description="<script>alert(1)</script>")
+
+    def test_team_name_blocks_javascript_url(self):
+        """javascript: URLs in team name should be rejected (via strict pattern since ':' not allowed)."""
+        with pytest.raises(ValidationError, match="can only contain"):
+            TeamCreateRequest(name="javascript:alert(1)", description="test")
+
+    def test_team_name_blocks_special_characters(self):
+        """Special characters like < > should be rejected."""
+        with pytest.raises(ValidationError, match="can only contain"):
+            TeamCreateRequest(name="Team <Engineering>", description="test")
+
+    def test_team_name_blocks_ampersand(self):
+        """Ampersand should be rejected (strict mode)."""
+        with pytest.raises(ValidationError, match="can only contain"):
+            TeamCreateRequest(name="R&D Team", description="test")
+
+    def test_valid_team_name_allowed(self):
+        """Normal team names should pass validation."""
+        team = TeamCreateRequest(name="Engineering Team", description="Our engineering team")
+        assert team.name == "Engineering Team"
+
+    def test_valid_team_name_with_allowed_chars(self):
+        """Names with allowed special chars should pass."""
+        team = TeamCreateRequest(name="Dev_Team-2024.v1", description="Development team")
+        assert team.name == "Dev_Team-2024.v1"
+
+    def test_update_team_name_blocks_xss(self):
+        """TeamUpdateRequest should also block XSS (via strict pattern)."""
+        with pytest.raises(ValidationError, match="can only contain"):
+            TeamUpdateRequest(name="<script>alert(1)</script>")
+
+    def test_update_team_description_blocks_xss(self):
+        """TeamUpdateRequest description should block XSS."""
+        with pytest.raises(ValidationError, match="contains HTML tags"):
+            TeamUpdateRequest(description="<iframe src='evil'></iframe>")
+
+    def test_update_team_name_blocks_special_characters(self):
+        """TeamUpdateRequest should block special characters."""
+        with pytest.raises(ValidationError, match="can only contain"):
+            TeamUpdateRequest(name="Team <Test>")
+
+    def test_description_blocks_javascript_url(self):
+        """javascript: URLs in description should be rejected via XSS check."""
+        with pytest.raises(ValidationError, match="contains script patterns"):
+            TeamCreateRequest(name="Valid Team", description="Click javascript:alert(1)")
+
+    def test_description_blocks_onerror_event(self):
+        """Event handlers in description should be rejected via XSS check."""
+        with pytest.raises(ValidationError, match="contains script patterns"):
+            TeamCreateRequest(name="Valid Team", description='test onerror="alert(1)"')
