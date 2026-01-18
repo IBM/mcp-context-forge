@@ -1,9 +1,8 @@
-use crate::sandbox::Sandbox;
+use crate::{MAX_FILE_SIZE, sandbox::Sandbox};
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use tokio::{fs, io::AsyncReadExt};
 
-static MAX_FILE_SIZE: u64 = 1 * 1024 * 1024; // TODO: move to config
 
 pub async fn read_file(sandbox: &Sandbox, path: &str) -> Result<String> {
     tracing::info!("Starting read file for {}", path);
