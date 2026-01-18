@@ -41,6 +41,10 @@ class TestTokenScopingMiddleware:
         request.headers = {}
         request.client = MagicMock()
         request.client.host = "127.0.0.1"
+        # Set up state as a simple object that can hold attributes
+        # This is needed for the idempotency guard in __call__
+        request.state = MagicMock()
+        request.state._token_scoping_done = False
         return request
 
     @pytest.mark.asyncio
