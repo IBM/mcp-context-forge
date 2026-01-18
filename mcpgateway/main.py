@@ -5173,6 +5173,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             headers = {k.lower(): v for k, v in request.headers.items()}
             name = params.get("name")
             arguments = params.get("arguments", {})
+            meta_data = params.get("_meta", None)
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
@@ -5201,6 +5202,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     server_id=server_id,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
+                    meta_data=meta_data,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
