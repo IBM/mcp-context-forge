@@ -215,17 +215,32 @@ class TokenStorageService:
                         pass
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
-            # Respect pre-configured resource; only derive from gateway.url if not explicitly configured
-            if not oauth_config.get("resource") and gateway.url:
-                # Standard
-                from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
+            # Standard
+            from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
 
-                parsed = urlparse(gateway.url)
-                # RFC 8707: resource MUST be absolute URI, MUST NOT include fragment, SHOULD NOT include query
-                if parsed.scheme and parsed.netloc:
-                    oauth_config["resource"] = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+            def normalize_resource(url: str) -> str | None:
+                """Normalize resource URL per RFC 8707 (absolute URI, no fragment, no query)."""
+                if not url:
+                    return None
+                parsed = urlparse(url)
+                # Only support hierarchical URIs with scheme and netloc (not URNs)
+                if not parsed.scheme or not parsed.netloc:
+                    return None
+                return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
+            existing_resource = oauth_config.get("resource")
+            if existing_resource:
+                # Normalize existing resource to match authorize/callback behavior
+                if isinstance(existing_resource, list):
+                    normalized = [normalize_resource(r) for r in existing_resource]
+                    oauth_config["resource"] = [r for r in normalized if r]
                 else:
-                    logger.warning(f"Gateway URL is not an absolute URI, skipping resource parameter: {gateway.url}")
+                    oauth_config["resource"] = normalize_resource(existing_resource)
+            elif gateway.url:
+                # Derive from gateway.url if not explicitly configured
+                oauth_config["resource"] = normalize_resource(gateway.url)
+                if not oauth_config.get("resource"):
+                    logger.warning(f"Gateway URL is not a valid absolute URI, skipping resource parameter: {gateway.url}")
 
             # Use OAuthManager to refresh the token
             # First-Party

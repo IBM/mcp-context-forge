@@ -43,6 +43,11 @@ def _normalize_resource_url(url: str | None) -> str | None:
     - resource MUST NOT include a fragment component
     - resource SHOULD NOT include a query component
 
+    Policy decisions:
+    - Only hierarchical URIs (with scheme and netloc) are supported; URNs are rejected
+    - Query components are always stripped per RFC 8707 "SHOULD NOT" recommendation
+    - If you need URN support or query preservation, configure the OAuth provider directly
+
     Args:
         url: The gateway URL to normalize
 
@@ -52,11 +57,11 @@ def _normalize_resource_url(url: str | None) -> str | None:
     if not url:
         return None
     parsed = urlparse(url)
-    # RFC 8707: resource MUST be an absolute URI (requires scheme and netloc)
+    # Only support hierarchical URIs with scheme and netloc (not URNs like urn:example:app)
     if not parsed.scheme or not parsed.netloc:
-        logger.warning(f"Invalid resource URL (not absolute URI): {url}")
+        logger.warning(f"Invalid resource URL (must be hierarchical URI with scheme and host): {url}")
         return None
-    # Remove fragment (required) and query (recommended) per RFC 8707
+    # Remove fragment (required) and query (per RFC 8707 SHOULD NOT recommendation)
     normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
     return normalized
 
@@ -119,7 +124,9 @@ async def initiate_oauth_flow(
             # Normalize existing resource (handles both string and list)
             existing = oauth_config["resource"]
             if isinstance(existing, list):
-                oauth_config["resource"] = [_normalize_resource_url(r) for r in existing if _normalize_resource_url(r)]
+                # Normalize once and filter in single pass
+                normalized = [_normalize_resource_url(r) for r in existing]
+                oauth_config["resource"] = [r for r in normalized if r]
             else:
                 oauth_config["resource"] = _normalize_resource_url(existing)
         else:
@@ -334,7 +341,9 @@ async def oauth_callback(
         if oauth_config_with_resource.get("resource"):
             existing = oauth_config_with_resource["resource"]
             if isinstance(existing, list):
-                oauth_config_with_resource["resource"] = [_normalize_resource_url(r) for r in existing if _normalize_resource_url(r)]
+                # Normalize once and filter in single pass
+                normalized = [_normalize_resource_url(r) for r in existing]
+                oauth_config_with_resource["resource"] = [r for r in normalized if r]
             else:
                 oauth_config_with_resource["resource"] = _normalize_resource_url(existing)
         else:
