@@ -165,32 +165,6 @@ async def test_call_tool_success(monkeypatch):
     mock_content.type = "text"
     mock_content.text = "hello"
     mock_result.content = [mock_content]
-    # Ensure no accidental 'structured_content' MagicMock attribute is present
-    mock_result.structured_content = None
-    # Prevent model_dump from returning a MagicMock with a 'structuredContent' key
-    mock_result.model_dump = lambda by_alias=True: {}
-
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", AsyncMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_db), __aexit__=AsyncMock())))
-    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
-
-    result = await call_tool("mytool", {"foo": "bar"})
-    assert isinstance(result, list)
-    assert isinstance(result[0], types.TextContent)
-    assert result[0].type == "text"
-    assert result[0].text == "hello"
-
-
-@pytest.mark.asyncio
-async def test_call_tool_success(monkeypatch):
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
-
-    mock_db = MagicMock()
-    mock_result = MagicMock()
-    mock_content = MagicMock()
-    mock_content.type = "text"
-    mock_content.text = "hello"
-    mock_result.content = [mock_content]
 
     @asynccontextmanager
     async def fake_get_db():
