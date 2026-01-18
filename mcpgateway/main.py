@@ -55,7 +55,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
-from starlette_compress import CompressMiddleware
+from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
@@ -1364,13 +1364,14 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
 class MCPPathRewriteMiddleware:
     """
-    Middleware that rewrites paths ending with '/mcp' to '/mcp', after performing authentication.
+    Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
 
-    - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp'.
-    - Only paths ending with '/mcp' (but not exactly '/mcp') are rewritten.
+    - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
+    - Only paths ending with '/mcp' or '/mcp/' (but not exactly '/mcp' or '/mcp/') are rewritten.
     - Authentication is performed before any path rewriting.
     - If authentication fails, the request is not processed further.
     - All other requests are passed through without change.
+    - Routes through the middleware stack (including CORSMiddleware) for proper CORS preflight handling.
 
     Attributes:
         application (Callable): The next ASGI application to process the request.
@@ -1521,16 +1522,18 @@ app.add_middleware(
 # Automatically negotiates compression algorithm based on client Accept-Encoding header
 # Priority: Brotli (best compression) > Zstd (fast) > GZip (universal fallback)
 # Only compress responses larger than minimum_size to avoid overhead
+# NOTE: When json_response_enabled=False (SSE mode), /mcp paths are excluded from
+# compression to prevent buffering/breaking of streaming responses. See middleware/compression.py.
 if settings.compression_enabled:
     app.add_middleware(
-        CompressMiddleware,
-        minimum_size=settings.compression_minimum_size,  # Only compress responses > N bytes
-        gzip_level=settings.compression_gzip_level,  # GZip: 1=fastest, 9=best (default: 6)
-        brotli_quality=settings.compression_brotli_quality,  # Brotli: 0-3=fast, 4-9=balanced, 10-11=max (default: 4)
-        zstd_level=settings.compression_zstd_level,  # Zstd: 1-3=fast, 4-9=balanced, 10+=slow (default: 3)
+        SSEAwareCompressMiddleware,
+        minimum_size=settings.compression_minimum_size,
+        gzip_level=settings.compression_gzip_level,
+        brotli_quality=settings.compression_brotli_quality,
+        zstd_level=settings.compression_zstd_level,
     )
     logger.info(
-        f"🗜️  Response compression enabled: minimum_size={settings.compression_minimum_size}B, "
+        f"🗜️  Response compression enabled (SSE-aware): minimum_size={settings.compression_minimum_size}B, "
         f"gzip_level={settings.compression_gzip_level}, "
         f"brotli_quality={settings.compression_brotli_quality}, "
         f"zstd_level={settings.compression_zstd_level}"

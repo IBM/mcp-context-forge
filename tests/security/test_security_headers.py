@@ -153,25 +153,75 @@ class TestCORSConfiguration:
 
         Browser-based MCP clients send preflight requests before connecting.
         CORSMiddleware must intercept these and respond with proper headers.
+
+        Note: This test dynamically uses an origin from the actual allowed_origins
+        config to work regardless of environment settings.
         """
-        with patch.object(settings, "allowed_origins", {"http://localhost:3000"}):
-            # Send a CORS preflight request (OPTIONS with Origin and Access-Control-Request-Method)
-            response = client.options(
-                "/servers/test-server-id/mcp",
-                headers={
-                    "Origin": "http://localhost:3000",
-                    "Access-Control-Request-Method": "POST",
-                    "Access-Control-Request-Headers": "Authorization, Content-Type",
-                },
-            )
+        # Dynamically get an allowed origin from the actual config
+        # This ensures the test works regardless of ALLOWED_ORIGINS env var
+        if not settings.allowed_origins:
+            pytest.skip("No allowed_origins configured - CORS test requires at least one origin")
 
-            # Preflight should succeed (200 from CORSMiddleware)
-            assert response.status_code == 200
+        # Skip wildcard config - can't test specific origin behavior with "*"
+        if "*" in settings.allowed_origins:
+            pytest.skip("Wildcard CORS configured - specific origin tests not applicable")
 
-            # CORS headers must be present
-            assert response.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
-            assert "POST" in response.headers.get("Access-Control-Allow-Methods", "")
-            assert response.headers.get("Access-Control-Allow-Credentials") == "true"
+        # Get a real origin (not "*")
+        real_origins = [o for o in settings.allowed_origins if o != "*"]
+        if not real_origins:
+            pytest.skip("No non-wildcard origins configured")
+
+        allowed_origin = real_origins[0]
+
+        # Send a CORS preflight request (OPTIONS with Origin and Access-Control-Request-Method)
+        response = client.options(
+            "/servers/test-server-id/mcp",
+            headers={
+                "Origin": allowed_origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Authorization, Content-Type",
+            },
+        )
+
+        # Preflight should succeed (200 from CORSMiddleware)
+        assert response.status_code == 200
+
+        # CORS headers must be present
+        assert response.headers.get("Access-Control-Allow-Origin") == allowed_origin
+        assert "POST" in response.headers.get("Access-Control-Allow-Methods", "")
+        assert response.headers.get("Access-Control-Allow-Credentials") == "true"
+
+    def test_cors_preflight_rejects_disallowed_origin(self, client: TestClient):
+        """Test CORS preflight rejects origins not in allowed_origins.
+
+        This verifies that CORSMiddleware is properly restricting access to
+        configured origins only.
+        """
+        # Skip if wildcard CORS is configured - all origins are allowed
+        if "*" in settings.allowed_origins:
+            pytest.skip("Wildcard CORS configured - rejection test not applicable")
+
+        # Use a clearly invalid origin that should never be in any real config
+        # Using .invalid TLD per RFC 2606 - reserved for testing
+        disallowed_origin = "https://attacker.invalid"
+
+        # Sanity check: ensure this origin is actually not allowed
+        assert disallowed_origin not in settings.allowed_origins, "Test origin unexpectedly in allowed_origins"
+
+        response = client.options(
+            "/servers/test-server-id/mcp",
+            headers={
+                "Origin": disallowed_origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Authorization, Content-Type",
+            },
+        )
+
+        # CORSMiddleware returns 400 for disallowed origins
+        assert response.status_code == 400
+
+        # No CORS allow header should be set for disallowed origin
+        assert response.headers.get("Access-Control-Allow-Origin") != disallowed_origin
 
 
 class TestProductionSecurity:
