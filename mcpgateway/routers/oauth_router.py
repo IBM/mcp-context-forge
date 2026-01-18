@@ -35,21 +35,18 @@ from mcpgateway.services.token_storage_service import TokenStorageService
 logger = logging.getLogger(__name__)
 
 
-def _normalize_resource_url(url: str | None) -> str | None:
+def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) -> str | None:
     """Normalize URL for use as RFC 8707 resource parameter.
 
     Per RFC 8707 Section 2:
-    - resource MUST be an absolute URI
+    - resource MUST be an absolute URI (scheme required; supports both URLs and URNs)
     - resource MUST NOT include a fragment component
-    - resource SHOULD NOT include a query component
-
-    Policy decisions:
-    - Only hierarchical URIs (with scheme and netloc) are supported; URNs are rejected
-    - Query components are always stripped per RFC 8707 "SHOULD NOT" recommendation
-    - If you need URN support or query preservation, configure the OAuth provider directly
+    - resource SHOULD NOT include a query component (but allowed when necessary)
 
     Args:
-        url: The gateway URL to normalize
+        url: The resource URL to normalize
+        preserve_query: If True, preserve query component (for explicitly configured resources).
+                       If False, strip query (for auto-derived resources per RFC 8707 SHOULD NOT).
 
     Returns:
         Normalized URL suitable for RFC 8707 resource parameter, or None if invalid
@@ -57,12 +54,15 @@ def _normalize_resource_url(url: str | None) -> str | None:
     if not url:
         return None
     parsed = urlparse(url)
-    # Only support hierarchical URIs with scheme and netloc (not URNs like urn:example:app)
-    if not parsed.scheme or not parsed.netloc:
-        logger.warning(f"Invalid resource URL (must be hierarchical URI with scheme and host): {url}")
+    # RFC 8707: resource MUST be an absolute URI (requires scheme)
+    # Support both hierarchical URIs (https://...) and URNs (urn:example:app)
+    if not parsed.scheme:
+        logger.warning(f"Invalid resource URL (must be absolute URI with scheme): {url}")
         return None
-    # Remove fragment (required) and query (per RFC 8707 SHOULD NOT recommendation)
-    normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    # Remove fragment (MUST NOT per RFC 8707)
+    # Query: strip for auto-derived (SHOULD NOT), preserve for explicit config (allowed when necessary)
+    query = parsed.query if preserve_query else ""
+    normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
     return normalized
 
 
@@ -121,16 +121,18 @@ async def initiate_oauth_flow(
         # Respect pre-configured resource (e.g., for providers requiring pre-registered resources)
         # Only derive from gateway.url if not explicitly configured
         if oauth_config.get("resource"):
-            # Normalize existing resource (handles both string and list)
+            # Normalize existing resource - preserve query for explicit config (RFC 8707 allows when necessary)
             existing = oauth_config["resource"]
             if isinstance(existing, list):
-                # Normalize once and filter in single pass
-                normalized = [_normalize_resource_url(r) for r in existing]
+                original_count = len(existing)
+                normalized = [_normalize_resource_url(r, preserve_query=True) for r in existing]
                 oauth_config["resource"] = [r for r in normalized if r]
+                if not oauth_config["resource"] and original_count > 0:
+                    logger.warning(f"All {original_count} configured resource values were invalid and removed")
             else:
-                oauth_config["resource"] = _normalize_resource_url(existing)
+                oauth_config["resource"] = _normalize_resource_url(existing, preserve_query=True)
         else:
-            # Default to gateway.url as the resource
+            # Default to gateway.url as the resource (strip query per RFC 8707 SHOULD NOT)
             oauth_config["resource"] = _normalize_resource_url(gateway.url)
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
@@ -339,14 +341,18 @@ async def oauth_callback(
         # Respect pre-configured resource; only derive from gateway.url if not explicitly configured
         oauth_config_with_resource = gateway.oauth_config.copy()
         if oauth_config_with_resource.get("resource"):
+            # Preserve query for explicit config (RFC 8707 allows when necessary)
             existing = oauth_config_with_resource["resource"]
             if isinstance(existing, list):
-                # Normalize once and filter in single pass
-                normalized = [_normalize_resource_url(r) for r in existing]
+                original_count = len(existing)
+                normalized = [_normalize_resource_url(r, preserve_query=True) for r in existing]
                 oauth_config_with_resource["resource"] = [r for r in normalized if r]
+                if not oauth_config_with_resource["resource"] and original_count > 0:
+                    logger.warning(f"All {original_count} configured resource values were invalid and removed")
             else:
-                oauth_config_with_resource["resource"] = _normalize_resource_url(existing)
+                oauth_config_with_resource["resource"] = _normalize_resource_url(existing, preserve_query=True)
         else:
+            # Strip query for auto-derived (RFC 8707 SHOULD NOT)
             oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
 
         result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)

@@ -553,9 +553,38 @@ class TestRFC8707ResourceNormalization:
         assert _normalize_resource_url("mcp.example.com/api") is None
         assert _normalize_resource_url("/api/v1") is None
 
-    def test_normalize_resource_url_rejects_scheme_only(self):
-        """Test that URLs without netloc return None."""
+    def test_normalize_resource_url_supports_urns(self):
+        """Test that URN-style absolute URIs are supported per RFC 8707."""
         # First-Party
         from mcpgateway.routers.oauth_router import _normalize_resource_url
 
-        assert _normalize_resource_url("file:///path") is None  # no netloc
+        # RFC 8707 allows any absolute URI, including URNs
+        assert _normalize_resource_url("urn:example:app") == "urn:example:app"
+        assert _normalize_resource_url("urn:ietf:params:oauth:token-type:jwt") == "urn:ietf:params:oauth:token-type:jwt"
+
+    def test_normalize_resource_url_supports_file_uri(self):
+        """Test that file:// URIs are supported."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        assert _normalize_resource_url("file:///path/to/resource") == "file:///path/to/resource"
+
+    def test_normalize_resource_url_preserve_query_flag(self):
+        """Test that preserve_query=True keeps query component."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        url = "https://api.example.com/v1?tenant=acme"
+        # Default: strip query
+        assert _normalize_resource_url(url) == "https://api.example.com/v1"
+        # With preserve_query: keep query
+        assert _normalize_resource_url(url, preserve_query=True) == "https://api.example.com/v1?tenant=acme"
+
+    def test_normalize_resource_url_always_strips_fragment(self):
+        """Test that fragments are always stripped even with preserve_query=True."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        url = "https://api.example.com/v1?tenant=acme#section"
+        # Fragment is always removed (RFC 8707 MUST NOT)
+        assert _normalize_resource_url(url, preserve_query=True) == "https://api.example.com/v1?tenant=acme"

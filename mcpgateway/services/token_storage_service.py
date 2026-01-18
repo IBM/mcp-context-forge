@@ -218,26 +218,41 @@ class TokenStorageService:
             # Standard
             from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
 
-            def normalize_resource(url: str) -> str | None:
-                """Normalize resource URL per RFC 8707 (absolute URI, no fragment, no query)."""
+            def normalize_resource(url: str, *, preserve_query: bool = False) -> str | None:
+                """Normalize resource URL per RFC 8707.
+
+                Args:
+                    url: Resource URL to normalize
+                    preserve_query: If True, preserve query (for explicit config). If False, strip query.
+                """
                 if not url:
                     return None
                 parsed = urlparse(url)
-                # Only support hierarchical URIs with scheme and netloc (not URNs)
-                if not parsed.scheme or not parsed.netloc:
+                # RFC 8707: resource MUST be absolute URI (requires scheme)
+                # Support both hierarchical URIs and URNs
+                if not parsed.scheme:
+                    logger.warning(f"Invalid resource URL (must be absolute URI with scheme): {url}")
                     return None
-                return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+                # Remove fragment (MUST NOT); query: preserve for explicit, strip for auto-derived
+                query = parsed.query if preserve_query else ""
+                return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
 
             existing_resource = oauth_config.get("resource")
             if existing_resource:
-                # Normalize existing resource to match authorize/callback behavior
+                # Normalize existing resource - preserve query for explicit config
                 if isinstance(existing_resource, list):
-                    normalized = [normalize_resource(r) for r in existing_resource]
+                    original_count = len(existing_resource)
+                    normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
                     oauth_config["resource"] = [r for r in normalized if r]
+                    if not oauth_config["resource"] and original_count > 0:
+                        logger.warning(f"All {original_count} configured resource values were invalid and removed during refresh")
                 else:
-                    oauth_config["resource"] = normalize_resource(existing_resource)
+                    normalized = normalize_resource(existing_resource, preserve_query=True)
+                    if not normalized and existing_resource:
+                        logger.warning(f"Configured resource was invalid and removed during refresh: {existing_resource}")
+                    oauth_config["resource"] = normalized
             elif gateway.url:
-                # Derive from gateway.url if not explicitly configured
+                # Derive from gateway.url if not explicitly configured (strip query)
                 oauth_config["resource"] = normalize_resource(gateway.url)
                 if not oauth_config.get("resource"):
                     logger.warning(f"Gateway URL is not a valid absolute URI, skipping resource parameter: {gateway.url}")
