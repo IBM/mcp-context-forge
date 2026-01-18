@@ -224,6 +224,9 @@ class TokenStorageService:
                 Args:
                     url: Resource URL to normalize
                     preserve_query: If True, preserve query (for explicit config). If False, strip query.
+
+                Returns:
+                    Normalized URL string, or None if invalid.
                 """
                 if not url:
                     return None
