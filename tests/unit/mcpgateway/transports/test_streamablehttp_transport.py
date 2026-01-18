@@ -165,32 +165,6 @@ async def test_call_tool_success(monkeypatch):
     mock_content.type = "text"
     mock_content.text = "hello"
     mock_result.content = [mock_content]
-    # Ensure no accidental 'structured_content' MagicMock attribute is present
-    mock_result.structured_content = None
-    # Prevent model_dump from returning a MagicMock with a 'structuredContent' key
-    mock_result.model_dump = lambda by_alias=True: {}
-
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", AsyncMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_db), __aexit__=AsyncMock())))
-    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
-
-    result = await call_tool("mytool", {"foo": "bar"})
-    assert isinstance(result, list)
-    assert isinstance(result[0], types.TextContent)
-    assert result[0].type == "text"
-    assert result[0].text == "hello"
-
-
-@pytest.mark.asyncio
-async def test_call_tool_success(monkeypatch):
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
-
-    mock_db = MagicMock()
-    mock_result = MagicMock()
-    mock_content = MagicMock()
-    mock_content.type = "text"
-    mock_content.text = "hello"
-    mock_result.content = [mock_content]
 
     @asynccontextmanager
     async def fake_get_db():
@@ -227,10 +201,7 @@ async def test_call_tool_with_structured_content(monkeypatch):
     # Simulate structured content being present
     mock_structured = {"status": "ok", "data": {"value": 42}}
     mock_result.structured_content = mock_structured
-    mock_result.model_dump = lambda by_alias=True: {
-        "content": [{"type": "text", "text": '{"result": "success"}'}],
-        "structuredContent": mock_structured
-    }
+    mock_result.model_dump = lambda by_alias=True: {"content": [{"type": "text", "text": '{"result": "success"}'}], "structuredContent": mock_structured}
 
     @asynccontextmanager
     async def fake_get_db():
@@ -1030,9 +1001,10 @@ async def test_read_resource_outer_exception(monkeypatch, caplog):
 #     }
 
 
-def _make_scope(path: str, headers: list[tuple[bytes, bytes]] | None = None) -> Scope:
+def _make_scope(path: str, headers: list[tuple[bytes, bytes]] | None = None, method: str = "POST") -> Scope:
     return {
         "type": "http",
+        "method": method,
         "path": path,
         "headers": headers or [],
         "modified_path": path,
@@ -1104,6 +1076,50 @@ async def test_streamable_http_auth_skips_non_mcp():
     result = await streamable_http_auth(scope, None, send)
     assert result is True
     assert called == []
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_skips_cors_preflight():
+    """Auth returns True for CORS preflight requests (OPTIONS with Origin and Access-Control-Request-Method)."""
+    # CORS preflight requests cannot carry Authorization headers, so they must be exempt from auth
+    # A proper preflight has: OPTIONS method + Origin header + Access-Control-Request-Method header
+    # See: https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#preflighted_requests
+    scope = _make_scope(
+        "/servers/1/mcp",
+        method="OPTIONS",
+        headers=[
+            (b"origin", b"http://localhost:3000"),
+            (b"access-control-request-method", b"POST"),
+        ],
+    )
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    assert result is True
+    assert called == []  # No response sent - auth skipped entirely
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_requires_auth_for_options_without_cors_headers(monkeypatch):
+    """OPTIONS without CORS preflight headers still requires auth (not a true preflight)."""
+    # Enable strict auth mode to verify non-preflight OPTIONS still goes through normal auth
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", True)
+
+    # OPTIONS request without Origin or Access-Control-Request-Method is NOT a CORS preflight
+    scope = _make_scope("/servers/1/mcp", method="OPTIONS")
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    result = await streamable_http_auth(scope, None, send)
+    # Should fail auth since no Authorization header and it's not a CORS preflight
+    assert result is False
+    assert called and called[0]["type"] == "http.response.start"
+    assert called[0]["status"] == tr.HTTP_401_UNAUTHORIZED
 
 
 @pytest.mark.asyncio

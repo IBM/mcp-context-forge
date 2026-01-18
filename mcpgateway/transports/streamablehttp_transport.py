@@ -1155,13 +1155,20 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         >>> list(sig.parameters.keys())
         ['scope', 'receive', 'send']
     """
-
     path = scope.get("path", "")
     if not path.endswith("/mcp") and not path.endswith("/mcp/"):
         # No auth needed for other paths in this middleware usage
         return True
 
     headers = Headers(scope=scope)
+
+    # CORS preflight (OPTIONS + Origin + Access-Control-Request-Method) cannot carry auth headers
+    method = scope.get("method", "")
+    if method == "OPTIONS":
+        origin = headers.get("origin")
+        if origin and headers.get("access-control-request-method"):
+            return True
+
     authorization = headers.get("authorization")
     proxy_user = headers.get(settings.proxy_user_header) if settings.trust_proxy_auth else None
 
