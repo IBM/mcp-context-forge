@@ -481,6 +481,23 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     server_id = server_id_var.get()
     user_context = user_context_var.get()
 
+    meta_data = None
+    # Extract _meta from request context if available
+    try:
+        ctx = mcp_app.request_context
+        if ctx:
+            meta_data = getattr(ctx, "meta", None) 
+            if meta_data is None and hasattr(ctx, "request"):
+                 # Fallback to raw request params if needed
+                 meta_data = getattr(ctx.request.params, "meta", None)
+
+            meta_data = meta_data.model_dump()
+    except LookupError:
+        # request_context might not be active in some edge cases (e.g. tests)
+        logger.debug("No active request context found")
+        pass
+
+
     # Extract authorization parameters from user context (same pattern as list_tools)
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
@@ -506,6 +523,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 user_email=user_email,
                 token_teams=token_teams,
                 server_id=server_id,
+                meta_data=meta_data,
             )
             if not result or not result.content:
                 logger.warning(f"No content returned by tool: {name}")
