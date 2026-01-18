@@ -63,7 +63,7 @@ class SSOService:
         self.auth_service = EmailAuthService(db)
         self._encryption = get_encryption_service(settings.auth_encryption_secret)
 
-    def _encrypt_secret(self, secret: str) -> str:
+    async def _encrypt_secret(self, secret: str) -> str:
         """Encrypt a client secret for secure storage.
 
         Args:
@@ -72,9 +72,9 @@ class SSOService:
         Returns:
             Encrypted secret string
         """
-        return self._encryption.encrypt_secret(secret)
+        return await self._encryption.encrypt_secret_async(secret)
 
-    def _decrypt_secret(self, encrypted_secret: str) -> Optional[str]:
+    async def _decrypt_secret(self, encrypted_secret: str) -> Optional[str]:
         """Decrypt a client secret for use.
 
         Args:
@@ -83,7 +83,7 @@ class SSOService:
         Returns:
             Plain text client secret
         """
-        decrypted: str | None = self._encryption.decrypt_secret(encrypted_secret)
+        decrypted: str | None = await self._encryption.decrypt_secret_async(encrypted_secret)
         if decrypted:
             return decrypted
 
@@ -192,7 +192,7 @@ class SSOService:
         result = self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
+    async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
         """Create new SSO provider configuration.
 
         Args:
@@ -202,16 +202,17 @@ class SSOService:
             Created SSO provider
 
         Examples:
-            >>> from unittest.mock import MagicMock
+            >>> import asyncio
+            >>> from unittest.mock import MagicMock, AsyncMock
             >>> service = SSOService(MagicMock())
-            >>> service._encrypt_secret = lambda s: 'ENC(' + s + ')'
+            >>> service._encrypt_secret = AsyncMock(side_effect=lambda s: 'ENC(' + s + ')')
             >>> data = {
             ...     'id': 'github', 'name': 'github', 'display_name': 'GitHub', 'provider_type': 'oauth2',
             ...     'client_id': 'cid', 'client_secret': 'sec',
             ...     'authorization_url': 'https://example/auth', 'token_url': 'https://example/token',
             ...     'userinfo_url': 'https://example/user', 'scope': 'user:email'
             ... }
-            >>> provider = service.create_provider(data)
+            >>> provider = asyncio.run(service.create_provider(data))
             >>> hasattr(provider, 'id') and provider.id == 'github'
             True
             >>> provider.client_secret_encrypted.startswith('ENC(')
@@ -219,7 +220,7 @@ class SSOService:
         """
         # Encrypt client secret
         client_secret = provider_data.pop("client_secret")
-        provider_data["client_secret_encrypted"] = self._encrypt_secret(client_secret)
+        provider_data["client_secret_encrypted"] = await self._encrypt_secret(client_secret)
 
         provider = SSOProvider(**provider_data)
         self.db.add(provider)
@@ -227,7 +228,7 @@ class SSOService:
         self.db.refresh(provider)
         return provider
 
-    def update_provider(self, provider_id: str, provider_data: Dict[str, Any]) -> Optional[SSOProvider]:
+    async def update_provider(self, provider_id: str, provider_data: Dict[str, Any]) -> Optional[SSOProvider]:
         """Update existing SSO provider configuration.
 
         Args:
@@ -238,16 +239,17 @@ class SSOService:
             Updated SSO provider or None if not found
 
         Examples:
+            >>> import asyncio
             >>> from types import SimpleNamespace
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, AsyncMock
             >>> svc = SSOService(MagicMock())
             >>> # Existing provider object
             >>> existing = SimpleNamespace(id='github', name='github', client_id='old', client_secret_encrypted='X', is_enabled=True)
             >>> svc.get_provider = lambda _id: existing
-            >>> svc._encrypt_secret = lambda s: 'ENC-' + s
+            >>> svc._encrypt_secret = AsyncMock(side_effect=lambda s: 'ENC-' + s)
             >>> svc.db.commit = lambda: None
             >>> svc.db.refresh = lambda obj: None
-            >>> updated = svc.update_provider('github', {'client_id': 'new', 'client_secret': 'sec'})
+            >>> updated = asyncio.run(svc.update_provider('github', {'client_id': 'new', 'client_secret': 'sec'}))
             >>> updated.client_id
             'new'
             >>> updated.client_secret_encrypted
@@ -260,7 +262,7 @@ class SSOService:
         # Handle client secret encryption if provided
         if "client_secret" in provider_data:
             client_secret = provider_data.pop("client_secret")
-            provider_data["client_secret_encrypted"] = self._encrypt_secret(client_secret)
+            provider_data["client_secret_encrypted"] = await self._encrypt_secret(client_secret)
 
         for key, value in provider_data.items():
             if hasattr(provider, key):
@@ -495,7 +497,7 @@ class SSOService:
         """
         token_params = {
             "client_id": provider.client_id,
-            "client_secret": self._decrypt_secret(provider.client_secret_encrypted),
+            "client_secret": await self._decrypt_secret(provider.client_secret_encrypted),
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": auth_session.redirect_uri,

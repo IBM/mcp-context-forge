@@ -231,7 +231,7 @@ class OAuthManager:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
-                decrypted_secret = encryption.decrypt_secret(client_secret)
+                decrypted_secret = await encryption.decrypt_secret_async(client_secret)
                 if decrypted_secret:
                     client_secret = decrypted_secret
                     logger.debug("Successfully decrypted client secret")
@@ -322,7 +322,7 @@ class OAuthManager:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
-                decrypted_secret = encryption.decrypt_secret(client_secret)
+                decrypted_secret = await encryption.decrypt_secret_async(client_secret)
                 if decrypted_secret:
                     client_secret = decrypted_secret
                     logger.debug("Successfully decrypted client secret")
@@ -439,7 +439,7 @@ class OAuthManager:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
-                decrypted_secret = encryption.decrypt_secret(client_secret)
+                decrypted_secret = await encryption.decrypt_secret_async(client_secret)
                 if decrypted_secret:
                     client_secret = decrypted_secret
                     logger.debug("Successfully decrypted client secret")
@@ -1025,7 +1025,7 @@ class OAuthManager:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
-                decrypted_secret = encryption.decrypt_secret(client_secret)
+                decrypted_secret = await encryption.decrypt_secret_async(client_secret)
                 if decrypted_secret:
                     client_secret = decrypted_secret
                     logger.debug("Successfully decrypted client secret")

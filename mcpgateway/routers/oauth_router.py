@@ -167,7 +167,7 @@ async def initiate_oauth_flow(
                         from mcpgateway.services.encryption_service import get_encryption_service
 
                         encryption = get_encryption_service(settings.auth_encryption_secret)
-                        decrypted_secret = encryption.decrypt_secret(registered_client.client_secret_encrypted)
+                        decrypted_secret = await encryption.decrypt_secret_async(registered_client.client_secret_encrypted)
 
                     # Update oauth_config with registered credentials
                     oauth_config["client_id"] = registered_client.client_id

@@ -19,6 +19,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from typing import Optional
 
 # Third-Party
@@ -153,6 +154,29 @@ class Argon2PasswordService:
         except Exception as e:
             logger.error(f"Unexpected error during password verification: {e}")
             return False
+
+    async def hash_password_async(self, password: str) -> str:
+        """Hash a password using Argon2id in a separate thread.
+
+        Args:
+            password: The plain text password to hash
+
+        Returns:
+            str: The Argon2id hash string
+        """
+        return await asyncio.to_thread(self.hash_password, password)
+
+    async def verify_password_async(self, password: str, hash_value: str) -> bool:
+        """Verify a password against its Argon2id hash in a separate thread.
+
+        Args:
+            password: The plain text password to verify
+            hash_value: The stored Argon2id hash
+
+        Returns:
+            bool: True if password matches hash, False otherwise
+        """
+        return await asyncio.to_thread(self.verify_password, password, hash_value)
 
     def needs_rehash(self, hash_value: str) -> bool:
         """Check if a hash needs to be rehashed due to parameter changes.
@@ -292,6 +316,35 @@ def verify_password(password: str, hash_value: str) -> bool:
         False
     """
     return password_service.verify_password(password, hash_value)
+
+
+async def hash_password_async(password: str) -> str:
+    """Hash a password using the global Argon2 service asynchronously.
+
+    Convenience function for password hashing.
+
+    Args:
+        password: The password to hash
+
+    Returns:
+        str: The hashed password
+    """
+    return await password_service.hash_password_async(password)
+
+
+async def verify_password_async(password: str, hash_value: str) -> bool:
+    """Verify a password using the global Argon2 service asynchronously.
+
+    Convenience function for password verification.
+
+    Args:
+        password: The password to verify
+        hash_value: The stored hash
+
+    Returns:
+        bool: True if password matches
+    """
+    return await password_service.verify_password_async(password, hash_value)
 
 
 def needs_rehash(hash_value: str) -> bool:
