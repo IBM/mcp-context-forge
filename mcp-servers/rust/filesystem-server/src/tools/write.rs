@@ -73,9 +73,13 @@ mod tests {
         let sandbox = setup_sandbox(&temp_dir).await;
 
         let path = temp_dir.path().join("test.txt");
-        write_file(&sandbox, path.to_str().unwrap(), "Hello, World!".to_string())
-            .await
-            .expect("write_file should succeed");
+        write_file(
+            &sandbox,
+            path.to_str().unwrap(),
+            "Hello, World!".to_string(),
+        )
+        .await
+        .expect("write_file should succeed");
 
         let content = fs::read_to_string(&path).await.unwrap();
         assert_eq!(content, "Hello, World!");
@@ -177,7 +181,9 @@ mod tests {
         let sandbox = setup_sandbox(&temp_dir).await;
 
         let path = temp_dir.path().join("newdir");
-        let result = create_directory(&sandbox, path.to_str().unwrap()).await.unwrap();
+        let result = create_directory(&sandbox, path.to_str().unwrap())
+            .await
+            .unwrap();
 
         assert_eq!(result, "");
         assert!(path.exists());
@@ -189,7 +195,9 @@ mod tests {
         let sandbox = setup_sandbox(&temp_dir).await;
 
         let path = temp_dir.path().join("a/b/c");
-        create_directory(&sandbox, path.to_str().unwrap()).await.unwrap();
+        create_directory(&sandbox, path.to_str().unwrap())
+            .await
+            .unwrap();
 
         assert!(path.exists());
     }
@@ -202,7 +210,9 @@ mod tests {
         let path = temp_dir.path().join("existing");
         fs::create_dir(&path).await.unwrap();
 
-        let result = create_directory(&sandbox, path.to_str().unwrap()).await.unwrap();
+        let result = create_directory(&sandbox, path.to_str().unwrap())
+            .await
+            .unwrap();
         assert!(result.contains("already exists"));
         assert!(path.exists());
     }
@@ -215,7 +225,9 @@ mod tests {
         let path = temp_dir.path().join("file.txt");
         fs::write(&path, "data").await.unwrap();
 
-        let result = create_directory(&sandbox, path.to_str().unwrap()).await.unwrap();
+        let result = create_directory(&sandbox, path.to_str().unwrap())
+            .await
+            .unwrap();
         assert!(result.contains("already exists"));
     }
 
