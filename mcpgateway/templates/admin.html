@@ -36,6 +36,26 @@
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     {% endif %}
     <script>
+      // Configure HTMX to swap content on 4xx responses (for inline error display)
+      document.addEventListener("htmx:beforeSwap", function (evt) {
+        const xhr = evt.detail.xhr;
+        if (!xhr || xhr.status < 400 || xhr.status >= 500) {
+          return;
+        }
+        const triggerEl = evt.detail.elt;
+        const requestEl = evt.detail.requestConfig?.elt;
+        const isTeamForm =
+          (triggerEl &&
+            triggerEl.closest('[data-team-validation="true"]')) ||
+          (requestEl &&
+            requestEl.closest('[data-team-validation="true"]'));
+        const hasRetarget = !!xhr.getResponseHeader("HX-Retarget");
+        if (isTeamForm || hasRetarget) {
+          evt.detail.shouldSwap = true;
+          evt.detail.isError = false;
+        }
+      });
+
       // Configure HTMX to include credentials and JWT tokens
       document.addEventListener("htmx:configRequest", function (evt) {
         // Force include credentials for same-origin requests
@@ -2353,7 +2373,7 @@
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if server.team %}
                     <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ server.team.replace(' ', '<br />')|safe }}
+                      {{ server.team|e|replace(' ', '<br />')|safe }}
                     </span>
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -4708,7 +4728,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if gateway.team %}
                     <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ gateway.team.replace(' ', '<br />')|safe }}
+                      {{ gateway.team|e|replace(' ', '<br />')|safe }}
                     </span>
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -13587,7 +13607,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               hx-post="{{ root_path }}/admin/teams"
               hx-target="#unified-teams-list"
               hx-swap="afterbegin"
+              data-team-validation="true"
             >
+              <div id="create-team-error" class="mb-4"></div>
               <div class="space-y-4">
                 <div>
                   <label
@@ -13605,7 +13627,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     placeholder="Development Team"
                   />
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Maximum 100 characters
+                    Letters, numbers, spaces, underscores, periods, and dashes only
                   </p>
                 </div>
 

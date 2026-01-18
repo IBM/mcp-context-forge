@@ -91,7 +91,7 @@
     </td>
     <td class="px-2 py-4 whitespace-nowrap">
       {% if server.team %}
-      <span class="text-sm text-gray-900 dark:text-gray-100">{{ server.team.replace(' ', '<br />')|safe }}</span>
+      <span class="text-sm text-gray-900 dark:text-gray-100">{{ server.team|e|replace(' ', '<br />')|safe }}</span>
       {% else %}
       <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
       {% endif %}
