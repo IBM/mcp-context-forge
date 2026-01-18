@@ -537,9 +537,25 @@ class TestRFC8707ResourceNormalization:
         assert _normalize_resource_url(url) == "https://mcp.example.com/api/v1/tools"
 
     def test_normalize_resource_url_handles_empty(self):
-        """Test that empty/None URLs are handled gracefully."""
+        """Test that empty/None URLs return None."""
         # First-Party
         from mcpgateway.routers.oauth_router import _normalize_resource_url
 
-        assert _normalize_resource_url("") == ""
+        assert _normalize_resource_url("") is None
         assert _normalize_resource_url(None) is None
+
+    def test_normalize_resource_url_rejects_relative_uri(self):
+        """Test that relative URIs (no scheme) return None per RFC 8707."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        # RFC 8707: resource MUST be an absolute URI
+        assert _normalize_resource_url("mcp.example.com/api") is None
+        assert _normalize_resource_url("/api/v1") is None
+
+    def test_normalize_resource_url_rejects_scheme_only(self):
+        """Test that URLs without netloc return None."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        assert _normalize_resource_url("file:///path") is None  # no netloc

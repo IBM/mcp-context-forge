@@ -35,7 +35,7 @@ from mcpgateway.services.token_storage_service import TokenStorageService
 logger = logging.getLogger(__name__)
 
 
-def _normalize_resource_url(url: str) -> str:
+def _normalize_resource_url(url: str | None) -> str | None:
     """Normalize URL for use as RFC 8707 resource parameter.
 
     Per RFC 8707 Section 2:
@@ -47,11 +47,15 @@ def _normalize_resource_url(url: str) -> str:
         url: The gateway URL to normalize
 
     Returns:
-        Normalized URL suitable for RFC 8707 resource parameter
+        Normalized URL suitable for RFC 8707 resource parameter, or None if invalid
     """
     if not url:
-        return url
+        return None
     parsed = urlparse(url)
+    # RFC 8707: resource MUST be an absolute URI (requires scheme and netloc)
+    if not parsed.scheme or not parsed.netloc:
+        logger.warning(f"Invalid resource URL (not absolute URI): {url}")
+        return None
     # Remove fragment (required) and query (recommended) per RFC 8707
     normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
     return normalized
@@ -108,10 +112,19 @@ async def initiate_oauth_flow(
 
         oauth_config = gateway.oauth_config.copy()  # Work with a copy to avoid mutating the original
 
-        # RFC 8707: Set resource to the MCP server URL (the actual resource being accessed)
-        # This tells the OAuth server to mint a JWT token for this audience
-        # Always recompute from gateway.url to handle URL changes (don't rely on stale stored value)
-        oauth_config["resource"] = _normalize_resource_url(gateway.url)
+        # RFC 8707: Set resource parameter for JWT access tokens
+        # Respect pre-configured resource (e.g., for providers requiring pre-registered resources)
+        # Only derive from gateway.url if not explicitly configured
+        if oauth_config.get("resource"):
+            # Normalize existing resource (handles both string and list)
+            existing = oauth_config["resource"]
+            if isinstance(existing, list):
+                oauth_config["resource"] = [_normalize_resource_url(r) for r in existing if _normalize_resource_url(r)]
+            else:
+                oauth_config["resource"] = _normalize_resource_url(existing)
+        else:
+            # Default to gateway.url as the resource
+            oauth_config["resource"] = _normalize_resource_url(gateway.url)
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
@@ -316,9 +329,16 @@ async def oauth_callback(
         # RFC 8707: Add resource parameter for JWT access tokens
         # Must be set here in callback, not just in /authorize, because complete_authorization_code_flow
         # needs it for the token exchange request
-        # Always recompute from gateway.url to handle URL changes (don't rely on stale stored value)
+        # Respect pre-configured resource; only derive from gateway.url if not explicitly configured
         oauth_config_with_resource = gateway.oauth_config.copy()
-        oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
+        if oauth_config_with_resource.get("resource"):
+            existing = oauth_config_with_resource["resource"]
+            if isinstance(existing, list):
+                oauth_config_with_resource["resource"] = [_normalize_resource_url(r) for r in existing if _normalize_resource_url(r)]
+            else:
+                oauth_config_with_resource["resource"] = _normalize_resource_url(existing)
+        else:
+            oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
 
         result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)
 

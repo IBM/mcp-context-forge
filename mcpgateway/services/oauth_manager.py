@@ -1054,8 +1054,15 @@ class OAuthManager:
         # The resource identifies the MCP server (resource server), not the OAuth server
         resource = credentials.get("resource")
         if resource:
-            # RFC 8707 allows multiple resource parameters; httpx handles lists in form data
-            token_data["resource"] = resource
+            if isinstance(resource, list):
+                # RFC 8707 allows multiple resource parameters - use list of tuples
+                form_data: list[tuple[str, str]] = list(token_data.items())
+                for r in resource:
+                    if r:
+                        form_data.append(("resource", r))
+                token_data = form_data  # type: ignore[assignment]
+            else:
+                token_data["resource"] = resource
 
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
@@ -1140,10 +1147,13 @@ class OAuthManager:
         # Must be included in refresh requests to maintain JWT token type
         resource = credentials.get("resource")
         if resource:
-            # Handle both string and list values per RFC 8707
             if isinstance(resource, list):
-                # For refresh, use the first resource if multiple are specified
-                token_data["resource"] = resource[0] if resource else None
+                # RFC 8707 allows multiple resource parameters - use list of tuples
+                form_data: list[tuple[str, str]] = list(token_data.items())
+                for r in resource:
+                    if r:
+                        form_data.append(("resource", r))
+                token_data = form_data  # type: ignore[assignment]
             else:
                 token_data["resource"] = resource
 

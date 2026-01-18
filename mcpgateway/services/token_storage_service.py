@@ -215,14 +215,17 @@ class TokenStorageService:
                         pass
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
-            # Always derive from current gateway.url to handle URL changes
-            if gateway.url:
+            # Respect pre-configured resource; only derive from gateway.url if not explicitly configured
+            if not oauth_config.get("resource") and gateway.url:
                 # Standard
                 from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
 
                 parsed = urlparse(gateway.url)
-                # Remove fragment (required) and query (recommended) per RFC 8707
-                oauth_config["resource"] = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+                # RFC 8707: resource MUST be absolute URI, MUST NOT include fragment, SHOULD NOT include query
+                if parsed.scheme and parsed.netloc:
+                    oauth_config["resource"] = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+                else:
+                    logger.warning(f"Gateway URL is not an absolute URI, skipping resource parameter: {gateway.url}")
 
             # Use OAuthManager to refresh the token
             # First-Party
