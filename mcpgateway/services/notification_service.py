@@ -42,7 +42,7 @@ import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
 import time
-from typing import Any, Callable, Dict, Optional, Set, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Dict, Optional, Set, TYPE_CHECKING
 
 # Third-Party
 from mcp.shared.session import RequestResponder
@@ -54,6 +54,12 @@ from mcpgateway.services.logging_service import LoggingService
 if TYPE_CHECKING:
     # First-Party
     from mcpgateway.services.gateway_service import GatewayService
+
+# Type alias for message handler callback
+MessageHandlerCallback = Callable[
+    [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
+    Awaitable[None],
+]
 
 # Initialize logging
 logging_service = LoggingService()
@@ -89,6 +95,11 @@ class GatewayCapabilities:
     prompts_list_changed: bool = False
 
 
+def _empty_notification_type_set() -> Set[NotificationType]:
+    """Factory function for creating an empty set of NotificationType."""
+    return set()
+
+
 @dataclass
 class PendingRefresh:
     """Represents a pending refresh operation with debounce tracking.
@@ -106,7 +117,7 @@ class PendingRefresh:
     include_resources: bool = True
     include_prompts: bool = True
     # Track which notification types triggered this refresh
-    triggered_by: Set[NotificationType] = field(default_factory=set)
+    triggered_by: Set[NotificationType] = field(default_factory=_empty_notification_type_set)
 
 
 class NotificationService:
@@ -159,7 +170,7 @@ class NotificationService:
         self._refresh_queue: asyncio.Queue[PendingRefresh] = asyncio.Queue(maxsize=max_queue_size)
 
         # Background worker task
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_task: Optional[asyncio.Task[None]] = None
         self._shutdown_event = asyncio.Event()
 
         # Reference to gateway service for refresh operations (set during initialize)
@@ -260,14 +271,14 @@ class NotificationService:
             >>> service._gateway_capabilities["gw-1"].resources_list_changed
             False
         """
-        tools_cap = capabilities.get("tools", {})
-        resources_cap = capabilities.get("resources", {})
-        prompts_cap = capabilities.get("prompts", {})
+        tools_cap: Dict[str, Any] = capabilities.get("tools", {}) if isinstance(capabilities.get("tools"), dict) else {}
+        resources_cap: Dict[str, Any] = capabilities.get("resources", {}) if isinstance(capabilities.get("resources"), dict) else {}
+        prompts_cap: Dict[str, Any] = capabilities.get("prompts", {}) if isinstance(capabilities.get("prompts"), dict) else {}
 
         self._gateway_capabilities[gateway_id] = GatewayCapabilities(
-            tools_list_changed=tools_cap.get("listChanged", False) if isinstance(tools_cap, dict) else False,
-            resources_list_changed=resources_cap.get("listChanged", False) if isinstance(resources_cap, dict) else False,
-            prompts_list_changed=prompts_cap.get("listChanged", False) if isinstance(prompts_cap, dict) else False,
+            tools_list_changed=bool(tools_cap.get("listChanged", False)),
+            resources_list_changed=bool(resources_cap.get("listChanged", False)),
+            prompts_list_changed=bool(prompts_cap.get("listChanged", False)),
         )
 
         logger.debug(
@@ -323,7 +334,7 @@ class NotificationService:
         self,
         gateway_id: str,
         gateway_url: Optional[str] = None,
-    ) -> Callable:
+    ) -> MessageHandlerCallback:
         """Create a message handler callback for a specific gateway.
 
         Returns a callback suitable for passing to ClientSession's message_handler
@@ -514,7 +525,7 @@ class NotificationService:
         try:
             # Use the existing refresh method with locking
             # pylint: disable=protected-access
-            result = await self._gateway_service._refresh_gateway_tools_resources_prompts(
+            result = await self._gateway_service._refresh_gateway_tools_resources_prompts(  # pyright: ignore[reportPrivateUsage]
                 gateway_id=pending.gateway_id,
                 created_via="notification_service",
                 include_resources=pending.include_resources,
