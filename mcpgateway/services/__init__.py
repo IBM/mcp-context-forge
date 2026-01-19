@@ -13,7 +13,7 @@ Exposes core MCP Gateway services:
 """
 
 from importlib import import_module
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from mcpgateway.utils.task_scheduler import task_scheduler, Priority  # noqa: E402  # pylint: disable=wrong-import-position
 
@@ -31,6 +31,14 @@ _LAZY_ATTRS = {
     "GatewayService": "mcpgateway.services.gateway_service",
     "GatewayError": "mcpgateway.services.gateway_service",
 }
+
+if TYPE_CHECKING:
+    # Provide names for static analysis (pylint/ruff/mypy) without importing
+    # the service submodules at runtime.
+    from mcpgateway.services.tool_service import ToolService, ToolError  # noqa: F401
+    from mcpgateway.services.resource_service import ResourceService, ResourceError  # noqa: F401
+    from mcpgateway.services.prompt_service import PromptService, PromptError  # noqa: F401
+    from mcpgateway.services.gateway_service import GatewayService, GatewayError  # noqa: F401
 
 
 def __getattr__(name: str) -> Any:
