@@ -2268,7 +2268,7 @@ async def admin_toggle_server(
         >>>
         >>> # Happy path: Activate server
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
-        >>> mock_request_activate = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_activate = MagicMock(spec=Request)
         >>> mock_request_activate.form = AsyncMock(return_value=form_data_activate)
         >>> original_toggle_server_status = server_service.toggle_server_status
         >>> server_service.toggle_server_status = AsyncMock()
@@ -2285,16 +2285,23 @@ async def admin_toggle_server(
         >>> mock_request_deactivate = MagicMock(spec=Request, scope={"root_path": "/api"})
         >>> mock_request_deactivate.form = AsyncMock(return_value=form_data_deactivate)
         >>>
+        >>> # Mock settings.app_root_path
+        >>> import mcpgateway.admin as admin_module
+        >>> original_app_root_path = admin_module.settings.app_root_path
+        >>> admin_module.settings.app_root_path = "/api"
+        >>>
         >>> async def test_admin_toggle_server_deactivate():
         ...     result = await admin_toggle_server(server_id, mock_request_deactivate, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin#catalog" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin/#catalog" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_toggle_server_deactivate())
         True
+        >>> # Restore
+        >>> admin_module.settings.app_root_path = original_app_root_path
         >>>
         >>> # Edge case: Toggle with inactive checkbox checked
         >>> form_data_inactive = FormData([("activate", "true"), ("is_inactive_checked", "true")])
-        >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_inactive = MagicMock(spec=Request)
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
         >>>
         >>> async def test_admin_toggle_server_inactive_checked():
@@ -2306,7 +2313,7 @@ async def admin_toggle_server(
         >>>
         >>> # Error path: Simulate an exception during toggle
         >>> form_data_error = FormData([("activate", "true")])
-        >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_error = MagicMock(spec=Request)
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
         >>> server_service.toggle_server_status = AsyncMock(side_effect=Exception("Toggle failed"))
         >>>
@@ -2774,7 +2781,7 @@ async def admin_toggle_gateway(
         >>>
         >>> # Happy path: Activate gateway
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
-        >>> mock_request_activate = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_activate = MagicMock(spec=Request)
         >>> mock_request_activate.form = AsyncMock(return_value=form_data_activate)
         >>> original_toggle_gateway_status = gateway_service.toggle_gateway_status
         >>> gateway_service.toggle_gateway_status = AsyncMock()
@@ -2788,19 +2795,26 @@ async def admin_toggle_gateway(
         >>>
         >>> # Happy path: Deactivate gateway
         >>> form_data_deactivate = FormData([("activate", "false"), ("is_inactive_checked", "false")])
-        >>> mock_request_deactivate = MagicMock(spec=Request, scope={"root_path": "/api"})
+        >>> mock_request_deactivate = MagicMock(spec=Request)
         >>> mock_request_deactivate.form = AsyncMock(return_value=form_data_deactivate)
+        >>>
+        >>> # Mock settings.app_root_path
+        >>> import mcpgateway.admin as admin_module
+        >>> original_app_root_path = admin_module.settings.app_root_path
+        >>> admin_module.settings.app_root_path = "/api"
         >>>
         >>> async def test_admin_toggle_gateway_deactivate():
         ...     result = await admin_toggle_gateway(gateway_id, mock_request_deactivate, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin#gateways" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin/#gateways" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_toggle_gateway_deactivate())
         True
+        >>> # Restore
+        >>> admin_module.settings.app_root_path = original_app_root_path
         >>>
         >>> # Error path: Simulate an exception during toggle
         >>> form_data_error = FormData([("activate", "true")])
-        >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_error = MagicMock(spec=Request)
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
         >>> gateway_service.toggle_gateway_status = AsyncMock(side_effect=Exception("Toggle failed"))
         >>>
@@ -9955,7 +9969,7 @@ async def admin_toggle_tool(
         >>>
         >>> # Happy path: Activate tool
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
-        >>> mock_request_activate = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_activate = MagicMock(spec=Request)
         >>> mock_request_activate.form = AsyncMock(return_value=form_data_activate)
         >>> original_toggle_tool_status = tool_service.toggle_tool_status
         >>> tool_service.toggle_tool_status = AsyncMock()
@@ -9969,19 +9983,26 @@ async def admin_toggle_tool(
         >>>
         >>> # Happy path: Deactivate tool
         >>> form_data_deactivate = FormData([("activate", "false"), ("is_inactive_checked", "false")])
-        >>> mock_request_deactivate = MagicMock(spec=Request, scope={"root_path": "/api"})
+        >>> mock_request_deactivate = MagicMock(spec=Request)
         >>> mock_request_deactivate.form = AsyncMock(return_value=form_data_deactivate)
+        >>> 
+        >>> # Mock settings.app_root_path
+        >>> import mcpgateway.admin as admin_module
+        >>> original_app_root_path = admin_module.settings.app_root_path
+        >>> admin_module.settings.app_root_path = "/api"
         >>>
         >>> async def test_admin_toggle_tool_deactivate():
         ...     result = await admin_toggle_tool(tool_id, mock_request_deactivate, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin#tools" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin/#tools" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_toggle_tool_deactivate())
         True
+        >>> # Restore
+        >>> admin_module.settings.app_root_path = original_app_root_path
         >>>
         >>> # Edge case: Toggle with inactive checkbox checked
         >>> form_data_inactive = FormData([("activate", "true"), ("is_inactive_checked", "true")])
-        >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_inactive = MagicMock(spec=Request)
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
         >>>
         >>> async def test_admin_toggle_tool_inactive_checked():
@@ -9993,7 +10014,7 @@ async def admin_toggle_tool(
         >>>
         >>> # Error path: Simulate an exception during toggle
         >>> form_data_error = FormData([("activate", "true")])
-        >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_error = MagicMock(spec=Request)
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
         >>> tool_service.toggle_tool_status = AsyncMock(side_effect=Exception("Toggle failed"))
         >>>
@@ -10770,7 +10791,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>>
         >>> # Happy path: Delete gateway
         >>> form_data_delete = FormData([("is_inactive_checked", "false")])
-        >>> mock_request_delete = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_delete = MagicMock(spec=Request)
         >>> mock_request_delete.form = AsyncMock(return_value=form_data_delete)
         >>> original_delete_gateway = gateway_service.delete_gateway
         >>> gateway_service.delete_gateway = AsyncMock()
@@ -10784,8 +10805,13 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>>
         >>> # Edge case: Delete with inactive checkbox checked
         >>> form_data_inactive = FormData([("is_inactive_checked", "true")])
-        >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": "/api"})
+        >>> mock_request_inactive = MagicMock(spec=Request)
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
+        >>>
+        >>> # Mock settings.app_root_path
+        >>> import mcpgateway.admin as admin_module
+        >>> original_app_root_path = admin_module.settings.app_root_path
+        >>> admin_module.settings.app_root_path = "/api"
         >>>
         >>> async def test_admin_delete_gateway_inactive_checked():
         ...     result = await admin_delete_gateway(gateway_id, mock_request_inactive, mock_db, mock_user)
@@ -10793,10 +10819,12 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>>
         >>> asyncio.run(test_admin_delete_gateway_inactive_checked())
         True
+        >>> # Restore
+        >>> admin_module.settings.app_root_path = original_app_root_path
         >>>
         >>> # Error path: Simulate an exception during deletion
         >>> form_data_error = FormData([])
-        >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_error = MagicMock(spec=Request)
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
         >>> gateway_service.delete_gateway = AsyncMock(side_effect=Exception("Deletion failed"))
         >>>
