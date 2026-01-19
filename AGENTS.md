@@ -119,6 +119,72 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 - **SQLite** default, **PostgreSQL** support, **Redis** for caching/federation
 - **Alembic** for migrations
 
+## Alembic Database Migrations
+
+When adding new database columns or tables, create an Alembic migration.
+
+### Creating Migrations
+
+```bash
+# CRITICAL: Always check the current head FIRST
+cd mcpgateway && alembic heads
+
+# Generate a new migration (auto-generates from model changes)
+alembic revision --autogenerate -m "add_column_to_table"
+
+# Or create an empty migration for manual edits
+alembic revision -m "add_column_to_table"
+```
+
+### Migration File Requirements
+
+The `down_revision` MUST point to the current head. **Never guess or copy from older migrations.**
+
+```python
+# CORRECT: Points to actual current head (verified via `alembic heads`)
+revision: str = "abc123def456"
+down_revision: Union[str, Sequence[str], None] = "43c07ed25a24"  # Current head
+
+# WRONG: Creates multiple heads (breaks all tests)
+down_revision: Union[str, Sequence[str], None] = "some_old_revision"
+```
+
+### Idempotent Migrations Pattern
+
+Always write idempotent migrations that check before modifying:
+
+```python
+def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
+
+    # Skip if table doesn't exist (fresh DB uses models.py directly)
+    if "my_table" not in inspector.get_table_names():
+        return
+
+    # Skip if column already exists
+    columns = [col["name"] for col in inspector.get_columns("my_table")]
+    if "new_column" in columns:
+        return
+
+    op.add_column("my_table", sa.Column("new_column", sa.String(), nullable=True))
+```
+
+### Verification
+
+```bash
+# Verify single head after creating migration
+cd mcpgateway && alembic heads
+# Should show only ONE head
+
+# Run tests to confirm migrations work
+make test
+```
+
+### Common Errors
+
+- **"Multiple heads are present"**: Your `down_revision` points to wrong parent. Fix by updating to actual current head.
+- **"Target database is not up to date"**: Run `alembic upgrade head` first.
+
 ## Coding Standards
 
 - **Python >= 3.11** with type hints; strict mypy

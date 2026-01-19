@@ -4,6 +4,7 @@ nav:
   - mcpgateway-translate.md
   - reverse-proxy.md
   - multi-auth-headers.md
+  - query-param-auth.md
   - tool-annotations.md
   - rest-passthrough.md
   - "gRPC Services (Experimental)": grpc-services.md
