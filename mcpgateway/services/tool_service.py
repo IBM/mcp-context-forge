@@ -678,12 +678,12 @@ class ToolService:
                 tool_dict["auth"] = {
                     "auth_type": "basic",
                     "username": username,
-                    "password": "********" if password else None,
+                    "password": settings.masked_auth_value if password else None,
                 }
             elif tool.auth_type == "bearer":
                 tool_dict["auth"] = {
                     "auth_type": "bearer",
-                    "token": "********" if decoded_auth_value["Authorization"] else None,
+                    "token": settings.masked_auth_value if decoded_auth_value["Authorization"] else None,
                 }
             elif tool.auth_type == "authheaders":
                 # Get first key
@@ -691,7 +691,7 @@ class ToolService:
                 tool_dict["auth"] = {
                     "auth_type": "authheaders",
                     "auth_header_key": first_key,
-                    "auth_header_value": "********" if decoded_auth_value[first_key] else None,
+                    "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,
                 }
             else:
                 tool_dict["auth"] = None

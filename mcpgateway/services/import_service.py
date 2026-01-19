@@ -1203,8 +1203,10 @@ class ImportService:
                         # Get the first key-value pair (schema supports single param)
                         param_key = next(iter(auth_query_params.keys()))
                         encrypted_value = auth_query_params[param_key]
-                        # Decode the encrypted value
-                        decrypted_value = decode_auth(encrypted_value)
+                        # Decode the encrypted value - returns dict like {param_key: value}
+                        decrypted_dict = decode_auth(encrypted_value)
+                        # Extract the actual value from the dict
+                        decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
                         auth_kwargs["auth_query_param_key"] = param_key
                         auth_kwargs["auth_query_param_value"] = decrypted_value
                         logger.debug(f"Importing gateway with query_param auth, key: {param_key}")
@@ -1270,8 +1272,10 @@ class ImportService:
                         # Get the first key-value pair (schema supports single param)
                         param_key = next(iter(auth_query_params.keys()))
                         encrypted_value = auth_query_params[param_key]
-                        # Decode the encrypted value
-                        decrypted_value = decode_auth(encrypted_value)
+                        # Decode the encrypted value - returns dict like {param_key: value}
+                        decrypted_dict = decode_auth(encrypted_value)
+                        # Extract the actual value from the dict
+                        decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
                         auth_kwargs["auth_query_param_key"] = param_key
                         auth_kwargs["auth_query_param_value"] = decrypted_value
                         logger.debug(f"Importing gateway update with query_param auth, key: {param_key}")

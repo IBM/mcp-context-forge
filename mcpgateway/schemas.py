@@ -3189,15 +3189,16 @@ class GatewayRead(BaseModelWithConfigDict):
     def _mask_query_param_auth(cls, data: Any) -> Any:
         """Mask query param auth value when constructing from DB model.
 
-        This extracts auth_query_params from the raw data (DB model dict)
+        This extracts auth_query_params from the raw data (DB model or dict)
         and populates the masked fields for display.
 
         Args:
-            data: The raw data (dict or model) to process.
+            data: The raw data (dict or ORM model) to process.
 
         Returns:
             Any: The processed data with masked query param values.
         """
+        # Handle dict input
         if isinstance(data, dict):
             auth_query_params = data.get("auth_query_params")
             if auth_query_params and isinstance(auth_query_params, dict):
@@ -3205,7 +3206,18 @@ class GatewayRead(BaseModelWithConfigDict):
                 first_key = next(iter(auth_query_params.keys()), None)
                 if first_key:
                     data["auth_query_param_key"] = first_key
-                    data["auth_query_param_value_masked"] = "********"
+                    data["auth_query_param_value_masked"] = settings.masked_auth_value
+        # Handle ORM model input (has auth_query_params attribute)
+        elif hasattr(data, "auth_query_params"):
+            auth_query_params = getattr(data, "auth_query_params", None)
+            if auth_query_params and isinstance(auth_query_params, dict):
+                # Convert ORM to dict for modification
+                data_dict = {c.name: getattr(data, c.name) for c in data.__table__.columns}
+                first_key = next(iter(auth_query_params.keys()), None)
+                if first_key:
+                    data_dict["auth_query_param_key"] = first_key
+                    data_dict["auth_query_param_value_masked"] = settings.masked_auth_value
+                return data_dict
         return data
 
     # This will be the main method to automatically populate fields

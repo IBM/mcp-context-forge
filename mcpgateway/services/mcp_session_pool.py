@@ -44,6 +44,9 @@ from mcp.shared.session import RequestResponder
 import mcp.types as mcp_types
 import orjson
 
+# First-Party
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
+
 # JSON-RPC standard error code for method not found
 METHOD_NOT_FOUND = -32601
 
@@ -416,7 +419,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Circuit breaker reset
             del self._circuit_open_until[url]
             self._failures[url] = 0
-            logger.info(f"Circuit breaker reset for {url}")
+            logger.info(f"Circuit breaker reset for {sanitize_url_for_logging(url)}")
             return False
         return True
 
@@ -426,7 +429,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if self._failures[url] >= self._circuit_breaker_threshold:
             self._circuit_open_until[url] = time.time() + self._circuit_breaker_reset
             self._circuit_breaker_trips += 1
-            logger.warning(f"Circuit breaker opened for {url} after {self._failures[url]} failures. " f"Will reset in {self._circuit_breaker_reset}s")
+            logger.warning(f"Circuit breaker opened for {sanitize_url_for_logging(url)} after {self._failures[url]} failures. " f"Will reset in {self._circuit_breaker_reset}s")
 
     def _record_success(self, url: str) -> None:
         """Record a success, resetting failure count."""
@@ -509,7 +512,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._hits += 1
                 async with lock:
                     self._active[pool_key].add(pooled)
-                logger.debug(f"Pool hit for {url} (identity={pool_key[2][:8]}, transport={transport_type.value})")
+                logger.debug(f"Pool hit for {sanitize_url_for_logging(url)} (identity={pool_key[2][:8]}, transport={transport_type.value})")
                 return pooled
 
             # Session invalid, close it
@@ -524,7 +527,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             if not acquired:
                 raise asyncio.TimeoutError("Failed to acquire session slot")
         except asyncio.TimeoutError:
-            raise asyncio.TimeoutError(f"Timeout waiting for available session for {url}") from None
+            raise asyncio.TimeoutError(f"Timeout waiting for available session for {sanitize_url_for_logging(url)}") from None
 
         # Create new session (semaphore acquired)
         try:
@@ -540,14 +543,14 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             self._record_success(url)
             async with lock:
                 self._active[pool_key].add(pooled)
-            logger.debug(f"Pool miss for {url} - created new session (transport={transport_type.value})")
+            logger.debug(f"Pool miss for {sanitize_url_for_logging(url)} - created new session (transport={transport_type.value})")
             return pooled
         except BaseException as e:
             # Release semaphore on ANY failure (including CancelledError)
             semaphore.release()
             if not isinstance(e, asyncio.CancelledError):
                 self._record_failure(url)
-                logger.warning(f"Failed to create session for {url}: {e}")
+                logger.warning(f"Failed to create session for {sanitize_url_for_logging(url)}: {e}")
             raise
 
     async def release(self, pooled: PooledSession) -> None:
@@ -596,7 +599,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         try:
             pool.put_nowait(pooled)
-            logger.debug(f"Session returned to pool for {pooled.url}")
+            logger.debug(f"Session returned to pool for {sanitize_url_for_logging(pooled.url)}")
         except asyncio.QueueFull:
             # Pool full (shouldn't happen with semaphore), close session
             await self._close_session(pooled)
@@ -683,7 +686,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         for session in sessions_to_close:
             await self._close_session(session)
             self._sessions_reaped += 1
-            logger.debug(f"Reaped stale session for {session.url} (age={session.age_seconds:.1f}s)")
+            logger.debug(f"Reaped stale session for {sanitize_url_for_logging(session.url)} (age={session.age_seconds:.1f}s)")
 
     async def _validate_session(self, pooled: PooledSession) -> bool:
         """
@@ -729,22 +732,22 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             try:
                 if method == "ping":
                     await asyncio.wait_for(pooled.session.send_ping(), timeout=self._health_check_timeout)
-                    logger.debug(f"Health check passed: ping (url={pooled.url})")
+                    logger.debug(f"Health check passed: ping (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_tools":
                     await asyncio.wait_for(pooled.session.list_tools(), timeout=self._health_check_timeout)
-                    logger.debug(f"Health check passed: list_tools (url={pooled.url})")
+                    logger.debug(f"Health check passed: list_tools (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_prompts":
                     await asyncio.wait_for(pooled.session.list_prompts(), timeout=self._health_check_timeout)
-                    logger.debug(f"Health check passed: list_prompts (url={pooled.url})")
+                    logger.debug(f"Health check passed: list_prompts (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_resources":
                     await asyncio.wait_for(pooled.session.list_resources(), timeout=self._health_check_timeout)
-                    logger.debug(f"Health check passed: list_resources (url={pooled.url})")
+                    logger.debug(f"Health check passed: list_resources (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "skip":
-                    logger.debug(f"Health check skipped per configuration (url={pooled.url})")
+                    logger.debug(f"Health check skipped per configuration (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 logger.warning(f"Unknown health check method '{method}', skipping")
                 continue
@@ -833,9 +836,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             if self._message_handler_factory:
                 try:
                     message_handler = self._message_handler_factory(url, gateway_id)
-                    logger.debug(f"Created message handler for session {url} (gateway={gateway_id})")
+                    logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={gateway_id})")
                 except Exception as e:
-                    logger.warning(f"Failed to create message handler for {url}: {e}")
+                    logger.warning(f"Failed to create message handler for {sanitize_url_for_logging(url)}: {e}")
 
             # Create and initialize session
             session = ClientSession(read_stream, write_stream, message_handler=message_handler)
@@ -843,7 +846,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             await session.__aenter__()  # Must call directly for manual lifecycle management
             await session.initialize()
 
-            logger.info(f"Created new MCP session for {url} (transport={transport_type.value})")
+            logger.info(f"Created new MCP session for {sanitize_url_for_logging(url)} (transport={transport_type.value})")
             success = True
 
             return PooledSession(
@@ -900,7 +903,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         except Exception as e:
             logger.debug(f"Error closing transport: {e}")
 
-        logger.debug(f"Closed session for {pooled.url} (uses={pooled.use_count})")
+        logger.debug(f"Closed session for {sanitize_url_for_logging(pooled.url)} (uses={pooled.use_count})")
 
     async def close_all(self) -> None:
         """

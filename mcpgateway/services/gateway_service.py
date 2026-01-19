@@ -1742,6 +1742,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # tools/resoures/prompts are need to be re-fetched not only if URL changed , in case any update like authentication and visibility changed
                 # url_changed = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != gateway.url
 
+                # Save original values BEFORE updating for change detection checks later
+                original_url = gateway.url
+                original_auth_type = gateway.auth_type
+
                 # Update fields if provided
                 if gateway_update.name is not None:
                     gateway.name = gateway_update.name
@@ -1777,6 +1781,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # If auth_type is empty, update the auth_value too
                     if gateway_update.auth_type == "":
                         gateway.auth_value = cast(Any, "")
+
+                    # Clear auth_query_params when switching away from query_param auth
+                    if original_auth_type == "query_param" and gateway_update.auth_type != "query_param":
+                        gateway.auth_query_params = None
+                        logger.debug(f"Cleared auth_query_params for gateway {gateway.id} (switched from query_param to {gateway_update.auth_type})")
 
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
@@ -1824,11 +1833,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 init_url = gateway.url
 
                 # Check if updating to query_param auth or updating existing query_param credentials
-                is_switching_to_queryparam = gateway_update.auth_type == "query_param"
-                is_updating_queryparam_creds = gateway.auth_type == "query_param" and (gateway_update.auth_query_param_key is not None or gateway_update.auth_query_param_value is not None)
-                is_url_changing = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != gateway.url
+                # Use original_auth_type since gateway.auth_type may have been updated already
+                is_switching_to_queryparam = gateway_update.auth_type == "query_param" and original_auth_type != "query_param"
+                is_updating_queryparam_creds = original_auth_type == "query_param" and (gateway_update.auth_query_param_key is not None or gateway_update.auth_query_param_value is not None)
+                is_url_changing = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != original_url
 
-                if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and gateway.auth_type == "query_param"):
+                if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and original_auth_type == "query_param"):
                     # Service-layer enforcement: Check feature flag
                     if not settings.insecure_allow_queryparam_auth:
                         # Grandfather clause: Allow updates to existing query_param gateways
@@ -1852,14 +1862,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     param_key = getattr(gateway_update, "auth_query_param_key", None) or (next(iter(gateway.auth_query_params.keys()), None) if gateway.auth_query_params else None)
                     param_value = getattr(gateway_update, "auth_query_param_value", None)
 
+                    # Get raw value from SecretStr if applicable
+                    raw_value: Optional[str] = None
+                    if param_value:
+                        if hasattr(param_value, "get_secret_value"):
+                            raw_value = param_value.get_secret_value()
+                        else:
+                            raw_value = str(param_value)
+
+                    # Check if the value is the masked placeholder - if so, keep existing value
+                    is_masked_placeholder = raw_value == settings.masked_auth_value
+
                     if param_key:
-                        if param_value:
-                            # Get the actual secret value
-                            if hasattr(param_value, "get_secret_value"):
-                                raw_value = param_value.get_secret_value()
-                            else:
-                                raw_value = str(param_value)
-                            # Encrypt for storage
+                        if raw_value and not is_masked_placeholder:
+                            # New value provided - encrypt for storage
                             encrypted_value = encode_auth({param_key: raw_value})
                             gateway.auth_query_params = {param_key: encrypted_value}
                             auth_query_params_decrypted = {param_key: raw_value}
