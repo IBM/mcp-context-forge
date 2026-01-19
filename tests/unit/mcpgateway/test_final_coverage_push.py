@@ -162,9 +162,8 @@ async def test_export_command_parameter_building():
         }
 
         with patch('mcpgateway.cli_export_import.Path.mkdir'):
-            with patch('builtins.open', create=True):
-                with patch('json.dump'):
-                    await export_command(args)
+            with patch('pathlib.Path.write_bytes'):  # Changed from builtins.open for asyncio.to_thread
+                await export_command(args)
 
         # Verify API was called with correct parameters
         mock_request.assert_called_once()
