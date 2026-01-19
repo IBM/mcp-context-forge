@@ -10682,7 +10682,7 @@ async function loadToolOpsModels() {
         data.models.forEach((model) => {
             const option = document.createElement("option");
             option.value = model.model_id;
-            option.textContent = model.model_id + ` (${model.provider_name}$)`;
+            option.textContent = model.model_id + ` (${model.provider_name})`;
             modelSelect.appendChild(option);
         });
     } catch (error) {
