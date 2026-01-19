@@ -23,13 +23,14 @@ from mcpgateway.services.resource_service import ResourceError, ResourceService 
 from mcpgateway.services.tool_service import ToolError, ToolService  # pylint: disable=wrong-import-position  # noqa: E402
 
 __all__ = [
-    "ToolService",
-    "ToolError",
-    "ResourceService",
-    "ResourceError",
-    "PromptService",
-    "PromptError",
-    "GatewayService",
-    "GatewayError",
+	"ToolService",
+	"ToolError",
+	"ResourceService",
+	"ResourceError",
+	"PromptService",
+	"PromptError",
+	"GatewayService",
+	"GatewayError",
+	"Priority",
+	"task_scheduler",
 ]
-
