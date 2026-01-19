@@ -260,6 +260,28 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 },
             ]
 
+            # Logic to add additional default roles from a json file
+            if settings.mcpgateway_bootstrap_roles_in_db_enabled:
+                try:
+                    additonal_default_roles_path = Path(settings.mcpgateway_bootstrap_roles_in_db_file)
+                    # Try multiple locations for the mcpgateway_bootstrap_roles_in_db_file file
+                    if not additonal_default_roles_path.is_absolute():
+                        # Try current directory first
+                        if not additonal_default_roles_path.exists():
+                            # Try project root
+                            additonal_default_roles_path = Path(__file__).parent.parent.parent / settings.mcpgateway_bootstrap_roles_in_db_file
+
+                    if not additonal_default_roles_path.exists():
+                        logger.warning(f"Catalog file not found: {additonal_default_roles_path}")
+
+                    with open(additonal_default_roles_path, "r", encoding="utf-8") as f:
+                        additonal_default_roles_data = json.load(f)
+                        default_roles.extend(additonal_default_roles_data)
+                    logger.info(f"Added {len(additonal_default_roles_data)} additional roles to default roles in bootstrap db")
+                except Exception as e:
+                    logger.error(f"Failed to load mcpgateway_bootstrap_roles_in_db_file: {e}")
+
+
             # Create default roles
             created_roles = []
             for role_def in default_roles:

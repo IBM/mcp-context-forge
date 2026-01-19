@@ -742,6 +742,11 @@ mcpContextForge:
     # ─ Optional database / redis overrides ─
     # DATABASE_URL: "postgresql+psycopg://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
     # REDIS_URL:    "redis://cache.acme.com:6379/0"                   # override the auto-generated URL
+    
+    # - Bootstrap additional system roles -
+    MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED: "false" # Enable Bootstrap additional system roles feature
+    MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE: "additional_roles_in_db.json" # Create and populate this file as given in the .env.example to add additional roles
+
 
   ####################################################################
   # Names of ConfigMap / Secret are resolved by templates; leave as-is.
