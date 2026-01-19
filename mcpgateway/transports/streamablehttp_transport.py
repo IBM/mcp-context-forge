@@ -703,6 +703,22 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    meta_data = None
+    # Extract _meta from request context if available
+    try:
+        ctx = mcp_app.request_context
+        if ctx:
+            meta_data = getattr(ctx, "meta", None) 
+            if meta_data is None and hasattr(ctx, "request"):
+                 # Fallback to raw request params if needed
+                 meta_data = getattr(ctx.request.params, "meta", None)
+
+            meta_data = meta_data.model_dump()
+    except LookupError:
+        # request_context might not be active in some edge cases (e.g. tests)
+        logger.debug("No active request context found")
+        pass
+
     try:
         async with get_db() as db:
             try:
@@ -816,6 +832,22 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    meta_data = None
+    # Extract _meta from request context if available
+    try:
+        ctx = mcp_app.request_context
+        if ctx:
+            meta_data = getattr(ctx, "meta", None) 
+            if meta_data is None and hasattr(ctx, "request"):
+                 # Fallback to raw request params if needed
+                 meta_data = getattr(ctx.request.params, "meta", None)
+
+            meta_data = meta_data.model_dump()
+    except LookupError:
+        # request_context might not be active in some edge cases (e.g. tests)
+        logger.debug("No active request context found")
+        pass
+        
     try:
         async with get_db() as db:
             try:

@@ -1386,6 +1386,7 @@ class PromptService:
         token_teams: Optional[List[str]] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
+        meta_data: Optional[Dict[str, Any]] = None,
     ) -> PromptResult:
         """Get a prompt template and optionally render it.
 
