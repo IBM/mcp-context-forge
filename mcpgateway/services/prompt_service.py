@@ -1386,7 +1386,7 @@ class PromptService:
         token_teams: Optional[List[str]] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
-        meta_data: Optional[Dict[str, Any]] = None,
+        _meta_data: Optional[Dict[str, Any]] = None,
     ) -> PromptResult:
         """Get a prompt template and optionally render it.
 
@@ -1402,6 +1402,7 @@ class PromptService:
                 None = unrestricted admin, [] = public-only, [...] = team-scoped.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
+            _meta_data: Optional metadata for prompt retrieval (not used currently).
 
         Returns:
             Prompt result with rendered messages

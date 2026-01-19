@@ -495,7 +495,6 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
-        pass
 
     # Extract authorization parameters from user context (same pattern as list_tools)
     user_email = user_context.get("email") if user_context else None
@@ -716,7 +715,6 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
-        pass
 
     try:
         async with get_db() as db:
@@ -845,7 +843,6 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
-        pass
 
     try:
         async with get_db() as db:

@@ -5165,7 +5165,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams=auth_token_teams,
                 plugin_context_table=plugin_context_table,
                 plugin_global_context=plugin_global_context,
-                meta_data=meta_data,
+                _meta_data=meta_data,
             )
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
