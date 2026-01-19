@@ -148,7 +148,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         try:
             safe_teams.append(
                 {
-                    "id": int(getattr(team, "id", None)) if getattr(team, "id", None) is not None else None,
+                    "id": str(getattr(team, "id", None)) if getattr(team, "id", None) is not None else None,
                     "name": str(getattr(team, "name", "")),
                     "slug": str(getattr(team, "slug", "")),
                     "is_personal": bool(getattr(team, "is_personal", False)),
@@ -187,7 +187,8 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     # For admin users: omit "teams" key entirely to enable unrestricted access bypass
     # For regular users: include teams for proper team-based scoping
     if not bool(getattr(user, "is_admin", False)):
-        payload["teams"] = safe_teams
+        # Use only team IDs for the "teams" claim to match /tokens behavior
+        payload["teams"] = [t["id"] for t in safe_teams if t.get("id")]
 
     # Generate token using centralized token creation
     token = await create_jwt_token(payload)
