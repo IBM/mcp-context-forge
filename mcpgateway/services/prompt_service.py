@@ -1924,9 +1924,9 @@ class PromptService:
             )
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
-    async def toggle_prompt_status(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
+    async def set_prompt_state(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
         """
-        Toggle the activation status of a prompt.
+        Set the activation status of a prompt.
 
         Args:
             db: Database session
@@ -1956,7 +1956,7 @@ class PromptService:
             >>> service.convert_prompt_to_read = MagicMock(return_value={})
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.toggle_prompt_status(db, 1, True))
+            ...     asyncio.run(service.set_prompt_state(db, 1, True))
             ... except Exception:
             ...     pass
         """
@@ -1989,10 +1989,10 @@ class PromptService:
                     await self._notify_prompt_deactivated(prompt)
                 logger.info(f"Prompt {prompt.name} {'activated' if activate else 'deactivated'}")
 
-                # Structured logging: Audit trail for prompt status toggle
+                # Structured logging: Audit trail for prompt state change
                 audit_trail.log_action(
                     user_id=user_email or "system",
-                    action="toggle_prompt_status",
+                    action="set_prompt_state",
                     resource_type="prompt",
                     resource_id=str(prompt.id),
                     resource_name=prompt.name,
@@ -2006,7 +2006,7 @@ class PromptService:
                 structured_logger.log(
                     level="INFO",
                     message=f"Prompt {'activated' if activate else 'deactivated'} successfully",
-                    event_type="prompt_status_toggled",
+                    event_type="prompt_state_changed",
                     component="prompt_service",
                     user_email=user_email,
                     team_id=prompt.team_id,
@@ -2021,8 +2021,8 @@ class PromptService:
         except PermissionError as e:
             structured_logger.log(
                 level="WARNING",
-                message="Prompt status toggle failed due to permission error",
-                event_type="prompt_toggle_permission_denied",
+                message="Prompt state change failed due to permission error",
+                event_type="prompt_state_change_permission_denied",
                 component="prompt_service",
                 user_email=user_email,
                 resource_type="prompt",
@@ -2036,8 +2036,8 @@ class PromptService:
 
             structured_logger.log(
                 level="ERROR",
-                message="Prompt status toggle failed",
-                event_type="prompt_toggle_failed",
+                message="Prompt state change failed",
+                event_type="prompt_state_change_failed",
                 component="prompt_service",
                 user_email=user_email,
                 resource_type="prompt",
@@ -2045,9 +2045,10 @@ class PromptService:
                 error=e,
                 db=db,
             )
-            raise PromptError(f"Failed to toggle prompt status: {str(e)}")
+            raise PromptError(f"Failed to set prompt state: {str(e)}")
 
     # Get prompt details for admin ui
+
     async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """
         Get prompt details by ID.

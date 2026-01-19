@@ -13,7 +13,7 @@ methods to prevent race conditions under high concurrency.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, AsyncMock
 from sqlalchemy.orm import Session
 
 from mcpgateway.db import get_for_update, Tool, Server, Resource, Prompt, Gateway, A2AAgent
@@ -86,8 +86,8 @@ class TestToolServiceLocking:
     """Test row-level locking in ToolService."""
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_uses_for_update(self):
-        """Verify tool status toggle uses get_for_update."""
+    async def test_set_tool_state_uses_for_update(self):
+        """Verify tool state change uses get_for_update."""
         service = ToolService()
         db = MagicMock(spec=Session)
 
@@ -100,7 +100,7 @@ class TestToolServiceLocking:
             with patch.object(service, "_notify_tool_deactivated", return_value=None):
                 with patch("mcpgateway.services.tool_service._get_registry_cache"):
                     try:
-                        await service.toggle_tool_status(db, "tool-id", activate=False, reachable=True)
+                        await service.set_tool_state(db, "tool-id", activate=False, reachable=True)
                     except Exception:
                         pass  # Ignore other errors, we're testing locking
 
@@ -186,8 +186,8 @@ class TestServerServiceLocking:
     """Test row-level locking in ServerService."""
 
     @pytest.mark.asyncio
-    async def test_toggle_server_status_uses_for_update(self):
-        """Verify server status toggle uses get_for_update."""
+    async def test_set_server_state_uses_for_update(self):
+        """Verify server state change uses get_for_update."""
         service = ServerService()
         db = MagicMock(spec=Session)
 
@@ -199,7 +199,7 @@ class TestServerServiceLocking:
             with patch.object(service, "_notify_server_deactivated", return_value=None):
                 with patch("mcpgateway.services.server_service._get_registry_cache"):
                     try:
-                        await service.toggle_server_status(db, "server-id", activate=False)
+                        await service.set_server_state(db, "server-id", activate=False)
                     except Exception:
                         pass
 
@@ -246,8 +246,8 @@ class TestResourceServiceLocking:
     """Test row-level locking in ResourceService."""
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_uses_for_update(self):
-        """Verify resource status toggle uses get_for_update."""
+    async def test_set_resource_state_uses_for_update(self):
+        """Verify resource state change uses get_for_update."""
         service = ResourceService()
         db = MagicMock(spec=Session)
 
@@ -259,7 +259,7 @@ class TestResourceServiceLocking:
             with patch.object(service, "_notify_resource_deactivated", return_value=None):
                 with patch("mcpgateway.services.resource_service._get_registry_cache"):
                     try:
-                        await service.toggle_resource_status(db, 1, activate=False)
+                        await service.set_resource_state(db, 1, activate=False)
                     except Exception:
                         pass
 
@@ -293,8 +293,8 @@ class TestPromptServiceLocking:
     """Test row-level locking in PromptService."""
 
     @pytest.mark.asyncio
-    async def test_toggle_prompt_status_uses_for_update(self):
-        """Verify prompt status toggle uses get_for_update."""
+    async def test_set_prompt_state_uses_for_update(self):
+        """Verify prompt state change uses get_for_update."""
         service = PromptService()
         db = MagicMock(spec=Session)
 
@@ -306,7 +306,7 @@ class TestPromptServiceLocking:
             with patch.object(service, "_notify_prompt_deactivated", return_value=None):
                 with patch("mcpgateway.services.prompt_service._get_registry_cache"):
                     try:
-                        await service.toggle_prompt_status(db, 1, activate=False)
+                        await service.set_prompt_state(db, 1, activate=False)
                     except Exception:
                         pass
 
@@ -345,8 +345,8 @@ class TestGatewayServiceLocking:
     """Test row-level locking in GatewayService."""
 
     @pytest.mark.asyncio
-    async def test_toggle_gateway_status_uses_regular_select(self):
-        """Verify gateway toggle uses regular select (not FOR UPDATE) to avoid holding locks during network I/O."""
+    async def test_set_gateway_state_uses_regular_select(self):
+        """Verify gateway state change uses regular select (not FOR UPDATE) to avoid holding locks during network I/O."""
         service = GatewayService()
         db = MagicMock(spec=Session)
 
@@ -363,15 +363,18 @@ class TestGatewayServiceLocking:
         mock_result.scalar_one_or_none.return_value = mock_gateway
         db.execute.return_value = mock_result
 
-        with patch.object(service, "_initialize_gateway", return_value=(None, [], [], [])):
-            with patch("mcpgateway.services.gateway_service._get_registry_cache"):
+        with patch.object(service, "_initialize_gateway", new=AsyncMock(return_value=(None, [], [], []))):
+            # Provide a cache mock with async `invalidate_gateways` so awaits succeed
+            mock_cache = MagicMock()
+            mock_cache.invalidate_gateways = AsyncMock()
+            with patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=mock_cache):
                 try:
-                    await service.toggle_gateway_status(db, "gateway-id", activate=False)
+                    await service.set_gateway_state(db, "gateway-id", activate=False)
                 except Exception:
                     pass
 
         # Verify db.execute was called (regular select, not get_for_update)
-        # This is intentional - toggle_gateway_status should NOT use FOR UPDATE
+        # This is intentional - set_gateway_state should NOT use FOR UPDATE
         # because _initialize_gateway performs network I/O
         assert db.execute.called
 
@@ -479,13 +482,13 @@ class TestConcurrencyScenarios:
                     with patch("mcpgateway.services.tool_service._get_registry_cache"):
                         # First toggle: True -> False
                         try:
-                            await service.toggle_tool_status(db, "tool-id", activate=False, reachable=True)
+                            await service.set_tool_state(db, "tool-id", activate=False, reachable=True)
                         except Exception:
                             pass
 
                         # Second toggle: False -> True (sees updated state)
                         try:
-                            await service.toggle_tool_status(db, "tool-id", activate=True, reachable=True)
+                            await service.set_tool_state(db, "tool-id", activate=True, reachable=True)
                         except Exception:
                             pass
 

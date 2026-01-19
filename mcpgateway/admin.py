@@ -2283,23 +2283,23 @@ async def admin_edit_server(
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/servers/{server_id}/toggle")
-async def admin_toggle_server(
+@admin_router.post("/servers/{server_id}/state")
+async def admin_set_server_state(
     server_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
     """
-    Toggle a server's active status via the admin UI.
+    Set a server's active status via the admin UI.
 
     This endpoint processes a form request to activate or deactivate a server.
     It expects a form field 'activate' with value "true" to activate the server
     or "false" to deactivate it. The endpoint handles exceptions gracefully and
-    logs any errors that might occur during the status toggle operation.
+    logs any errors that might occur during the status change operation.
 
     Args:
-        server_id (str): The ID of the server whose status to toggle.
+        server_id (str): The ID of the server whose status to set.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -2323,14 +2323,14 @@ async def admin_toggle_server(
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
         >>> mock_request_activate = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_activate.form = AsyncMock(return_value=form_data_activate)
-        >>> original_toggle_server_status = server_service.toggle_server_status
-        >>> server_service.toggle_server_status = AsyncMock()
+        >>> original_set_server_state= server_service.set_server_state
+        >>> server_service.set_server_state = AsyncMock()
         >>>
-        >>> async def test_admin_toggle_server_activate():
-        ...     result = await admin_toggle_server(server_id, mock_request_activate, mock_db, mock_user)
+        >>> async def test_admin_set_server_state_activate():
+        ...     result = await admin_set_server_state(server_id, mock_request_activate, mock_db, mock_user)
         ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#catalog" in result.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_server_activate())
+        >>> asyncio.run(test_admin_set_server_state_activate())
         True
         >>>
         >>> # Happy path: Deactivate server
@@ -2338,33 +2338,33 @@ async def admin_toggle_server(
         >>> mock_request_deactivate = MagicMock(spec=Request, scope={"root_path": "/api"})
         >>> mock_request_deactivate.form = AsyncMock(return_value=form_data_deactivate)
         >>>
-        >>> async def test_admin_toggle_server_deactivate():
-        ...     result = await admin_toggle_server(server_id, mock_request_deactivate, mock_db, mock_user)
+        >>> async def test_admin_set_server_state_deactivate():
+        ...     result = await admin_set_server_state(server_id, mock_request_deactivate, mock_db, mock_user)
         ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin#catalog" in result.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_server_deactivate())
+        >>> asyncio.run(test_admin_set_server_state_deactivate())
         True
         >>>
-        >>> # Edge case: Toggle with inactive checkbox checked
+        >>> # Edge case: Set state with inactive checkbox checked
         >>> form_data_inactive = FormData([("activate", "true"), ("is_inactive_checked", "true")])
         >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
         >>>
-        >>> async def test_admin_toggle_server_inactive_checked():
-        ...     result = await admin_toggle_server(server_id, mock_request_inactive, mock_db, mock_user)
+        >>> async def test_admin_set_server_state_inactive_checked():
+        ...     result = await admin_set_server_state(server_id, mock_request_inactive, mock_db, mock_user)
         ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/?include_inactive=true#catalog" in result.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_server_inactive_checked())
+        >>> asyncio.run(test_admin_set_server_state_inactive_checked())
         True
         >>>
-        >>> # Error path: Simulate an exception during toggle
+        >>> # Error path: Simulate an exception during state change
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
-        >>> server_service.toggle_server_status = AsyncMock(side_effect=Exception("Toggle failed"))
+        >>> server_service.set_server_state = AsyncMock(side_effect=Exception("State change failed"))
         >>>
-        >>> async def test_admin_toggle_server_exception():
-        ...     result = await admin_toggle_server(server_id, mock_request_error, mock_db, mock_user)
+        >>> async def test_admin_set_server_state_exception():
+        ...     result = await admin_set_server_state(server_id, mock_request_error, mock_db, mock_user)
         ...     location_header = result.headers["location"]
         ...     return (
         ...         isinstance(result, RedirectResponse)
@@ -2374,26 +2374,26 @@ async def admin_toggle_server(
         ...         and location_header.endswith("#catalog")  # Ensure the fragment is correct
         ...     )
         >>>
-        >>> asyncio.run(test_admin_toggle_server_exception())
+        >>> asyncio.run(test_admin_set_server_state_exception())
         True
         >>>
         >>> # Restore original method
-        >>> server_service.toggle_server_status = original_toggle_server_status
+        >>> server_service.set_server_state = original_set_server_state
     """
     form = await request.form()
     error_message = None
     user_email = get_user_email(user)
-    LOGGER.debug(f"User {user_email} is toggling server ID {server_id} with activate: {form.get('activate')}")
+    LOGGER.debug(f"User {user_email} is setting server ID {server_id} state with activate: {form.get('activate')}")
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+        await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} toggling servers {server_id}: {e}")
+        LOGGER.warning(f"Permission denied for user {user_email} setting server {server_id} state: {e}")
         error_message = str(e)
     except Exception as e:
-        LOGGER.error(f"Error toggling server status: {e}")
-        error_message = "Error toggling server status. Please try again."
+        LOGGER.error(f"Error setting server status: {e}")
+        error_message = "Error setting server status. Please try again."
 
     root_path = request.scope.get("root_path", "")
 
@@ -2787,22 +2787,22 @@ async def admin_list_gateways(
     }
 
 
-@admin_router.post("/gateways/{gateway_id}/toggle")
-async def admin_toggle_gateway(
+@admin_router.post("/gateways/{gateway_id}/state")
+async def admin_set_gateway_state(
     gateway_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
-    Toggle the active status of a gateway via the admin UI.
+    Set the active status of a gateway via the admin UI.
 
-    This endpoint allows an admin to toggle the active status of a gateway.
+    This endpoint allows an admin to set the active status of a gateway.
     It expects a form field 'activate' with a value of "true" or "false" to
     determine the new status of the gateway.
 
     Args:
-        gateway_id (str): The ID of the gateway to toggle.
+        gateway_id (str): The ID of the gateway to set state for.
         request (Request): The FastAPI request object containing form data.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
@@ -2826,14 +2826,14 @@ async def admin_toggle_gateway(
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
         >>> mock_request_activate = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_activate.form = AsyncMock(return_value=form_data_activate)
-        >>> original_toggle_gateway_status = gateway_service.toggle_gateway_status
-        >>> gateway_service.toggle_gateway_status = AsyncMock()
+        >>> original_set_gateway_state = gateway_service.set_gateway_state
+        >>> gateway_service.set_gateway_state = AsyncMock()
         >>>
-        >>> async def test_admin_toggle_gateway_activate():
-        ...     result = await admin_toggle_gateway(gateway_id, mock_request_activate, mock_db, mock_user)
+        >>> async def test_admin_set_gateway_state_activate():
+        ...     result = await admin_set_gateway_state(gateway_id, mock_request_activate, mock_db, mock_user)
         ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#gateways" in result.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_gateway_activate())
+        >>> asyncio.run(test_admin_set_gateway_state_activate())
         True
         >>>
         >>> # Happy path: Deactivate gateway
@@ -2841,21 +2841,21 @@ async def admin_toggle_gateway(
         >>> mock_request_deactivate = MagicMock(spec=Request, scope={"root_path": "/api"})
         >>> mock_request_deactivate.form = AsyncMock(return_value=form_data_deactivate)
         >>>
-        >>> async def test_admin_toggle_gateway_deactivate():
-        ...     result = await admin_toggle_gateway(gateway_id, mock_request_deactivate, mock_db, mock_user)
+        >>> async def test_admin_set_gateway_state_deactivate():
+        ...     result = await admin_set_gateway_state(gateway_id, mock_request_deactivate, mock_db, mock_user)
         ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin#gateways" in result.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_gateway_deactivate())
+        >>> asyncio.run(test_admin_set_gateway_state_deactivate())
         True
         >>>
         >>> # Error path: Simulate an exception during toggle
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
-        >>> gateway_service.toggle_gateway_status = AsyncMock(side_effect=Exception("Toggle failed"))
+        >>> gateway_service.set_gateway_state = AsyncMock(side_effect=Exception("State change failed"))
         >>>
-        >>> async def test_admin_toggle_gateway_exception():
-        ...     result = await admin_toggle_gateway(gateway_id, mock_request_error, mock_db, mock_user)
+        >>> async def test_admin_set_gateway_state_exception():
+        ...     result = await admin_set_gateway_state(gateway_id, mock_request_error, mock_db, mock_user)
         ...     location_header = result.headers["location"]
         ...     return (
         ...         isinstance(result, RedirectResponse)
@@ -2865,26 +2865,26 @@ async def admin_toggle_gateway(
         ...         and location_header.endswith("#gateways")  # Ensure the fragment is correct
         ...     )
         >>>
-        >>> asyncio.run(test_admin_toggle_gateway_exception())
+        >>> asyncio.run(test_admin_set_gateway_state_exception())
         True
         >>> # Restore original method
-        >>> gateway_service.toggle_gateway_status = original_toggle_gateway_status
+        >>> gateway_service.set_gateway_state = original_set_gateway_state
     """
     error_message = None
     user_email = get_user_email(user)
-    LOGGER.debug(f"User {user_email} is toggling gateway ID {gateway_id}")
+    LOGGER.debug(f"User {user_email} is setting gateway state for ID {gateway_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
 
     try:
-        await gateway_service.toggle_gateway_status(db, gateway_id, activate, user_email=user_email)
+        await gateway_service.set_gateway_state(db, gateway_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} toggling gateway {gateway_id}: {e}")
+        LOGGER.warning(f"Permission denied for user {user_email} setting gateway state {gateway_id}: {e}")
         error_message = str(e)
     except Exception as e:
-        LOGGER.error(f"Error toggling gateway status: {e}")
-        error_message = "Failed to toggle gateway status. Please try again."
+        LOGGER.error(f"Error setting gateway state: {e}")
+        error_message = "Failed to set gateway state. Please try again."
 
     root_path = request.scope.get("root_path", "")
 
@@ -9797,8 +9797,8 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
-@admin_router.post("/tools/{tool_id}/toggle")
-async def admin_toggle_tool(
+@admin_router.post("/tools/{tool_id}/state")
+async def admin_set_tool_state(
     tool_id: str,
     request: Request,
     db: Session = Depends(get_db),
@@ -9837,14 +9837,14 @@ async def admin_toggle_tool(
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
         >>> mock_request_activate = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_activate.form = AsyncMock(return_value=form_data_activate)
-        >>> original_toggle_tool_status = tool_service.toggle_tool_status
-        >>> tool_service.toggle_tool_status = AsyncMock()
+        >>> original_set_tool_state = tool_service.set_tool_state
+        >>> tool_service.set_tool_state = AsyncMock()
         >>>
-        >>> async def test_admin_toggle_tool_activate():
-        ...     result = await admin_toggle_tool(tool_id, mock_request_activate, mock_db, mock_user)
+        >>> async def test_admin_set_tool_state_activate():
+        ...     result = await admin_set_tool_state(tool_id, mock_request_activate, mock_db, mock_user)
         ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#tools" in result.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_tool_activate())
+        >>> asyncio.run(test_admin_set_tool_state_activate())
         True
         >>>
         >>> # Happy path: Deactivate tool
@@ -9852,11 +9852,11 @@ async def admin_toggle_tool(
         >>> mock_request_deactivate = MagicMock(spec=Request, scope={"root_path": "/api"})
         >>> mock_request_deactivate.form = AsyncMock(return_value=form_data_deactivate)
         >>>
-        >>> async def test_admin_toggle_tool_deactivate():
-        ...     result = await admin_toggle_tool(tool_id, mock_request_deactivate, mock_db, mock_user)
+        >>> async def test_admin_set_tool_state_deactivate():
+        ...     result = await admin_set_tool_state(tool_id, mock_request_deactivate, mock_db, mock_user)
         ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/api/admin#tools" in result.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_tool_deactivate())
+        >>> asyncio.run(test_admin_set_tool_state_deactivate())
         True
         >>>
         >>> # Edge case: Toggle with inactive checkbox checked
@@ -9864,21 +9864,21 @@ async def admin_toggle_tool(
         >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
         >>>
-        >>> async def test_admin_toggle_tool_inactive_checked():
-        ...     result = await admin_toggle_tool(tool_id, mock_request_inactive, mock_db, mock_user)
+        >>> async def test_admin_set_tool_state_inactive_checked():
+        ...     result = await admin_set_tool_state(tool_id, mock_request_inactive, mock_db, mock_user)
         ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/?include_inactive=true#tools" in result.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_tool_inactive_checked())
+        >>> asyncio.run(test_admin_set_tool_state_inactive_checked())
         True
         >>>
         >>> # Error path: Simulate an exception during toggle
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
-        >>> tool_service.toggle_tool_status = AsyncMock(side_effect=Exception("Toggle failed"))
+        >>> tool_service.set_tool_state = AsyncMock(side_effect=Exception("State change failed"))
         >>>
-        >>> async def test_admin_toggle_tool_exception():
-        ...     result = await admin_toggle_tool(tool_id, mock_request_error, mock_db, mock_user)
+        >>> async def test_admin_set_tool_state_exception():
+        ...     result = await admin_set_tool_state(tool_id, mock_request_error, mock_db, mock_user)
         ...     location_header = result.headers["location"]
         ...     return (
         ...         isinstance(result, RedirectResponse)
@@ -9888,11 +9888,11 @@ async def admin_toggle_tool(
         ...         and location_header.endswith("#tools")  # Ensure fragment is correct
         ...     )
         >>>
-        >>> asyncio.run(test_admin_toggle_tool_exception())
+        >>> asyncio.run(test_admin_set_tool_state_exception())
         True
         >>>
         >>> # Restore original method
-        >>> tool_service.toggle_tool_status = original_toggle_tool_status
+        >>> tool_service.set_tool_state = original_set_tool_state
     """
     error_message = None
     user_email = get_user_email(user)
@@ -9901,13 +9901,13 @@ async def admin_toggle_tool(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
+        await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} toggling tools {tool_id}: {e}")
+        LOGGER.warning(f"Permission denied for user {user_email} setting tool state {tool_id}: {e}")
         error_message = str(e)
     except Exception as e:
-        LOGGER.error(f"Error toggling tool status: {e}")
-        error_message = "Failed to toggle tool status. Please try again."
+        LOGGER.error(f"Error setting tool state: {e}")
+        error_message = "Failed to set tool state. Please try again."
 
     root_path = request.scope.get("root_path", "")
 
@@ -11279,8 +11279,8 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
-@admin_router.post("/resources/{resource_id}/toggle")
-async def admin_toggle_resource(
+@admin_router.post("/resources/{resource_id}/state")
+async def admin_set_resource_state(
     resource_id: str,
     request: Request,
     db: Session = Depends(get_db),
@@ -11321,14 +11321,14 @@ async def admin_toggle_resource(
         >>> mock_request.form = AsyncMock(return_value=form_data)
         >>> mock_request.scope = {"root_path": ""}
         >>>
-        >>> original_toggle_resource_status = resource_service.toggle_resource_status
-        >>> resource_service.toggle_resource_status = AsyncMock()
+        >>> original_set_resource_state= resource_service.set_resource_state
+        >>> resource_service.set_resource_state = AsyncMock()
         >>>
-        >>> async def test_admin_toggle_resource():
-        ...     response = await admin_toggle_resource(1, mock_request, mock_db, mock_user)
+        >>> async def test_admin_set_resource_state():
+        ...     response = await admin_set_resource_state(1, mock_request, mock_db, mock_user)
         ...     return isinstance(response, RedirectResponse) and response.status_code == 303
         >>>
-        >>> asyncio.run(test_admin_toggle_resource())
+        >>> asyncio.run(test_admin_set_resource_state())
         True
         >>>
         >>> # Test with activate=false
@@ -11338,11 +11338,11 @@ async def admin_toggle_resource(
         ... ])
         >>> mock_request.form = AsyncMock(return_value=form_data_deactivate)
         >>>
-        >>> async def test_admin_toggle_resource_deactivate():
-        ...     response = await admin_toggle_resource(1, mock_request, mock_db, mock_user)
+        >>> async def test_admin_set_resource_state_deactivate():
+        ...     response = await admin_set_resource_state(1, mock_request, mock_db, mock_user)
         ...     return isinstance(response, RedirectResponse) and response.status_code == 303
         >>>
-        >>> asyncio.run(test_admin_toggle_resource_deactivate())
+        >>> asyncio.run(test_admin_set_resource_state_deactivate())
         True
         >>>
         >>> # Test with inactive checkbox checked
@@ -11352,28 +11352,28 @@ async def admin_toggle_resource(
         ... ])
         >>> mock_request.form = AsyncMock(return_value=form_data_inactive)
         >>>
-        >>> async def test_admin_toggle_resource_inactive():
-        ...     response = await admin_toggle_resource(1, mock_request, mock_db, mock_user)
+        >>> async def test_admin_set_resource_state_inactive():
+        ...     response = await admin_set_resource_state(1, mock_request, mock_db, mock_user)
         ...     return isinstance(response, RedirectResponse) and "include_inactive=true" in response.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_resource_inactive())
+        >>> asyncio.run(test_admin_set_resource_state_inactive())
         True
         >>>
         >>> # Test exception handling
-        >>> resource_service.toggle_resource_status = AsyncMock(side_effect=Exception("Test error"))
+        >>> resource_service.set_resource_state = AsyncMock(side_effect=Exception("Test error"))
         >>> form_data_error = FormData([
         ...     ("activate", "true"),
         ...     ("is_inactive_checked", "false")
         ... ])
         >>> mock_request.form = AsyncMock(return_value=form_data_error)
         >>>
-        >>> async def test_admin_toggle_resource_exception():
-        ...     response = await admin_toggle_resource(1, mock_request, mock_db, mock_user)
+        >>> async def test_admin_set_resource_state_exception():
+        ...     response = await admin_set_resource_state(1, mock_request, mock_db, mock_user)
         ...     return isinstance(response, RedirectResponse) and response.status_code == 303
         >>>
-        >>> asyncio.run(test_admin_toggle_resource_exception())
+        >>> asyncio.run(test_admin_set_resource_state_exception())
         True
-        >>> resource_service.toggle_resource_status = original_toggle_resource_status
+        >>> resource_service.set_resource_state = original_set_resource_state
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is toggling resource ID {resource_id}")
@@ -11382,13 +11382,13 @@ async def admin_toggle_resource(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
+        await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} toggling resource status {resource_id}: {e}")
+        LOGGER.warning(f"Permission denied for user {user_email} setting resource state {resource_id}: {e}")
         error_message = str(e)
     except Exception as e:
-        LOGGER.error(f"Error toggling resource status: {e}")
-        error_message = "Failed to toggle resource status. Please try again."
+        LOGGER.error(f"Error setting resource state: {e}")
+        error_message = "Failed to set resource state. Please try again."
 
     root_path = request.scope.get("root_path", "")
 
@@ -11840,8 +11840,8 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
-@admin_router.post("/prompts/{prompt_id}/toggle")
-async def admin_toggle_prompt(
+@admin_router.post("/prompts/{prompt_id}/state")
+async def admin_set_prompt_state(
     prompt_id: str,
     request: Request,
     db: Session = Depends(get_db),
@@ -11882,14 +11882,14 @@ async def admin_toggle_prompt(
         >>> mock_request.form = AsyncMock(return_value=form_data)
         >>> mock_request.scope = {"root_path": ""}
         >>>
-        >>> original_toggle_prompt_status = prompt_service.toggle_prompt_status
-        >>> prompt_service.toggle_prompt_status = AsyncMock()
+        >>> original_set_prompt_state = prompt_service.set_prompt_state
+        >>> prompt_service.set_prompt_state = AsyncMock()
         >>>
-        >>> async def test_admin_toggle_prompt():
-        ...     response = await admin_toggle_prompt(1, mock_request, mock_db, mock_user)
+        >>> async def test_admin_set_prompt_state():
+        ...     response = await admin_set_prompt_state(1, mock_request, mock_db, mock_user)
         ...     return isinstance(response, RedirectResponse) and response.status_code == 303
         >>>
-        >>> asyncio.run(test_admin_toggle_prompt())
+        >>> asyncio.run(test_admin_set_prompt_state())
         True
         >>>
         >>> # Test with activate=false
@@ -11899,11 +11899,11 @@ async def admin_toggle_prompt(
         ... ])
         >>> mock_request.form = AsyncMock(return_value=form_data_deactivate)
         >>>
-        >>> async def test_admin_toggle_prompt_deactivate():
-        ...     response = await admin_toggle_prompt(1, mock_request, mock_db, mock_user)
+        >>> async def test_admin_set_prompt_state_deactivate():
+        ...     response = await admin_set_prompt_state(1, mock_request, mock_db, mock_user)
         ...     return isinstance(response, RedirectResponse) and response.status_code == 303
         >>>
-        >>> asyncio.run(test_admin_toggle_prompt_deactivate())
+        >>> asyncio.run(test_admin_set_prompt_state_deactivate())
         True
         >>>
         >>> # Test with inactive checkbox checked
@@ -11913,28 +11913,28 @@ async def admin_toggle_prompt(
         ... ])
         >>> mock_request.form = AsyncMock(return_value=form_data_inactive)
         >>>
-        >>> async def test_admin_toggle_prompt_inactive():
-        ...     response = await admin_toggle_prompt(1, mock_request, mock_db, mock_user)
+        >>> async def test_admin_set_prompt_state_inactive():
+        ...     response = await admin_set_prompt_state(1, mock_request, mock_db, mock_user)
         ...     return isinstance(response, RedirectResponse) and "include_inactive=true" in response.headers["location"]
         >>>
-        >>> asyncio.run(test_admin_toggle_prompt_inactive())
+        >>> asyncio.run(test_admin_set_prompt_state_inactive())
         True
         >>>
         >>> # Test exception handling
-        >>> prompt_service.toggle_prompt_status = AsyncMock(side_effect=Exception("Test error"))
+        >>> prompt_service.set_prompt_state = AsyncMock(side_effect=Exception("Test error"))
         >>> form_data_error = FormData([
         ...     ("activate", "true"),
         ...     ("is_inactive_checked", "false")
         ... ])
         >>> mock_request.form = AsyncMock(return_value=form_data_error)
         >>>
-        >>> async def test_admin_toggle_prompt_exception():
-        ...     response = await admin_toggle_prompt(1, mock_request, mock_db, mock_user)
+        >>> async def test_admin_set_prompt_state_exception():
+        ...     response = await admin_set_prompt_state(1, mock_request, mock_db, mock_user)
         ...     return isinstance(response, RedirectResponse) and response.status_code == 303
         >>>
-        >>> asyncio.run(test_admin_toggle_prompt_exception())
+        >>> asyncio.run(test_admin_set_prompt_state_exception())
         True
-        >>> prompt_service.toggle_prompt_status = original_toggle_prompt_status
+        >>> prompt_service.set_prompt_state = original_set_prompt_state
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is toggling prompt ID {prompt_id}")
@@ -11943,13 +11943,13 @@ async def admin_toggle_prompt(
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
-        await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
+        await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} toggling prompt {prompt_id}: {e}")
+        LOGGER.warning(f"Permission denied for user {user_email} setting prompt state {prompt_id}: {e}")
         error_message = str(e)
     except Exception as e:
-        LOGGER.error(f"Error toggling prompt status: {e}")
-        error_message = "Failed to toggle prompt status. Please try again."
+        LOGGER.error(f"Error setting prompt state: {e}")
+        error_message = "Failed to set prompt state. Please try again."
 
     root_path = request.scope.get("root_path", "")
 
@@ -14543,8 +14543,8 @@ async def admin_edit_a2a_agent(
         return ORJSONResponse({"message": str(e), "success": False}, status_code=500)
 
 
-@admin_router.post("/a2a/{agent_id}/toggle")
-async def admin_toggle_a2a_agent(
+@admin_router.post("/a2a/{agent_id}/state")
+async def admin_set_a2a_agent_state(
     agent_id: str,
     request: Request,
     db: Session = Depends(get_db),
@@ -14576,21 +14576,21 @@ async def admin_toggle_a2a_agent(
 
         user_email = get_user_email(user)
 
-        await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
+        await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} toggling A2A agent status{agent_id}: {e}")
+        LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
         error_message = str(e)
     except A2AAgentNotFoundError as e:
-        LOGGER.error(f"A2A agent toggle failed - not found: {e}")
+        LOGGER.error(f"A2A agent state change failed - not found: {e}")
         root_path = request.scope.get("root_path", "")
         error_message = "A2A agent not found."
     except Exception as e:
-        LOGGER.error(f"Error toggling A2A agent: {e}")
+        LOGGER.error(f"Error setting A2A agent state: {e}")
         root_path = request.scope.get("root_path", "")
-        error_message = "Failed to toggle status of A2A agent. Please try again."
+        error_message = "Failed to set state of A2A agent. Please try again."
 
     root_path = request.scope.get("root_path", "")
 
@@ -14855,16 +14855,18 @@ async def admin_update_grpc_service(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@admin_router.post("/grpc/{service_id}/toggle")
-async def admin_toggle_grpc_service(
+@admin_router.post("/grpc/{service_id}/state")
+async def admin_set_grpc_service_state(
     service_id: str,
+    activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ):
-    """Toggle a gRPC service's enabled status.
+    """Set a gRPC service's enabled state.
 
     Args:
         service_id: Service ID
+        activate: If provided, sets enabled to this value. If None, inverts current state (legacy behavior).
         db: Database session
         user: Authenticated user
 
@@ -14872,14 +14874,17 @@ async def admin_toggle_grpc_service(
         Updated gRPC service
 
     Raises:
-        HTTPException: If gRPC support is disabled or toggle fails
+        HTTPException: If gRPC support is disabled or state change fails
     """
     if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
-        service = await grpc_service_mgr.get_service(db, service_id)
-        result = await grpc_service_mgr.toggle_service(db, service_id, not service.enabled)
+        if activate is None:
+            # Legacy toggle behavior - invert current state
+            service = await grpc_service_mgr.get_service(db, service_id)
+            activate = not service.enabled
+        result = await grpc_service_mgr.set_service_state(db, service_id, activate)
         return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

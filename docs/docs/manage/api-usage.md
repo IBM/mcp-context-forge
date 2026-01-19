@@ -312,7 +312,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle gateway enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/gateways/$GATEWAY_ID/toggle?activate=false | jq '.'
+  $BASE_URL/gateways/$GATEWAY_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Gateway
@@ -503,7 +503,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle tool enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/tools/$TOOL_ID/toggle?activate=false | jq '.'
+  $BASE_URL/tools/$TOOL_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Tool
@@ -654,7 +654,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle server enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/servers/$SERVER_ID/toggle?activate=false | jq '.'
+  $BASE_URL/servers/$SERVER_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Server
@@ -773,7 +773,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle resource enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/resources/$RESOURCE_ID/toggle?activate=false | jq '.'
+  $BASE_URL/resources/$RESOURCE_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Resource
@@ -882,7 +882,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle prompt enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/prompts/$PROMPT_ID/toggle?activate=false | jq '.'
+  $BASE_URL/prompts/$PROMPT_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Prompt
@@ -1364,7 +1364,7 @@ TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
 for TOOL_ID in $TOOLS; do
   echo "Enabling tool: $TOOL_ID"
   curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-    $BASE_URL/tools/$TOOL_ID/toggle > /dev/null
+    $BASE_URL/tools/$TOOL_ID/state > /dev/null
 done
 
 echo "Done!"

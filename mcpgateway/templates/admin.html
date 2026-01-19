@@ -2435,7 +2435,7 @@
                         {% if server.enabled %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
+                          action="{{ root_path }}/admin/servers/{{ server.id }}/state"
                           class="contents"
                           onsubmit="return handleToggleSubmit(event, 'servers')"
                         >
@@ -2451,7 +2451,7 @@
                         {% else %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
+                          action="{{ root_path }}/admin/servers/{{ server.id }}/state"
                           class="contents"
                           onsubmit="return handleToggleSubmit(event, 'servers')"
                         >
@@ -4902,7 +4902,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         {% if gateway.enabled %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
+                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
                           onsubmit="return handleToggleSubmit(event, 'gateways')"
                         >
@@ -4918,7 +4918,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         {% else %}
                         <form
                           method="POST"
-                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
+                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
                           onsubmit="return handleToggleSubmit(event, 'gateways')"
                         >
@@ -6331,7 +6331,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           <!-- Row 3: Activate/Deactivate | Delete -->
                           <div class="col-span-2 flex flex-col space-y-1">
                             {% if agent.enabled %}
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="contents">
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/state" class="contents">
                               <input type="hidden" name="activate" value="false" />
                               <button
                                 type="submit"
@@ -6342,7 +6342,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                               </button>
                             </form>
                             {% else %}
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="contents">
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/state" class="contents">
                               <input type="hidden" name="activate" value="true" />
                               <button
                                 type="submit"
@@ -7231,7 +7231,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </div>
                   </div>
                   <div class="flex flex-col space-y-2 ml-4">
-                    <form action="{{ root_path }}/grpc/{{ service.id }}/toggle" method="POST" class="inline">
+                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/state?activate={{ 'false' if service.enabled else 'true' }}" method="POST" class="inline">
                       <button
                         type="submit"
                         class="px-3 py-1 text-sm font-medium rounded-md {% if service.enabled %}bg-yellow-100 text-yellow-800 hover:bg-yellow-200{% else %}bg-green-100 text-green-800 hover:bg-green-200{% endif %}"
@@ -7239,7 +7239,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         {% if service.enabled %}Deactivate{% else %}Activate{% endif %}
                       </button>
                     </form>
-                    <form action="{{ root_path }}/grpc/{{ service.id }}/reflect" method="POST" class="inline">
+                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/reflect" method="POST" class="inline">
                       <button
                         type="submit"
                         class="px-3 py-1 text-sm font-medium bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200"
@@ -7253,7 +7253,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >
                       View Methods
                     </button>
-                    <form action="{{ root_path }}/grpc/{{ service.id }}/delete" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete this gRPC service?')">
+                    <form action="{{ root_path }}/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete this gRPC service?')">
                       <button
                         type="submit"
                         class="px-3 py-1 text-sm font-medium bg-red-100 text-red-800 rounded-md hover:bg-red-200"
@@ -11331,11 +11331,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         const isActiveFlag = item.isActive || item.enabled || item.is_active;
         const activeButton = isActiveFlag ?
-          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/toggle" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
+          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/state" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
             <input type="hidden" name="activate" value="false" />
             <button type="submit" class="text-yellow-600 hover:text-yellow-900">Deactivate</button>
           </form>` :
-          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/toggle" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
+          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/state" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
             <input type="hidden" name="activate" value="true" />
             <button type="submit" class="text-blue-600 hover:text-blue-900">Activate</button>
           </form>`;

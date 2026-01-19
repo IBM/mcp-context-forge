@@ -816,9 +816,9 @@ class TestServerService:
             assert "Public Server already exists with name" in str(exc.value)
             test_db.rollback.assert_called()
 
-    # -------------------------- toggle --------------------------------- #
+    # -------------------------- set state --------------------------------- #
     @pytest.mark.asyncio
-    async def test_toggle_server_status(self, server_service, mock_server, test_db):
+    async def test_set_server_state(self, server_service, mock_server, test_db):
         mock_server.team_id = 1
         test_db.get = Mock(return_value=mock_server)
         # Ensure get_for_update returns the mocked server when loader options are used
@@ -853,7 +853,7 @@ class TestServerService:
             )
         )
 
-        result = await server_service.toggle_server_status(test_db, 1, activate=False)
+        result = await server_service.set_server_state(test_db, 1, activate=False)
 
         # get_for_update may use `db.get(..., options=...)` or execute a select;
         # accept either approach.

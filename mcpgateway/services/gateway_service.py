@@ -2145,9 +2145,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
+    async def set_gateway_state(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
         """
-        Toggle the activation status of a gateway.
+        Set the activation status of a gateway.
 
         Args:
             db: Database session
@@ -2331,13 +2331,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
 
-                # Toggle tools with skip_cache_invalidation=True to avoid N invalidations
+                # Set tools state with skip_cache_invalidation=True to avoid N invalidations
                 if only_update_reachable:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
+                        await self.tool_service.set_tool_state(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
                 else:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable, skip_cache_invalidation=True)
+                        await self.tool_service.set_tool_state(db, tool.id, activate, reachable, skip_cache_invalidation=True)
 
                 # Invalidate tools cache once after all tool status changes
                 if tools:
@@ -2347,10 +2347,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
-                # Structured logging: Audit trail for gateway status toggle
+                # Structured logging: Audit trail for gateway state change
                 audit_trail.log_action(
                     user_id=user_email or "system",
-                    action="toggle_gateway_status",
+                    action="set_gateway_state",
                     resource_type="gateway",
                     resource_id=str(gateway.id),
                     resource_name=gateway.name,
@@ -2367,11 +2367,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db=db,
                 )
 
-                # Structured logging: Log successful gateway status toggle
+                # Structured logging: Log successful gateway state change
                 structured_logger.log(
                     level="INFO",
                     message=f"Gateway {'activated' if activate else 'deactivated'} successfully",
-                    event_type="gateway_status_toggled",
+                    event_type="gateway_state_changed",
                     component="gateway_service",
                     user_email=user_email,
                     team_id=gateway.team_id,
@@ -2392,8 +2392,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
-                message="Gateway status toggle failed due to permission error",
-                event_type="gateway_toggle_permission_denied",
+                message="Gateway state change failed due to permission error",
+                event_type="gateway_state_change_permission_denied",
                 component="gateway_service",
                 user_email=user_email,
                 resource_type="gateway",
@@ -2405,11 +2405,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         except Exception as e:
             db.rollback()
 
-            # Structured logging: Log generic gateway status toggle failure
+            # Structured logging: Log generic gateway state change failure
             structured_logger.log(
                 level="ERROR",
-                message="Gateway status toggle failed",
-                event_type="gateway_toggle_failed",
+                message="Gateway state change failed",
+                event_type="gateway_state_change_failed",
                 component="gateway_service",
                 user_email=user_email,
                 resource_type="gateway",
@@ -2417,7 +2417,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 error=e,
                 db=db,
             )
-            raise GatewayError(f"Failed to toggle gateway status: {str(e)}")
+            raise GatewayError(f"Failed to set gateway state: {str(e)}")
 
     async def _notify_gateway_updated(self, gateway: DbGateway) -> None:
         """
@@ -2980,7 +2980,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if count >= GW_FAILURE_THRESHOLD:
             logger.error(f"Gateway {gateway.name} failed {GW_FAILURE_THRESHOLD} times. Deactivating...")
             with cast(Any, SessionLocal)() as db:
-                await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
+                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
     async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
@@ -3303,7 +3303,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if gateway_enabled and not gateway_reachable:
                         logger.info(f"Reactivating gateway: {gateway_name}, as it is healthy now")
                         with cast(Any, SessionLocal)() as status_db:
-                            await self.toggle_gateway_status(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
+                            await self.set_gateway_state(status_db, gateway_id, activate=True, reachable=True, only_update_reachable=True)
 
                     # Update last_seen with fresh session (gateway object is detached)
                     try:

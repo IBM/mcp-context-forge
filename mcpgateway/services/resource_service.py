@@ -2208,9 +2208,9 @@ class ResourceService:
                     except Exception as e:
                         logger.warning(f"Failed to end observability span for resource reading: {e}")
 
-    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
+    async def set_resource_state(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
         """
-        Toggle the activation status of a resource.
+        Set the activation status of a resource.
 
         Args:
             db: Database session
@@ -2241,7 +2241,7 @@ class ResourceService:
             >>> service.convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_resource_status(db, 1, True))
+            >>> asyncio.run(service.set_resource_state(db, 1, True))
             'resource_read'
         """
         try:
@@ -2276,10 +2276,10 @@ class ResourceService:
 
                 logger.info(f"Resource {resource.uri} {'activated' if activate else 'deactivated'}")
 
-                # Structured logging: Audit trail for resource status toggle
+                # Structured logging: Audit trail for resource state change
                 audit_trail.log_action(
                     user_id=user_email or "system",
-                    action="toggle_resource_status",
+                    action="set_resource_state",
                     resource_type="resource",
                     resource_id=str(resource.id),
                     resource_name=resource.name,
@@ -2294,11 +2294,11 @@ class ResourceService:
                     db=db,
                 )
 
-                # Structured logging: Log successful resource status toggle
+                # Structured logging: Log successful resource state change
                 structured_logger.log(
                     level="INFO",
                     message=f"Resource {'activated' if activate else 'deactivated'} successfully",
-                    event_type="resource_status_toggled",
+                    event_type="resource_state_changed",
                     component="resource_service",
                     user_email=user_email,
                     team_id=resource.team_id,
@@ -2317,8 +2317,8 @@ class ResourceService:
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
-                message="Resource status toggle failed due to permission error",
-                event_type="resource_toggle_permission_denied",
+                message="Resource state change failed due to permission error",
+                event_type="resource_state_change_permission_denied",
                 component="resource_service",
                 user_email=user_email,
                 resource_type="resource",
@@ -2330,11 +2330,11 @@ class ResourceService:
         except Exception as e:
             db.rollback()
 
-            # Structured logging: Log generic resource status toggle failure
+            # Structured logging: Log generic resource state change failure
             structured_logger.log(
                 level="ERROR",
-                message="Resource status toggle failed",
-                event_type="resource_toggle_failed",
+                message="Resource state change failed",
+                event_type="resource_state_change_failed",
                 component="resource_service",
                 user_email=user_email,
                 resource_type="resource",
@@ -2342,7 +2342,7 @@ class ResourceService:
                 error=e,
                 db=db,
             )
-            raise ResourceError(f"Failed to toggle resource status: {str(e)}")
+            raise ResourceError(f"Failed to set resource state: {str(e)}")
 
     async def subscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
         """

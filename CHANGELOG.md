@@ -755,7 +755,7 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
   - `GET /grpc` - List all gRPC services with team filtering
   - `GET /grpc/{id}` - Get service details
   - `PUT /grpc/{id}` - Update service configuration
-  - `POST /grpc/{id}/toggle` - Enable/disable service
+  - `POST /grpc/{id}/state` - Enable/disable service
   - `POST /grpc/{id}/delete` - Delete service
   - `POST /grpc/{id}/reflect` - Re-trigger service discovery
   - `GET /grpc/{id}/methods` - List discovered methods
