@@ -1644,12 +1644,11 @@ async def admin_servers_partial_html(
     # Batch convert to Pydantic models using server service
     # This eliminates the N+1 query problem from calling get_server_details() in a loop
     servers_pydantic = []
-    for p in servers_db:
+    for s in servers_db:
         try:
-            servers_pydantic.append(server_service.convert_server_to_read(p, include_metrics=False))
+            servers_pydantic.append(server_service.convert_server_to_read(s, include_metrics=False))
         except Exception as e:
-            LOGGER.error(f"Failed to convert server {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
-
+            LOGGER.error(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
     data = jsonable_encoder(servers_pydantic)
     base_url = f"{settings.app_root_path}/admin/servers/partial"
 
@@ -7952,12 +7951,11 @@ async def admin_gateways_partial_html(
     # Batch convert to Pydantic models using gateway service
     # This eliminates the N+1 query problem from calling get_gateway_details() in a loop
     gateways_pydantic = []
-    for p in gateways_db:
+    for g in gateways_db:
         try:
-            gateways_pydantic.append(gateway_service.convert_gateway_to_read(p))
+            gateways_pydantic.append(gateway_service.convert_gateway_to_read(g))
         except Exception as e:
-            LOGGER.error(f"Failed to convert gateway {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
-
+            LOGGER.error(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
     data = jsonable_encoder(gateways_pydantic)
     base_url = f"{settings.app_root_path}/admin/gateways/partial"
 
@@ -9024,12 +9022,11 @@ async def admin_a2a_partial_html(
     # Batch convert to Pydantic models using a2a service
     # This eliminates the N+1 query problem from calling get_a2a_details() in a loop
     a2a_agents_pydantic = []
-    for r in a2a_agents_db:
+    for a in a2a_agents_db:
         try:
-            a2a_agents_pydantic.append(a2a_service.convert_agent_to_read(r, include_metrics=False))
+            a2a_agents_pydantic.append(a2a_service.convert_agent_to_read(a, include_metrics=False))
         except Exception as e:
-            LOGGER.error(f"Failed to convert a2a agent {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
-
+            LOGGER.error(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
     data = jsonable_encoder(a2a_agents_pydantic)
     base_url = f"{settings.app_root_path}/admin/a2a/partial"
 

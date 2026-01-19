@@ -802,7 +802,6 @@ class A2AAgentService:
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
-        # return [self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map) for agent in agents]
         result = []
         for agent in agents:
             try:
