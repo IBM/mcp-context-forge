@@ -1374,7 +1374,15 @@ class ResourceService:
         """
         return get_cached_ssl_context(ca_certificate)
 
-    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None, user_identity: Optional[Union[str, Dict[str, Any]]] = None, meta_data: Optional[Dict[str, Any]] = None) -> Any:
+    async def invoke_resource(
+        self,
+        db: Session,
+        resource_id: str,
+        resource_uri: str,
+        resource_template_uri: Optional[str] = None,
+        user_identity: Optional[Union[str, Dict[str, Any]]] = None,
+        meta_data: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
 
@@ -1751,7 +1759,9 @@ class ResourceService:
                                 logger.debug(f"Exception while connecting to sse gateway: {sanitized_error}")
                                 return None
 
-                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None, meta_data: Optional[Dict[str, Any]] = None) -> str | None:
+                        async def connect_to_streamablehttp_server(
+                            server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None, meta_data: Optional[Dict[str, Any]] = None
+                        ) -> str | None:
                             """
                             Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
 
@@ -2184,7 +2194,12 @@ class ResourceService:
                 # If content is already a Pydantic content model, return as-is
                 if isinstance(content, (ResourceContent, TextContent)):
                     resource_response = await self.invoke_resource(
-                        db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None, user_identity=user, meta_data=meta_data
+                        db=db,
+                        resource_id=getattr(content, "id"),
+                        resource_uri=getattr(content, "uri") or None,
+                        resource_template_uri=getattr(content, "text") or None,
+                        user_identity=user,
+                        meta_data=meta_data,
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
@@ -2193,12 +2208,22 @@ class ResourceService:
                 if hasattr(content, "text") or hasattr(content, "blob"):
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
-                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "blob") or None, user_identity=user, meta_data=meta_data
+                            db=db,
+                            resource_id=getattr(content, "id"),
+                            resource_uri=getattr(content, "uri") or None,
+                            resource_template_uri=getattr(content, "blob") or None,
+                            user_identity=user,
+                            meta_data=meta_data,
                         )
                         setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
-                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None, user_identity=user, meta_data=meta_data
+                            db=db,
+                            resource_id=getattr(content, "id"),
+                            resource_uri=getattr(content, "uri") or None,
+                            resource_template_uri=getattr(content, "text") or None,
+                            user_identity=user,
+                            meta_data=meta_data,
                         )
                         setattr(content, "text", resource_response)
                     return content
