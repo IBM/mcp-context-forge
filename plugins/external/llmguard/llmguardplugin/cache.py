@@ -11,9 +11,9 @@ This module loads redis client for caching, updates, retrieves and deletes cache
 
 # Standard
 import os
-import pickle
 
 # Third-Party
+import orjson
 import redis
 
 # First-Party
@@ -46,24 +46,30 @@ class CacheTTLDict(dict):
         self.cache = redis.Redis(host=redis_host, port=redis_port)
         logger.info(f"Cache Initialization: {self.cache}")
 
-    def update_cache(self, key: int = None, value: tuple = None) -> tuple[bool]:
+    def update_cache(self, key: int = None, value: list = None) -> tuple[bool, bool]:
         """Takes in key and value for caching in redis. It sets expiry time for the key.
         And redis, by itself takes care of deleting that key from cache after ttl has been reached.
 
         Args:
             key: The id of vault in string
-            value: The tuples in the vault
+            value: The tuples in the vault (List[Tuple] format)
 
         Returns:
-            tuple[bool]: A tuple containing (success_set, success_expiry) booleans.
+            tuple[bool, bool]: A tuple containing (success_set, success_expiry) booleans.
         """
-        serialized_obj = pickle.dumps(value)
-        logger.info(f"Update cache in cache: {key} {serialized_obj}")
+        try:
+            serialized_obj = orjson.dumps(value)
+        except TypeError as e:
+            # Non-JSON types in vault will break deanonymization later
+            logger.error(f"Cache serialization failed for key {key} - vault sharing disabled: {e}")
+            return False, False
+        # Log key and size only - serialized_obj may contain PII
+        logger.debug(f"Updating cache for key: {key}, size: {len(serialized_obj)} bytes")
         success_set = self.cache.set(key, serialized_obj)
         if success_set:
-            logger.debug(f"Cache updated successfully with key: {key} and value {value}")
+            logger.debug(f"Cache set successful for key: {key}")
         else:
-            logger.error(f"Cache updated failed for key: {key} and value {value}")
+            logger.error(f"Cache set failed for key: {key}")
         success_expiry = self.cache.expire(key, self.cache_ttl)
         if success_expiry:
             logger.debug(f"Cache expiry set successfully for key: {key}")
@@ -71,22 +77,46 @@ class CacheTTLDict(dict):
             logger.error("Failed to set cache expiration")
         return success_set, success_expiry
 
-    def retrieve_cache(self, key: int = None) -> tuple:
+    def retrieve_cache(self, key: int = None) -> list | None:
         """Retrieves cache for a key value
 
         Args:
             key: The id of vault in string
 
         Returns:
-            tuple: The retrieved object from cache or None if not found.
+            list | None: The retrieved object from cache (List[Tuple] for vault) or None if not found.
         """
         value = self.cache.get(key)
         if value:
-            retrieved_obj = pickle.loads(value)
-            logger.debug(f"Cache retrieval for id: {key} with value: {retrieved_obj}")
-            return retrieved_obj
+            try:
+                retrieved_obj = orjson.loads(value)
+                # Vault data must be List[List] -> convert to List[Tuple]
+                if not isinstance(retrieved_obj, list):
+                    # Unexpected shape - treat as cache miss to avoid downstream crash
+                    logger.warning(f"Cache data for key {key} has unexpected type {type(retrieved_obj).__name__}, treating as miss")
+                    self.cache.delete(key)
+                    return None
+                retrieved_obj = self._convert_to_list_of_tuples(retrieved_obj)
+                logger.debug(f"Cache hit for key: {key}, items: {len(retrieved_obj)}")
+                return retrieved_obj
+            except orjson.JSONDecodeError as e:
+                logger.error(f"Cache retrieval failed - invalid JSON for id: {key}: {e}")
+                # Delete corrupted entry to avoid repeated error logs
+                self.cache.delete(key)
+                return None
         else:
-            logger.error(f"Cache retrieval unsuccessful for id: {key}")
+            logger.debug(f"Cache miss for id: {key}")
+            return None
+
+    def _convert_to_list_of_tuples(self, obj: list) -> list:
+        """Converts List[List[str]] to List[Tuple[str, ...]] for vault compatibility.
+
+        The Vault class expects List[Tuple] for _tuples attribute.
+        JSON serialization converts tuples to lists, so we convert the immediate
+        children back to tuples. Vault tuples are flat string tuples like
+        ('original_text', 'entity_type', 'placeholder'), so no deep recursion needed.
+        """
+        return [tuple(item) if isinstance(item, list) else item for item in obj]
 
     def delete_cache(self, key: int = None) -> None:
         """Deletes cache for a key value
