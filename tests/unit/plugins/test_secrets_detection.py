@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for secrets detection plugin regex patterns."""
 
 import pytest
