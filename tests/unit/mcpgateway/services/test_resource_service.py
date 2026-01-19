@@ -461,6 +461,26 @@ class TestResourceReading:
     """Test resource reading functionality."""
 
     @pytest.mark.asyncio
+    async def test_read_resource_with_metadata(self, resource_service, mock_db, mock_resource):
+        """Test reading resource with metadata."""
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+
+        meta_data = {"trace_id": "123"}
+
+        # Mock invoke_resource and its return
+        with patch.object(resource_service, "invoke_resource", new_callable=AsyncMock) as mock_invoke:
+            mock_invoke.return_value = "Resource Content"
+
+            await resource_service.read_resource(mock_db, resource_id=mock_resource.id, meta_data=meta_data)
+
+            mock_invoke.assert_awaited_once()
+            # Verify meta_data was passed
+            call_kwargs = mock_invoke.call_args.kwargs
+            assert call_kwargs["meta_data"] == meta_data
+
+    @pytest.mark.asyncio
     @patch("mcpgateway.services.resource_service.get_cached_ssl_context")
     async def test_read_resource_success(self, mock_ssl_cache, mock_db, mock_resource):
         mock_ctx = MagicMock()

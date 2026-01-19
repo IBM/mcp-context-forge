@@ -270,6 +270,18 @@ class TestPromptService:
     # ──────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
+    async def test_get_prompt_with_metadata(self, prompt_service, test_db):
+        """Test get_prompt accepts metadata."""
+        db_prompt = _build_db_prompt(template="Hello!")
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
+
+        meta_data = {"trace_id": "123"}
+
+        # Just verify it doesn't crash and returns result
+        result = await prompt_service.get_prompt(test_db, "1", {}, meta_data=meta_data)
+        assert result.messages[0].content.text == "Hello!"
+
+    @pytest.mark.asyncio
     async def test_get_prompt_rendered(self, prompt_service, test_db):
         """Prompt is fetched and rendered into Message objects."""
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
