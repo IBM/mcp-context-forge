@@ -4131,11 +4131,7 @@ class ToolService:
         elif agent.auth_type == "bearer" and agent.auth_value:
             headers["Authorization"] = f"Bearer {agent.auth_value}"
         elif agent.auth_type == "query_param" and agent.auth_query_params:
-            # Handle query parameter authentication
-            # First-Party
-            from mcpgateway.utils.encoding import decode_auth  # pylint: disable=import-outside-toplevel
-            from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
-
+            # Handle query parameter authentication (imports at top: decode_auth, apply_query_param_auth, sanitize_url_for_logging)
             auth_query_params_decrypted: dict[str, str] = {}
             for param_key, encrypted_value in agent.auth_query_params.items():
                 if encrypted_value:
