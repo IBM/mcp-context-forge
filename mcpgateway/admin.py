@@ -41,7 +41,7 @@ import uuid
 # Third-Party
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import httpx
 import orjson
@@ -51,6 +51,7 @@ from sqlalchemy import and_, bindparam, case, cast, desc, false, func, or_, sele
 from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 from sqlalchemy.sql.functions import coalesce
+from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
@@ -13310,20 +13311,22 @@ async def admin_get_log_file(
         if not (file_path.suffix in [".log", ".jsonl", ".json"] or file_path.stem.startswith(Path(settings.log_file).stem)):
             raise HTTPException(403, "Not a log file")
 
-        # Return file for download using Response with file content
+        # Return file for download using FileResponse (streams asynchronously)
+        # Pre-stat the file to catch issues early and provide Content-Length
         try:
-            with open(file_path, "rb") as f:
-                file_content = f.read()
-
-            return Response(
-                content=file_content,
+            file_stat = file_path.stat()
+            LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
+            return FileResponse(
+                path=file_path,
                 media_type="application/octet-stream",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{file_path.name}"',
-                },
+                filename=file_path.name,
+                stat_result=file_stat,
             )
+        except FileNotFoundError:
+            LOGGER.error(f"Log file disappeared before streaming: {filename}")
+            raise HTTPException(404, f"Log file not found: {filename}")
         except Exception as e:
-            LOGGER.error(f"Error reading file for download: {e}")
+            LOGGER.error(f"Error preparing file for download: {e}")
             raise HTTPException(500, f"Error reading file for download: {e}")
 
     # List available log files
@@ -15909,30 +15912,21 @@ async def admin_generate_support_bundle(
         service = SupportBundleService()
         bundle_path = service.generate_bundle(config)
 
-        # Read bundle file
-        with open(bundle_path, "rb") as f:
-            bundle_content = f.read()
-
-        # Clean up temp file
-        try:
-            bundle_path.unlink()
-        except Exception as cleanup_error:
-            LOGGER.warning(f"Failed to cleanup temporary bundle file: {cleanup_error}")
-
-        # Return as downloadable file
+        # Return as downloadable file using FileResponse (streams asynchronously)
         timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
         filename = f"mcpgateway-support-{timestamp}.zip"
 
-        LOGGER.info(f"Support bundle generated successfully for user {user}: {filename} ({len(bundle_content)} bytes)")
+        # Pre-stat for Content-Length header and logging
+        bundle_stat = bundle_path.stat()
+        LOGGER.info(f"Support bundle generated successfully for user {user}: {filename} ({bundle_stat.st_size} bytes)")
 
-        return Response(
-            content=bundle_content,
+        # Use BackgroundTask to clean up temp file after response is sent
+        return FileResponse(
+            path=bundle_path,
             media_type="application/zip",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Content-Length": str(len(bundle_content)),
-                "X-Content-Type-Options": "nosniff",
-            },
+            filename=filename,
+            stat_result=bundle_stat,
+            background=BackgroundTask(lambda: bundle_path.unlink(missing_ok=True)),
         )
 
     except Exception as e:

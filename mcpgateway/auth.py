@@ -359,7 +359,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         result = {
             "user": None,
             "personal_team_id": None,
-            "is_token_revoked": False,
+            "is_token_revoked": False,  # nosec B105 - boolean flag, not a password
         }
 
         # Query 1: Get user data

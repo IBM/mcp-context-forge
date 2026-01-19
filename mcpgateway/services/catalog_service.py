@@ -6,6 +6,7 @@ easily registered with one-click from the admin UI.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -73,8 +74,8 @@ class CatalogService:
                 logger.warning(f"Catalog file not found: {catalog_path}")
                 return {"catalog_servers": [], "categories": [], "auth_types": []}
 
-            with open(catalog_path, "r", encoding="utf-8") as f:
-                catalog_data = yaml.safe_load(f)
+            content = await asyncio.to_thread(catalog_path.read_text, encoding="utf-8")
+            catalog_data = yaml.safe_load(content)
 
             # Update cache
             self._catalog_cache = catalog_data
