@@ -495,6 +495,11 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
             # Extract team_id from path parameters if available
             team_id = kwargs.get("team_id")
 
+            # If team_id is None or blank in kwargs then check
+            if not team_id:
+                # check if user_context has team_id
+                team_id = user_context.get("team_id", None)
+
             # Check if user has any of the required permissions
             granted = False
             for permission in permissions:
