@@ -46,6 +46,15 @@ def __getattr__(name: str) -> Any:
 
     This avoids importing many service submodules at package import time,
     which can cause import cycles reported by linters.
+
+    Args:
+        name: Attribute name being accessed on the package.
+
+    Returns:
+        The requested attribute from the appropriate service submodule.
+
+    Raises:
+        AttributeError: If the requested attribute does not exist.
     """
     # Expose task scheduler and Priority directly
     if name in {"task_scheduler", "Priority"}:
@@ -75,6 +84,9 @@ def __dir__() -> list[str]:
 
     Combines existing globals with lazily-exported service symbols so tools
     like ``dir(mcp_gateway.services)`` and static analyzers see the full API.
+
+    Returns:
+        A sorted list of attribute names available from the package.
     """
     return sorted(list(globals().keys()) + list(_LAZY_ATTRS.keys()))
 
