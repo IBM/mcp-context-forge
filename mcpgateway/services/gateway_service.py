@@ -104,6 +104,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -769,7 +770,32 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             auth_value = getattr(gateway, "auth_value", {})
             authentication_headers: Optional[Dict[str, str]] = None
 
-            if hasattr(gateway, "auth_headers") and gateway.auth_headers:
+            # Handle query_param auth - encrypt and prepare for storage
+            auth_query_params_encrypted: Optional[Dict[str, str]] = None
+            auth_query_params_decrypted: Optional[Dict[str, str]] = None
+            init_url = normalized_url  # URL to use for initialization
+
+            if auth_type == "query_param":
+                # Extract and encrypt query param auth
+                param_key = getattr(gateway, "auth_query_param_key", None)
+                param_value = getattr(gateway, "auth_query_param_value", None)
+                if param_key and param_value:
+                    # Get the actual secret value
+                    if hasattr(param_value, "get_secret_value"):
+                        raw_value = param_value.get_secret_value()
+                    else:
+                        raw_value = str(param_value)
+                    # Encrypt for storage
+                    encrypted_value = encode_auth({param_key: raw_value})
+                    auth_query_params_encrypted = {param_key: encrypted_value}
+                    auth_query_params_decrypted = {param_key: raw_value}
+                    # Append query params to URL for initialization
+                    init_url = apply_query_param_auth(normalized_url, auth_query_params_decrypted)
+                    # Query param auth doesn't use auth_value
+                    auth_value = None
+                    authentication_headers = None
+
+            elif hasattr(gateway, "auth_headers") and gateway.auth_headers:
                 # Convert list of {key, value} to dict
                 header_dict = {h["key"]: h["value"] for h in gateway.auth_headers if h.get("key")}
                 # Keep encoded form for persistence, but pass raw headers for initialization
@@ -788,13 +814,30 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if initialize_timeout is not None:
                 try:
                     capabilities, tools, resources, prompts = await asyncio.wait_for(
-                        self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate),
+                        self._initialize_gateway(
+                            init_url,  # URL with query params if applicable
+                            authentication_headers,
+                            gateway.transport,
+                            auth_type,
+                            oauth_config,
+                            ca_certificate,
+                            auth_query_params=auth_query_params_decrypted,
+                        ),
                         timeout=initialize_timeout,
                     )
                 except asyncio.TimeoutError as exc:
-                    raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s") from exc
+                    sanitized = sanitize_url_for_logging(init_url, auth_query_params_decrypted)
+                    raise GatewayConnectionError(f"Gateway initialization timed out after {initialize_timeout}s for {sanitized}") from exc
             else:
-                capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate)
+                capabilities, tools, resources, prompts = await self._initialize_gateway(
+                    init_url,  # URL with query params if applicable
+                    authentication_headers,
+                    gateway.transport,
+                    auth_type,
+                    oauth_config,
+                    ca_certificate,
+                    auth_query_params=auth_query_params_decrypted,
+                )
 
             if gateway.one_time_auth:
                 # For one-time auth, clear auth_type and auth_value after initialization
@@ -899,6 +942,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 last_seen=datetime.now(timezone.utc),
                 auth_type=auth_type,
                 auth_value=auth_value,
+                auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
                 passthrough_headers=gateway.passthrough_headers,
                 tools=tools,
@@ -1775,6 +1819,73 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if current_auth != decoded_auth:
                         gateway.auth_value = decoded_auth
 
+                # Handle query_param auth updates with service-layer enforcement
+                auth_query_params_decrypted: Optional[Dict[str, str]] = None
+                init_url = gateway.url
+
+                # Check if updating to query_param auth or updating existing query_param credentials
+                is_switching_to_queryparam = gateway_update.auth_type == "query_param"
+                is_updating_queryparam_creds = gateway.auth_type == "query_param" and (gateway_update.auth_query_param_key is not None or gateway_update.auth_query_param_value is not None)
+                is_url_changing = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != gateway.url
+
+                if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and gateway.auth_type == "query_param"):
+                    # Service-layer enforcement: Check feature flag
+                    if not settings.insecure_allow_queryparam_auth:
+                        # Grandfather clause: Allow updates to existing query_param gateways
+                        # unless they're trying to change credentials
+                        if is_switching_to_queryparam or is_updating_queryparam_creds:
+                            raise ValueError("Query parameter authentication is disabled. " "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
+
+                    # Service-layer enforcement: Check host allowlist
+                    if settings.insecure_queryparam_auth_allowed_hosts:
+                        check_url = str(gateway_update.url) if gateway_update.url else gateway.url
+                        parsed = urlparse(check_url)
+                        hostname = (parsed.hostname or "").lower()
+                        if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
+                            allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
+                            raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. Allowed: {allowed}")
+
+                    # Process query_param auth credentials
+                    param_key = getattr(gateway_update, "auth_query_param_key", None) or (next(iter(gateway.auth_query_params.keys()), None) if gateway.auth_query_params else None)
+                    param_value = getattr(gateway_update, "auth_query_param_value", None)
+
+                    if param_key:
+                        if param_value:
+                            # Get the actual secret value
+                            if hasattr(param_value, "get_secret_value"):
+                                raw_value = param_value.get_secret_value()
+                            else:
+                                raw_value = str(param_value)
+                            # Encrypt for storage
+                            encrypted_value = encode_auth({param_key: raw_value})
+                            gateway.auth_query_params = {param_key: encrypted_value}
+                            auth_query_params_decrypted = {param_key: raw_value}
+                        elif gateway.auth_query_params:
+                            # Use existing encrypted value
+                            existing_encrypted = gateway.auth_query_params.get(param_key, "")
+                            if existing_encrypted:
+                                decrypted = decode_auth(existing_encrypted)
+                                auth_query_params_decrypted = {param_key: decrypted.get(param_key, "")}
+
+                        # Append query params to URL for initialization
+                        if auth_query_params_decrypted:
+                            init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
+
+                    # Update auth_type if switching
+                    if is_switching_to_queryparam:
+                        gateway.auth_type = "query_param"
+                        gateway.auth_value = None  # Query param auth doesn't use auth_value
+
+                elif gateway.auth_type == "query_param" and gateway.auth_query_params:
+                    # Existing query_param gateway without credential changes - decrypt for init
+                    first_key = next(iter(gateway.auth_query_params.keys()), None)
+                    if first_key:
+                        encrypted_value = gateway.auth_query_params.get(first_key, "")
+                        if encrypted_value:
+                            decrypted = decode_auth(encrypted_value)
+                            auth_query_params_decrypted = {first_key: decrypted.get(first_key, "")}
+                            init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
+
                 # Try to reinitialize connection if URL actually changed
                 # if url_changed:
                 # Initialize empty lists in case initialization fails
@@ -1785,7 +1896,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 try:
                     ca_certificate = getattr(gateway, "ca_certificate", None)
                     capabilities, tools, resources, prompts = await self._initialize_gateway(
-                        gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate
+                        init_url,
+                        gateway.auth_value,
+                        gateway.transport,
+                        gateway.auth_type,
+                        gateway.oauth_config,
+                        ca_certificate,
+                        auth_query_params=auth_query_params_decrypted,
                     )
                     new_tool_names = [tool.name for tool in tools]
                     new_resource_uris = [resource.uri for resource in resources]
@@ -3494,6 +3611,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         pre_auth_headers: Optional[Dict[str, str]] = None,
         include_resources: bool = True,
         include_prompts: bool = True,
+        auth_query_params: Optional[Dict[str, str]] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -3505,12 +3623,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             url: Gateway URL to connect to
             authentication: Optional authentication headers for the connection
             transport: Transport protocol - "SSE" or "StreamableHTTP"
-            auth_type: Authentication type - "basic", "bearer", "headers", "oauth" or None
+            auth_type: Authentication type - "basic", "bearer", "headers", "oauth", "query_param" or None
             oauth_config: OAuth configuration if auth_type is "oauth"
             ca_certificate: CA certificate for SSL verification
             pre_auth_headers: Pre-authenticated headers to skip OAuth token fetch (for reuse)
             include_resources: Whether to include resources in the fetch
             include_prompts: Whether to include prompts in the fetch
+            auth_query_params: Query param names for URL sanitization in error logs (decrypted values)
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -3580,14 +3699,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources)
+                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)
             elif transport.lower() == "streamablehttp":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate, include_prompts, include_resources)
+                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params)
 
             return capabilities, tools, resources, prompts
         except Exception as e:
-            logger.error(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
-            raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
+            sanitized_url = sanitize_url_for_logging(url, auth_query_params)
+            logger.error(f"Gateway initialization failed for {sanitized_url}: {str(e)}", exc_info=True)
+            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
@@ -4865,11 +4985,19 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     return capabilities, tools, resources, prompts
         except Exception as e:
+            # Note: This function is for OAuth servers only, which don't use query param auth
+            sanitized_url = sanitize_url_for_logging(server_url)
             logger.error(f"SSE connection error details: {type(e).__name__}: {str(e)}", exc_info=True)
-            raise GatewayConnectionError(f"Failed to connect to SSE server at {server_url}: {str(e)}")
+            raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {str(e)}")
 
     async def connect_to_sse_server(
-        self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None, include_prompts: bool = True, include_resources: bool = True
+        self,
+        server_url: str,
+        authentication: Optional[Dict[str, str]] = None,
+        ca_certificate: Optional[bytes] = None,
+        include_prompts: bool = True,
+        include_resources: bool = True,
+        auth_query_params: Optional[Dict[str, str]] = None,
     ):
         """Connect to an MCP server running with SSE transport.
 
@@ -4879,6 +5007,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ca_certificate: Optional CA certificate for SSL verification.
             include_prompts: Whether to fetch prompts from the server.
             include_resources: Whether to fetch resources from the server.
+            auth_query_params: Query param names for URL sanitization in error logs.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -5020,10 +5149,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             logger.warning(f"Failed to fetch prompts: {e}")
 
                 return capabilities, tools, resources, prompts
-        raise GatewayConnectionError(f"Failed to initialize gateway at {server_url}")
+        sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
+        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
 
     async def connect_to_streamablehttp_server(
-        self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None, include_prompts: bool = True, include_resources: bool = True
+        self,
+        server_url: str,
+        authentication: Optional[Dict[str, str]] = None,
+        ca_certificate: Optional[bytes] = None,
+        include_prompts: bool = True,
+        include_resources: bool = True,
+        auth_query_params: Optional[Dict[str, str]] = None,
     ):
         """Connect to an MCP server running with Streamable HTTP transport.
 
@@ -5033,6 +5169,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ca_certificate: Optional CA certificate for SSL verification.
             include_prompts: Whether to fetch prompts from the server.
             include_resources: Whether to fetch resources from the server.
+            auth_query_params: Query param names for URL sanitization in error logs.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -5167,4 +5304,5 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             logger.warning(f"Failed to fetch prompts: {e}")
 
                 return capabilities, tools, resources, prompts
-        raise GatewayConnectionError(f"Failed to initialize gateway at{server_url}")
+        sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
+        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")

@@ -1267,6 +1267,10 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
 | `OAUTH_DEFAULT_TIMEOUT`         | Default OAuth token timeout in seconds                                     | `3600`                 | int > 0     |
+| `INSECURE_ALLOW_QUERYPARAM_AUTH` | Enable query parameter authentication for gateways (see security warning) | `false`             | bool        |
+| `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` | JSON array of hosts allowed to use query param auth               | `[]`                | JSON array  |
+
+> ⚠️ **Query Parameter Authentication (INSECURE)**: The `INSECURE_ALLOW_QUERYPARAM_AUTH` setting enables API key authentication via URL query parameters. This is inherently insecure (CWE-598) as API keys may appear in proxy logs, browser history, and server access logs. Only enable this when the upstream MCP server (e.g., Tavily) requires this authentication method. Always configure `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` to restrict which hosts can use this feature.
 
 > 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
 >

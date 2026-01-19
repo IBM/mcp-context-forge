@@ -5271,6 +5271,7 @@ async function editGateway(gatewayId) {
             "auth-headers-fields-gw-edit",
         );
         const authOAuthSection = safeGetElement("auth-oauth-fields-gw-edit");
+        const authQueryParamSection = safeGetElement("auth-query_param-fields-gw-edit");
 
         // Individual fields
         const authUsernameField = safeGetElement(
@@ -5321,6 +5322,9 @@ async function editGateway(gatewayId) {
         }
         if (authOAuthSection) {
             authOAuthSection.style.display = "none";
+        }
+        if (authQueryParamSection) {
+            authQueryParamSection.style.display = "none";
         }
 
         switch (gateway.authType) {
@@ -5434,6 +5438,33 @@ async function editGateway(gatewayId) {
                         Array.isArray(config.scopes)
                     ) {
                         oauthScopesField.value = config.scopes.join(" ");
+                    }
+                }
+                break;
+            case "query_param":
+                if (authQueryParamSection) {
+                    authQueryParamSection.style.display = "block";
+                    // Get the input fields within the section
+                    const queryParamKeyField = authQueryParamSection.querySelector(
+                        "input[name='auth_query_param_key']"
+                    );
+                    const queryParamValueField = authQueryParamSection.querySelector(
+                        "input[name='auth_query_param_value']"
+                    );
+                    if (queryParamKeyField && gateway.authQueryParamKey) {
+                        queryParamKeyField.value = gateway.authQueryParamKey;
+                    }
+                    if (queryParamValueField) {
+                        // Always show masked value for security
+                        queryParamValueField.value = MASKED_AUTH_VALUE;
+                        if (gateway.authQueryParamValueUnmasked) {
+                            queryParamValueField.dataset.isMasked = "true";
+                            queryParamValueField.dataset.realValue =
+                                gateway.authQueryParamValueUnmasked;
+                        } else {
+                            delete queryParamValueField.dataset.isMasked;
+                            delete queryParamValueField.dataset.realValue;
+                        }
                     }
                 }
                 break;
@@ -7405,6 +7436,7 @@ function handleAuthTypeSelection(
     bearerFields,
     headersFields,
     oauthFields,
+    queryParamFields,
 ) {
     if (!basicFields || !bearerFields || !headersFields) {
         console.warn("Auth field elements not found");
@@ -7421,6 +7453,11 @@ function handleAuthTypeSelection(
     // Hide OAuth fields if they exist
     if (oauthFields) {
         oauthFields.style.display = "none";
+    }
+
+    // Hide query param fields if they exist
+    if (queryParamFields) {
+        queryParamFields.style.display = "none";
     }
 
     // Show relevant field based on selection
@@ -7453,6 +7490,11 @@ function handleAuthTypeSelection(
         case "oauth":
             if (oauthFields) {
                 oauthFields.style.display = "block";
+            }
+            break;
+        case "query_param":
+            if (queryParamFields) {
+                queryParamFields.style.display = "block";
             }
             break;
         default:
@@ -15715,6 +15757,7 @@ function setupAuthenticationToggles() {
             basicId: "auth-basic-fields-gw",
             bearerId: "auth-bearer-fields-gw",
             headersId: "auth-headers-fields-gw",
+            queryParamId: "auth-query_param-fields-gw",
         },
 
         // A2A Add Form auth fields
@@ -15734,6 +15777,7 @@ function setupAuthenticationToggles() {
             bearerId: "auth-bearer-fields-gw-edit",
             headersId: "auth-headers-fields-gw-edit",
             oauthId: "auth-oauth-fields-gw-edit",
+            queryParamId: "auth-query_param-fields-gw-edit",
         },
 
         // A2A Edit Form auth fields
@@ -15761,11 +15805,19 @@ function setupAuthenticationToggles() {
                 const basicFields = safeGetElement(handler.basicId);
                 const bearerFields = safeGetElement(handler.bearerId);
                 const headersFields = safeGetElement(handler.headersId);
+                const oauthFields = handler.oauthId
+                    ? safeGetElement(handler.oauthId)
+                    : null;
+                const queryParamFields = handler.queryParamId
+                    ? safeGetElement(handler.queryParamId)
+                    : null;
                 handleAuthTypeSelection(
                     this.value,
                     basicFields,
                     bearerFields,
                     headersFields,
+                    oauthFields,
+                    queryParamFields,
                 );
             });
         }
@@ -16794,9 +16846,10 @@ function handleAuthTypeChange() {
     const bearerFields = safeGetElement(`auth-bearer-fields-${prefix}`);
     const headersFields = safeGetElement(`auth-headers-fields-${prefix}`);
     const oauthFields = safeGetElement(`auth-oauth-fields-${prefix}`);
+    const queryParamFields = safeGetElement(`auth-query_param-fields-${prefix}`);
 
     // Hide all auth sections first
-    [basicFields, bearerFields, headersFields, oauthFields].forEach(
+    [basicFields, bearerFields, headersFields, oauthFields, queryParamFields].forEach(
         (section) => {
             if (section) {
                 section.style.display = "none";
@@ -16824,6 +16877,11 @@ function handleAuthTypeChange() {
         case "oauth":
             if (oauthFields) {
                 oauthFields.style.display = "block";
+            }
+            break;
+        case "query_param":
+            if (queryParamFields) {
+                queryParamFields.style.display = "block";
             }
             break;
         default:

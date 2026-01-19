@@ -67,6 +67,7 @@ from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.url_auth import apply_query_param_auth
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
@@ -1632,6 +1633,22 @@ class ResourceService:
                         # ═══════════════════════════════════════════════════════════════════════════
                         gateway_url = gateway.url
                         gateway_transport = gateway.transport
+                        gateway_auth_type = gateway.auth_type
+                        gateway_auth_query_params = getattr(gateway, "auth_query_params", None)
+
+                        # Apply query param auth to URL if applicable
+                        if gateway_auth_type == "query_param" and gateway_auth_query_params:
+                            auth_query_params_decrypted = {}
+                            for param_key, encrypted_value in gateway_auth_query_params.items():
+                                if encrypted_value:
+                                    try:
+                                        decrypted = decode_auth(encrypted_value)
+                                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                                    except Exception:  # noqa: S110 - intentionally skip failed decryptions
+                                        # Silently skip params that fail decryption (corrupted or old key)
+                                        logger.debug(f"Failed to decrypt query param '{param_key}' for resource")
+                            if auth_query_params_decrypted:
+                                gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
                         # ═══════════════════════════════════════════════════════════════════════════
                         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls

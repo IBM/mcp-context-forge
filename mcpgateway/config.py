@@ -298,6 +298,16 @@ class Settings(BaseSettings):
     #  Encryption key phrase for auth storage
     auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"))
 
+    # Query Parameter Authentication (INSECURE - disabled by default)
+    insecure_allow_queryparam_auth: bool = Field(
+        default=False,
+        description=("Enable query parameter authentication for gateway peers. " "WARNING: API keys may appear in proxy logs. See CWE-598."),
+    )
+    insecure_queryparam_auth_allowed_hosts: List[str] = Field(
+        default_factory=list,
+        description=("Allowlist of hosts permitted to use query parameter auth. " "Empty list allows any host when feature is enabled. " "Format: ['mcp.tavily.com', 'api.example.com']"),
+    )
+
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
@@ -1522,6 +1532,7 @@ Disallow: /
         "sso_auto_admin_domains",
         "sso_github_admin_orgs",
         "sso_google_admin_domains",
+        "insecure_queryparam_auth_allowed_hosts",
         mode="before",
     )
     @classmethod

@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, SecretStr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -2504,6 +2504,17 @@ class GatewayCreate(BaseModel):
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
 
+    # Query Parameter Authentication (INSECURE)
+    auth_query_param_key: Optional[str] = Field(
+        None,
+        description="Query parameter name for authentication (e.g., 'api_key', 'tavilyApiKey')",
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_\-]*$",
+    )
+    auth_query_param_value: Optional[SecretStr] = Field(
+        None,
+        description="Query parameter value (API key). Stored encrypted.",
+    )
+
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
 
@@ -2749,7 +2760,48 @@ class GatewayCreate(BaseModel):
         if auth_type == "one_time_auth":
             return None  # No auth_value needed for one-time auth
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
+        if auth_type == "query_param":
+            # Query param auth doesn't use auth_value field
+            # Validation is handled by model_validator
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+
+    @model_validator(mode="after")
+    def validate_query_param_auth(self) -> "GatewayCreate":
+        """Validate query parameter authentication configuration.
+
+        Returns:
+            GatewayCreate: The validated instance.
+
+        Raises:
+            ValueError: If query param auth is disabled or host is not in allowlist.
+        """
+        if self.auth_type != "query_param":
+            return self
+
+        # Check feature flag
+        if not settings.insecure_allow_queryparam_auth:
+            raise ValueError("Query parameter authentication is disabled. " "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable. " "WARNING: API keys in URLs may appear in proxy logs.")
+
+        # Check required fields
+        if not self.auth_query_param_key:
+            raise ValueError("auth_query_param_key is required when auth_type is 'query_param'")
+        if not self.auth_query_param_value:
+            raise ValueError("auth_query_param_value is required when auth_type is 'query_param'")
+
+        # Check host allowlist (if configured)
+        if settings.insecure_queryparam_auth_allowed_hosts:
+            parsed = urlparse(str(self.url))
+            # Extract hostname properly (handles IPv6, ports, userinfo)
+            hostname = parsed.hostname or ""
+            hostname = hostname.lower()
+
+            if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
+                allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+
+        return self
 
 
 class GatewayUpdate(BaseModelWithConfigDict):
@@ -2779,6 +2831,17 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # Query Parameter Authentication (INSECURE)
+    auth_query_param_key: Optional[str] = Field(
+        None,
+        description="Query parameter name for authentication",
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_\-]*$",
+    )
+    auth_query_param_value: Optional[SecretStr] = Field(
+        None,
+        description="Query parameter value (API key)",
+    )
 
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
@@ -2991,7 +3054,36 @@ class GatewayUpdate(BaseModelWithConfigDict):
         if auth_type == "one_time_auth":
             return None  # No auth_value needed for one-time auth
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
+        if auth_type == "query_param":
+            # Query param auth doesn't use auth_value field
+            # Validation is handled by model_validator
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+
+    @model_validator(mode="after")
+    def validate_query_param_auth(self) -> "GatewayUpdate":
+        """Validate query parameter authentication configuration.
+
+        NOTE: This only runs when auth_type is explicitly set to "query_param".
+        Service-layer enforcement in update_gateway() handles the case where
+        auth_type is omitted but the existing gateway uses query_param auth.
+
+        Returns:
+            GatewayUpdate: The validated instance.
+
+        Raises:
+            ValueError: If required fields are missing when setting query_param auth.
+        """
+        if self.auth_type != "query_param":
+            return self
+        # Validate fields are provided when explicitly setting query_param auth
+        # Feature flag/allowlist check happens in service layer (has access to existing gateway)
+        if not self.auth_query_param_key:
+            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
+        if not self.auth_query_param_value:
+            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+        return self
 
 
 class GatewayRead(BaseModelWithConfigDict):
@@ -3039,6 +3131,16 @@ class GatewayRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
 
+    # Query Parameter Authentication (masked for security)
+    auth_query_param_key: Optional[str] = Field(
+        None,
+        description="Query parameter name for authentication",
+    )
+    auth_query_param_value_masked: Optional[str] = Field(
+        None,
+        description="Masked indicator if query param auth is configured",
+    )
+
     # auth_value will populate the following fields
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
     auth_password: Optional[str] = Field(None, description="password for basic authentication")
@@ -3077,6 +3179,30 @@ class GatewayRead(BaseModelWithConfigDict):
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, description="Per-gateway refresh interval in seconds")
     last_refresh_at: Optional[datetime] = Field(None, description="Timestamp of last successful refresh")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _mask_query_param_auth(cls, data: Any) -> Any:
+        """Mask query param auth value when constructing from DB model.
+
+        This extracts auth_query_params from the raw data (DB model dict)
+        and populates the masked fields for display.
+
+        Args:
+            data: The raw data (dict or model) to process.
+
+        Returns:
+            Any: The processed data with masked query param values.
+        """
+        if isinstance(data, dict):
+            auth_query_params = data.get("auth_query_params")
+            if auth_query_params and isinstance(auth_query_params, dict):
+                # Extract the param key name and set masked value
+                first_key = next(iter(auth_query_params.keys()), None)
+                if first_key:
+                    data["auth_query_param_key"] = first_key
+                    data["auth_query_param_value_masked"] = "********"
+        return data
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
@@ -3155,6 +3281,11 @@ class GatewayRead(BaseModelWithConfigDict):
 
         if auth_type == "one_time_auth":
             # One-time auth gateways don't store auth_value
+            return self
+
+        if auth_type == "query_param":
+            # Query param auth is handled by the before validator
+            # (auth_query_params from DB model is processed there)
             return self
 
         # If no encoded value is present, nothing to populate

@@ -337,6 +337,12 @@ mcpContextForge:
     SECURE_COOKIES: "true"           # force secure cookie flags
     COOKIE_SAMESITE: lax             # cookie SameSite attribute
 
+    # ─ Query Parameter Authentication (INSECURE) ─
+    # WARNING: API keys in URLs may appear in proxy logs, browser history, server logs.
+    # See CWE-598. Only use when upstream MCP server (e.g., Tavily) requires it.
+    INSECURE_ALLOW_QUERYPARAM_AUTH: "false"  # enable query param auth (default: disabled)
+    INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS: "[]"  # JSON array of allowed hosts, e.g. '["mcp.tavily.com"]'
+
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_FORMAT: json                 # json or text format
