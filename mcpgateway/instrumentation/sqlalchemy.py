@@ -29,13 +29,67 @@ from sqlalchemy.engine import Connection, Engine
 logger = logging.getLogger(__name__)
 
 # Thread-local storage for tracking queries in progress
-_query_tracking = {}
+# Use a thread-local object so each thread has its own mapping. This
+# prevents cross-thread mutation of a single dict which could lead to
+# race conditions when the span writer (background thread) and request
+# threads interact with tracked queries.
+_query_tracking = threading.local()
 
 # Thread-local flag to prevent recursive instrumentation
 _instrumentation_context = threading.local()
 
 # Background queue for deferred span writes to avoid database locks
-_span_queue: queue.Queue = queue.Queue(maxsize=1000)
+
+
+class InstrumentationQueue:
+    """Configurable queue wrapper that tracks dropped/total counts.
+
+    This provides a simple drop-rate metric and a bounded queue used by
+    the background span writer.
+    """
+
+    def __init__(self, maxsize: Optional[int] = None) -> None:
+        # Import settings lazily to avoid import cycles during module
+        # initialization in tests or tooling.
+        try:
+            from mcpgateway.config import settings
+
+            cfg_size = getattr(settings, "instrumentation_queue_size", None)
+        except Exception:
+            cfg_size = None
+
+        self._maxsize = maxsize if maxsize is not None else (cfg_size or 1000)
+        self._queue: queue.Queue = queue.Queue(maxsize=self._maxsize)
+        self._dropped_count = 0
+        self._total_count = 0
+        self._lock = threading.Lock()
+
+    def put(self, span: dict) -> bool:
+        with self._lock:
+            self._total_count += 1
+        try:
+            self._queue.put_nowait(span)
+            return True
+        except queue.Full:
+            with self._lock:
+                self._dropped_count += 1
+            return False
+
+    def get(self, timeout: Optional[float] = None):
+        return self._queue.get(timeout=timeout)
+
+    def task_done(self) -> None:
+        self._queue.task_done()
+
+    @property
+    def drop_rate(self) -> float:
+        with self._lock:
+            if self._total_count == 0:
+                return 0.0
+            return float(self._dropped_count) / float(self._total_count)
+
+
+_span_queue: InstrumentationQueue = InstrumentationQueue()
 _span_writer_thread: Optional[threading.Thread] = None
 _shutdown_event = threading.Event()
 
@@ -46,6 +100,9 @@ def _write_span_to_db(span_data: dict) -> None:
     Args:
         span_data: Dictionary containing span information
     """
+    # Set recursion guard so DB operations performed while persisting
+    # observability spans are not re-instrumented by SQLAlchemy hooks.
+    setattr(_instrumentation_context, "inside_span_creation", True)
     try:
         # Import here to avoid circular imports
         # First-Party
@@ -90,6 +147,12 @@ def _write_span_to_db(span_data: dict) -> None:
     except Exception as e:  # pylint: disable=broad-except
         # Don't fail if span creation fails
         logger.warning(f"Failed to write query span: {e}")
+    finally:
+        # Clear recursion guard even if errors occurred
+        try:
+            setattr(_instrumentation_context, "inside_span_creation", False)
+        except Exception:
+            pass
 
 
 def _span_writer_worker() -> None:
@@ -165,7 +228,9 @@ def _before_cursor_execute(
     """
     # Store start time for this query
     conn_id = id(conn)
-    _query_tracking[conn_id] = {
+    if not hasattr(_query_tracking, "map"):
+        _query_tracking.map = {}
+    _query_tracking.map[conn_id] = {
         "start_time": time.time(),
         "statement": statement,
         "parameters": parameters,
@@ -192,7 +257,9 @@ def _after_cursor_execute(
         executemany: Whether this is a bulk execution
     """
     conn_id = id(conn)
-    tracking = _query_tracking.pop(conn_id, None)
+    tracking = None
+    if hasattr(_query_tracking, "map"):
+        tracking = _query_tracking.map.pop(conn_id, None)
 
     if not tracking:
         return
@@ -286,10 +353,13 @@ def _create_query_span(
 
         # Enqueue for background processing (non-blocking)
         try:
-            _span_queue.put_nowait(span_data)
-            logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
-        except queue.Full:
-            logger.warning("Span queue is full, dropping span data")
+            ok = _span_queue.put(span_data)
+            if ok:
+                logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
+            else:
+                logger.warning("Span queue is full, dropping span data")
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"Failed to enqueue span data: {e}")
 
     except Exception as e:  # pylint: disable=broad-except
         # Don't fail the query if span creation fails
