@@ -249,6 +249,8 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
     This tests the fix for issue #2183: when team_id is not in path/query parameters,
     the decorator should fall back to user_context.team_id from the JWT token.
     """
+    import mcpgateway.plugins.framework as plugin_framework
+
     async def dummy_func(user=None):
         return "ok"
 
@@ -258,6 +260,8 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+    # Disable plugin manager so standard RBAC check runs
+    monkeypatch.setattr(plugin_framework, "get_plugin_manager", lambda: None)
 
     decorated = rbac.require_permission("gateways.read")(dummy_func)
     result = await decorated(user=mock_user)
@@ -276,6 +280,8 @@ async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
     When both a path/query param team_id and user_context.team_id exist,
     the decorator should prefer the explicit kwarg.
     """
+    import mcpgateway.plugins.framework as plugin_framework
+
     async def dummy_func(user=None, team_id=None):
         return "ok"
 
@@ -285,6 +291,8 @@ async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+    # Disable plugin manager so standard RBAC check runs
+    monkeypatch.setattr(plugin_framework, "get_plugin_manager", lambda: None)
 
     decorated = rbac.require_permission("gateways.read")(dummy_func)
     # Call with explicit team_id="team-B" kwarg
@@ -351,6 +359,8 @@ async def test_decorators_handle_none_user_context_team_id(monkeypatch):
     the decorator should pass None to check_permission, falling back
     to global/personal role checks.
     """
+    import mcpgateway.plugins.framework as plugin_framework
+
     async def dummy_func(user=None):
         return "ok"
 
@@ -360,6 +370,8 @@ async def test_decorators_handle_none_user_context_team_id(monkeypatch):
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+    # Disable plugin manager so standard RBAC check runs
+    monkeypatch.setattr(plugin_framework, "get_plugin_manager", lambda: None)
 
     # Test require_permission
     decorated_perm = rbac.require_permission("gateways.read")(dummy_func)
