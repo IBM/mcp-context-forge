@@ -7322,6 +7322,111 @@ async def admin_tools_partial_html(
     )
 
 
+@admin_router.get("/tool-ops/partial", response_class=HTMLResponse)
+async def admin_tool_ops_partial(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    include_inactive: bool = False,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Return HTML partial for tool operations table.
+
+    Args:
+        request (Request): The request object.
+        page (int): The page number. Defaults to 1.
+        per_page (int): The number of items per page. Defaults to settings.pagination_default_page_size.
+        include_inactive (bool): Whether to include inactive items. Defaults to False.
+        gateway_id (Optional[str]): The gateway ID to filter by. Defaults to None.
+        team_id (Optional[str]): The team ID to filter by. Defaults to None.
+        db (Session): The database session. Defaults to Depends(get_db).
+        user (Any): The current user. Defaults to Depends(get_current_user_with_permissions).
+
+    Returns:
+        HTMLResponse: The HTML partial for the tool operations table.
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"Tool ops partial request - team_id: {team_id}, page: {page}")
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+
+    query = select(DbTool).options(joinedload(DbTool.email_team))
+
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbTool.gateway_id.in_(non_null_ids), DbTool.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering tools by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbTool.gateway_id.is_(None))
+                LOGGER.debug("Filtering tools by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbTool.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering tools by gateway IDs: {non_null_ids}")
+
+    if not include_inactive:
+        query = query.where(DbTool.enabled.is_(True))
+
+    if team_id:
+        if team_id in team_ids:
+            team_access = [
+                and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
+                and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering tools by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        access_conditions = []
+        access_conditions.append(DbTool.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+        access_conditions.append(DbTool.visibility == "public")
+        query = query.where(or_(*access_conditions))
+
+    query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id)
+
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,
+        base_url=f"{settings.app_root_path}/admin/tool-ops/partial",
+        query_params={
+            "include_inactive": "true" if include_inactive else "false",
+            "gateway_id": gateway_id or "",
+            "team_id": team_id or "",
+        },
+        use_cursor_threshold=False,
+    )
+
+    tools_db = paginated_result["data"]
+    tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False) for t in tools_db]
+
+    db.commit()
+
+    return request.app.state.templates.TemplateResponse(
+        "toolops_partial.html",
+        {
+            "request": request,
+            "tools": tools_pydantic,
+            "root_path": request.scope.get("root_path", ""),
+        },
+    )
+
+
 @admin_router.get("/tools/ids", response_class=JSONResponse)
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
@@ -7421,16 +7526,16 @@ async def admin_search_tools(
     returning both IDs and names for use in search functionality like the Add Server page.
 
     Args:
-        q (str): Search query string to match against tool names, IDs, or descriptions
-        include_inactive (bool): Whether to include inactive tools in the search results
-        limit (int): Maximum number of results to return
-        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated
-        team_id (Optional[str]): Filter by team ID
-        db (Session): Database session dependency
-        user: Current user making the request
+        q (str): Search query string to match against tool names, IDs, or descriptions.
+        include_inactive (bool): Whether to include inactive tools in the search results.
+        limit (int): Maximum number of results to return.
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
+        team_id (Optional[str]): Filter by team ID.
+        db (Session): Database session.
+        user: Current user with permissions.
 
     Returns:
-        JSONResponse: Dictionary containing list of matching tools and count
+        JSONResponse: A JSON response containing a list of matching tools.
     """
     user_email = get_user_email(user)
     search_query = q.strip().lower()

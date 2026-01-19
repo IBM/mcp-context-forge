@@ -356,7 +356,7 @@ class TestAdminToolAPIs:
                 pass
         assert db is not None, "Test database session not found. Ensure your test fixture exposes db."
         team_service = TeamManagementService(db)
-        new_team = await team_service.create_team(name="Test Team", description="A team for testing", created_by="admin@example.com", visibility="private")
+        new_team = await team_service.create_team(name=f"Test Team - {uuid.uuid4().hex[:8]}", description="A team for testing", created_by="admin@example.com", visibility="private")
         # Private scope (owner-level)
         form_data_private = {
             "name": unique_name,
@@ -422,6 +422,73 @@ class TestAdminToolAPIs:
 
 
 # -------------------------
+# Test Tool Ops Admin APIs
+# -------------------------
+class TestAdminToolOpsAPIs:
+    """Test admin tool-ops management endpoints."""
+
+    async def test_admin_tool_ops_partial_with_team_id(self, client, app_with_temp_db):
+        """Test that /admin/tool-ops/partial respects team_id parameter."""
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.services.team_management_service import TeamManagementService
+
+        # Get db session from app's dependency overrides or directly from get_db
+        # (which uses the patched SessionLocal in tests)
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create two teams (creator is automatically added as owner)
+        team_service = TeamManagementService(db)
+        team1 = await team_service.create_team(name=f"Team 1 - {uuid.uuid4().hex[:8]}", description="First team", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name=f"Team 2 - {uuid.uuid4().hex[:8]}", description="Second team", created_by="admin@example.com", visibility="private")
+
+        # Create tools in different teams
+        # Note: tool names get normalized to use hyphens instead of underscores
+        tool1_name = f"team1-tool-{uuid.uuid4().hex[:8]}"
+        tool2_name = f"team2-tool-{uuid.uuid4().hex[:8]}"
+        tool1_data = {
+            "name": tool1_name,
+            "url": "http://example.com/tool1",
+            "description": "Tool in team 1",
+            "visibility": "team",
+            "team_id": team1.id,
+        }
+        tool2_data = {
+            "name": tool2_name,
+            "url": "http://example.com/tool2",
+            "description": "Tool in team 2",
+            "visibility": "team",
+            "team_id": team2.id,
+        }
+
+        # Create the tools
+        await client.post("/admin/tools/", data=tool1_data, headers=TEST_AUTH_HEADER)
+        await client.post("/admin/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
+
+        # Test filtering by team1 - should only return tool1
+        response = await client.get(f"/admin/tool-ops/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert tool1_name in html
+        assert tool2_name not in html
+
+        # Test filtering by team2 - should only return tool2
+        response = await client.get(f"/admin/tool-ops/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert tool2_name in html
+        assert tool1_name not in html
+
+        # Test without team_id filter - should return both
+        response = await client.get("/admin/tool-ops/partial", headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        html = response.text
+        assert tool1_name in html
+        assert tool2_name in html
+
+
+# -------------------------
 # Test Resource Admin APIs
 # -------------------------
 class TestAdminResourceAPIs:
@@ -431,7 +498,7 @@ class TestAdminResourceAPIs:
         """Test adding a resource via the admin UI with new logic."""
         # Define valid form data
         valid_form_data = {
-            "uri": "test://resource1",
+            "uri": f"test://resource1-{uuid.uuid4().hex[:8]}",
             "name": "Test Resource",
             "description": "A test resource",
             "mimeType": "text/plain",
@@ -489,7 +556,7 @@ class TestAdminPromptAPIs:
         """Test complete prompt lifecycle through admin UI."""
         # Create a prompt via form submission
         form_data = {
-            "name": "test_admin_prompt",
+            "name": f"test_admin_prompt_{uuid.uuid4().hex[:8]}",
             "description": "Test prompt via admin",
             "template": "Hello {{name}}, this is a test prompt",
             "arguments": '[{"name": "name", "description": "User name", "required": true}]',
@@ -505,21 +572,19 @@ class TestAdminPromptAPIs:
         resp_json = response.json()
         # Handle paginated response
         prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
-        assert len(prompts) == 1
-        prompt = prompts[0]
-        assert prompt["name"] == "test-admin-prompt"
-        assert prompt["originalName"] == "test_admin_prompt"
+        assert len(prompts) >= 1
+        prompt = next((p for p in prompts if p["originalName"] == form_data["name"]), None)
+        assert prompt is not None
         prompt_id = prompt["id"]
 
         # Get individual prompt
         response = await client.get(f"/admin/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json()["name"] == "test-admin-prompt"
-        assert response.json()["originalName"] == "test_admin_prompt"
+        assert response.json()["originalName"] == form_data["name"]
 
         # Edit prompt
         edit_data = {
-            "name": "updated_admin_prompt",
+            "name": f"updated_admin_prompt_{uuid.uuid4().hex[:8]}",
             "description": "Updated description",
             "template": "Updated {{greeting}}",
             "arguments": '[{"name": "greeting", "description": "Greeting", "required": false}]',
@@ -734,8 +799,8 @@ class TestTeamFiltering:
 
         # Create two teams (creator is automatically added as owner)
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name="Team 1", description="First team", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name="Team 2", description="Second team", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name=f"Team 1 - {uuid.uuid4().hex[:8]}", description="First team", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name=f"Team 2 - {uuid.uuid4().hex[:8]}", description="Second team", created_by="admin@example.com", visibility="private")
 
         # Create tools in different teams
         # Note: tool names get normalized to use hyphens instead of underscores
@@ -794,8 +859,8 @@ class TestTeamFiltering:
 
         # Create TWO teams
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name="Team 1 IDs", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name="Team 2 IDs", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name=f"Team 1 IDs - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name=f"Team 2 IDs - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create tools in different teams
         team1_tool_id = uuid.uuid4().hex
@@ -854,8 +919,8 @@ class TestTeamFiltering:
 
         # Create TWO teams (creator is automatically added as owner)
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name="Search Team 1", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name="Search Team 2", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name=f"Search Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name=f"Search Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create searchable tools in different teams
         search_term = f"searchable_{uuid.uuid4().hex[:8]}"
@@ -906,7 +971,7 @@ class TestTeamFiltering:
 
         # Create a team but DON'T add the user to it
         team_service = TeamManagementService(db)
-        other_team = await team_service.create_team(name="Other Team", description="Test", created_by="other@example.com", visibility="private")
+        other_team = await team_service.create_team(name=f"Other Team - {uuid.uuid4().hex[:8]}", description="Test", created_by="other@example.com", visibility="private")
 
         # Create a tool in that team
         tool_data = {
@@ -960,13 +1025,13 @@ class TestTeamFiltering:
 
         # Create TWO teams (creator is automatically added as owner)
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name="Resource Team 1", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name="Resource Team 2", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name=f"Resource Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name=f"Resource Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create resources in different teams
         team1_resource = {
             "name": f"team1_resource_{uuid.uuid4().hex[:8]}",
-            "uri": "file:///team1",
+            "uri": f"file:///team1-{uuid.uuid4().hex[:8]}",
             "description": "Team 1 resource",
             "visibility": "team",
             "team_id": team1.id,
@@ -974,7 +1039,7 @@ class TestTeamFiltering:
         }
         team2_resource = {
             "name": f"team2_resource_{uuid.uuid4().hex[:8]}",
-            "uri": "file:///team2",
+            "uri": f"file:///team2-{uuid.uuid4().hex[:8]}",
             "description": "Team 2 resource",
             "visibility": "team",
             "team_id": team2.id,
@@ -1006,8 +1071,8 @@ class TestTeamFiltering:
 
         # Create TWO teams (creator is automatically added as owner)
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name="Prompt Team 1", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name="Prompt Team 2", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name=f"Prompt Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name=f"Prompt Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create prompts in different teams
         team1_prompt = {
@@ -1048,8 +1113,8 @@ class TestTeamFiltering:
 
         # Create two teams
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name="Server Team 1", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name="Server Team 2", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name=f"Server Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name=f"Server Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create servers in different teams
         team1_server = {
@@ -1088,8 +1153,8 @@ class TestTeamFiltering:
 
         # Create two teams
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name="Gateway Team 1", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name="Gateway Team 2", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name=f"Gateway Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name=f"Gateway Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create gateways directly in DB (gateway creation via form is complex)
         team1_gw_name = f"team1_gw_{uuid.uuid4().hex[:8]}"
@@ -1145,7 +1210,7 @@ class TestTeamFiltering:
 
         # Create a team
         team_service = TeamManagementService(db)
-        team = await team_service.create_team(name="Visibility Test Team", description="Test", created_by="admin@example.com", visibility="private")
+        team = await team_service.create_team(name=f"Visibility Test Team - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create a PRIVATE tool owned by another user in the same team
         private_tool_name = f"private_tool_{uuid.uuid4().hex[:8]}"
