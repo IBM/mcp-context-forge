@@ -1683,3 +1683,36 @@ class TestAdminListingGracefulErrorHandling:
 # Run tests with pytest
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+
+@pytest.mark.asyncio
+async def test_observability_endpoints_with_database(client: AsyncClient):
+    """Test all observability endpoints work with the database backend.
+
+    This test verifies that the PostgreSQL GROUP BY fix works correctly
+    by testing all affected observability endpoints.
+    """
+    endpoints = [
+        "/admin/observability/tools/usage",
+        "/admin/observability/tools/errors",
+        "/admin/observability/tools/chains",
+        "/admin/observability/prompts/usage",
+        "/admin/observability/prompts/errors",
+        "/admin/observability/resources/usage",
+        "/admin/observability/resources/errors",
+    ]
+
+    for endpoint in endpoints:
+        response = await client.get(endpoint, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200, f"{endpoint} failed with status {response.status_code}: {response.text}"
+        data = response.json()
+        assert isinstance(data, dict), f"{endpoint} should return a dict"
+        # Verify response structure based on endpoint
+        if "tools" in endpoint:
+            assert "tools" in data or "chains" in data, f"{endpoint} missing expected key"
+        elif "prompts" in endpoint:
+            assert "prompts" in data, f"{endpoint} missing 'prompts' key"
+        elif "resources" in endpoint:
+            assert "resources" in data, f"{endpoint} missing 'resources' key"
