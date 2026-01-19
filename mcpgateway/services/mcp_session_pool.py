@@ -1070,6 +1070,15 @@ def init_mcp_session_pool(
 
         # Create default handler factory that uses notification service
         def default_handler_factory(url: str, gateway_id: Optional[str]):
+            """Create a message handler for MCP session notifications.
+
+            Args:
+                url: The MCP server URL for the session.
+                gateway_id: Optional gateway ID for attribution, falls back to URL if not provided.
+
+            Returns:
+                A message handler that forwards notifications to the notification service.
+            """
             return notification_svc.create_message_handler(gateway_id or url, url)
 
         effective_handler_factory = default_handler_factory
