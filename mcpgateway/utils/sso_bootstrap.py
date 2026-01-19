@@ -119,7 +119,7 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "client_id": settings.sso_github_client_id,
                 "client_secret": settings.sso_github_client_secret.get_secret_value() if settings.sso_github_client_secret else "",
                 "authorization_url": "https://github.com/login/oauth/authorize",
-                "token_url": "https://github.com/login/oauth/access_token",
+                "token_url": "https://github.com/login/oauth/access_token",  # nosec B105 - public OAuth endpoint
                 "userinfo_url": "https://api.github.com/user",
                 "scope": "user:email",
                 "trusted_domains": settings.sso_trusted_domains,
@@ -139,7 +139,7 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "client_id": settings.sso_google_client_id,
                 "client_secret": settings.sso_google_client_secret.get_secret_value() if settings.sso_google_client_secret else "",
                 "authorization_url": "https://accounts.google.com/o/oauth2/auth",
-                "token_url": "https://oauth2.googleapis.com/token",
+                "token_url": "https://oauth2.googleapis.com/token",  # nosec B105 - public OAuth endpoint
                 "userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
                 "issuer": "https://accounts.google.com",
                 "scope": "openid profile email",

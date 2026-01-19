@@ -363,7 +363,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
-                return {"sub": proxy_user, "source": "proxy", "token": None}
+                return {"sub": proxy_user, "source": "proxy", "token": None}  # nosec B105 - None is not a password
             # If no proxy header but proxy auth is trusted, treat as anonymous
             return "anonymous"
         else:

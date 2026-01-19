@@ -242,7 +242,7 @@ class MCPServerConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "examples": [
-                {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token-here"},
+                {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token-here"},  # nosec B105 - example placeholder
                 {"command": "python", "args": ["server.py"], "transport": "stdio"},
             ]
         }
@@ -707,7 +707,7 @@ class MCPClientConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "mcp_server": {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token"},
+                "mcp_server": {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token"},  # nosec B105 - example placeholder
                 "llm": {
                     "provider": "azure_openai",
                     "config": {"api_key": "your-key", "azure_endpoint": "https://your-resource.openai.azure.com/", "azure_deployment": "gpt-4", "api_version": "2024-05-01-preview"},
