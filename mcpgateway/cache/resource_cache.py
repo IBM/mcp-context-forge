@@ -56,8 +56,8 @@ import time
 from typing import Any, Optional
 
 # First-Party
+from mcpgateway.services import Priority, task_scheduler
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services import task_scheduler, Priority
 
 # Initialize logging service first
 logging_service = LoggingService()

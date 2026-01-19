@@ -6,10 +6,12 @@ It is intentionally lightweight so other packages can import the scheduler
 without pulling the full `mcpgateway.services` package (avoids import cycles
 and linting issues).
 """
+# Future
 from __future__ import annotations
 
-from enum import IntEnum
+# Standard
 import asyncio
+from enum import IntEnum
 import logging
 from typing import Awaitable, Callable
 
@@ -39,6 +41,11 @@ class TaskScheduler:
     """
 
     def __init__(self, max_concurrent: int = 3):
+        """Initialize the TaskScheduler.
+
+        Args:
+            max_concurrent: Maximum number of concurrent running tasks.
+        """
         self._queue: "asyncio.PriorityQueue[tuple[int, int, Callable[[], Awaitable], asyncio.Future]]" = asyncio.PriorityQueue()
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._counter = 0
@@ -92,8 +99,14 @@ class TaskScheduler:
         """Schedule a zero-argument callable that returns a coroutine for prioritized execution.
 
         The callable will be invoked by the scheduler when it's ready to run
-        (avoids creating coroutine objects before scheduling). Returns an
-        `asyncio.Task` that completes with the callable's coroutine result.
+        (avoids creating coroutine objects before scheduling).
+
+        Args:
+            func: A zero-argument callable which, when called, returns an awaitable/coroutine.
+            priority: Scheduling priority; lower numeric value runs earlier.
+
+        Returns:
+            An ``asyncio.Task`` which will complete with the callable's coroutine result.
         """
         self._ensure_manager()
         self._counter += 1

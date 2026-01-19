@@ -43,8 +43,8 @@ from mcpgateway.db import (
     ToolMetric,
     ToolMetricsHourly,
 )
+from mcpgateway.services import Priority, task_scheduler
 from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service_if_initialized
-from mcpgateway.services import task_scheduler, Priority
 
 logger = logging.getLogger(__name__)
 

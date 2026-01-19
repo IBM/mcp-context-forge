@@ -19,7 +19,7 @@ from uuid import uuid4
 
 # First-Party
 from mcpgateway.common.models import ElicitResult
-from mcpgateway.services import task_scheduler, Priority
+from mcpgateway.services import Priority, task_scheduler
 
 logger = logging.getLogger(__name__)
 
