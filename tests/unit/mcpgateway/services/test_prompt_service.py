@@ -278,7 +278,7 @@ class TestPromptService:
         meta_data = {"trace_id": "123"}
 
         # Just verify it doesn't crash and returns result
-        result = await prompt_service.get_prompt(test_db, "1", {}, meta_data=meta_data)
+        result = await prompt_service.get_prompt(test_db, "1", {}, _meta_data=meta_data)
         assert result.messages[0].content.text == "Hello!"
 
     @pytest.mark.asyncio
