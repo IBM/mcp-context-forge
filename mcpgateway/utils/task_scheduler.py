@@ -53,6 +53,13 @@ class TaskScheduler:
         self._running = False
 
     def _ensure_manager(self) -> None:
+        """Ensure the background manager task is running.
+
+        This creates the manager task on the running event loop if it has not
+        already been started. If no event loop is available yet, this is a
+        no-op and the manager will be started later when scheduling from an
+        event loop context.
+        """
         if not self._running:
             try:
                 loop = asyncio.get_running_loop()
@@ -64,6 +71,12 @@ class TaskScheduler:
             self._running = True
 
     async def _manager_loop(self) -> None:
+        """Background manager loop that dispatches scheduled tasks.
+
+        This loop waits for scheduled items, drains any immediately available
+        queued items so they can be ordered by priority, and schedules their
+        execution while respecting the concurrency semaphore.
+        """
         while True:
             # Wait for at least one item
             first_item = await self._queue.get()
@@ -80,6 +93,12 @@ class TaskScheduler:
             items.sort(key=lambda t: (t[0], t[1]))
 
             async def _run_item(func, fut):
+                """Run a single scheduled item under the concurrency semaphore.
+
+                The callable ``func`` is invoked to obtain the coroutine which is
+                awaited; the provided future ``fut`` is completed with the
+                coroutine's result or an exception marker on failure.
+                """
                 async with self._semaphore:
                     try:
                         coro = func()
@@ -120,6 +139,11 @@ class TaskScheduler:
         self._queue.put_nowait((int(priority), self._counter, func, fut))
 
         async def _wait_future() -> object:
+            """Await the internal future returned for scheduled tasks.
+
+            This small wrapper returns the result of the future that the
+            manager will complete when the scheduled callable finishes.
+            """
             return await fut
 
         return asyncio.create_task(_wait_future())
