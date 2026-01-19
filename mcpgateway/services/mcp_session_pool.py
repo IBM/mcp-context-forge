@@ -31,7 +31,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
-import orjson
 import logging
 import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
@@ -41,6 +40,7 @@ import httpx
 from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+import orjson
 
 # JSON-RPC standard error code for method not found
 METHOD_NOT_FOUND = -32601
