@@ -304,6 +304,9 @@ class TestSessionPoolIsolation:
         pool._create_session = AsyncMock()
 
         async def create_mock_session(url, headers, transport_type, *args, **kwargs):
+            # Extract gateway_id from kwargs if provided
+            gateway_id = kwargs.get("gateway_id", "") or ""
+
             # Create a mock that mimics PooledSession behavior needed by acquire/release
             real_pooled = MagicMock()
             real_pooled.url = url
@@ -313,6 +316,7 @@ class TestSessionPoolIsolation:
             real_pooled.idle_seconds = 0.5
             real_pooled.last_used = time.time()
             real_pooled.created_at = time.time()
+            real_pooled.gateway_id = gateway_id  # Required for pool key reconstruction
 
             # Setup session mock behavior
             real_pooled.session = AsyncMock()
@@ -799,8 +803,8 @@ class TestIdlePoolEviction:
                 session = await pool.acquire("http://test:8080")
 
                 # Force session back into pool by patching release to skip TTL check
-                # New Key structure: (user_hash, url, identity_hash, transport)
-                pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
+                # Key structure: (user_hash, url, identity_hash, transport, gateway_id)
+                pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
                 pool._active.get(pool_key, set()).discard(session)
                 pool._pools[pool_key].put_nowait(session)
 
@@ -849,8 +853,8 @@ class TestIdlePoolEviction:
             # Acquire session (now in _active)
             session = await pool.acquire("http://test:8080")
             # simulate long-running tool call by setting old last_used time
-            # New Key structure: (user_hash, url, identity_hash, transport)
-            pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
+            # Key structure: (user_hash, url, identity_hash, transport, gateway_id)
+            pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
             pool._pool_last_used[pool_key] = time.time() - 1000
 
             # Release should update _pool_last_used
@@ -901,7 +905,7 @@ class TestContextManager:
                 assert pooled.session is not None
 
             # Session should be back in pool
-            pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
+            pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
             assert pool._pools[pool_key].qsize() == 1
 
         await pool.close_all()
