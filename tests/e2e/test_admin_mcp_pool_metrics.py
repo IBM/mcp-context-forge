@@ -210,7 +210,7 @@ class TestPoolMetricsEvictionTracking:
                     await pool.release(s)
 
                     # Verify pool has the key before eviction
-                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
+                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
                     assert pool_key in pool._pools
                     assert pool.get_metrics()["pool_key_count"] == 1
 
@@ -256,7 +256,7 @@ class TestPoolMetricsEvictionTracking:
                     s = await pool.acquire("http://test:8080")
 
                     # Force session back into pool
-                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
+                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
                     pool._active.get(pool_key, set()).discard(s)
                     pool._pools[pool_key].put_nowait(s)
 
