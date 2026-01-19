@@ -388,10 +388,7 @@ class A2AAgentService:
 
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
-                    raise ValueError(
-                        "Query parameter authentication is disabled. "
-                        "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable."
-                    )
+                    raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
 
                 # Service-layer enforcement: Check host allowlist
                 if settings.insecure_queryparam_auth_allowed_hosts:
@@ -1052,10 +1049,7 @@ class A2AAgentService:
                     # Grandfather clause: Allow updates to existing query_param agents
                     # unless they're trying to change credentials
                     if is_switching_to_queryparam or is_updating_queryparam_creds:
-                        raise ValueError(
-                            "Query parameter authentication is disabled. "
-                            "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable."
-                        )
+                        raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
 
                 # Service-layer enforcement: Check host allowlist
                 if settings.insecure_queryparam_auth_allowed_hosts:
