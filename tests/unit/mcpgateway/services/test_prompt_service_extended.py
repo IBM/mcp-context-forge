@@ -183,23 +183,23 @@ class TestPromptServiceExtended:
         assert callable(method)
 
     @pytest.mark.asyncio
-    async def test_toggle_prompt_status_not_found(self):
-        """Test toggle_prompt_status method exists."""
+    async def test_set_prompt_state_method_exists(self):
+        """Test set_prompt_state method exists."""
         service = PromptService()
 
         # Test method exists
-        assert hasattr(service, 'toggle_prompt_status')
-        assert callable(getattr(service, 'toggle_prompt_status'))
+        assert hasattr(service, 'set_prompt_state')
+        assert callable(getattr(service, 'set_prompt_state'))
 
     @pytest.mark.asyncio
-    async def test_toggle_prompt_status_no_change_needed(self):
-        """Test toggle_prompt_status method is async."""
+    async def test_set_prompt_state_no_change_needed(self):
+        """Test set_prompt_state method is async."""
         service = PromptService()
 
         # Test method is async
         # Standard
         import asyncio
-        assert asyncio.iscoroutinefunction(service.toggle_prompt_status)
+        assert asyncio.iscoroutinefunction(service.set_prompt_state)
 
     @pytest.mark.asyncio
     async def test_delete_prompt_not_found(self):

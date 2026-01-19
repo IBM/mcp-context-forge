@@ -2246,9 +2246,9 @@ class ToolService:
             )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
+    async def set_tool_state(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
         """
-        Toggle the activation status of a tool.
+        Set the activation status of a tool.
 
         Args:
             db (Session): The SQLAlchemy database session.
@@ -2281,7 +2281,7 @@ class ToolService:
             >>> service.convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_tool_status(db, 'tool_id', True, True))
+            >>> asyncio.run(service.set_tool_state(db, 'tool_id', True, True))
             'tool_read'
         """
         try:
@@ -2331,10 +2331,10 @@ class ToolService:
 
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
 
-                # Structured logging: Audit trail for tool status toggle
+                # Structured logging: Audit trail for tool state change
                 audit_trail.log_action(
                     user_id=user_email or "system",
-                    action="toggle_tool_status",
+                    action="set_tool_state",
                     resource_type="tool",
                     resource_id=tool.id,
                     resource_name=tool.name,
@@ -2350,11 +2350,11 @@ class ToolService:
                     db=db,
                 )
 
-                # Structured logging: Log successful tool status toggle
+                # Structured logging: Log successful tool state change
                 structured_logger.log(
                     level="INFO",
                     message=f"Tool {'activated' if activate else 'deactivated'} successfully",
-                    event_type="tool_status_toggled",
+                    event_type="tool_state_changed",
                     component="tool_service",
                     user_email=user_email,
                     team_id=tool.team_id,
@@ -2373,8 +2373,8 @@ class ToolService:
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
-                message="Tool status toggle failed due to permission error",
-                event_type="tool_toggle_permission_denied",
+                message="Tool state change failed due to permission error",
+                event_type="tool_state_change_permission_denied",
                 component="tool_service",
                 user_email=user_email,
                 resource_type="tool",
@@ -2386,11 +2386,11 @@ class ToolService:
         except Exception as e:
             db.rollback()
 
-            # Structured logging: Log generic tool status toggle failure
+            # Structured logging: Log generic tool state change failure
             structured_logger.log(
                 level="ERROR",
-                message="Tool status toggle failed",
-                event_type="tool_toggle_failed",
+                message="Tool state change failed",
+                event_type="tool_state_change_failed",
                 component="tool_service",
                 user_email=user_email,
                 resource_type="tool",
@@ -2398,7 +2398,7 @@ class ToolService:
                 error=e,
                 db=db,
             )
-            raise ToolError(f"Failed to toggle tool status: {str(e)}")
+            raise ToolError(f"Failed to set tool state: {str(e)}")
 
     async def invoke_tool(
         self,

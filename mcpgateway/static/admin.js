@@ -28352,7 +28352,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
  */
 function updateEntityActionButtons(cell, type, id, isEnabled) {
     // We look for the form that toggles activation inside the cell
-    const form = cell.querySelector('form[action*="/toggle"]');
+    const form = cell.querySelector('form[action*="/state"]');
     if (!form) {
         return;
     }
@@ -29836,7 +29836,7 @@ async function deleteLLMProvider(providerId, providerName) {
 async function toggleLLMProvider(providerId) {
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/llm/providers/${providerId}/toggle`,
+            `${window.ROOT_PATH}/llm/providers/${providerId}/state`,
             {
                 method: "POST",
                 headers: {
@@ -30219,7 +30219,7 @@ async function deleteLLMModel(modelId, modelName) {
 async function toggleLLMModel(modelId) {
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/llm/models/${modelId}/toggle`,
+            `${window.ROOT_PATH}/llm/models/${modelId}/state`,
             {
                 method: "POST",
                 headers: {
