@@ -28,28 +28,25 @@ def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
     tables = inspector.get_table_names()
 
-    if "gateways" not in tables:
-        print("Fresh database detected. Skipping migration.")
-        return
-
-    columns = [col["name"] for col in inspector.get_columns("gateways")]
-    if "auth_query_params" in columns:
-        print("auth_query_params column already exists. Skipping migration.")
-        return
-
-    try:
-        with op.batch_alter_table("gateways", schema=None) as batch_op:
-            batch_op.add_column(
-                sa.Column(
-                    "auth_query_params",
-                    sa.JSON(),
-                    nullable=True,
-                    comment="Encrypted query parameters for authentication",
-                )
-            )
-        print("Successfully added auth_query_params column to gateways table.")
-    except Exception as e:
-        print(f"Warning: Could not add auth_query_params column: {e}")
+    # Handle gateways table
+    if "gateways" in tables:
+        columns = [col["name"] for col in inspector.get_columns("gateways")]
+        if "auth_query_params" not in columns:
+            try:
+                with op.batch_alter_table("gateways", schema=None) as batch_op:
+                    batch_op.add_column(
+                        sa.Column(
+                            "auth_query_params",
+                            sa.JSON(),
+                            nullable=True,
+                            comment="Encrypted query parameters for authentication",
+                        )
+                    )
+                print("Successfully added auth_query_params column to gateways table.")
+            except Exception as e:
+                print(f"Warning: Could not add auth_query_params column to gateways: {e}")
+        else:
+            print("auth_query_params column already exists in gateways. Skipping.")
 
 
 def downgrade() -> None:
@@ -57,15 +54,12 @@ def downgrade() -> None:
     inspector = sa.inspect(op.get_bind())
     tables = inspector.get_table_names()
 
-    if "gateways" not in tables:
-        return
-
-    columns = [col["name"] for col in inspector.get_columns("gateways")]
-    if "auth_query_params" not in columns:
-        return
-
-    try:
-        with op.batch_alter_table("gateways", schema=None) as batch_op:
-            batch_op.drop_column("auth_query_params")
-    except Exception as e:
-        print(f"Warning: Could not drop auth_query_params column: {e}")
+    # Handle gateways table
+    if "gateways" in tables:
+        columns = [col["name"] for col in inspector.get_columns("gateways")]
+        if "auth_query_params" in columns:
+            try:
+                with op.batch_alter_table("gateways", schema=None) as batch_op:
+                    batch_op.drop_column("auth_query_params")
+            except Exception as e:
+                print(f"Warning: Could not drop auth_query_params column from gateways: {e}")

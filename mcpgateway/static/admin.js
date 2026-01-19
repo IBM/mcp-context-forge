@@ -3512,6 +3512,9 @@ async function editA2AAgent(agentId) {
             "auth-headers-fields-a2a-edit",
         );
         const authOAuthSection = safeGetElement("auth-oauth-fields-a2a-edit");
+        const authQueryParamSection = safeGetElement(
+            "auth-query_param-fields-a2a-edit",
+        );
 
         // Individual fields
         const authUsernameField = safeGetElement(
@@ -3550,6 +3553,14 @@ async function editA2AAgent(agentId) {
             "oauth-auth-code-fields-a2a-edit",
         );
 
+        // Query param fields
+        const authQueryParamKeyField = safeGetElement(
+            "auth-query-param-key-a2a-edit",
+        );
+        const authQueryParamValueField = safeGetElement(
+            "auth-query-param-value-a2a-edit",
+        );
+
         // Hide all auth sections first
         if (authBasicSection) {
             authBasicSection.style.display = "none";
@@ -3562,6 +3573,9 @@ async function editA2AAgent(agentId) {
         }
         if (authOAuthSection) {
             authOAuthSection.style.display = "none";
+        }
+        if (authQueryParamSection) {
+            authQueryParamSection.style.display = "none";
         }
 
         switch (agent.authType) {
@@ -3636,6 +3650,18 @@ async function editA2AAgent(agentId) {
                     }
                 }
                 break;
+            case "query_param":
+                if (authQueryParamSection) {
+                    authQueryParamSection.style.display = "block";
+                    if (authQueryParamKeyField) {
+                        authQueryParamKeyField.value =
+                            agent.authQueryParamKey || "";
+                    }
+                    if (authQueryParamValueField) {
+                        authQueryParamValueField.value = "*****"; // mask value
+                    }
+                }
+                break;
             case "":
             default:
                 // No auth – keep everything hidden
@@ -3695,6 +3721,7 @@ function toggleA2AAuthFields(authType) {
         "auth-bearer-fields-a2a-edit",
         "auth-headers-fields-a2a-edit",
         "auth-oauth-fields-a2a-edit",
+        "auth-query_param-fields-a2a-edit",
     ];
     sections.forEach((id) => {
         const el = document.getElementById(id);
@@ -15771,6 +15798,7 @@ function setupAuthenticationToggles() {
             basicId: "auth-basic-fields-a2a",
             bearerId: "auth-bearer-fields-a2a",
             headersId: "auth-headers-fields-a2a",
+            queryParamId: "auth-query_param-fields-a2a",
         },
 
         // Gateway Edit Form auth fields
@@ -15792,6 +15820,7 @@ function setupAuthenticationToggles() {
             bearerId: "auth-bearer-fields-a2a-edit",
             headersId: "auth-headers-fields-a2a-edit",
             oauthId: "auth-oauth-fields-a2a-edit",
+            queryParamId: "auth-query_param-fields-a2a-edit",
         },
 
         {

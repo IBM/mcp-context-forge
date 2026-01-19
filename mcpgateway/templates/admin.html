@@ -6551,6 +6551,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <option value="bearer">Bearer Token</option>
                   <option value="authheaders">Custom Headers</option>
                   <option value="oauth">OAuth 2.0</option>
+                  <option value="query_param">Query Parameter (INSECURE)</option>
                 </select>
               </div>
 
@@ -6627,6 +6628,52 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     name="auth_headers"
                     id="auth-headers-json-a2a"
                   />
+                </div>
+              </div>
+
+              <!-- Query Parameter Auth Fields -->
+              <div id="auth-query_param-fields-a2a" style="display: none">
+                <div class="p-3 mb-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-md">
+                  <p class="text-xs text-amber-700 dark:text-amber-400">
+                    <strong>Security Warning:</strong> API keys in URLs may appear in proxy logs, browser history, and server access logs.
+                    Consider using bearer tokens or headers instead (CWE-598).
+                  </p>
+                </div>
+                <div>
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    Query Parameter Name
+                  </label>
+                  <input
+                    type="text"
+                    name="auth_query_param_key"
+                    placeholder="e.g., api_key"
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                </div>
+                <div class="mt-3">
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    Query Parameter Value
+                  </label>
+                  <div class="relative">
+                    <input
+                      type="password"
+                      name="auth_query_param_value"
+                      id="auth-query-param-value-a2a"
+                      data-sensitive-label="API key"
+                      class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
+                    />
+                    <button
+                      type="button"
+                      onclick="togglePasswordVisibility('auth-query-param-value-a2a')"
+                      class="absolute inset-y-0 right-0 mt-1 px-3 flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                    >
+                      Show
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -9903,6 +9950,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <option value="bearer">Bearer Token</option>
                           <option value="authheaders">Custom Headers</option>
                           <option value="oauth">OAuth 2.0</option>
+                          <option value="query_param">Query Parameter (INSECURE)</option>
                         </select>
                       </div>
 
@@ -9961,6 +10009,53 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           </div>
                           <div id="auth-headers-container-a2a-edit" class="space-y-2"></div>
                           <input type="hidden" name="auth_headers" id="auth-headers-json-a2a-edit" />
+                        </div>
+                      </div>
+
+                      <!-- Query Parameter Auth Fields -->
+                      <div id="auth-query_param-fields-a2a-edit" style="display: none">
+                        <div class="p-3 mb-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-md">
+                          <p class="text-xs text-amber-700 dark:text-amber-400">
+                            <strong>Security Warning:</strong> API keys in URLs may appear in proxy logs, browser history, and server access logs.
+                            Consider using bearer tokens or headers instead (CWE-598).
+                          </p>
+                        </div>
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Query Parameter Name
+                          </label>
+                          <input
+                            type="text"
+                            name="auth_query_param_key"
+                            id="auth-query-param-key-a2a-edit"
+                            placeholder="e.g., api_key"
+                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          />
+                        </div>
+                        <div class="mt-3">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Query Parameter Value
+                          </label>
+                          <div class="relative">
+                            <input
+                              type="password"
+                              name="auth_query_param_value"
+                              id="auth-query-param-value-a2a-edit"
+                              data-sensitive-label="API key"
+                              class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
+                            />
+                            <button
+                              type="button"
+                              onclick="togglePasswordVisibility('auth-query-param-value-a2a-edit')"
+                              class="absolute inset-y-0 right-0 mt-1 px-3 flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                            >
+                              Show
+                            </button>
+                          </div>
                         </div>
                       </div>
 

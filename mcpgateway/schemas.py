@@ -4196,6 +4196,16 @@ class A2AAgentCreate(BaseModel):
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
 
+    # Query Parameter Authentication (CWE-598 security concern - use only when required by upstream)
+    auth_query_param_key: Optional[str] = Field(
+        None,
+        description="Query parameter name for authentication (e.g., 'tavilyApiKey')",
+    )
+    auth_query_param_value: Optional[SecretStr] = Field(
+        None,
+        description="Query parameter value (API key) - will be encrypted at rest",
+    )
+
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
@@ -4451,7 +4461,52 @@ class A2AAgentCreate(BaseModel):
             # One-time auth does not require encoding here
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
+        if auth_type == "query_param":
+            # Query param auth doesn't use auth_value field
+            # Validation is handled by model_validator
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+
+    @model_validator(mode="after")
+    def validate_query_param_auth(self) -> "A2AAgentCreate":
+        """Validate query parameter authentication configuration.
+
+        Returns:
+            A2AAgentCreate: The validated instance.
+
+        Raises:
+            ValueError: If query param auth is disabled or host is not in allowlist.
+        """
+        if self.auth_type != "query_param":
+            return self
+
+        # Check feature flag
+        if not settings.insecure_allow_queryparam_auth:
+            raise ValueError(
+                "Query parameter authentication is disabled. "
+                + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable. "
+                + "WARNING: API keys in URLs may appear in proxy logs."
+            )
+
+        # Check required fields
+        if not self.auth_query_param_key:
+            raise ValueError("auth_query_param_key is required when auth_type is 'query_param'")
+        if not self.auth_query_param_value:
+            raise ValueError("auth_query_param_value is required when auth_type is 'query_param'")
+
+        # Check host allowlist (if configured)
+        if settings.insecure_queryparam_auth_allowed_hosts:
+            parsed = urlparse(str(self.endpoint_url))
+            # Extract hostname properly (handles IPv6, ports, userinfo)
+            hostname = parsed.hostname or parsed.netloc.split("@")[-1].split(":")[0]
+            hostname_lower = hostname.lower()
+
+            if hostname_lower not in settings.insecure_queryparam_auth_allowed_hosts:
+                allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
+                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
+
+        return self
 
 
 class A2AAgentUpdate(BaseModelWithConfigDict):
@@ -4481,6 +4536,16 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # Query Parameter Authentication (CWE-598 security concern - use only when required by upstream)
+    auth_query_param_key: Optional[str] = Field(
+        None,
+        description="Query parameter name for authentication (e.g., 'tavilyApiKey')",
+    )
+    auth_query_param_value: Optional[SecretStr] = Field(
+        None,
+        description="Query parameter value (API key) - will be encrypted at rest",
+    )
 
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the agent")
 
@@ -4739,7 +4804,36 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             # One-time auth does not require encoding here
             return None
 
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
+        if auth_type == "query_param":
+            # Query param auth doesn't use auth_value field
+            # Validation is handled by model_validator
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
+
+    @model_validator(mode="after")
+    def validate_query_param_auth(self) -> "A2AAgentUpdate":
+        """Validate query parameter authentication configuration.
+
+        NOTE: This only runs when auth_type is explicitly set to "query_param".
+        Service-layer enforcement handles the case where auth_type is omitted
+        but the existing agent uses query_param auth.
+
+        Returns:
+            A2AAgentUpdate: The validated instance.
+
+        Raises:
+            ValueError: If required fields are missing when setting query_param auth.
+        """
+        if self.auth_type != "query_param":
+            return self
+        # Validate fields are provided when explicitly setting query_param auth
+        # Feature flag/allowlist check happens in service layer (has access to existing agent)
+        if not self.auth_query_param_key:
+            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
+        if not self.auth_query_param_value:
+            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+        return self
 
 
 class A2AAgentRead(BaseModelWithConfigDict):
@@ -4751,9 +4845,10 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
-    - Authentication type: basic, bearer, headers, oauth
+    - Authentication type: basic, bearer, headers, oauth, query_param
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
+    - Query parameter authentication (key name and masked value)
 
     Auto Populated fields:
     - Authentication username: for basic auth
@@ -4761,6 +4856,8 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Authentication token: for bearer auth
     - Authentication header key: for headers auth
     - Authentication header value: for headers auth
+    - Query param key: for query_param auth
+    - Query param value (masked): for query_param auth
     """
 
     id: Optional[str] = Field(None, description="Unique ID of the a2a agent")
@@ -4794,6 +4891,16 @@ class A2AAgentRead(BaseModelWithConfigDict):
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
 
+    # Query Parameter Authentication (masked for security)
+    auth_query_param_key: Optional[str] = Field(
+        None,
+        description="Query parameter name for authentication",
+    )
+    auth_query_param_value_masked: Optional[str] = Field(
+        None,
+        description="Masked query parameter value (actual value is encrypted at rest)",
+    )
+
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
     created_from_ip: Optional[str] = Field(None, description="IP address of creator")
@@ -4814,6 +4921,47 @@ class A2AAgentRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _mask_query_param_auth(cls, data: Any) -> Any:
+        """Mask query param auth value when constructing from DB model.
+
+        This extracts auth_query_params from the raw data (DB model or dict)
+        and populates the masked fields for display.
+
+        Args:
+            data: The raw data (dict or ORM model) to process.
+
+        Returns:
+            Any: The processed data with masked query param values.
+        """
+        # Handle dict input
+        if isinstance(data, dict):
+            auth_query_params = data.get("auth_query_params")
+            if auth_query_params and isinstance(auth_query_params, dict):
+                # Extract the param key name and set masked value
+                first_key = next(iter(auth_query_params.keys()), None)
+                if first_key:
+                    data["auth_query_param_key"] = first_key
+                    data["auth_query_param_value_masked"] = settings.masked_auth_value
+        # Handle ORM model input (has auth_query_params attribute)
+        elif hasattr(data, "auth_query_params"):
+            auth_query_params = getattr(data, "auth_query_params", None)
+            if auth_query_params and isinstance(auth_query_params, dict):
+                # Convert ORM to dict for modification, preserving all attributes
+                # Start with table columns
+                data_dict = {c.name: getattr(data, c.name) for c in data.__table__.columns}
+                # Preserve dynamically added attributes like 'team' (from relationships)
+                for attr in ["team"]:
+                    if hasattr(data, attr):
+                        data_dict[attr] = getattr(data, attr)
+                first_key = next(iter(auth_query_params.keys()), None)
+                if first_key:
+                    data_dict["auth_query_param_key"] = first_key
+                    data_dict["auth_query_param_value_masked"] = settings.masked_auth_value
+                return data_dict
+        return data
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
@@ -4890,6 +5038,11 @@ class A2AAgentRead(BaseModelWithConfigDict):
             return self
 
         if auth_type == "one_time_auth":
+            return self
+
+        if auth_type == "query_param":
+            # Query param auth is handled by the before validator
+            # (auth_query_params from DB model is processed there)
             return self
 
         # If no encoded value is present, nothing to populate

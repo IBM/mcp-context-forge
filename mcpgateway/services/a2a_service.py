@@ -379,6 +379,47 @@ class A2AAgentService:
 
             oauth_config = getattr(agent_data, "oauth_config", None)
 
+            # Handle query_param auth - encrypt and prepare for storage
+            auth_query_params_encrypted: Optional[Dict[str, str]] = None
+            if auth_type == "query_param":
+                # First-Party
+                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+                # Service-layer enforcement: Check feature flag
+                if not settings.insecure_allow_queryparam_auth:
+                    raise ValueError(
+                        "Query parameter authentication is disabled. "
+                        "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable."
+                    )
+
+                # Service-layer enforcement: Check host allowlist
+                if settings.insecure_queryparam_auth_allowed_hosts:
+                    parsed = urlparse(str(agent_data.endpoint_url))
+                    hostname = (parsed.hostname or "").lower()
+                    allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
+                    if hostname not in allowed_hosts:
+                        allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
+                        raise ValueError(
+                            f"Host '{hostname}' is not in the allowed hosts for query param auth. "
+                            f"Allowed: {allowed}"
+                        )
+
+                # Extract and encrypt query param auth
+                param_key = getattr(agent_data, "auth_query_param_key", None)
+                param_value = getattr(agent_data, "auth_query_param_value", None)
+                if param_key and param_value:
+                    # Handle SecretStr
+                    if hasattr(param_value, "get_secret_value"):
+                        raw_value = param_value.get_secret_value()
+                    else:
+                        raw_value = str(param_value)
+                    # Encrypt for storage
+                    encrypted_value = encode_auth({param_key: raw_value})
+                    auth_query_params_encrypted = {param_key: encrypted_value}
+                    # Query param auth doesn't use auth_value
+                    auth_value = None
+
             # Create new agent
             new_agent = DbA2AAgent(
                 name=agent_data.name,
@@ -390,6 +431,7 @@ class A2AAgentService:
                 config=agent_data.config,
                 auth_type=auth_type,
                 auth_value=auth_value,  # This should be encrypted in practice
+                auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
                 tags=agent_data.tags,
                 passthrough_headers=getattr(agent_data, "passthrough_headers", None),
@@ -922,6 +964,7 @@ class A2AAgentService:
             A2AAgentNameConflictError: If name conflicts with another agent.
             A2AAgentError: For other errors during update.
             IntegrityError: If a database integrity error occurs.
+            ValueError: If query_param auth is disabled or host not in allowlist.
         """
         try:
             # Acquire row lock for update to avoid lost-update on `version` and other fields
@@ -959,6 +1002,10 @@ class A2AAgentService:
             # Update fields
             update_data = agent_data.model_dump(exclude_unset=True)
 
+            # Track original auth_type and endpoint_url before updates
+            original_auth_type = agent.auth_type
+            original_endpoint_url = agent.endpoint_url
+
             for field, value in update_data.items():
                 if field == "passthrough_headers":
                     if value is not None:
@@ -977,8 +1024,93 @@ class A2AAgentService:
                         agent.passthrough_headers = None
                     continue
 
+                # Skip query_param fields - handled separately below
+                if field in ("auth_query_param_key", "auth_query_param_value"):
+                    continue
+
                 if hasattr(agent, field):
                     setattr(agent, field, value)
+
+            # Handle query_param auth updates
+            # Clear auth_query_params when switching away from query_param auth
+            if original_auth_type == "query_param" and agent_data.auth_type is not None and agent_data.auth_type != "query_param":
+                agent.auth_query_params = None
+                logger.debug(f"Cleared auth_query_params for agent {agent.id} (switched from query_param to {agent_data.auth_type})")
+
+            # Handle switching to query_param auth or updating existing query_param credentials
+            is_switching_to_queryparam = agent_data.auth_type == "query_param" and original_auth_type != "query_param"
+            is_updating_queryparam_creds = original_auth_type == "query_param" and (agent_data.auth_query_param_key is not None or agent_data.auth_query_param_value is not None)
+            is_url_changing = agent_data.endpoint_url is not None and str(agent_data.endpoint_url) != original_endpoint_url
+
+            if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and original_auth_type == "query_param"):
+                # First-Party
+                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
+                # Service-layer enforcement: Check feature flag
+                if not settings.insecure_allow_queryparam_auth:
+                    # Grandfather clause: Allow updates to existing query_param agents
+                    # unless they're trying to change credentials
+                    if is_switching_to_queryparam or is_updating_queryparam_creds:
+                        raise ValueError(
+                            "Query parameter authentication is disabled. "
+                            "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable."
+                        )
+
+                # Service-layer enforcement: Check host allowlist
+                if settings.insecure_queryparam_auth_allowed_hosts:
+                    check_url = str(agent_data.endpoint_url) if agent_data.endpoint_url else agent.endpoint_url
+                    parsed = urlparse(check_url)
+                    hostname = (parsed.hostname or "").lower()
+                    allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
+                    if hostname not in allowed_hosts:
+                        allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
+                        raise ValueError(
+                            f"Host '{hostname}' is not in the allowed hosts for query param auth. "
+                            f"Allowed: {allowed}"
+                        )
+
+            if is_switching_to_queryparam or is_updating_queryparam_creds:
+                # Get query param key and value
+                param_key = getattr(agent_data, "auth_query_param_key", None)
+                param_value = getattr(agent_data, "auth_query_param_value", None)
+
+                if param_key:
+                    # Check if value is masked (user didn't change it) or new value provided
+                    is_masked_placeholder = False
+                    if param_value and hasattr(param_value, "get_secret_value"):
+                        raw_value = param_value.get_secret_value()
+                        # First-Party
+                        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+                        is_masked_placeholder = raw_value == settings.masked_auth_value
+                    elif param_value:
+                        raw_value = str(param_value)
+                    else:
+                        raw_value = None
+
+                    if raw_value and not is_masked_placeholder:
+                        # New value provided - encrypt for storage
+                        encrypted_value = encode_auth({param_key: raw_value})
+                        agent.auth_query_params = {param_key: encrypted_value}
+                    elif agent.auth_query_params and is_masked_placeholder:
+                        # Use existing encrypted value (user didn't change the password)
+                        # But key may have changed, so preserve with new key if different
+                        existing_key = next(iter(agent.auth_query_params.keys()), None)
+                        if existing_key and existing_key != param_key:
+                            # Key changed but value is masked - decrypt and re-encrypt with new key
+                            existing_encrypted = agent.auth_query_params.get(existing_key, "")
+                            if existing_encrypted:
+                                decrypted = decode_auth(existing_encrypted)
+                                existing_value = decrypted.get(existing_key, "")
+                                if existing_value:
+                                    encrypted_value = encode_auth({param_key: existing_value})
+                                    agent.auth_query_params = {param_key: encrypted_value}
+
+                # Update auth_type if switching
+                if is_switching_to_queryparam:
+                    agent.auth_type = "query_param"
+                    agent.auth_value = None  # Query param auth doesn't use auth_value
 
             # Update metadata
             if modified_by:
@@ -1236,6 +1368,24 @@ class A2AAgentService:
         agent_protocol_version = agent.protocol_version
         agent_auth_type = agent.auth_type
         agent_auth_value = agent.auth_value
+        agent_auth_query_params = agent.auth_query_params
+
+        # Handle query_param auth - decrypt and apply to URL
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        if agent_auth_type == "query_param" and agent_auth_query_params:
+            # First-Party
+            from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
+
+            auth_query_params_decrypted = {}
+            for param_key, encrypted_value in agent_auth_query_params.items():
+                if encrypted_value:
+                    try:
+                        decrypted = decode_auth(encrypted_value)
+                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                    except Exception:
+                        logger.debug(f"Failed to decrypt query param '{param_key}' for A2A agent invocation")
+            if auth_query_params_decrypted:
+                agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
 
         # Decode auth_value for supported auth types (before closing session)
         auth_headers = {}
@@ -1264,6 +1414,13 @@ class A2AAgentService:
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2: Make HTTP call (no DB connection held)
         # ═══════════════════════════════════════════════════════════════════════════
+
+        # Create sanitized URL for logging (redacts auth query params)
+        # First-Party
+        from mcpgateway.utils.url_auth import sanitize_url_for_logging, sanitize_exception_message  # pylint: disable=import-outside-toplevel
+
+        sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_query_params_decrypted)
+
         try:
             # Prepare the request to the A2A agent
             # Format request based on agent type and endpoint
@@ -1289,7 +1446,7 @@ class A2AAgentService:
             if correlation_id:
                 headers["X-Correlation-ID"] = correlation_id
 
-            # Log A2A external call start
+            # Log A2A external call start (with sanitized URL to prevent credential leakage)
             call_start_time = datetime.now(timezone.utc)
             structured_logger.log(
                 level="INFO",
@@ -1302,7 +1459,7 @@ class A2AAgentService:
                     "event": "a2a_call_started",
                     "agent_name": agent_name,
                     "agent_id": agent_id,
-                    "endpoint_url": agent_endpoint_url,
+                    "endpoint_url": sanitized_endpoint_url,
                     "interaction_type": interaction_type,
                     "protocol_version": agent_protocol_version,
                 },
@@ -1327,7 +1484,9 @@ class A2AAgentService:
                     metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code, "success": True},
                 )
             else:
-                error_message = f"HTTP {http_response.status_code}: {http_response.text}"
+                # Sanitize error message to prevent URL secrets from leaking in logs
+                raw_error = f"HTTP {http_response.status_code}: {http_response.text}"
+                error_message = sanitize_exception_message(raw_error, auth_query_params_decrypted)
 
                 # Log failed A2A call
                 structured_logger.log(
@@ -1348,7 +1507,8 @@ class A2AAgentService:
             # Re-raise A2AAgentError without wrapping
             raise
         except Exception as e:
-            error_message = str(e)
+            # Sanitize error message to prevent URL secrets from leaking in logs
+            error_message = sanitize_exception_message(str(e), auth_query_params_decrypted)
             logger.error(f"Failed to invoke A2A agent '{agent_name}': {error_message}")
             raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}")
 
@@ -1549,6 +1709,8 @@ class A2AAgentService:
         agent_data = {k: getattr(db_agent, k, None) for k in A2AAgentRead.model_fields.keys()}
         agent_data["metrics"] = metrics
         agent_data["team"] = getattr(db_agent, "team", None)
+        # Include auth_query_params for the _mask_query_param_auth validator
+        agent_data["auth_query_params"] = getattr(db_agent, "auth_query_params", None)
 
         # Validate using Pydantic model
         validated_agent = A2AAgentRead.model_validate(agent_data)
