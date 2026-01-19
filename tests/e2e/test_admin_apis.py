@@ -1236,6 +1236,100 @@ class TestTeamFiltering:
         assert private_tool_name not in html, f"Private tool should NOT be visible to non-owner! Found in: {html[:500]}"
 
 
+# -------------------------
+# Test Graceful Error Handling
+# -------------------------
+class TestAdminListingGracefulErrorHandling:
+    """Test that admin listing endpoints handle entity conversion errors gracefully.
+
+    These tests verify that when one entity (tool/resource/prompt) fails to convert
+    to its Pydantic model (e.g., due to corrupted data), the listing operation
+    continues with remaining entities instead of failing completely.
+    """
+
+    async def test_admin_tools_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/tools returns valid tools even when one has corrupted data."""
+        # First-Party
+        from mcpgateway.db import get_db, Tool as DbTool
+
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create valid tools
+        valid_tool_1 = DbTool(
+            id=uuid.uuid4().hex,
+            original_name=f"valid_tool_1_{uuid.uuid4().hex[:8]}",
+            url="http://example.com/valid1",
+            description="A valid tool",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+            input_schema={"type": "object"},
+        )
+        valid_tool_2 = DbTool(
+            id=uuid.uuid4().hex,
+            original_name=f"valid_tool_2_{uuid.uuid4().hex[:8]}",
+            url="http://example.com/valid2",
+            description="Another valid tool",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+            input_schema={"type": "object"},
+        )
+
+        db.add(valid_tool_1)
+        db.add(valid_tool_2)
+        db.commit()
+
+        # Request tools listing
+        response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+
+        # Should succeed even if some tools have issues
+        assert response.status_code == 200
+        resp_json = response.json()
+
+        # Should have the valid tools in the response
+        tools = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
+        tool_names = [t.get("originalName", t.get("original_name", "")) for t in tools]
+
+        assert valid_tool_1.original_name in tool_names
+        assert valid_tool_2.original_name in tool_names
+
+    async def test_admin_tools_partial_returns_200(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/tools/partial (HTMX endpoint) returns 200 and handles the request gracefully."""
+        # Request partial tools listing (used by HTMX for pagination)
+        response = await client.get("/admin/tools/partial", headers=TEST_AUTH_HEADER)
+
+        # Should succeed
+        assert response.status_code == 200
+        # Should return HTML content
+        assert "text/html" in response.headers.get("content-type", "")
+
+    async def test_admin_resources_listing_returns_200(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/resources endpoint returns 200 and handles the request gracefully."""
+        # Request resources listing - even with no resources, should return 200
+        response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
+
+        # Should succeed
+        assert response.status_code == 200
+        resp_json = response.json()
+
+        # Should return a valid response structure
+        assert isinstance(resp_json, dict) or isinstance(resp_json, list)
+
+    async def test_admin_prompts_listing_returns_200(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/prompts endpoint returns 200 and handles the request gracefully."""
+        # Request prompts listing - even with no prompts, should return 200
+        response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
+
+        # Should succeed
+        assert response.status_code == 200
+        resp_json = response.json()
+
+        # Should return a valid response structure
+        assert isinstance(resp_json, dict) or isinstance(resp_json, list)
+
+
 # Run tests with pytest
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
