@@ -25,6 +25,7 @@ Policy:
 from __future__ import annotations
 
 # Standard
+import asyncio
 import os
 import socket
 from typing import Any
@@ -62,6 +63,20 @@ def _has_eicar(data: bytes) -> bool:
     """
     blob = data.decode("latin1", errors="ignore")
     return any(sig in blob for sig in EICAR_SIGNATURES)
+
+
+def _read_file_limited(path: str, max_bytes: int) -> bytes:
+    """Read file with size limit (called via asyncio.to_thread).
+
+    Args:
+        path: Path to file to read.
+        max_bytes: Maximum bytes to read.
+
+    Returns:
+        File content bytes (up to max_bytes + 1).
+    """
+    with open(path, "rb") as f:  # nosec B108
+        return f.read(max_bytes + 1)
 
 
 class ClamAVConfig:
@@ -216,8 +231,7 @@ class ClamAVRemotePlugin(Plugin):
             path = uri[len("file://") :]
             if os.path.isfile(path):
                 try:
-                    with open(path, "rb") as f:  # nosec B108
-                        data = f.read(self._cfg.max_bytes + 1)
+                    data = await asyncio.to_thread(_read_file_limited, path, self._cfg.max_bytes)
                 except Exception as exc:  # nosec - IO errors simply annotate
                     self._bump("errors")
                     return ResourcePreFetchResult(metadata={"clamav": {"error": str(exc)}})

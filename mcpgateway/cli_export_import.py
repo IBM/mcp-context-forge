@@ -142,8 +142,7 @@ async def export_command(args: argparse.Namespace) -> None:
 
         # Write export data
         output_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_file, "wb") as f:
-            f.write(orjson.dumps(export_data, option=orjson.OPT_INDENT_2))
+        await asyncio.to_thread(output_file.write_bytes, orjson.dumps(export_data, option=orjson.OPT_INDENT_2))
 
         # Print summary
         metadata = export_data.get("metadata", {})
@@ -184,8 +183,8 @@ async def import_command(args: argparse.Namespace) -> None:
         print(f"Importing configuration from {input_file}")
 
         # Load import data
-        with open(input_file, "rb") as f:
-            import_data = orjson.loads(f.read())
+        content = await asyncio.to_thread(input_file.read_bytes)
+        import_data = orjson.loads(content)
 
         # Build request data
         request_data = {

@@ -172,6 +172,86 @@ def _b64_url_id(url: str) -> str:
     return raw.strip("=")
 
 
+def _compute_file_hash(file_path: str, alg: str) -> str:
+    """Compute file hash synchronously (called via asyncio.to_thread).
+
+    Args:
+        file_path: Path to file to hash.
+        alg: Hash algorithm (sha256, md5, sha1).
+
+    Returns:
+        Hex digest of the file hash.
+    """
+    h = hashlib.new(alg)
+    with open(file_path, "rb") as f:  # nosec B108
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _upload_file_sync(
+    url: str,
+    file_path: str,
+    headers: dict[str, str],
+    timeout: float,
+    max_retries: int = 3,
+    base_backoff: float = 0.5,
+    max_delay: float = 8.0,
+    jitter_max: float = 0.2,
+) -> dict[str, Any]:
+    """Upload file synchronously with streaming and retry logic (called via asyncio.to_thread).
+
+    Implements exponential backoff with jitter matching ResilientHttpClient semantics.
+
+    Args:
+        url: URL to upload to.
+        file_path: Path to file to upload.
+        headers: HTTP headers including API key.
+        timeout: Request timeout in seconds.
+        max_retries: Maximum retry attempts.
+        base_backoff: Base delay in seconds before retrying.
+        max_delay: Maximum backoff delay in seconds.
+        jitter_max: Maximum jitter to add to backoff.
+
+    Returns:
+        JSON response from the upload endpoint.
+
+    Raises:
+        httpx.HTTPStatusError: If request fails after all retries.
+    """
+    import random  # pylint: disable=import-outside-toplevel
+
+    retryable_status_codes = {429, 500, 502, 503, 504}
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            with open(file_path, "rb") as f:  # nosec B108
+                files = {"file": (os.path.basename(file_path), f)}
+                with httpx.Client(headers=headers, timeout=timeout) as sync_client:
+                    resp = sync_client.post(url, files=files)
+                    resp.raise_for_status()
+                    return resp.json()
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            if exc.response.status_code not in retryable_status_codes:
+                raise
+            if attempt < max_retries:
+                delay = min(base_backoff * (2**attempt), max_delay)
+                delay += random.uniform(0, jitter_max)  # nosec B311
+                time.sleep(delay)
+        except (httpx.NetworkError, httpx.TimeoutException) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                delay = min(base_backoff * (2**attempt), max_delay)
+                delay += random.uniform(0, jitter_max)  # nosec B311
+                time.sleep(delay)
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Upload failed after retries")
+
+
 def _from_cache(key: str) -> Optional[dict[str, Any]]:
     """Retrieve cached data if not expired.
 
@@ -552,27 +632,30 @@ class VirusTotalURLCheckerPlugin(Plugin):
                     # Resolve local path
                     file_path = unquote(parsed.path)
                     if os.path.isfile(file_path):
-                        # Compute hash
+                        # Compute hash (async via to_thread)
                         if cfg.file_hash_alg.lower() not in ("sha256", "md5", "sha1"):
                             alg = "sha256"
                         else:
                             alg = cfg.file_hash_alg.lower()
-                        h = hashlib.new(alg)
-                        with open(file_path, "rb") as f:  # nosec B108
-                            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                                h.update(chunk)
-                        digest = h.hexdigest()
+                        digest = await asyncio.to_thread(_compute_file_hash, file_path, alg)
                         finfo = await _http_get(client, f"{cfg.base_url}/files/{digest}")
                         if finfo is None and cfg.upload_if_unknown:
                             size = os.path.getsize(file_path)
                             if size <= cfg.upload_max_bytes:
-                                # Upload file for analysis
-                                with open(file_path, "rb") as f:  # nosec B108
-                                    files = {"file": (os.path.basename(file_path), f)}
-                                    resp = await client.post(f"{cfg.base_url}/files", files=files)
-                                    resp.raise_for_status()
-                                    data = resp.json()
-                                    analysis_id = data.get("data", {}).get("id")
+                                # Upload file for analysis (async via to_thread with sync httpx + retry)
+                                upload_headers = {"x-apikey": api_key}
+                                data = await asyncio.to_thread(
+                                    _upload_file_sync,
+                                    f"{cfg.base_url}/files",
+                                    file_path,
+                                    upload_headers,
+                                    cfg.timeout_seconds,
+                                    cfg.max_retries,
+                                    cfg.base_backoff,
+                                    cfg.max_delay,
+                                    cfg.jitter_max,
+                                )
+                                analysis_id = data.get("data", {}).get("id")
                                 if cfg.wait_for_analysis and analysis_id:
                                     deadline = time.time() + cfg.max_wait_seconds
                                     while time.time() < deadline:
