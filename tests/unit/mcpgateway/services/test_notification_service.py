@@ -149,7 +149,7 @@ class TestNotificationDispatch:
     async def test_handle_notification_tools(self, notification_service):
         """Test handling tools/list_changed notification."""
         notification_service._enqueue_refresh = AsyncMock()
-        
+
         # Mock notification structure
         mock_root = MagicMock()
         mock_root.__class__.__name__ = "ToolListChangedNotification"
@@ -237,7 +237,7 @@ class TestDebouncing:
         # Fill the queue (max size is 10 in fixture)
         for i in range(10):
             await notification_service._refresh_queue.put(PendingRefresh(gateway_id=f"gw-{i}"))
-        
+
         assert notification_service._refresh_queue.full()
 
         # Try to enqueue another
@@ -252,7 +252,7 @@ class TestDebouncing:
     async def test_enqueue_refresh_flags_tools(self, notification_service):
         """Test include flags for TOOLS_LIST_CHANGED."""
         await notification_service._enqueue_refresh("gw-1", NotificationType.TOOLS_LIST_CHANGED)
-        
+
         pending = await notification_service._refresh_queue.get()
         assert pending.include_resources is True
         assert pending.include_prompts is True
@@ -261,7 +261,7 @@ class TestDebouncing:
     async def test_enqueue_refresh_flags_resources(self, notification_service):
         """Test include flags for RESOURCES_LIST_CHANGED."""
         await notification_service._enqueue_refresh("gw-1", NotificationType.RESOURCES_LIST_CHANGED)
-        
+
         pending = await notification_service._refresh_queue.get()
         assert pending.include_resources is True
         assert pending.include_prompts is False
@@ -270,7 +270,7 @@ class TestDebouncing:
     async def test_enqueue_refresh_flags_prompts(self, notification_service):
         """Test include flags for PROMPTS_LIST_CHANGED."""
         await notification_service._enqueue_refresh("gw-1", NotificationType.PROMPTS_LIST_CHANGED)
-        
+
         pending = await notification_service._refresh_queue.get()
         assert pending.include_resources is False
         assert pending.include_prompts is True
@@ -321,6 +321,8 @@ class TestRefreshExecution:
         mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
             return_value={"success": True, "tools_added": 2, "tools_removed": 1}
         )
+        # _get_refresh_lock is synchronous and returns an asyncio.Lock
+        mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
 
         notification_service.set_gateway_service(mock_gateway_service)
 
@@ -347,6 +349,8 @@ class TestRefreshExecution:
         mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
             side_effect=Exception("Connection failed")
         )
+        # _get_refresh_lock is synchronous and returns an asyncio.Lock
+        mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
 
         notification_service.set_gateway_service(mock_gateway_service)
 
@@ -363,14 +367,38 @@ class TestRefreshExecution:
         mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
             return_value={"success": False, "error": "Something went wrong"}
         )
+        # _get_refresh_lock is synchronous and returns an asyncio.Lock
+        mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
 
         notification_service.set_gateway_service(mock_gateway_service)
         pending = PendingRefresh(gateway_id="gw-1")
 
         await notification_service._execute_refresh(pending)
-        
+
         assert notification_service._refreshes_failed == 1
         assert notification_service._refreshes_triggered == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_refresh_skips_when_lock_held(self, notification_service):
+        """Test refresh execution skips when lock is already held."""
+        mock_gateway_service = AsyncMock()
+        mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
+            return_value={"success": True}
+        )
+        # Create a lock that's already held
+        held_lock = asyncio.Lock()
+        await held_lock.acquire()  # Lock is now held
+        mock_gateway_service._get_refresh_lock = MagicMock(return_value=held_lock)
+
+        notification_service.set_gateway_service(mock_gateway_service)
+        pending = PendingRefresh(gateway_id="gw-1")
+
+        await notification_service._execute_refresh(pending)
+
+        # Should not have called refresh because lock was held
+        mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
+        assert notification_service._notifications_debounced == 1
+        held_lock.release()  # Cleanup
 
 
 class TestMetrics:
@@ -478,7 +506,7 @@ class TestGlobalSingleton:
         """Test initialization and retrieval."""
         service = init_notification_service(debounce_seconds=2.0)
         assert service.debounce_seconds == 2.0
-        
+
         retrieved = get_notification_service()
         assert retrieved is service
 
@@ -490,8 +518,7 @@ class TestGlobalSingleton:
         assert service._worker_task is not None
 
         await close_notification_service()
-        
+
         # Should be cleared
         with pytest.raises(RuntimeError):
             get_notification_service()
-

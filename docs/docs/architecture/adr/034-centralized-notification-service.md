@@ -1,6 +1,6 @@
 # ADR-034: Centralized Notification Service
 
-- *Status:* Planned
+- *Status:* Accepted
 - *Date:* 2026-01-13
 - *Deciders:* Platform Team
 
@@ -14,7 +14,7 @@ The Model Context Protocol (MCP) supports various server-to-client notifications
 | notifications/tools/list_changed       | Server → Client   | Notifies the client that available tools on the server have changed.     | Client should refresh the tool list.                |
 | notifications/resources/list_changed   | Server → Client   | Informs the client that available resources on the server have changed.  | Client should refresh resource list.                |
 | notifications/resources/updated        | Server → Client   | Resource the client subscribed to has changed.                           | Client may re-read the resource.                    |
-| notifications/prompts/list_changed     | Server → Client   | Server’s prompts list changed.                                           | Client may refresh prompt templates list.           |
+| notifications/prompts/list_changed     | Server → Client   | Server's prompts list changed.                                           | Client may refresh prompt templates list.           |
 | notifications/roots/list_changed       | Client → Server   | Client informs server that its root set changed.                         | Server might request updated roots from client.     |
 | notifications/message (logging)        | Server → Client   | Sends a log message (e.g., informational output from the server).        | Logging or debugging stream.                        |
 | progress                               | Both → Both       | Updates progress on a long-running operation with a token.               | Streaming progress for long-running tasks.          |
@@ -78,12 +78,12 @@ flowchart TD
     MCP[MCP Server] -->|notifications/...| Session[ClientSession/Pool]
     Session -->|callback| Handler[Message Handler]
     Handler -->|enqueue| Queue[Async Queue]
-    
+
     subgraph NotificationService
         Queue --> Worker[Background Worker]
         Worker -->|Debounce Logic| Action{Trigger Action?}
     end
-    
+
     Action -->|Yes| GatewayService[Gateway Service]
     GatewayService -->|Refresh| DB[(Database)]
 ```
@@ -106,6 +106,9 @@ flowchart TD
 - Adds stateful complexity (background worker task).
 - Requires careful lifecycle management (startup/shutdown) to prevent resource leaks.
 - Debugging decentralized events can be harder than synchronous flows (mitigated by extensive logging).
+
+### Known Limitations
+- **Gateway Attribution with Shared URLs:** The session pool keys sessions by `(URL, identity, transport)`, not by `gateway_id`. If multiple gateways share the same URL and authentication identity, notifications will be attributed to whichever gateway first created the pooled session. For correct notification handling, ensure each gateway has a unique URL or authentication identity. This trade-off preserves session pooling efficiency for the common case where each gateway has a unique endpoint.
 
 ## Alternatives Considered
 

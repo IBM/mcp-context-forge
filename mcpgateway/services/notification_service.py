@@ -12,11 +12,19 @@ Description:
 
     Key Features:
     - Debounced refresh to prevent notification storms
+    - Flag merging during debounce (notifications within window merge their refresh flags)
+    - Per-gateway refresh locking to prevent concurrent refresh races
     - Per-gateway refresh tracking with capability awareness
     - Compatible with MCPSessionPool for pooled session notification handling
-    - Supports both tools, resources, and prompts list_changed notifications
+    - Supports tools, resources, and prompts list_changed notifications
 
-Capable of handling other tasks as well like cancellation, progress notifications, etc. (to be implemented here)
+    Limitations:
+    - Session pool keys by (URL, identity, transport), not gateway_id. If multiple
+      gateways share the same URL and authentication, notifications will be attributed
+      to whichever gateway first created the pooled session. For correct notification
+      handling, ensure each gateway has a unique URL or authentication identity.
+
+    Capable of handling other tasks as well like cancellation, progress notifications, etc. (to be implemented here)
 
 Usage:
     ```python
@@ -166,6 +174,10 @@ class NotificationService:
         # Debounce tracking: gateway_id -> last refresh enqueue time
         self._last_refresh_enqueued: Dict[str, float] = {}
 
+        # Track pending refreshes by gateway_id to allow flag merging during debounce
+        # When a notification arrives during debounce window, we merge flags instead of dropping
+        self._pending_refresh_flags: Dict[str, PendingRefresh] = {}
+
         # Pending refresh queue
         self._refresh_queue: asyncio.Queue[PendingRefresh] = asyncio.Queue(maxsize=max_queue_size)
 
@@ -246,6 +258,7 @@ class NotificationService:
 
         self._gateway_capabilities.clear()
         self._last_refresh_enqueued.clear()
+        self._pending_refresh_flags.clear()
         logger.info("NotificationService shutdown complete")
 
     def register_gateway_capabilities(
@@ -423,7 +436,12 @@ class NotificationService:
         gateway_id: str,
         notification_type: NotificationType,
     ) -> None:
-        """Enqueue a refresh operation with debouncing.
+        """Enqueue a refresh operation with debouncing and flag merging.
+
+        When notifications arrive during the debounce window, their flags are
+        merged into the pending refresh instead of being dropped. This ensures
+        that if tools/list_changed arrives after resources/list_changed within
+        the debounce window, tools will still be refreshed.
 
         Args:
             gateway_id: The gateway to refresh.
@@ -431,16 +449,6 @@ class NotificationService:
         """
         now = time.time()
         last_enqueued = self._last_refresh_enqueued.get(gateway_id, 0)
-
-        # Debounce: skip if we recently enqueued a refresh for this gateway
-        if now - last_enqueued < self.debounce_seconds:
-            self._notifications_debounced += 1
-            logger.debug(
-                "Debounced refresh for gateway %s (last enqueued %.1fs ago)",
-                gateway_id,
-                now - last_enqueued,
-            )
-            return
 
         # Determine what to include based on notification type
         include_resources = notification_type == NotificationType.RESOURCES_LIST_CHANGED
@@ -451,6 +459,35 @@ class NotificationService:
             include_resources = True
             include_prompts = True
 
+        # Debounce: if within window, merge flags into pending refresh instead of dropping
+        if now - last_enqueued < self.debounce_seconds:
+            existing = self._pending_refresh_flags.get(gateway_id)
+            if existing:
+                # Merge flags - use OR to include all requested types
+                existing.include_resources = existing.include_resources or include_resources
+                existing.include_prompts = existing.include_prompts or include_prompts
+                existing.triggered_by.add(notification_type)
+                self._notifications_debounced += 1
+                logger.debug(
+                    "Merged %s into pending refresh for gateway %s (resources=%s, prompts=%s)",
+                    notification_type.value,
+                    gateway_id,
+                    existing.include_resources,
+                    existing.include_prompts,
+                )
+                return
+
+            # No pending refresh found but within debounce - this shouldn't happen normally
+            # but can occur if the refresh was already processed. Count as debounced.
+            self._notifications_debounced += 1
+            logger.debug(
+                "Debounced refresh for gateway %s (last enqueued %.1fs ago, no pending)",
+                gateway_id,
+                now - last_enqueued,
+            )
+            return
+
+        # Create new pending refresh
         pending = PendingRefresh(
             gateway_id=gateway_id,
             include_resources=include_resources,
@@ -461,6 +498,7 @@ class NotificationService:
         try:
             self._refresh_queue.put_nowait(pending)
             self._last_refresh_enqueued[gateway_id] = now
+            self._pending_refresh_flags[gateway_id] = pending  # Track for flag merging
             logger.info(
                 "Enqueued refresh for gateway %s (triggered by %s)",
                 gateway_id,
@@ -505,57 +543,78 @@ class NotificationService:
     async def _execute_refresh(self, pending: PendingRefresh) -> None:
         """Execute a refresh operation.
 
+        Acquires the per-gateway refresh lock to prevent concurrent refreshes
+        with manual refresh or health check auto-refresh.
+
         Args:
             pending: The pending refresh to execute.
         """
+        gateway_id = pending.gateway_id
+
+        # Clear pending flag tracking now that we're processing this refresh
+        self._pending_refresh_flags.pop(gateway_id, None)
+
         if not self._gateway_service:
             logger.warning(
                 "Cannot execute refresh for gateway %s: GatewayService not set",
-                pending.gateway_id,
+                gateway_id,
             )
             return
 
-        logger.info(
-            "Executing event-driven refresh for gateway %s (resources=%s, prompts=%s)",
-            pending.gateway_id,
-            pending.include_resources,
-            pending.include_prompts,
-        )
+        # Acquire per-gateway lock to prevent concurrent refresh with manual/auto refresh
+        # pylint: disable=protected-access
+        lock = self._gateway_service._get_refresh_lock(gateway_id)  # pyright: ignore[reportPrivateUsage]
 
-        try:
-            # Use the existing refresh method with locking
-            # pylint: disable=protected-access
-            result = await self._gateway_service._refresh_gateway_tools_resources_prompts(  # pyright: ignore[reportPrivateUsage]
-                gateway_id=pending.gateway_id,
-                created_via="notification_service",
-                include_resources=pending.include_resources,
-                include_prompts=pending.include_prompts,
+        # Skip if lock is already held (another refresh in progress)
+        if lock.locked():
+            logger.debug(
+                "Skipping event-driven refresh for gateway %s: lock held (refresh in progress)",
+                gateway_id,
             )
+            self._notifications_debounced += 1
+            return
 
-            self._refreshes_triggered += 1
-
-            if result.get("success"):
-                logger.info(
-                    "Event-driven refresh completed for gateway %s: tools_added=%d, tools_removed=%d",
-                    pending.gateway_id,
-                    result.get("tools_added", 0),
-                    result.get("tools_removed", 0),
-                )
-            else:
-                self._refreshes_failed += 1
-                logger.warning(
-                    "Event-driven refresh failed for gateway %s: %s",
-                    pending.gateway_id,
-                    result.get("error"),
-                )
-
-        except Exception as e:
-            self._refreshes_failed += 1
-            logger.exception(
-                "Error during event-driven refresh for gateway %s: %s",
+        async with lock:
+            logger.info(
+                "Executing event-driven refresh for gateway %s (resources=%s, prompts=%s)",
                 pending.gateway_id,
-                e,
+                pending.include_resources,
+                pending.include_prompts,
             )
+
+            try:
+                # Use the existing refresh method (lock already held)
+                result = await self._gateway_service._refresh_gateway_tools_resources_prompts(  # pyright: ignore[reportPrivateUsage]
+                    gateway_id=pending.gateway_id,
+                    created_via="notification_service",
+                    include_resources=pending.include_resources,
+                    include_prompts=pending.include_prompts,
+                )
+
+                self._refreshes_triggered += 1
+
+                if result.get("success"):
+                    logger.info(
+                        "Event-driven refresh completed for gateway %s: tools_added=%d, tools_removed=%d",
+                        pending.gateway_id,
+                        result.get("tools_added", 0),
+                        result.get("tools_removed", 0),
+                    )
+                else:
+                    self._refreshes_failed += 1
+                    logger.warning(
+                        "Event-driven refresh failed for gateway %s: %s",
+                        pending.gateway_id,
+                        result.get("error"),
+                    )
+
+            except Exception as e:
+                self._refreshes_failed += 1
+                logger.exception(
+                    "Error during event-driven refresh for gateway %s: %s",
+                    pending.gateway_id,
+                    e,
+                )
 
     def get_metrics(self) -> Dict[str, Any]:
         """Return notification service metrics.

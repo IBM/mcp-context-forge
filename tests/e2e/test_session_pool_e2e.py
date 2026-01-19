@@ -420,9 +420,9 @@ async def notification_env():
     # Initialize global notification service with short debounce
     service = init_notification_service(debounce_seconds=0.1)
     await service.initialize()
-    
+
     yield service
-    
+
     await close_notification_service()
 
 
@@ -433,28 +433,30 @@ class TestNotificationE2E:
     async def test_notification_flow_e2e(self, notification_env):
         """Test full flow from notification to gateway refresh."""
         service = notification_env
-        
+
         # Mock GatewayService
         mock_gateway_service = AsyncMock()
         mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
             return_value={"success": True, "tools_added": 1}
         )
+        # _get_refresh_lock is synchronous and returns an asyncio.Lock
+        mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
         service.set_gateway_service(mock_gateway_service)
 
         # Register capabilities for gateway
         gateway_id = "test-gateway-1"
         service.register_gateway_capabilities(
-            gateway_id, 
+            gateway_id,
             {"tools": {"listChanged": True}}
         )
 
         # Create session pool
         pool = MCPSessionPool()
-        
+
         try:
             # Simulate a pooled session with message handler hooked up
             # In real flow, pool.acquire() does this. We'll verify pool.session() logic here.
-            
+
             # 1. Verify pool uses notification service to create handler
             handler = service.create_message_handler(gateway_id)
             assert callable(handler)
@@ -485,7 +487,7 @@ class TestNotificationE2E:
                 include_resources=True,  # Tools change implies resources/prompts refresh check
                 include_prompts=True,
             )
-            
+
             # 7. Verify metrics updated
             metrics = service.get_metrics()
             assert metrics["refreshes_triggered"] == 1
@@ -502,33 +504,35 @@ class TestNotificationE2E:
         mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
             return_value={"success": True}
         )
+        # _get_refresh_lock is synchronous and returns an asyncio.Lock
+        mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
         service.set_gateway_service(mock_gateway_service)
-        
+
         gateway_id = "test-gateway-debounce"
         service.register_gateway_capabilities(gateway_id, {"tools": {"listChanged": True}})
-        
+
         handler = service.create_message_handler(gateway_id)
-        
+
         # Fire multiple notifications rapidly
         notification = mcp_types.ServerNotification(
             root=mcp_types.ToolListChangedNotification(
                 method="notifications/tools/list_changed"
             )
         )
-        
+
         for _ in range(5):
             await handler(notification)
-            
+
         # Should have 5 received but only 1 triggered (after wait)
         metrics = service.get_metrics()
         assert metrics["notifications_received"] == 5
-        
+
         # Wait for debounce
         await asyncio.sleep(0.2)
-        
+
         # Verify only one refresh call
         assert mock_gateway_service._refresh_gateway_tools_resources_prompts.call_count == 1
-        
+
         metrics = service.get_metrics()
         assert metrics["refreshes_triggered"] == 1
         assert metrics["notifications_debounced"] >= 4
@@ -541,8 +545,10 @@ class TestNotificationE2E:
         mock_gateway_service._refresh_gateway_tools_resources_prompts = AsyncMock(
             return_value={"success": True}
         )
+        # _get_refresh_lock is synchronous and returns an asyncio.Lock
+        mock_gateway_service._get_refresh_lock = MagicMock(return_value=asyncio.Lock())
         service.set_gateway_service(mock_gateway_service)
-        
+
         gateway_id = "test-gateway-types"
         # Register support for all
         service.register_gateway_capabilities(gateway_id, {
@@ -550,7 +556,7 @@ class TestNotificationE2E:
             "resources": {"listChanged": True},
             "prompts": {"listChanged": True}
         })
-        
+
         handler = service.create_message_handler(gateway_id)
 
         # 1. Resources only
@@ -559,28 +565,28 @@ class TestNotificationE2E:
                 method="notifications/resources/list_changed"
             )
         ))
-        
+
         await asyncio.sleep(0.2)
-        
+
         mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_with(
             gateway_id=gateway_id,
             created_via="notification_service",
             include_resources=True,
             include_prompts=False
         )
-        
+
         # Reset mock
         mock_gateway_service.reset_mock()
-        
+
         # 2. Prompts only
         await handler(mcp_types.ServerNotification(
             root=mcp_types.PromptListChangedNotification(
                 method="notifications/prompts/list_changed"
             )
         ))
-        
+
         await asyncio.sleep(0.2)
-        
+
         mock_gateway_service._refresh_gateway_tools_resources_prompts.assert_called_with(
             gateway_id=gateway_id,
             created_via="notification_service",
