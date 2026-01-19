@@ -5271,7 +5271,9 @@ async function editGateway(gatewayId) {
             "auth-headers-fields-gw-edit",
         );
         const authOAuthSection = safeGetElement("auth-oauth-fields-gw-edit");
-        const authQueryParamSection = safeGetElement("auth-query_param-fields-gw-edit");
+        const authQueryParamSection = safeGetElement(
+            "auth-query_param-fields-gw-edit",
+        );
 
         // Individual fields
         const authUsernameField = safeGetElement(
@@ -5445,12 +5447,14 @@ async function editGateway(gatewayId) {
                 if (authQueryParamSection) {
                     authQueryParamSection.style.display = "block";
                     // Get the input fields within the section
-                    const queryParamKeyField = authQueryParamSection.querySelector(
-                        "input[name='auth_query_param_key']"
-                    );
-                    const queryParamValueField = authQueryParamSection.querySelector(
-                        "input[name='auth_query_param_value']"
-                    );
+                    const queryParamKeyField =
+                        authQueryParamSection.querySelector(
+                            "input[name='auth_query_param_key']",
+                        );
+                    const queryParamValueField =
+                        authQueryParamSection.querySelector(
+                            "input[name='auth_query_param_value']",
+                        );
                     if (queryParamKeyField && gateway.authQueryParamKey) {
                         queryParamKeyField.value = gateway.authQueryParamKey;
                     }
@@ -16846,16 +16850,22 @@ function handleAuthTypeChange() {
     const bearerFields = safeGetElement(`auth-bearer-fields-${prefix}`);
     const headersFields = safeGetElement(`auth-headers-fields-${prefix}`);
     const oauthFields = safeGetElement(`auth-oauth-fields-${prefix}`);
-    const queryParamFields = safeGetElement(`auth-query_param-fields-${prefix}`);
+    const queryParamFields = safeGetElement(
+        `auth-query_param-fields-${prefix}`,
+    );
 
     // Hide all auth sections first
-    [basicFields, bearerFields, headersFields, oauthFields, queryParamFields].forEach(
-        (section) => {
-            if (section) {
-                section.style.display = "none";
-            }
-        },
-    );
+    [
+        basicFields,
+        bearerFields,
+        headersFields,
+        oauthFields,
+        queryParamFields,
+    ].forEach((section) => {
+        if (section) {
+            section.style.display = "none";
+        }
+    });
 
     // Show the appropriate section
     switch (authType) {
