@@ -268,7 +268,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             # Extract team_id from path parameters if available
             team_id = kwargs.get("team_id")
 
-            # If team_id is None or blank in kwargs then check 
+            # If team_id is None or blank in kwargs then check
             if not team_id:
                 # check if user_context has team_id
                 team_id = user_context.get("team_id", None)
