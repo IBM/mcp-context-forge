@@ -1955,6 +1955,30 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             except orjson.JSONDecodeError:
                 LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
 
+        # Handle OAuth 2.0 configuration (RFC 9728)
+        oauth_enabled = form.get("oauth_enabled") == "on"
+        oauth_config = None
+        if oauth_enabled:
+            authorization_server = str(form.get("oauth_authorization_server", "")).strip()
+            scopes_str = str(form.get("oauth_scopes", "")).strip()
+            token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
+
+            if authorization_server:
+                oauth_config = {"authorization_servers": [authorization_server]}
+                if scopes_str:
+                    # Convert space-separated scopes to list
+                    oauth_config["scopes_supported"] = scopes_str.split()
+                if token_endpoint:
+                    oauth_config["token_endpoint"] = token_endpoint
+            else:
+                # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
+                LOGGER.warning(
+                    "OAuth was enabled for server '%s' but no authorization server was provided; disabling OAuth for this server.",
+                    form.get("name"),
+                )
+                oauth_enabled = False
+                oauth_config = None
+
         server = ServerCreate(
             id=form.get("id") or None,
             name=form.get("name"),
@@ -1965,6 +1989,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             associated_prompts=",".join(str(x) for x in associated_prompts_list),
             tags=tags,
             visibility=visibility,
+            oauth_enabled=oauth_enabled,
+            oauth_config=oauth_config,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -2181,6 +2207,30 @@ async def admin_edit_server(
             except orjson.JSONDecodeError:
                 LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
 
+        # Handle OAuth 2.0 configuration (RFC 9728)
+        oauth_enabled = form.get("oauth_enabled") == "on"
+        oauth_config = None
+        if oauth_enabled:
+            authorization_server = str(form.get("oauth_authorization_server", "")).strip()
+            scopes_str = str(form.get("oauth_scopes", "")).strip()
+            token_endpoint = str(form.get("oauth_token_endpoint", "")).strip()
+
+            if authorization_server:
+                oauth_config = {"authorization_servers": [authorization_server]}
+                if scopes_str:
+                    # Convert space-separated scopes to list
+                    oauth_config["scopes_supported"] = scopes_str.split()
+                if token_endpoint:
+                    oauth_config["token_endpoint"] = token_endpoint
+            else:
+                # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
+                LOGGER.warning(
+                    "OAuth was enabled for server '%s' but no authorization server was provided; disabling OAuth for this server.",
+                    form.get("name"),
+                )
+                oauth_enabled = False
+                oauth_config = None
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
@@ -2193,6 +2243,8 @@ async def admin_edit_server(
             visibility=visibility,
             team_id=team_id,
             owner_email=user_email,
+            oauth_enabled=oauth_enabled,
+            oauth_config=oauth_config,
         )
 
         await server_service.update_server(

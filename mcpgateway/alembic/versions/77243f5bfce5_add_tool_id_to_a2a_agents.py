@@ -44,9 +44,7 @@ def upgrade() -> None:
     # Fail if tools table doesn't exist - FK requires it
     if not inspector.has_table("tools"):
         raise RuntimeError(
-            "Cannot proceed: a2a_agents table exists but tools table is missing. "
-            "This migration adds a FK from a2a_agents.tool_id to tools.id. "
-            "Please verify your database schema."
+            "Cannot proceed: a2a_agents table exists but tools table is missing. " "This migration adds a FK from a2a_agents.tool_id to tools.id. " "Please verify your database schema."
         )
 
     # Check current state
@@ -62,20 +60,10 @@ def upgrade() -> None:
     # If column exists but FK doesn't, check for orphaned references that would block FK creation
     if not need_column and need_fk:
         # Use COUNT for efficiency, then fetch limited sample for error message
-        orphan_count = bind.execute(
-            sa.text(
-                "SELECT COUNT(*) FROM a2a_agents WHERE tool_id IS NOT NULL "
-                "AND tool_id NOT IN (SELECT id FROM tools)"
-            )
-        ).scalar() or 0
+        orphan_count = bind.execute(sa.text("SELECT COUNT(*) FROM a2a_agents WHERE tool_id IS NOT NULL " "AND tool_id NOT IN (SELECT id FROM tools)")).scalar() or 0
         if orphan_count > 0:
             # Fetch limited sample for error details
-            sample = bind.execute(
-                sa.text(
-                    "SELECT id, tool_id FROM a2a_agents WHERE tool_id IS NOT NULL "
-                    "AND tool_id NOT IN (SELECT id FROM tools) LIMIT 10"
-                )
-            ).fetchall()
+            sample = bind.execute(sa.text("SELECT id, tool_id FROM a2a_agents WHERE tool_id IS NOT NULL " "AND tool_id NOT IN (SELECT id FROM tools) LIMIT 10")).fetchall()
             orphan_details = "\n".join(f"  - agent {aid} -> tool {tid}" for aid, tid in sample)
             more_msg = f"\n  ... and {orphan_count - len(sample)} more" if orphan_count > len(sample) else ""
             raise RuntimeError(

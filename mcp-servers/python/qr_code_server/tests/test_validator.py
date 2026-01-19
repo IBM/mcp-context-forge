@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from qr_code_server.tools.validator import (
     QRValidationRequest,
     encoded_bits,

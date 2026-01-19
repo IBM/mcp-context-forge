@@ -953,6 +953,7 @@ class SSOService:
             List of role assignments: [{"role_name": str, "scope": str, "scope_id": Optional[str]}]
         """
         # pylint: disable=import-outside-toplevel
+        # First-Party
         from mcpgateway.services.role_service import RoleService
 
         role_assignments = []
@@ -1045,6 +1046,7 @@ class SSOService:
             _provider: SSO provider configuration (reserved for future use)
         """
         # pylint: disable=import-outside-toplevel
+        # First-Party
         from mcpgateway.services.role_service import RoleService
 
         role_service = RoleService(self.db)

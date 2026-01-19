@@ -2895,6 +2895,83 @@
                 </div>
               </div>
             </div>
+
+            <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
+            <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+              <div class="flex items-center mb-4">
+                <input
+                  type="checkbox"
+                  name="oauth_enabled"
+                  id="server-oauth-enabled"
+                  class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                  onchange="document.getElementById('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                />
+                <label
+                  for="server-oauth-enabled"
+                  class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Enable OAuth 2.0 for MCP Client Authentication</label
+                >
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                When enabled, MCP clients can authenticate using browser-based OAuth/SSO per RFC 9728.
+              </p>
+
+              <!-- OAuth Configuration Fields (hidden by default) -->
+              <div id="server-oauth-config-section" class="hidden space-y-4 pl-6 border-l-2 border-indigo-200 dark:border-indigo-800">
+                <div>
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                    for="server-oauth-authorization-server"
+                    >Authorization Server URL</label
+                  >
+                  <input
+                    type="url"
+                    name="oauth_authorization_server"
+                    id="server-oauth-authorization-server"
+                    placeholder="https://idp.example.com"
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    The OAuth 2.0 authorization server URL (e.g., your Identity Provider)
+                  </p>
+                </div>
+                <div>
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                    for="server-oauth-scopes"
+                    >Scopes (space-separated)</label
+                  >
+                  <input
+                    type="text"
+                    name="oauth_scopes"
+                    id="server-oauth-scopes"
+                    placeholder="openid profile email"
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    OAuth scopes to request (e.g., openid profile email)
+                  </p>
+                </div>
+                <div>
+                  <label
+                    class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                    for="server-oauth-token-endpoint"
+                    >Token Endpoint URL (optional)</label
+                  >
+                  <input
+                    type="url"
+                    name="oauth_token_endpoint"
+                    id="server-oauth-token-endpoint"
+                    placeholder="https://idp.example.com/oauth/token"
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Leave blank to use standard discovery from authorization server
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div class="mt-6">
               <button
                 type="submit"
@@ -10596,6 +10673,82 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
                         aria-live="polite"
                       ></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
+                <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+                  <div class="flex items-center mb-4">
+                    <input
+                      type="checkbox"
+                      name="oauth_enabled"
+                      id="edit-server-oauth-enabled"
+                      class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      onchange="document.getElementById('edit-server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                    />
+                    <label
+                      for="edit-server-oauth-enabled"
+                      class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-400"
+                      >Enable OAuth 2.0 for MCP Client Authentication</label
+                    >
+                  </div>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                    When enabled, MCP clients can authenticate using browser-based OAuth/SSO per RFC 9728.
+                  </p>
+
+                  <!-- OAuth Configuration Fields (hidden by default) -->
+                  <div id="edit-server-oauth-config-section" class="hidden space-y-4 pl-6 border-l-2 border-indigo-200 dark:border-indigo-800">
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        for="edit-server-oauth-authorization-server"
+                        >Authorization Server URL</label
+                      >
+                      <input
+                        type="url"
+                        name="oauth_authorization_server"
+                        id="edit-server-oauth-authorization-server"
+                        placeholder="https://idp.example.com"
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        The OAuth 2.0 authorization server URL (e.g., your Identity Provider)
+                      </p>
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        for="edit-server-oauth-scopes"
+                        >Scopes (space-separated)</label
+                      >
+                      <input
+                        type="text"
+                        name="oauth_scopes"
+                        id="edit-server-oauth-scopes"
+                        placeholder="openid profile email"
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        OAuth scopes to request (e.g., openid profile email)
+                      </p>
+                    </div>
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        for="edit-server-oauth-token-endpoint"
+                        >Token Endpoint URL (optional)</label
+                      >
+                      <input
+                        type="url"
+                        name="oauth_token_endpoint"
+                        id="edit-server-oauth-token-endpoint"
+                        placeholder="https://idp.example.com/oauth/token"
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Leave blank to use standard discovery from authorization server
+                      </p>
                     </div>
                   </div>
                 </div>

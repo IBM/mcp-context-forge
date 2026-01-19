@@ -290,6 +290,9 @@ class ServerService:
             "federation_source": getattr(server, "federation_source", None),
             "version": getattr(server, "version", None),
             "tags": server.tags or [],
+            # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+            "oauth_enabled": getattr(server, "oauth_enabled", False),
+            "oauth_config": getattr(server, "oauth_config", None),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -478,6 +481,9 @@ class ServerService:
                 team_id=getattr(server_in, "team_id", None) or team_id,
                 owner_email=getattr(server_in, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(server_in, "visibility", None) or visibility,
+                # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+                oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
+                oauth_config=getattr(server_in, "oauth_config", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -1215,6 +1221,24 @@ class ServerService:
             if server_update.tags is not None:
                 server.tags = server_update.tags
 
+            # Update OAuth 2.0 configuration if provided
+            # Track if OAuth is being explicitly disabled to prevent config re-assignment
+            oauth_being_disabled = server_update.oauth_enabled is not None and not server_update.oauth_enabled
+
+            if server_update.oauth_enabled is not None:
+                server.oauth_enabled = server_update.oauth_enabled
+                # If OAuth is being disabled, clear the config
+                if oauth_being_disabled:
+                    server.oauth_config = None
+
+            # Only update oauth_config if OAuth is not being explicitly disabled
+            # This prevents the case where oauth_enabled=False and oauth_config are both provided
+            if not oauth_being_disabled:
+                if hasattr(server_update, "model_fields_set") and "oauth_config" in server_update.model_fields_set:
+                    server.oauth_config = server_update.oauth_config
+                elif server_update.oauth_config is not None:
+                    server.oauth_config = server_update.oauth_config
+
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
             if modified_by:
@@ -1824,3 +1848,80 @@ class ServerService:
 
         metrics_cache.invalidate("servers")
         metrics_cache.invalidate_prefix("top_servers:")
+
+    def get_oauth_protected_resource_metadata(self, db: Session, server_id: str, resource_base_url: str) -> Dict[str, Any]:
+        """
+        Get RFC 9728 OAuth 2.0 Protected Resource Metadata for a server.
+
+        This method retrieves the OAuth configuration for a server and formats it
+        according to RFC 9728 Protected Resource Metadata specification, enabling
+        MCP clients to discover OAuth authorization servers for browser-based SSO.
+
+        Args:
+            db: Database session.
+            server_id: The ID of the server.
+            resource_base_url: The base URL for the resource (e.g., "https://gateway.example.com/servers/abc123").
+
+        Returns:
+            Dict containing RFC 9728 Protected Resource Metadata:
+            - resource: The protected resource identifier (URL)
+            - authorization_servers: List of authorization server issuer URIs
+            - bearer_methods_supported: Supported bearer token methods
+            - scopes_supported: Optional list of supported scopes
+
+        Raises:
+            ServerNotFoundError: If server doesn't exist, is disabled, or is non-public.
+            ServerError: If OAuth is not enabled or not properly configured.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> service = ServerService()
+            >>> # Method exists and is callable
+            >>> callable(service.get_oauth_protected_resource_metadata)
+            True
+        """
+        server = db.get(DbServer, server_id)
+
+        # Return not found for non-existent, disabled, or non-public servers
+        # (avoids leaking information about private/team servers)
+        if not server:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        if not server.enabled:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        if getattr(server, "visibility", "public") != "public":
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        # Check OAuth configuration
+        if not getattr(server, "oauth_enabled", False):
+            raise ServerError(f"OAuth not enabled for server: {server_id}")
+
+        oauth_config = getattr(server, "oauth_config", None)
+        if not oauth_config:
+            raise ServerError(f"OAuth not configured for server: {server_id}")
+
+        # Extract authorization server(s) - support both list and single value
+        authorization_servers = oauth_config.get("authorization_servers", [])
+        if not authorization_servers:
+            auth_server = oauth_config.get("authorization_server")
+            if auth_server:
+                authorization_servers = [auth_server]
+
+        if not authorization_servers:
+            raise ServerError(f"OAuth authorization_server not configured for server: {server_id}")
+
+        # Build RFC 9728 Protected Resource Metadata response
+        response_data: Dict[str, Any] = {
+            "resource": resource_base_url,
+            "authorization_servers": authorization_servers,
+            "bearer_methods_supported": ["header"],
+        }
+
+        # Add optional scopes if configured (never include secrets from oauth_config)
+        scopes = oauth_config.get("scopes_supported") or oauth_config.get("scopes")
+        if scopes:
+            response_data["scopes_supported"] = scopes
+
+        logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
+        return response_data
