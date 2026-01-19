@@ -386,3 +386,168 @@ class TestRBACOwnershipHTTP:
 
         # Cleanup
         app.dependency_overrides.clear()
+
+
+# ============================================================================
+# Tests for team_id fallback from user_context (Issue #2183)
+# ============================================================================
+
+
+class TestTeamIdFallbackHTTP:
+    """Integration tests for team_id fallback behavior in RBAC (Issue #2183).
+
+    These tests verify that when team_id is not in path/query parameters,
+    the RBAC decorators correctly fall back to user_context.team_id from the JWT token.
+    """
+
+    @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
+    def test_team_scoped_role_accesses_endpoint_without_team_id_param(
+        self,
+        mock_list_gateways: AsyncMock,
+        test_db_and_client,
+    ):
+        """Test that team-scoped role can access endpoint without team_id param.
+
+        Scenario:
+        - User has team-scoped role with 'gateways.read' permission in team X
+        - User's token is scoped to team X
+        - User calls GET /gateways WITHOUT ?team_id param
+        Expected: Request succeeds using team_id from token for permission check
+        """
+        TestSessionLocal, _ = test_db_and_client
+
+        # Mock service to return empty list
+        mock_list_gateways.return_value = []
+
+        # Set up user context with team_id from token
+        mock_user = MagicMock()
+        mock_user.email = "team-user@example.com"
+
+        async def mock_user_with_team():
+            return {
+                "email": "team-user@example.com",
+                "full_name": "Team User",
+                "is_admin": False,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "db": TestSessionLocal(),
+                "team_id": "team-X",  # Team ID from JWT token
+            }
+
+        app.dependency_overrides[require_auth] = lambda: "team-user@example.com"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_team
+
+        client = TestClient(app)
+
+        # Call GET /gateways WITHOUT team_id parameter
+        response = client.get(
+            "/gateways",
+            headers={"Authorization": "Bearer test-token"}
+        )
+
+        # Should succeed - RBAC decorator uses team_id from user_context
+        assert response.status_code == 200
+
+        # Cleanup
+        app.dependency_overrides.clear()
+
+    @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
+    def test_team_scoped_role_with_mismatched_team_id_gets_403(
+        self,
+        mock_list_gateways: AsyncMock,
+        test_db_and_client,
+    ):
+        """Test that team-scoped role with mismatched team_id param gets 403.
+
+        Scenario:
+        - User has team-scoped role in team X
+        - User's token is scoped to team X
+        - User calls GET /gateways?team_id=Y (different team)
+        Expected: 403 Forbidden (team mismatch check in endpoint)
+        """
+        TestSessionLocal, _ = test_db_and_client
+
+        # Set up user context with team_id from token
+        mock_user = MagicMock()
+        mock_user.email = "team-user@example.com"
+
+        async def mock_user_with_team():
+            return {
+                "email": "team-user@example.com",
+                "full_name": "Team User",
+                "is_admin": False,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "db": TestSessionLocal(),
+                "team_id": "team-X",  # Token is scoped to team X
+            }
+
+        app.dependency_overrides[require_auth] = lambda: "team-user@example.com"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_team
+
+        client = TestClient(app)
+
+        # Call GET /gateways with DIFFERENT team_id parameter
+        response = client.get(
+            "/gateways?team_id=team-Y",  # Mismatched team
+            headers={"Authorization": "Bearer test-token"}
+        )
+
+        # Should get 403 - team mismatch
+        assert response.status_code == 403
+
+        # Cleanup
+        app.dependency_overrides.clear()
+
+    @patch("mcpgateway.main.server_service.list_servers", new_callable=AsyncMock)
+    def test_team_scoped_role_on_endpoint_without_team_id_param(
+        self,
+        mock_list_servers: AsyncMock,
+        test_db_and_client,
+    ):
+        """Test team-scoped role on endpoint that doesn't accept team_id param.
+
+        Scenario:
+        - User has team-scoped role with 'servers.read' permission
+        - User calls GET /servers (no team_id query param supported)
+        Expected: Request succeeds (uses token's team_id for permission check)
+        """
+        TestSessionLocal, _ = test_db_and_client
+
+        # Mock service to return empty list
+        mock_list_servers.return_value = []
+
+        # Set up user context with team_id from token
+        mock_user = MagicMock()
+        mock_user.email = "team-user@example.com"
+
+        async def mock_user_with_team():
+            return {
+                "email": "team-user@example.com",
+                "full_name": "Team User",
+                "is_admin": False,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "db": TestSessionLocal(),
+                "team_id": "team-servers",  # Team ID from JWT token
+            }
+
+        app.dependency_overrides[require_auth] = lambda: "team-user@example.com"
+        app.dependency_overrides[get_current_user] = lambda: mock_user
+        app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_team
+
+        client = TestClient(app)
+
+        # Call GET /servers - endpoint doesn't accept team_id parameter
+        response = client.get(
+            "/servers",
+            headers={"Authorization": "Bearer test-token"}
+        )
+
+        # Should succeed - RBAC decorator uses team_id from user_context
+        assert response.status_code == 200
+
+        # Cleanup
+        app.dependency_overrides.clear()
