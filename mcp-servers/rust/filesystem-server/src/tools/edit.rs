@@ -40,10 +40,10 @@ pub async fn move_file(sandbox: &Sandbox, source: &str, destination: &str) -> an
     Ok(())
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct Edit {
-    old: String,
-    new: String,
+    pub old: String,
+    pub new: String,
 }
 
 fn apply_edits(mut content: String, edits: Vec<Edit>) -> String {

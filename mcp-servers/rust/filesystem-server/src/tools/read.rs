@@ -3,7 +3,6 @@ use anyhow::{Context, Result};
 use futures::future::join_all;
 use tokio::{fs, io::AsyncReadExt};
 
-
 pub async fn read_file(sandbox: &Sandbox, path: &str) -> Result<String> {
     tracing::info!("Starting read file for {}", path);
 
