@@ -103,8 +103,6 @@ class TaskScheduler:
                     func: Zero-argument callable that returns an awaitable.
                     fut: Future to complete with the result or exception.
 
-                Returns:
-                    None
                 """
                 async with self._semaphore:
                     try:
