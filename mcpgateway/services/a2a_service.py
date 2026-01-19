@@ -802,7 +802,16 @@ class A2AAgentService:
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map) for agent in agents]
+        # return [self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map) for agent in agents]
+        result = []
+        for agent in agents:
+            try:
+                result.append(self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map))
+            except Exception as e:
+                logger.error(f"Failed to convert A2A agent {getattr(agent, 'id', 'unknown')} ({getattr(agent, 'name', 'unknown')}): {e}")
+                # Continue with remaining agents instead of failing completely
+
+        return result
 
     async def get_agent(
         self,

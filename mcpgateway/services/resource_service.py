@@ -1198,8 +1198,12 @@ class ResourceService:
 
         result = []
         for t in resources:
-            t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self.convert_resource_to_read(t, include_metrics=False))
+            try:
+                t.team = team_map.get(str(t.team_id)) if t.team_id else None
+                result.append(self.convert_resource_to_read(t, include_metrics=False))
+            except Exception as e:
+                logger.error(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                # Continue with remaining resources instead of failing completely
         return result
 
     async def list_server_resources(
@@ -1301,8 +1305,12 @@ class ResourceService:
 
         result = []
         for t in resources:
-            t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self.convert_resource_to_read(t, include_metrics=False))
+            try:
+                t.team = team_map.get(str(t.team_id)) if t.team_id else None
+                result.append(self.convert_resource_to_read(t, include_metrics=False))
+            except Exception as e:
+                logger.error(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                # Continue with remaining resources instead of failing completely
         return result
 
     async def _record_resource_metric(self, db: Session, resource: DbResource, start_time: float, success: bool, error_message: Optional[str]) -> None:

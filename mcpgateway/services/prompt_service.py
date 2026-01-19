@@ -1171,8 +1171,12 @@ class PromptService:
 
         result = []
         for t in prompts:
-            t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self.convert_prompt_to_read(t, include_metrics=False))
+            try:
+                t.team = team_map.get(str(t.team_id)) if t.team_id else None
+                result.append(self.convert_prompt_to_read(t, include_metrics=False))
+            except Exception as e:
+                logger.error(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                # Continue with remaining prompts instead of failing completely
         return result
 
     async def list_server_prompts(
@@ -1272,8 +1276,12 @@ class PromptService:
 
         result = []
         for t in prompts:
-            t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self.convert_prompt_to_read(t, include_metrics=False))
+            try:
+                t.team = team_map.get(str(t.team_id)) if t.team_id else None
+                result.append(self.convert_prompt_to_read(t, include_metrics=False))
+            except Exception as e:
+                logger.error(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                # Continue with remaining prompts instead of failing completely
         return result
 
     async def _record_prompt_metric(self, db: Session, prompt: DbPrompt, start_time: float, success: bool, error_message: Optional[str]) -> None:
