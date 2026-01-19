@@ -98,6 +98,13 @@ class TaskScheduler:
                 The callable ``func`` is invoked to obtain the coroutine which is
                 awaited; the provided future ``fut`` is completed with the
                 coroutine's result or an exception marker on failure.
+
+                Args:
+                    func: Zero-argument callable that returns an awaitable.
+                    fut: Future to complete with the result or exception.
+
+                Returns:
+                    None
                 """
                 async with self._semaphore:
                     try:
@@ -143,6 +150,10 @@ class TaskScheduler:
 
             This small wrapper returns the result of the future that the
             manager will complete when the scheduled callable finishes.
+
+            Returns:
+                The value set on the internal future by the manager when the
+                scheduled callable completes.
             """
             return await fut
 
