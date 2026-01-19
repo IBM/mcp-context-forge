@@ -17,16 +17,9 @@ window.createMetricsController = function() {
      * Destroy all Chart.js instances to prevent canvas reuse errors
      */
     destroyAllCharts() {
-      Object.keys(this.charts).forEach(key => {
-        if (this.charts[key]) {
-          try {
-            this.charts[key].destroy();
-          } catch (e) {
-            console.warn(`Failed to destroy chart ${key}:`, e);
-          }
-          this.charts[key] = null;
-        }
-      });
+      // Use global registry for centralized cleanup
+      window.chartRegistry.destroyByPrefix('metrics-');
+      this.charts = {};
     },
 
     /**
@@ -47,14 +40,23 @@ window.createMetricsController = function() {
         if (document.hidden) {
           this.stopAutoRefresh();
         } else {
-          this.startAutoRefresh();
-          // Refresh data when tab becomes visible
-          if (!this.loading) {
-            this.loadAllMetrics();
+          // Check if we're still on the observability tab
+          const panel = document.getElementById('observability-panel');
+          if (panel && !panel.classList.contains('hidden')) {
+            this.startAutoRefresh();
+            // Refresh data when tab becomes visible
+            if (!this.loading) {
+              this.loadAllMetrics();
+            }
           }
         }
       };
       document.addEventListener('visibilitychange', this.visibilityHandler);
+
+      // Add cleanup on component destroy
+      this.$el.addEventListener('destroy', () => {
+        this.cleanup();
+      });
 
       // Add cleanup on page unload as fallback
       window.addEventListener('beforeunload', () => this.cleanup());
@@ -155,26 +157,38 @@ window.createMetricsController = function() {
      * Render percentile chart with proper cleanup and error handling
      */
     renderPercentileChart(data) {
-      const ctx = document.getElementById('percentileChart');
-      if (!ctx) {
+      const canvas = document.getElementById('percentileChart');
+      if (!canvas) {
         console.warn('percentileChart canvas not found');
         return;
       }
 
-      // Destroy existing chart
-      if (this.charts.percentile) {
-        try {
-          this.charts.percentile.destroy();
-        } catch (e) {
-          console.warn('Failed to destroy percentile chart:', e);
-        }
-        this.charts.percentile = null;
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('percentileChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('metrics-percentile');
 
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
         try {
-          this.charts.percentile = new Chart(ctx, {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('percentileChart canvas became hidden, aborting render');
+            return;
+          }
+          
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for percentileChart');
+            return;
+          }
+          
+          const chart = new Chart(ctx, {
         type: 'line',
         data: {
           labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString()),
@@ -243,6 +257,9 @@ window.createMetricsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('metrics-percentile', chart);
+          this.charts.percentile = chart;
         } catch (e) {
           console.error('Failed to create percentile chart:', e);
           this.error = 'Failed to render percentile chart';
@@ -253,26 +270,38 @@ window.createMetricsController = function() {
      * Render time series chart with proper cleanup and error handling
      */
     renderTimeSeriesChart(data) {
-      const ctx = document.getElementById('timeSeriesChart');
-      if (!ctx) {
+      const canvas = document.getElementById('timeSeriesChart');
+      if (!canvas) {
         console.warn('timeSeriesChart canvas not found');
         return;
       }
 
-      // Destroy existing chart
-      if (this.charts.timeSeries) {
-        try {
-          this.charts.timeSeries.destroy();
-        } catch (e) {
-          console.warn('Failed to destroy time series chart:', e);
-        }
-        this.charts.timeSeries = null;
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('timeSeriesChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('metrics-timeseries');
 
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
         try {
-          this.charts.timeSeries = new Chart(ctx, {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('timeSeriesChart canvas became hidden, aborting render');
+            return;
+          }
+          
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for timeSeriesChart');
+            return;
+          }
+          
+          const chart = new Chart(ctx, {
         type: 'line',
         data: {
           labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString()),
@@ -336,6 +365,9 @@ window.createMetricsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('metrics-timeseries', chart);
+          this.charts.timeSeries = chart;
         } catch (e) {
           console.error('Failed to create time series chart:', e);
           this.error = 'Failed to render time series chart';
@@ -399,21 +431,20 @@ window.createMetricsController = function() {
      * Render heatmap chart with proper cleanup and error handling
      */
     renderHeatmap(data) {
-      const ctx = document.getElementById('heatmapChart');
-      if (!ctx) {
+      const canvas = document.getElementById('heatmapChart');
+      if (!canvas) {
         console.warn('heatmapChart canvas not found');
         return;
       }
 
-      // Destroy existing chart
-      if (this.charts.heatmap) {
-        try {
-          this.charts.heatmap.destroy();
-        } catch (e) {
-          console.warn('Failed to destroy heatmap chart:', e);
-        }
-        this.charts.heatmap = null;
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('heatmapChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('metrics-heatmap');
 
       // Flatten the 2D heatmap data for Chart.js matrix
       const heatmapData = [];
@@ -430,7 +461,20 @@ window.createMetricsController = function() {
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
         try {
-          this.charts.heatmap = new Chart(ctx, {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('heatmapChart canvas became hidden, aborting render');
+            return;
+          }
+          
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for heatmapChart');
+            return;
+          }
+          
+          const chart = new Chart(ctx, {
             type: 'scatter',
         data: {
           datasets: [
@@ -503,6 +547,9 @@ window.createMetricsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('metrics-heatmap', chart);
+          this.charts.heatmap = chart;
         } catch (e) {
           console.error('Failed to create heatmap chart:', e);
           this.error = 'Failed to render heatmap chart';
