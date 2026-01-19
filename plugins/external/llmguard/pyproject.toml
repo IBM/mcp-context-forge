@@ -47,6 +47,8 @@ dependencies = [
     "mcp>=1.16.0",
     "mcp-contextforge-gateway",
     "llm-guard",
+    "redis>=5.0.0",
+    "orjson>=3.10.0",
 ]
 
 # URLs
