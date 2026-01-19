@@ -517,13 +517,13 @@ class TestServerEndpoints:
         assert response.status_code == 200
         mock_update.assert_called_once()
 
-    @patch("mcpgateway.main.server_service.toggle_server_status")
-    def test_toggle_server_status(self, mock_toggle, test_client, auth_headers):
-        """Test toggling server active/inactive status."""
+    @patch("mcpgateway.main.server_service.set_server_state")
+    def test_set_server_state(self, mock_toggle, test_client, auth_headers):
+        """Test setting server active/inactive state."""
         updated_server = MOCK_SERVER_READ.copy()
         updated_server["enabled"] = False
         mock_toggle.return_value = ServerRead(**updated_server)
-        response = test_client.post("/servers/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/servers/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         mock_toggle.assert_called_once()
 
@@ -651,13 +651,13 @@ class TestToolEndpoints:
         assert response.status_code == 200
         mock_update.assert_called_once()
 
-    @patch("mcpgateway.main.tool_service.toggle_tool_status")
-    def test_toggle_tool_status(self, mock_toggle, test_client, auth_headers):
-        """Test toggling tool active/inactive status."""
+    @patch("mcpgateway.main.tool_service.set_tool_state")
+    def test_set_tool_state(self, mock_toggle, test_client, auth_headers):
+        """Test setting tool active/inactive state."""
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = {"id": 1, "name": "test", "is_active": False}
         mock_toggle.return_value = mock_tool
-        response = test_client.post("/tools/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/tools/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -769,13 +769,13 @@ class TestResourceEndpoints:
         assert response.status_code == 200
         mock_list.assert_called_once()
 
-    @patch("mcpgateway.main.resource_service.toggle_resource_status")
-    def test_toggle_resource_status(self, mock_toggle, test_client, auth_headers):
-        """Test toggling resource active/inactive status."""
+    @patch("mcpgateway.main.resource_service.set_resource_state")
+    def test_set_resource_state(self, mock_toggle, test_client, auth_headers):
+        """Test setting resource active/inactive state."""
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = {"id": "1", "enabled": False}
         mock_toggle.return_value = mock_resource
-        response = test_client.post("/resources/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/resources/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -849,13 +849,13 @@ class TestPromptEndpoints:
         assert response.json()["status"] == "success"
         mock_delete.assert_called_once()
 
-    @patch("mcpgateway.main.prompt_service.toggle_prompt_status")
-    def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
-        """Test toggling prompt active/inactive status."""
+    @patch("mcpgateway.main.prompt_service.set_prompt_state")
+    def test_set_prompt_state(self, mock_toggle, test_client, auth_headers):
+        """Test setting prompt active/inactive state."""
         mock_prompt = MagicMock()
         mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
         mock_toggle.return_value = mock_prompt
-        response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/prompts/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
         mock_toggle.assert_called_once()
@@ -929,13 +929,13 @@ class TestPromptEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
-    @patch("mcpgateway.main.prompt_service.toggle_prompt_status")
-    def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
-        """Test toggling prompt active/inactive status."""
+    @patch("mcpgateway.main.prompt_service.set_prompt_state")
+    def test_set_prompt_state(self, mock_toggle, test_client, auth_headers):
+        """Test setting prompt active/inactive state."""
         mock_prompt = MagicMock()
         mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
         mock_toggle.return_value = mock_prompt
-        response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/prompts/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -1009,13 +1009,13 @@ class TestGatewayEndpoints:
         mock_delete.assert_called_once()
         mock_invalidate_cache.assert_called_once()
 
-    @patch("mcpgateway.main.gateway_service.toggle_gateway_status")
-    def test_toggle_gateway_status(self, mock_toggle, test_client, auth_headers):
-        """Test toggling gateway active/inactive status."""
+    @patch("mcpgateway.main.gateway_service.set_gateway_state")
+    def test_set_gateway_state(self, mock_toggle, test_client, auth_headers):
+        """Test setting gateway active/inactive state."""
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {"id": "1", "is_active": False}
         mock_toggle.return_value = mock_gateway
-        response = test_client.post("/gateways/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/gateways/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
         mock_toggle.assert_called_once()
@@ -1072,13 +1072,13 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
-    @patch("mcpgateway.main.gateway_service.toggle_gateway_status")
-    def test_toggle_gateway_status(self, mock_toggle, test_client, auth_headers):
-        """Test toggling gateway active/inactive status."""
+    @patch("mcpgateway.main.gateway_service.set_gateway_state")
+    def test_set_gateway_state(self, mock_toggle, test_client, auth_headers):
+        """Test setting gateway active/inactive state."""
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {"id": "1", "is_active": False}
         mock_toggle.return_value = mock_gateway
-        response = test_client.post("/gateways/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/gateways/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 

@@ -146,7 +146,7 @@ class A2AAgentNameConflictError(A2AAgentError):
 class A2AAgentService:
     """Service for managing A2A agents in the gateway.
 
-    Provides methods to create, list, retrieve, update, toggle status, and delete agent records.
+    Provides methods to create, list, retrieve, update, set state, and delete agent records.
     Also supports interactions with A2A-compatible agents.
     """
 
@@ -1039,8 +1039,8 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
 
-    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
-        """Toggle the activation status of an A2A agent.
+    async def set_agent_state(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
+        """Set the activation status of an A2A agent.
 
         Args:
             db: Database session.

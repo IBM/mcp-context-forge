@@ -280,13 +280,13 @@ class GrpcService:
 
         return GrpcServiceRead.model_validate(service)
 
-    async def toggle_service(
+    async def set_service_state(
         self,
         db: Session,
         service_id: str,
         activate: bool,
     ) -> GrpcServiceRead:
-        """Toggle a gRPC service's enabled status.
+        """Set a gRPC service's enabled status.
 
         Args:
             db: Database session

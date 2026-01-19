@@ -359,7 +359,7 @@ class TestResourcePluginIntegration:
         created = await service.register_resource(test_db, resource)
 
         # Deactivate the resource
-        await service.toggle_resource_status(test_db, created.id, activate=False)
+        await service.set_resource_state(test_db, created.id, activate=False)
 
 
         # Try to read inactive resource

@@ -562,7 +562,7 @@ class TestResourceManagement:
     """Test resource management operations."""
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_activate(self, resource_service, mock_db, mock_inactive_resource):
+    async def test_set_resource_state_activate(self, resource_service, mock_db, mock_inactive_resource):
         """Test activating an inactive resource."""
         mock_db.get.return_value = mock_inactive_resource
 
@@ -590,14 +590,14 @@ class TestResourceManagement:
                 },
             )
 
-            result = await resource_service.toggle_resource_status(mock_db, 2, activate=True)
+            result = await resource_service.set_resource_state(mock_db, 2, activate=True)
 
             assert mock_inactive_resource.enabled is True
             # commit called twice: once for status change, once in _get_team_name to release transaction
             assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_deactivate(self, resource_service, mock_db, mock_resource):
+    async def test_set_resource_state_deactivate(self, resource_service, mock_db, mock_resource):
         """Test deactivating an active resource."""
         mock_db.get.return_value = mock_resource
 
@@ -625,26 +625,26 @@ class TestResourceManagement:
                 },
             )
 
-            result = await resource_service.toggle_resource_status(mock_db, 1, activate=False)
+            result = await resource_service.set_resource_state(mock_db, 1, activate=False)
 
             assert mock_resource.enabled is False
             # commit called twice: once for status change, once in _get_team_name to release transaction
             assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_not_found(self, resource_service, mock_db):
-        """Test toggling status of non-existent resource."""
+    async def test_set_resource_state_not_found(self, resource_service, mock_db):
+        """Test setting state of non-existent resource."""
         mock_db.get.return_value = None
 
         with pytest.raises(ResourceError) as exc_info:  # ResourceError, not ResourceNotFoundError
-            await resource_service.toggle_resource_status(mock_db, 999, activate=True)
+            await resource_service.set_resource_state(mock_db, 999, activate=True)
 
         # The actual error message will vary, just check it mentions the resource
         assert "999" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_no_change(self, resource_service, mock_db, mock_resource):
-        """Test toggling status when no change needed."""
+    async def test_set_resource_state_no_change(self, resource_service, mock_db, mock_resource):
+        """Test setting state when no change needed."""
         mock_db.get.return_value = mock_resource
         mock_resource.enabled = True
 
@@ -673,7 +673,7 @@ class TestResourceManagement:
             )
 
             # Try to activate already active resource
-            result = await resource_service.toggle_resource_status(mock_db, 1, activate=True)
+            result = await resource_service.set_resource_state(mock_db, 1, activate=True)
 
             # No status change commit, but _get_team_name commits to release transaction
             assert mock_db.commit.call_count == 1
@@ -1472,13 +1472,13 @@ class TestErrorHandling:
             mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_error(self, resource_service, mock_db, mock_resource):
-        """Test toggle status with error."""
+    async def test_set_resource_state_error(self, resource_service, mock_db, mock_resource):
+        """Test set state with error."""
         mock_db.get.return_value = mock_resource
         mock_db.commit.side_effect = Exception("Database error")
 
         with pytest.raises(ResourceError):
-            await resource_service.toggle_resource_status(mock_db, "39334ce0ed2644d79ede8913a66930c9", activate=False)
+            await resource_service.set_resource_state(mock_db, "39334ce0ed2644d79ede8913a66930c9", activate=False)
 
         mock_db.rollback.assert_called_once()
 

@@ -128,7 +128,7 @@ class ServerNameConflictError(ServerError):
 class ServerService:
     """Service for managing MCP Servers in the catalog.
 
-    Provides methods to create, list, retrieve, update, toggle status, and delete server records.
+    Provides methods to create, list, retrieve, update, set state, and delete server records.
     Also supports event notifications for changes in server data.
     """
 
@@ -1375,8 +1375,8 @@ class ServerService:
             )
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
-        """Toggle the activation status of a server.
+    async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
+        """Set the activation status of a server.
 
         Args:
             db: Database session.
@@ -1409,7 +1409,7 @@ class ServerService:
             >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_server_status(db, 'server_id', True))
+            >>> asyncio.run(service.set_server_state(db, 'server_id', True))
             'server_read'
         """
         try:
@@ -1452,7 +1452,7 @@ class ServerService:
                     await self._notify_server_deactivated(server)
                 logger.info(f"Server {server.name} {'activated' if activate else 'deactivated'}")
 
-                # Structured logging: Audit trail for server status toggle
+                # Structured logging: Audit trail for server state change
                 self._audit_trail.log_action(
                     user_id=user_email or "system",
                     action="activate_server" if activate else "deactivate_server",
@@ -1497,8 +1497,8 @@ class ServerService:
             # Structured logging: Log permission error
             self._structured_logger.log(
                 level="WARNING",
-                message="Server status toggle failed due to insufficient permissions",
-                event_type="server_status_toggle_permission_denied",
+                message="Server state change failed due to insufficient permissions",
+                event_type="server_state_change_permission_denied",
                 component="server_service",
                 server_id=server_id,
                 user_email=user_email,
@@ -1507,18 +1507,18 @@ class ServerService:
         except Exception as e:
             db.rollback()
 
-            # Structured logging: Log generic server status toggle failure
+            # Structured logging: Log generic server state change failure
             self._structured_logger.log(
                 level="ERROR",
-                message="Server status toggle failed",
-                event_type="server_status_toggle_failed",
+                message="Server state change failed",
+                event_type="server_state_change_failed",
                 component="server_service",
                 server_id=server_id,
                 error_type=type(e).__name__,
                 error_message=str(e),
                 user_email=user_email,
             )
-            raise ServerError(f"Failed to toggle server status: {str(e)}")
+            raise ServerError(f"Failed to set server state: {str(e)}")
 
     async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Permanently delete a server.

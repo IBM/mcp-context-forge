@@ -1051,8 +1051,8 @@ class TestToolService:
         assert "Tool not found: 999" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status(self, tool_service, mock_tool, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_state(self, tool_service, mock_tool, test_db):
+        """Test setting tool active state."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()
@@ -1099,7 +1099,7 @@ class TestToolService:
         tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=False, reachable=True)
+        result = await tool_service.set_tool_state(test_db, 1, activate=False, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
@@ -1117,15 +1117,15 @@ class TestToolService:
         assert result == tool_read
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_not_found(self, tool_service, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_state_not_found(self, tool_service, test_db):
+        """Test setting tool state when not found."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=None)
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
         with pytest.raises(ToolError) as exc:
-            await tool_service.toggle_tool_status(test_db, "1", activate=False, reachable=True)
+            await tool_service.set_tool_state(test_db, "1", activate=False, reachable=True)
 
         assert "Tool not found: 1" in str(exc.value)
 
@@ -1133,8 +1133,8 @@ class TestToolService:
         test_db.get.assert_called_once_with(DbTool, "1")
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
-        """Test toggling tool active status."""
+    async def test_set_tool_state_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
+        """Test activating tool state."""
         # Mock DB get to return tool
         mock_tool.enabled = False
         test_db.get = Mock(return_value=mock_tool)
@@ -1143,7 +1143,7 @@ class TestToolService:
 
         tool_service._notify_tool_activated = AsyncMock()
 
-        result = await tool_service.toggle_tool_status(test_db, "1", activate=True, reachable=True)
+        result = await tool_service.set_tool_state(test_db, "1", activate=True, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, "1")
@@ -1207,8 +1207,8 @@ class TestToolService:
         assert q.empty()
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_no_change(self, tool_service, mock_tool, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_state_no_change(self, tool_service, mock_tool, test_db):
+        """Test setting tool state with no change."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()
@@ -1255,7 +1255,7 @@ class TestToolService:
         tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=True, reachable=True)
+        result = await tool_service.set_tool_state(test_db, 1, activate=True, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)

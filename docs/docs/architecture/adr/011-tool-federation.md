@@ -37,7 +37,7 @@ We implemented this by making the following changes:
    - When storing and updating tools, use `original_name` in `DbTool` objects to store the original name coming from `_initiate_gateway`.
    - Remove check for only storing tools without matching original names
    - Check if `gateway.url` exists instead of `gateway.name` exists before thowing `GatewayNameConflictError`.
-   - Check for existing tools on `original_name` and `gateway_id` instead of just `name` (as earlier) in **update_gateway** and **toggle_gateway_status** code.
+   - Check for existing tools on `original_name` and `gateway_id` instead of just `name` (as earlier) in **update_gateway** and **set_gateway_state** code.
    - Set `name` and `gateway_slug` just before passing to `ToolRead` seprately since these don't come from the database as these are properties and not columns.
    - To obtain tool from database for invocation, handle the case that `name` from the API is not stored as a column in the database, but is a property by making an appropriate comparison as `DbTool.gateway_slug + settings.gateway_tool_name_separator + DbTool.original_name == name`
 
