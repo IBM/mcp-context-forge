@@ -88,7 +88,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging
+from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Cache import (lazy to avoid circular dependencies)
@@ -2991,13 +2991,15 @@ class ToolService:
                                     root_cause = root_cause.exceptions[0]
                             # Log failed MCP call (using local variables)
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            # Sanitize error message to prevent URL secrets from leaking in logs
+                            sanitized_error = sanitize_exception_message(str(root_cause), gateway_auth_query_params_decrypted)
                             structured_logger.log(
                                 level="ERROR",
                                 message=f"MCP tool call failed: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={"error_type": type(root_cause).__name__, "error_message": str(root_cause)},
+                                error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
                             )
                             raise
@@ -3090,13 +3092,15 @@ class ToolService:
                                     root_cause = root_cause.exceptions[0]
                             # Log failed MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            # Sanitize error message to prevent URL secrets from leaking in logs
+                            sanitized_error = sanitize_exception_message(str(root_cause), gateway_auth_query_params_decrypted)
                             structured_logger.log(
                                 level="ERROR",
                                 message=f"MCP tool call failed: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={"error_type": type(root_cause).__name__, "error_message": str(root_cause)},
+                                error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp"},
                             )
                             raise

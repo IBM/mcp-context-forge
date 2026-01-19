@@ -194,7 +194,14 @@ def sanitize_exception_message(
         return message
 
     def replace_url(match: re.Match) -> str:
-        """Replace a matched URL with its sanitized version."""
+        """Replace a matched URL with its sanitized version.
+
+        Args:
+            match: Regex match object containing the URL.
+
+        Returns:
+            Sanitized URL with sensitive params redacted.
+        """
         url = match.group(0)
         return sanitize_url_for_logging(url, auth_query_params)
 

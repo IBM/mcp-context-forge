@@ -67,7 +67,7 @@ from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.url_auth import apply_query_param_auth
+from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
@@ -1731,7 +1731,9 @@ class ResourceService:
                                             resource_response = await session.read_resource(uri=uri)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
-                                logger.debug(f"Exception while connecting to sse gateway: {e}")
+                                # Sanitize error message to prevent URL secrets from leaking in logs
+                                sanitized_error = sanitize_exception_message(str(e))
+                                logger.debug(f"Exception while connecting to sse gateway: {sanitized_error}")
                                 return None
 
                         async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
@@ -1805,7 +1807,9 @@ class ResourceService:
                                             resource_response = await session.read_resource(uri=uri)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
-                                logger.debug(f"Exception while connecting to streamablehttp gateway: {e}")
+                                # Sanitize error message to prevent URL secrets from leaking in logs
+                                sanitized_error = sanitize_exception_message(str(e))
+                                logger.debug(f"Exception while connecting to streamablehttp gateway: {sanitized_error}")
                                 return None
 
                         if span:

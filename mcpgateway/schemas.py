@@ -2492,7 +2492,7 @@ class GatewayCreate(BaseModel):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -2782,11 +2782,7 @@ class GatewayCreate(BaseModel):
 
         # Check feature flag
         if not settings.insecure_allow_queryparam_auth:
-            raise ValueError(
-                "Query parameter authentication is disabled. "
-                + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable. "
-                + "WARNING: API keys in URLs may appear in proxy logs."
-            )
+            raise ValueError("Query parameter authentication is disabled. " + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable. " + "WARNING: API keys in URLs may appear in proxy logs.")
 
         # Check required fields
         if not self.auth_query_param_key:
@@ -3127,7 +3123,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
     auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
@@ -4188,7 +4184,7 @@ class A2AAgentCreate(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -4785,7 +4781,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     metrics: Optional[A2AAgentMetrics] = Field(None, description="Agent metrics (may be None in list operations)")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
 
     # OAuth 2.0 configuration
