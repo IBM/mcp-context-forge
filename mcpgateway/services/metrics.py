@@ -143,6 +143,7 @@ def setup_metrics(app):
         # Store update function as a module-level attribute so it can be called
         # from the application lifespan after SharedHttpClient is initialized
         def update_http_pool_metrics():
+            """Update HTTP connection pool metrics from SharedHttpClient stats."""
             try:
                 # First-Party
                 from mcpgateway.services.http_client_service import SharedHttpClient  # pylint: disable=import-outside-toplevel

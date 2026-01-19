@@ -59,7 +59,6 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
 from mcpgateway import __version__
-from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
@@ -71,6 +70,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
@@ -81,6 +81,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -4804,7 +4805,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
             init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
-            result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id)
+            # Pass server_id to advertise OAuth capability if configured per RFC 9728
+            result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "tools/list":
@@ -5571,10 +5573,10 @@ async def readiness_check():
     """
 
     def _check_db() -> str | None:
-        """Check database connectivity for readiness.
+        """Check database connectivity by executing a simple query.
 
         Returns:
-            Error string when the check fails, otherwise None.
+            None if successful, error message string if failed.
         """
         # Create session in this thread - all DB operations stay in the same thread.
         db = SessionLocal()
@@ -6027,6 +6029,7 @@ app.include_router(gateway_router)
 app.include_router(root_router)
 app.include_router(utility_router)
 app.include_router(server_router)
+app.include_router(server_well_known_router, prefix="/servers")
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)

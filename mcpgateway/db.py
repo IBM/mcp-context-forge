@@ -4243,6 +4243,11 @@ class Server(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+    # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
+    oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
     # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading

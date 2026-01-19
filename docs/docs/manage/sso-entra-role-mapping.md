@@ -104,13 +104,13 @@ Context Forge includes a comprehensive RBAC system with the following default ro
      "description": "Platform administrators"
    }
    {
-     "displayName": "Developer", 
+     "displayName": "Developer",
      "value": "Developer",
      "description": "Developers with tool access"
    }
    {
      "displayName": "Viewer",
-     "value": "Viewer", 
+     "value": "Viewer",
      "description": "Read-only users"
    }
    ```
@@ -321,9 +321,9 @@ Role mapping may be incomplete. Consider using App Roles or Azure group filterin
 SELECT sso_metadata FROM pending_user_approval WHERE email='user@example.com';
 
 # Check user's current roles
-SELECT r.name, ur.scope, ur.granted_by 
-FROM user_roles ur 
-JOIN roles r ON ur.role_id = r.id 
+SELECT r.name, ur.scope, ur.granted_by
+FROM user_roles ur
+JOIN roles r ON ur.role_id = r.id
 WHERE ur.user_email='user@example.com';
 ```
 

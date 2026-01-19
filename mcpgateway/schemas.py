@@ -3565,6 +3565,10 @@ class ServerCreate(BaseModel):
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
 
+    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+    oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -3694,6 +3698,10 @@ class ServerUpdate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
     visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+
+    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+    oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
     @field_validator("tags")
     @classmethod
@@ -3866,6 +3874,10 @@ class ServerRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+    oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
     @model_validator(mode="before")
     @classmethod
