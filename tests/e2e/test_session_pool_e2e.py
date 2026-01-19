@@ -174,7 +174,7 @@ class TestIdleEvictionE2E:
                     assert pool.get_metrics()["pool_key_count"] == 1
 
                     # Set old last_used time to trigger eviction
-                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
+                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
                     pool._pool_last_used[pool_key] = time.time() - 1000
 
                     # Wait and trigger eviction
@@ -215,7 +215,7 @@ class TestIdleEvictionE2E:
                     session = await pool.acquire("http://test:8080")
 
                     # Force session back into pool
-                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp")
+                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
                     pool._active.get(pool_key, set()).discard(session)
                     pool._pools[pool_key].put_nowait(session)
 

@@ -76,6 +76,7 @@ class PooledSession:
     headers: Dict[str, str]  # Original headers (for reconnection)
     identity_key: str  # Identity hash component for headers
     user_identity: str = "anonymous"  # for user isolation
+    gateway_id: str = ""  # Gateway ID for notification attribution
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
@@ -114,8 +115,9 @@ class PooledSession:
 
 
 # Type aliases
-# Pool key includes transport type to prevent returning wrong transport for same URL
-PoolKey = Tuple[str, str, str, str]  # (user_identity_hash, url, identity_hash, transport_type)
+# Pool key includes transport type and gateway_id to prevent returning wrong transport for same URL
+# and to ensure correct notification attribution when notifications are enabled
+PoolKey = Tuple[str, str, str, str, str]  # (user_identity_hash, url, identity_hash, transport_type, gateway_id)
 HttpxClientFactory = Callable[
     [Optional[Dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
     httpx.AsyncClient,
@@ -140,7 +142,7 @@ MessageHandlerFactory = Callable[
 
 class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     """
-    Pool of MCP ClientSessions keyed by (user_identity, server URL, identity hash, transport type).
+    Pool of MCP ClientSessions keyed by (user_identity, server URL, identity hash, transport type, gateway_id).
 
     Thread-Safety:
         This pool is designed for asyncio concurrency. It uses asyncio.Lock
@@ -155,6 +157,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     Transport Isolation:
         Sessions are also isolated by transport type (SSE vs STREAMABLE_HTTP).
         The same URL with different transports will use separate pools.
+
+    Gateway Isolation:
+        Sessions are isolated by gateway_id for correct notification attribution.
+        When notifications are enabled, each gateway gets its own pooled sessions
+        even if they share the same URL and authentication.
 
     Features:
         - Session reuse across requests (10-20x latency improvement)
@@ -358,8 +365,19 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         serialized_identity = orjson.dumps(identity_parts)
         return hashlib.sha256(serialized_identity).hexdigest()
 
-    def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType, user_identity: str) -> PoolKey:
-        """Create composite pool key from URL, identity, transport type, and user identity."""
+    def _make_pool_key(
+        self,
+        url: str,
+        headers: Optional[Dict[str, str]],
+        transport_type: TransportType,
+        user_identity: str,
+        gateway_id: Optional[str] = None,
+    ) -> PoolKey:
+        """Create composite pool key from URL, identity, transport type, user identity, and gateway_id.
+
+        Including gateway_id ensures correct notification attribution when multiple gateways
+        share the same URL/auth. Sessions are isolated per gateway for proper event routing.
+        """
         identity_hash = self._compute_identity_hash(headers)
 
         # Anonymize user identity by hashing it (unless it's commonly "anonymous")
@@ -369,7 +387,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         else:
             user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
 
-        return (user_hash, url, identity_hash, transport_type.value)
+        # Use empty string for None gateway_id to maintain consistent key type
+        gw_id = gateway_id or ""
+
+        return (user_hash, url, identity_hash, transport_type.value, gw_id)
 
     async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:
         """Get or create a lock for the given pool key (thread-safe)."""
@@ -454,7 +475,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         effective_timeout = timeout if timeout is not None else self._default_transport_timeout
 
         user_id = user_identity or "anonymous"
-        pool_key = self._make_pool_key(url, headers, transport_type, user_id)
+        pool_key = self._make_pool_key(url, headers, transport_type, user_id, gateway_id)
         pool = await self._get_or_create_pool(pool_key)
 
         # Update pool key last used time IMMEDIATELY after getting pool
@@ -540,13 +561,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             logger.warning("Attempted to release already-closed session")
             return
 
-        # Pool key includes transport type and user identity
+        # Pool key includes transport type, user identity, and gateway_id
         # Re-compute user hash from stored raw identity (full hash for collision resistance)
         user_hash = "anonymous"
         if pooled.user_identity != "anonymous":
             user_hash = hashlib.sha256(pooled.user_identity.encode()).hexdigest()
 
-        pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value)
+        pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value, pooled.gateway_id)
         lock = await self._get_or_create_lock(pool_key)
         pool = await self._get_or_create_pool(pool_key)
 
@@ -829,9 +850,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 session=session,
                 transport_context=transport_ctx,
                 url=url,
-                identity_key=identity_key,
                 transport_type=transport_type,
                 headers=merged_headers,
+                identity_key=identity_key,
+                gateway_id=gateway_id or "",
             )
 
         except asyncio.CancelledError:  # pylint: disable=try-except-raise
@@ -931,12 +953,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
             "pools": {
-                f"{url}|{identity[:8]}|{transport}|{user}": {
+                f"{url}|{identity[:8]}|{transport}|{user}|{gw_id[:8] if gw_id else 'none'}": {
                     "available": pool.qsize(),
-                    "active": len(self._active.get((user, url, identity, transport), set())),
+                    "active": len(self._active.get((user, url, identity, transport, gw_id), set())),
                     "max": self._max_sessions,
                 }
-                for (user, url, identity, transport), pool in self._pools.items()
+                for (user, url, identity, transport, gw_id), pool in self._pools.items()
             },
             "circuit_breakers": {
                 url: {

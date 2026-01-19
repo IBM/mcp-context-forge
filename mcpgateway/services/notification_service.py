@@ -16,13 +16,8 @@ Description:
     - Per-gateway refresh locking to prevent concurrent refresh races
     - Per-gateway refresh tracking with capability awareness
     - Compatible with MCPSessionPool for pooled session notification handling
+    - Per-gateway session isolation ensures correct notification attribution
     - Supports tools, resources, and prompts list_changed notifications
-
-    Limitations:
-    - Session pool keys by (URL, identity, transport), not gateway_id. If multiple
-      gateways share the same URL and authentication, notifications will be attributed
-      to whichever gateway first created the pooled session. For correct notification
-      handling, ensure each gateway has a unique URL or authentication identity.
 
     Capable of handling other tasks as well like cancellation, progress notifications, etc. (to be implemented here)
 
@@ -104,7 +99,11 @@ class GatewayCapabilities:
 
 
 def _empty_notification_type_set() -> Set[NotificationType]:
-    """Factory function for creating an empty set of NotificationType."""
+    """Factory function for creating an empty set of NotificationType.
+
+    Returns:
+        An empty set typed for NotificationType elements.
+    """
     return set()
 
 
@@ -549,6 +548,7 @@ class NotificationService:
         Args:
             pending: The pending refresh to execute.
         """
+        # pylint: disable=protected-access
         gateway_id = pending.gateway_id
 
         # Clear pending flag tracking now that we're processing this refresh
@@ -562,7 +562,6 @@ class NotificationService:
             return
 
         # Acquire per-gateway lock to prevent concurrent refresh with manual/auto refresh
-        # pylint: disable=protected-access
         lock = self._gateway_service._get_refresh_lock(gateway_id)  # pyright: ignore[reportPrivateUsage]
 
         # Skip if lock is already held (another refresh in progress)

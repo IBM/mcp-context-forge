@@ -106,9 +106,7 @@ flowchart TD
 - Adds stateful complexity (background worker task).
 - Requires careful lifecycle management (startup/shutdown) to prevent resource leaks.
 - Debugging decentralized events can be harder than synchronous flows (mitigated by extensive logging).
-
-### Known Limitations
-- **Gateway Attribution with Shared URLs:** The session pool keys sessions by `(URL, identity, transport)`, not by `gateway_id`. If multiple gateways share the same URL and authentication identity, notifications will be attributed to whichever gateway first created the pooled session. For correct notification handling, ensure each gateway has a unique URL or authentication identity. This trade-off preserves session pooling efficiency for the common case where each gateway has a unique endpoint.
+- Slightly reduced session reuse when gateway_id differs (sessions are now keyed by gateway_id for correct notification attribution).
 
 ## Alternatives Considered
 
