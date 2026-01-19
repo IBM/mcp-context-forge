@@ -1075,6 +1075,11 @@ class A2AAgentService:
                 param_key = getattr(agent_data, "auth_query_param_key", None)
                 param_value = getattr(agent_data, "auth_query_param_value", None)
 
+                # If no key provided but value is, reuse existing key (value-only rotation)
+                existing_key = next(iter(agent.auth_query_params.keys()), None) if agent.auth_query_params else None
+                if not param_key and param_value and existing_key:
+                    param_key = existing_key
+
                 if param_key:
                     # Check if value is masked (user didn't change it) or new value provided
                     is_masked_placeholder = False
@@ -1096,7 +1101,6 @@ class A2AAgentService:
                     elif agent.auth_query_params and is_masked_placeholder:
                         # Use existing encrypted value (user didn't change the password)
                         # But key may have changed, so preserve with new key if different
-                        existing_key = next(iter(agent.auth_query_params.keys()), None)
                         if existing_key and existing_key != param_key:
                             # Key changed but value is masked - decrypt and re-encrypt with new key
                             existing_encrypted = agent.auth_query_params.get(existing_key, "")

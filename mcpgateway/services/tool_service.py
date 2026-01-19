@@ -4122,13 +4122,35 @@ class ToolService:
         client = await get_http_client()
         headers = {"Content-Type": "application/json"}
 
+        # Determine the endpoint URL (may be modified for query_param auth)
+        endpoint_url = agent.endpoint_url
+
         # Add authentication if configured
         if agent.auth_type == "api_key" and agent.auth_value:
             headers["Authorization"] = f"Bearer {agent.auth_value}"
         elif agent.auth_type == "bearer" and agent.auth_value:
             headers["Authorization"] = f"Bearer {agent.auth_value}"
+        elif agent.auth_type == "query_param" and agent.auth_query_params:
+            # Handle query parameter authentication
+            # First-Party
+            from mcpgateway.utils.encoding import decode_auth  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
 
-        http_response = await client.post(agent.endpoint_url, json=request_data, headers=headers)
+            auth_query_params_decrypted: dict[str, str] = {}
+            for param_key, encrypted_value in agent.auth_query_params.items():
+                if encrypted_value:
+                    try:
+                        decrypted = decode_auth(encrypted_value)
+                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                    except Exception:
+                        logger.debug(f"Failed to decrypt query param for key '{param_key}'")
+            if auth_query_params_decrypted:
+                endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
+                # Log sanitized URL to avoid credential leakage
+                sanitized_url = sanitize_url_for_logging(endpoint_url, auth_query_params_decrypted)
+                logger.debug(f"Applied query param auth to A2A agent endpoint: {sanitized_url}")
+
+        http_response = await client.post(endpoint_url, json=request_data, headers=headers)
 
         if http_response.status_code == 200:
             return http_response.json()
