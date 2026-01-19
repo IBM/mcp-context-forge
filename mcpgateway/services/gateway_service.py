@@ -1775,7 +1775,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     logger.info("Updated passthrough_headers for gateway {gateway.id}: {gateway.passthrough_headers}")
 
-                if getattr(gateway, "auth_type", None) is not None:
+                # Only update auth_type if explicitly provided in the update
+                if gateway_update.auth_type is not None:
                     gateway.auth_type = gateway_update.auth_type
 
                     # If auth_type is empty, update the auth_value too
@@ -2341,7 +2342,25 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     # Try to initialize if activating
                     try:
-                        capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config)
+                        # Handle query_param auth - decrypt and apply to URL
+                        init_url = gateway.url
+                        auth_query_params_decrypted: Optional[Dict[str, str]] = None
+                        if gateway.auth_type == "query_param" and gateway.auth_query_params:
+                            auth_query_params_decrypted = {}
+                            for param_key, encrypted_value in gateway.auth_query_params.items():
+                                if encrypted_value:
+                                    try:
+                                        decrypted = decode_auth(encrypted_value)
+                                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                                    except Exception:
+                                        logger.debug(f"Failed to decrypt query param '{param_key}' for gateway activation")
+                            if auth_query_params_decrypted:
+                                init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
+
+                        capabilities, tools, resources, prompts = await self._initialize_gateway(
+                            init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config,
+                            auth_query_params=auth_query_params_decrypted
+                        )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
@@ -3259,6 +3278,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         gateway_auth_type = gateway.auth_type
         gateway_oauth_config = gateway.oauth_config
         gateway_auth_value = gateway.auth_value
+        gateway_auth_query_params = gateway.auth_query_params
+
+        # Handle query_param auth - decrypt and apply to URL for health check
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        if gateway_auth_type == "query_param" and gateway_auth_query_params:
+            auth_query_params_decrypted = {}
+            for param_key, encrypted_value in gateway_auth_query_params.items():
+                if encrypted_value:
+                    try:
+                        decrypted = decode_auth(encrypted_value)
+                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                    except Exception:
+                        logger.debug(f"Failed to decrypt query param '{param_key}' for health check")
+            if auth_query_params_decrypted:
+                gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
+
+        # Sanitize URL for logging/telemetry (redacts sensitive query params)
+        gateway_url_sanitized = sanitize_url_for_logging(gateway_url, auth_query_params_decrypted)
 
         # Create span for individual gateway health check
         with create_span(
@@ -3266,11 +3303,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             {
                 "gateway.name": gateway_name,
                 "gateway.id": str(gateway_id),
-                "gateway.url": gateway_url,
+                "gateway.url": gateway_url_sanitized,
                 "gateway.transport": gateway_transport,
                 "gateway.enabled": gateway_enabled,
                 "http.method": "GET",
-                "http.url": gateway_url,
+                "http.url": gateway_url_sanitized,
             },
         ) as span:
             valid = False
@@ -3323,7 +3360,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
             # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
             async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context) as client:
-                logger.debug(f"Checking health of gateway: {gateway_name} ({gateway_url})")
+                logger.debug(f"Checking health of gateway: {gateway_name} ({gateway_url_sanitized})")
                 try:
                     # Handle different authentication types
                     headers = {}
@@ -4484,6 +4521,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         gateway_auth_value = None
         gateway_oauth_config = None
         gateway_ca_certificate = None
+        gateway_auth_query_params = None
 
         if gateway:
             if not gateway.enabled or not gateway.reachable:
@@ -4497,6 +4535,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway_auth_value = gateway.auth_value
             gateway_oauth_config = gateway.oauth_config
             gateway_ca_certificate = gateway.ca_certificate
+            gateway_auth_query_params = gateway.auth_query_params
         else:
             with fresh_db_session() as db:
                 gateway_obj = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
@@ -4517,6 +4556,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 gateway_auth_value = gateway_obj.auth_value
                 gateway_oauth_config = gateway_obj.oauth_config
                 gateway_ca_certificate = gateway_obj.ca_certificate
+                gateway_auth_query_params = gateway_obj.auth_query_params
+
+        # Handle query_param auth - decrypt and apply to URL for refresh
+        auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        if gateway_auth_type == "query_param" and gateway_auth_query_params:
+            auth_query_params_decrypted = {}
+            for param_key, encrypted_value in gateway_auth_query_params.items():
+                if encrypted_value:
+                    try:
+                        decrypted = decode_auth(encrypted_value)
+                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                    except Exception:
+                        logger.debug(f"Failed to decrypt query param '{param_key}' for tool refresh")
+            if auth_query_params_decrypted:
+                gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
         # Fetch tools/resources/prompts from MCP server (no DB connection held)
         try:
@@ -4530,6 +4584,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 pre_auth_headers=pre_auth_headers,
                 include_resources=include_resources,
                 include_prompts=include_prompts,
+                auth_query_params=auth_query_params_decrypted,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch tools from gateway {gateway_name}: {e}")

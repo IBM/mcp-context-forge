@@ -88,7 +88,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.url_auth import apply_query_param_auth
+from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Cache import (lazy to avoid circular dependencies)
@@ -2926,13 +2926,15 @@ class ToolService:
                         # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
+                        # Sanitize server_url to redact sensitive query params from logs
+                        server_url_sanitized = sanitize_url_for_logging(server_url, gateway_auth_query_params_decrypted)
                         mcp_start_time = time.time()
                         structured_logger.log(
                             level="INFO",
                             message=f"MCP tool call started: {tool_name_original}",
                             component="tool_service",
                             correlation_id=correlation_id,
-                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
+                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url_sanitized, "transport": "sse"},
                         )
 
                         try:
@@ -3023,13 +3025,15 @@ class ToolService:
                         # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
+                        # Sanitize server_url to redact sensitive query params from logs
+                        server_url_sanitized = sanitize_url_for_logging(server_url, gateway_auth_query_params_decrypted)
                         mcp_start_time = time.time()
                         structured_logger.log(
                             level="INFO",
                             message=f"MCP tool call started: {tool_name_original}",
                             component="tool_service",
                             correlation_id=correlation_id,
-                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "streamablehttp"},
+                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url_sanitized, "transport": "streamablehttp"},
                         )
 
                         try:

@@ -272,7 +272,7 @@ class TestToolService:
 
         assert tool_read.auth.auth_type == "basic"
         assert tool_read.auth.username == "test_user"
-        assert tool_read.auth.password == "********"
+        assert tool_read.auth.password == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_bearer_auth(self, tool_service, mock_tool):
@@ -285,7 +285,7 @@ class TestToolService:
         tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "bearer"
-        assert tool_read.auth.token == "********"
+        assert tool_read.auth.token == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_authheaders_auth(self, tool_service, mock_tool):
@@ -300,7 +300,7 @@ class TestToolService:
 
         assert tool_read.auth.auth_type == "authheaders"
         assert tool_read.auth.auth_header_key == "test-api-key"
-        assert tool_read.auth.auth_header_value == "********"
+        assert tool_read.auth.auth_header_value == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_include_auth_false_skips_decode(self, tool_service, mock_tool):
@@ -1461,7 +1461,7 @@ class TestToolService:
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
-        assert result.auth == AuthenticationValues(auth_type="basic", username="test_user", password="********")
+        assert result.auth == AuthenticationValues(auth_type="basic", username="test_user", password=settings.masked_auth_value)
 
     @pytest.mark.asyncio
     async def test_update_tool_bearer_auth(self, tool_service, mock_tool, test_db):
@@ -1482,7 +1482,7 @@ class TestToolService:
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
-        assert result.auth == AuthenticationValues(auth_type="bearer", token="********")
+        assert result.auth == AuthenticationValues(auth_type="bearer", token=settings.masked_auth_value)
 
     @pytest.mark.asyncio
     async def test_update_tool_empty_auth(self, tool_service, mock_tool, test_db):
