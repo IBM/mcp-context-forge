@@ -314,6 +314,23 @@ class Settings(BaseSettings):
         ],
         description="Regex patterns for dangerous input",
     )
+    
+    # Validation Performance Optimization Settings
+    validation_max_body_size: int = Field(default=1048576, description="Maximum request body size in bytes to validate (1MB default, 0=unlimited)")
+    validation_max_response_size: int = Field(default=5242880, description="Maximum response size in bytes to sanitize (5MB default, 0=unlimited)")
+    validation_skip_endpoints: List[str] = Field(
+        default_factory=lambda: [
+            r"^/health$",
+            r"^/metrics$",
+            r"^/static/.*",
+        ],
+        description="Regex patterns for endpoints to skip validation (performance optimization)",
+    )
+    validation_cache_enabled: bool = Field(default=True, description="Enable caching of validation results for identical payloads")
+    validation_cache_ttl: int = Field(default=300, description="Validation cache TTL in seconds")
+    validation_cache_max_size: int = Field(default=1000, description="Maximum number of cached validation results")
+    validation_sample_large_responses: bool = Field(default=True, description="Sample large responses instead of full sanitization")
+    validation_sample_size: int = Field(default=10240, description="Sample size in bytes for large response sanitization (10KB default)")
 
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
     sso_keycloak_groups_claim: str = Field(default="groups", description="JWT claim for groups/roles")
