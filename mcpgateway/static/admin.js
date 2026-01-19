@@ -10650,6 +10650,54 @@ async function testTool(toolId) {
     }
 }
 
+async function loadToolOpsModels() {
+    const modelSelect = document.getElementById("modelSelect");
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/llm/models?enabled_only=false&page=1&page_size=50`,
+            {
+                method: "GET",
+            },
+        );
+        if (!response.ok) {
+            throw new Error("Failed to fetch models");
+        }
+
+        const data = await response.json();
+
+        // Clear existing options
+        modelSelect.innerHTML = "";
+
+        // Placeholder
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        placeholder.textContent =
+            "Select Model (Configure in Settings -> LLM Settings)";
+        modelSelect.appendChild(placeholder);
+
+        // Populate models
+        data.models.forEach((model) => {
+            const option = document.createElement("option");
+            option.value = model.model_id;
+            option.textContent = model.model_id + ` (${model.provider_name}$)`;
+            modelSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error(error);
+        modelSelect.innerHTML = `
+            <option value="" disabled selected>
+            Failed to load models
+            </option>
+        `;
+    }
+}
+
+// Load models when Tool Ops panel is shown / page loads
+document.addEventListener("DOMContentLoaded", loadToolOpsModels);
+
 async function loadTools() {
     const toolBody = document.getElementById("toolBody");
     console.log("Loading tools...");
@@ -10774,6 +10822,15 @@ async function enrichTool(toolId) {
             return;
         }
 
+        //Check for ModelId Selection
+        const modelId = document.getElementById("modelSelect").value;
+        if (!modelId) {
+            showErrorMessage(`Please select a model id.`);
+            return;
+        }
+        // Use modelId in the API call
+        console.log("Selected model:", modelId);
+
         // 3. BUTTON STATE: Immediate feedback with better state management
         const enrichButton = document.querySelector(
             `[onclick*="enrichTool('${toolId}')"]`,
@@ -10806,7 +10863,7 @@ async function enrichTool(toolId) {
         // 6. MAKE REQUEST with increased timeout
         //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
         const response = await fetchWithTimeout(
-            `/toolops/enrichment/enrich_tool?tool_id=${toolId}`,
+            `/toolops/enrichment/enrich_tool?model_id=${modelId}&tool_id=${toolId}`,
             {
                 method: "POST",
                 headers: {
@@ -10955,19 +11012,30 @@ document.addEventListener("DOMContentLoaded", () => {
             showErrorMessage("⚠️ Please select at least one tool.");
             return;
         }
+        //Check for ModelId Selection
+        const modelId = document.getElementById("modelSelect").value;
+        if (!modelId) {
+            showErrorMessage(`Please select a model id.`);
+            return;
+        }
+        // Use modelId in the API call
+        console.log("Selected model:", modelId);
         try {
             console.log(selectedToolIds);
             selectedToolIds.forEach((toolId) => {
                 console.log(toolId);
-                fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
-                    method: "POST",
-                    headers: {
-                        "Cache-Control": "no-cache",
-                        Pragma: "no-cache",
-                        "Content-Type": "application/json",
+                fetch(
+                    `/toolops/enrichment/enrich_tool?model_id=${modelId}&tool_id=${toolId}`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Cache-Control": "no-cache",
+                            Pragma: "no-cache",
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ tool_id: toolId }),
                     },
-                    body: JSON.stringify({ tool_id: toolId }),
-                });
+                );
             });
             showSuccessMessage("Tool description enrichment has started.");
             // Uncheck all checkboxes
@@ -11017,10 +11085,19 @@ document.addEventListener("DOMContentLoaded", () => {
             return;
         }
 
+        //Check for ModelId Selection
+        const modelId = document.getElementById("modelSelect").value;
+        if (!modelId) {
+            showErrorMessage(`Please select a model id.`);
+            return;
+        }
+        // Use modelId in the API call
+        console.log("Selected model:", modelId);
+
         try {
             for (const toolId of selectedToolIds) {
                 fetch(
-                    `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+                    `/toolops/validation/generate_testcases?model_id=${modelId}&tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
                     {
                         method: "POST",
                         headers: {
@@ -11158,6 +11235,14 @@ async function generateToolTestCases(toolId) {
 }
 
 async function generateTestCases() {
+    //Check for ModelId Selection
+    const modelId = document.getElementById("modelSelect").value;
+    if (!modelId) {
+        showErrorMessage(`Please select a model id.`);
+        return;
+    }
+    // Use modelId in the API call
+    console.log("Selected model:", modelId);
     const testCases = document.getElementById("gen-testcase-count").value;
     const variations = document.getElementById("gen-nl-variation-count").value;
     let toolId;
@@ -11172,11 +11257,11 @@ async function generateTestCases() {
 
     try {
         showSuccessMessage(
-            "Test case generation started successfully for the tool.",
+            "Test case generation started successfully for the tools.",
         );
         closeModal("testcase-gen-modal");
         const response = await fetch(
-            `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+            `/toolops/validation/generate_testcases?model_id=${modelId}&tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
             {
                 method: "POST",
                 headers: {
@@ -11234,6 +11319,15 @@ async function validateTool(toolId) {
         const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
         const timeSinceLastRequest = now - lastRequest;
         const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        //Check for ModelId Selection
+        const modelId = document.getElementById("modelSelect").value;
+        if (!modelId) {
+            showErrorMessage(`Please select a model id.`);
+            return;
+        }
+        // Use modelId in the API call
+        console.log("Selected model:", modelId);
 
         if (timeSinceLastRequest < enhancedDebounceDelay) {
             console.log(
@@ -11399,7 +11493,7 @@ async function validateTool(toolId) {
         ];
 
         const validationStatusResponse = await fetchWithTimeout(
-            `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=status`,
+            `/toolops/validation/generate_testcases?model_id=${modelId}&tool_id=${toolId}&mode=status`,
             {
                 method: "POST",
                 headers: {
@@ -11437,7 +11531,7 @@ async function validateTool(toolId) {
                     );
                 } else {
                     const validationResponse = await fetchWithTimeout(
-                        `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=query`,
+                        `/toolops/validation/generate_testcases?model_id=${modelId}&tool_id=${toolId}&mode=query`,
                         {
                             method: "POST",
                             headers: {
@@ -11445,7 +11539,10 @@ async function validateTool(toolId) {
                                 Pragma: "no-cache",
                                 "Content-Type": "application/json",
                             },
-                            body: JSON.stringify({ tool_id: toolId }),
+                            body: JSON.stringify({
+                                model_id: modelId,
+                                tool_id: toolId,
+                            }),
                         },
                         toolTestState.requestTimeout, // Use the increased timeout
                     );
@@ -12244,6 +12341,15 @@ async function runToolAgentValidation(testIndex) {
         return;
     }
 
+    //Check for ModelId Selection
+    const modelId = document.getElementById("modelSelect").value;
+    if (!modelId) {
+        showErrorMessage(`Please select a model id.`);
+        return;
+    }
+    // Use modelId in the API call
+    console.log("Selected model:", modelId);
+
     try {
         // Disable run button
         if (runButton) {
@@ -12272,7 +12378,11 @@ async function runToolAgentValidation(testIndex) {
         );
         console.log("Running validation for the Tool Id: ", toolId);
 
-        const payload = { tool_id: toolId, tool_nl_test_cases: nlTestCases };
+        const payload = {
+            model_id: modelId,
+            tool_id: toolId,
+            tool_nl_test_cases: nlTestCases,
+        };
 
         // Parse custom headers from the passthrough headers field
         const requestHeaders = {

@@ -3708,6 +3708,20 @@
             <!-- Right Column -->
             <div class="space-y-6">
               <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
+                <label
+                  for="modelSelect"
+                  class="block text-sm font-medium text-gray-900 mb-2"
+                >
+                  Model ID
+                </label>
+                <select
+                  id="modelSelect"
+                  class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  <option value="" disabled selected>Loading models...</option>
+                </select>
+              </div>
+              <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-4">
                 <div class="flex items-center justify-between mb-3">
                   <h3 class="text-sm font-medium text-gray-900">Selected Tools</h3>
                   <span id="selectedCount" class="text-xs px-2 py-1 rounded-full bg-indigo-100 text-indigo-800">0</span>
