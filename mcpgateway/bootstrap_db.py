@@ -33,9 +33,11 @@ Examples:
 import asyncio
 from contextlib import contextmanager
 from importlib.resources import files
+import json
 import os
 import tempfile
 from typing import cast
+from pathlib import Path
 
 # Third-Party
 from alembic import command
@@ -280,7 +282,6 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     logger.info(f"Added {len(additonal_default_roles_data)} additional roles to default roles in bootstrap db")
                 except Exception as e:
                     logger.error(f"Failed to load mcpgateway_bootstrap_roles_in_db_file: {e}")
-
 
             # Create default roles
             created_roles = []

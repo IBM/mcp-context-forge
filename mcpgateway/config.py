@@ -459,7 +459,6 @@ class Settings(BaseSettings):
     mcpgateway_bootstrap_roles_in_db_enabled: bool = Field(default=False, description="Enable MCP Gateway add additional roles in db")
     mcpgateway_bootstrap_roles_in_db_file: str = Field(default="additional_roles_in_db.json", description="Path to add additional roles in db")
 
-
     # Elicitation support (MCP 2025-06-18)
     mcpgateway_elicitation_enabled: bool = Field(default=True, description="Enable elicitation passthrough support (MCP 2025-06-18)")
     mcpgateway_elicitation_timeout: int = Field(default=60, description="Default timeout for elicitation requests in seconds")
