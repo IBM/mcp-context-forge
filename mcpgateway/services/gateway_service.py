@@ -1834,7 +1834,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # Grandfather clause: Allow updates to existing query_param gateways
                         # unless they're trying to change credentials
                         if is_switching_to_queryparam or is_updating_queryparam_creds:
-                            raise ValueError("Query parameter authentication is disabled. " "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
+                            raise ValueError(
+                                "Query parameter authentication is disabled. "
+                                + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable."
+                            )
 
                     # Service-layer enforcement: Check host allowlist
                     if settings.insecure_queryparam_auth_allowed_hosts:
