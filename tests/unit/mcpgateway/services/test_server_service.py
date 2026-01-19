@@ -1565,3 +1565,69 @@ class TestServerService:
         assert server_read.oauth_enabled is True
         assert server_read.oauth_config is not None
         assert server_read.oauth_config["authorization_server"] == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_disable_oauth_clears_config_even_when_both_provided(self, server_service, mock_server, test_db):
+        """Test that disabling OAuth clears config even when oauth_config is also provided in the update.
+
+        This tests the fix for the logic ordering issue where oauth_enabled=False would clear
+        oauth_config, but then oauth_config would be reassigned if also present in the update.
+        """
+        # Setup server with OAuth already enabled
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {
+            "authorization_servers": ["https://original-idp.example.com"],
+            "scopes_supported": ["openid"],
+        }
+
+        # Mock get_for_update (which uses db.execute when loader options are present)
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        test_db.refresh = Mock()
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=False,
+                oauth_config=None,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        # Update with BOTH oauth_enabled=False AND a new oauth_config
+        # The expectation is that oauth_config should be cleared, NOT replaced
+        server_update = ServerUpdate(
+            oauth_enabled=False,
+            oauth_config={
+                "authorization_servers": ["https://new-idp.example.com"],
+                "scopes_supported": ["profile"],
+            },
+        )
+
+        test_user_email = "user@example.com"
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+
+        # Verify OAuth was disabled AND config was cleared (not replaced)
+        assert mock_server.oauth_enabled is False
+        assert mock_server.oauth_config is None
+        assert result.oauth_enabled is False
+        assert result.oauth_config is None

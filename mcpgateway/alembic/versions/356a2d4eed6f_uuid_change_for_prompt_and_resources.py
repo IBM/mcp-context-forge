@@ -48,8 +48,15 @@ def upgrade() -> None:
     # Non-integer includes: VARCHAR, STRING, TEXT, UUID, CHAR, etc.
     # Use exact matching to avoid false positives (e.g., POINT, INTERVAL contain "INT")
     integer_type_names = {
-        "INTEGER", "INT", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT",  # Standard SQL
-        "SERIAL", "BIGSERIAL", "SMALLSERIAL",  # PostgreSQL auto-increment
+        "INTEGER",
+        "INT",
+        "BIGINT",
+        "SMALLINT",
+        "TINYINT",
+        "MEDIUMINT",  # Standard SQL
+        "SERIAL",
+        "BIGSERIAL",
+        "SMALLSERIAL",  # PostgreSQL auto-increment
     }
 
     def is_integer_type(type_str: str) -> bool:

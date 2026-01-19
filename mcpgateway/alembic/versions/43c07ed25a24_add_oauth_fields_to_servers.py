@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """add_oauth_fields_to_servers
 
 Revision ID: 43c07ed25a24

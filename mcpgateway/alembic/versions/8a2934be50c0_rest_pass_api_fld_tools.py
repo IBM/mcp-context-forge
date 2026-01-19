@@ -63,10 +63,7 @@ def downgrade() -> None:
     # Remove Passthrough REST fields from tools table if it exists
     if inspector.has_table("tools"):
         columns = [col["name"] for col in inspector.get_columns("tools")]
-        drop_columns = [
-            "plugin_chain_post", "plugin_chain_pre", "allowlist", "expose_passthrough",
-            "timeout_ms", "header_mapping", "query_mapping", "path_template", "base_url"
-        ]
+        drop_columns = ["plugin_chain_post", "plugin_chain_pre", "allowlist", "expose_passthrough", "timeout_ms", "header_mapping", "query_mapping", "path_template", "base_url"]
         for col_name in drop_columns:
             if col_name in columns:
                 op.drop_column("tools", col_name)

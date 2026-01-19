@@ -62,6 +62,10 @@ async def server_oauth_protected_resource(
     Raises:
         HTTPException: 404 if server not found, disabled, non-public, OAuth not enabled, or not configured.
     """
+    # Check global well-known toggle first to respect admin configuration
+    if not settings.well_known_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
     # Build resource URL using proper protocol detection for proxies
     # Note: get_base_url_with_protocol uses request.base_url which already includes root_path
     base_url = get_base_url_with_protocol(request)
@@ -107,6 +111,10 @@ async def server_well_known_file(
     Raises:
         HTTPException: 404 if server not found, disabled, non-public, or file not configured.
     """
+    # Check global well-known toggle first to avoid leaking server existence
+    if not settings.well_known_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
     # Validate server exists and is publicly accessible
     server = db.get(DbServer, server_id)
 

@@ -330,6 +330,144 @@ class TestAdminServerRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code in (200, 409, 422, 500)
 
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_enable_oauth(self, mock_update_server, mock_request, mock_db):
+        """Test enabling OAuth configuration when editing a server."""
+        server_id = "00000000-0000-0000-0000-000000000001"
+        # Setup form data with OAuth enabled
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "OAuth_Server",
+                "description": "Server with OAuth",
+                "oauth_enabled": "on",
+                "oauth_authorization_server": "https://idp.example.com",
+                "oauth_scopes": "openid profile email",
+                "oauth_token_endpoint": "https://idp.example.com/oauth/token",
+                "visibility": "public",
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        # Mock successful update
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {
+            "id": server_id,
+            "name": "OAuth_Server",
+            "oauth_enabled": True,
+            "oauth_config": {
+                "authorization_servers": ["https://idp.example.com"],
+                "scopes_supported": ["openid", "profile", "email"],
+                "token_endpoint": "https://idp.example.com/oauth/token",
+            },
+        }
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, "test-user")
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        # Verify update_server was called with OAuth config
+        mock_update_server.assert_called_once()
+        call_args = mock_update_server.call_args
+        server_update = call_args[0][2]  # Third positional arg is the ServerUpdate
+        assert server_update.oauth_enabled is True
+        assert server_update.oauth_config is not None
+        assert "authorization_servers" in server_update.oauth_config
+        assert server_update.oauth_config["authorization_servers"] == ["https://idp.example.com"]
+        assert server_update.oauth_config["scopes_supported"] == ["openid", "profile", "email"]
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_disable_oauth(self, mock_update_server, mock_request, mock_db):
+        """Test disabling OAuth configuration when editing a server."""
+        server_id = "00000000-0000-0000-0000-000000000002"
+        # Setup form data with OAuth disabled (checkbox not checked = not in form)
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "OAuth_Disabled_Server",
+                "description": "Server with OAuth disabled",
+                # oauth_enabled is NOT present (checkbox unchecked)
+                "visibility": "public",
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        # Mock successful update
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {
+            "id": server_id,
+            "name": "OAuth_Disabled_Server",
+            "oauth_enabled": False,
+            "oauth_config": None,
+        }
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, "test-user")
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        # Verify update_server was called with OAuth disabled
+        mock_update_server.assert_called_once()
+        call_args = mock_update_server.call_args
+        server_update = call_args[0][2]  # Third positional arg is the ServerUpdate
+        assert server_update.oauth_enabled is False
+        assert server_update.oauth_config is None
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_oauth_without_authorization_server(self, mock_update_server, mock_request, mock_db):
+        """Test that OAuth is disabled when enabled but no authorization server provided."""
+        server_id = "00000000-0000-0000-0000-000000000003"
+        # Setup form data with OAuth enabled but missing authorization server
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "OAuth_Missing_Server",
+                "description": "Server with incomplete OAuth",
+                "oauth_enabled": "on",
+                "oauth_authorization_server": "",  # Empty!
+                "oauth_scopes": "openid",
+                "visibility": "public",
+                "associatedTools": [],
+                "associatedResources": [],
+                "associatedPrompts": [],
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        # Mock successful update
+        mock_server_read = MagicMock()
+        mock_server_read.model_dump.return_value = {
+            "id": server_id,
+            "name": "OAuth_Missing_Server",
+            "oauth_enabled": False,
+            "oauth_config": None,
+        }
+        mock_update_server.return_value = mock_server_read
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, "test-user")
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 200
+
+        # Verify OAuth was disabled due to missing authorization server
+        mock_update_server.assert_called_once()
+        call_args = mock_update_server.call_args
+        server_update = call_args[0][2]  # Third positional arg is the ServerUpdate
+        assert server_update.oauth_enabled is False
+        assert server_update.oauth_config is None
+
     @patch.object(ServerService, "toggle_server_status")
     async def test_admin_toggle_server_with_exception(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling server status with exception handling."""

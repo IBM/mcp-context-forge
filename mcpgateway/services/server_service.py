@@ -1222,16 +1222,22 @@ class ServerService:
                 server.tags = server_update.tags
 
             # Update OAuth 2.0 configuration if provided
+            # Track if OAuth is being explicitly disabled to prevent config re-assignment
+            oauth_being_disabled = server_update.oauth_enabled is not None and not server_update.oauth_enabled
+
             if server_update.oauth_enabled is not None:
                 server.oauth_enabled = server_update.oauth_enabled
-                # If OAuth is being disabled, also clear the config
-                if not server_update.oauth_enabled:
+                # If OAuth is being disabled, clear the config
+                if oauth_being_disabled:
                     server.oauth_config = None
-            # Update oauth_config if explicitly provided (check if it was set in the update)
-            if hasattr(server_update, "model_fields_set") and "oauth_config" in server_update.model_fields_set:
-                server.oauth_config = server_update.oauth_config
-            elif server_update.oauth_config is not None:
-                server.oauth_config = server_update.oauth_config
+
+            # Only update oauth_config if OAuth is not being explicitly disabled
+            # This prevents the case where oauth_enabled=False and oauth_config are both provided
+            if not oauth_being_disabled:
+                if hasattr(server_update, "model_fields_set") and "oauth_config" in server_update.model_fields_set:
+                    server.oauth_config = server_update.oauth_config
+                elif server_update.oauth_config is not None:
+                    server.oauth_config = server_update.oauth_config
 
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)

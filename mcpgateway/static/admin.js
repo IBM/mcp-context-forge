@@ -6081,6 +6081,73 @@ async function editServer(serverId) {
             iconField.value = server.icon || "";
         }
 
+        // Set OAuth 2.0 configuration fields (RFC 9728)
+        const oauthEnabledCheckbox = safeGetElement(
+            "edit-server-oauth-enabled",
+        );
+        const oauthConfigSection = safeGetElement(
+            "edit-server-oauth-config-section",
+        );
+        const oauthAuthServerField = safeGetElement(
+            "edit-server-oauth-authorization-server",
+        );
+        const oauthScopesField = safeGetElement("edit-server-oauth-scopes");
+        const oauthTokenEndpointField = safeGetElement(
+            "edit-server-oauth-token-endpoint",
+        );
+
+        if (oauthEnabledCheckbox) {
+            oauthEnabledCheckbox.checked = server.oauth_enabled || false;
+        }
+
+        // Show/hide OAuth config section based on oauth_enabled state
+        if (oauthConfigSection) {
+            if (server.oauth_enabled) {
+                oauthConfigSection.classList.remove("hidden");
+            } else {
+                oauthConfigSection.classList.add("hidden");
+            }
+        }
+
+        // Populate OAuth config fields if oauth_config exists
+        if (server.oauth_config) {
+            // Extract authorization server (may be in authorization_servers array or authorization_server string)
+            let authServer = "";
+            if (
+                server.oauth_config.authorization_servers &&
+                server.oauth_config.authorization_servers.length > 0
+            ) {
+                authServer = server.oauth_config.authorization_servers[0];
+            } else if (server.oauth_config.authorization_server) {
+                authServer = server.oauth_config.authorization_server;
+            }
+            if (oauthAuthServerField) {
+                oauthAuthServerField.value = authServer;
+            }
+
+            // Extract scopes (may be scopes_supported array or scopes array)
+            const scopes =
+                server.oauth_config.scopes_supported ||
+                server.oauth_config.scopes ||
+                [];
+            if (oauthScopesField) {
+                oauthScopesField.value = Array.isArray(scopes)
+                    ? scopes.join(" ")
+                    : scopes;
+            }
+
+            // Extract token endpoint
+            if (oauthTokenEndpointField) {
+                oauthTokenEndpointField.value =
+                    server.oauth_config.token_endpoint || "";
+            }
+        } else {
+            // Clear OAuth config fields when no config exists
+            if (oauthAuthServerField) oauthAuthServerField.value = "";
+            if (oauthScopesField) oauthScopesField.value = "";
+            if (oauthTokenEndpointField) oauthTokenEndpointField.value = "";
+        }
+
         // Store server data for modal population
         window.currentEditingServer = server;
 

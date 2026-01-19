@@ -519,3 +519,82 @@ class TestVirtualServerWellKnownFiles:
         response = await client.get(f"/servers/{server_id}/.well-known/robots.txt")
         assert response.status_code == 200
         assert "text/plain" in response.headers["content-type"]
+
+
+class TestWellKnownDisabledScenarios:
+    """Tests for well_known_enabled=false scenarios on server-scoped endpoints."""
+
+    async def _create_server(self, client: AsyncClient, payload: dict) -> str:
+        """Helper to create a server and return its ID."""
+        response = await client.post("/servers", json=payload, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 201, f"Failed to create server: {response.text}"
+        return response.json()["id"]
+
+    async def test_oauth_endpoint_returns_404_when_well_known_disabled(self, client: AsyncClient):
+        """OAuth endpoint returns 404 when well_known_enabled is false."""
+        server_id = await self._create_server(
+            client,
+            {
+                "server": {
+                    "name": "server_oauth_wellknown_disabled",
+                    "description": "Server with OAuth for well-known disabled test",
+                    "oauth_enabled": True,
+                    "oauth_config": {
+                        "authorization_server": "https://idp.example.com",
+                    },
+                },
+                "team_id": None,
+                "visibility": "public",
+            },
+        )
+
+        # Temporarily disable well_known_enabled
+        original_value = settings.well_known_enabled
+        settings.well_known_enabled = False
+        try:
+            response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+            assert response.status_code == 404
+            # Should return generic "Not found" to avoid leaking information
+            assert response.json()["detail"] == "Not found"
+        finally:
+            settings.well_known_enabled = original_value
+
+    async def test_robots_txt_returns_404_when_well_known_disabled(self, client: AsyncClient):
+        """robots.txt returns 404 when well_known_enabled is false."""
+        server_id = await self._create_server(
+            client,
+            {
+                "server": {
+                    "name": "server_robots_wellknown_disabled",
+                    "description": "Server for well-known disabled test",
+                },
+                "team_id": None,
+                "visibility": "public",
+            },
+        )
+
+        # Temporarily disable well_known_enabled
+        original_value = settings.well_known_enabled
+        settings.well_known_enabled = False
+        try:
+            response = await client.get(f"/servers/{server_id}/.well-known/robots.txt")
+            assert response.status_code == 404
+            # Should return generic "Not found" to avoid leaking information
+            assert response.json()["detail"] == "Not found"
+        finally:
+            settings.well_known_enabled = original_value
+
+    async def test_nonexistent_server_returns_same_error_when_well_known_disabled(self, client: AsyncClient):
+        """Non-existent server returns same error as valid server when well_known_enabled is false."""
+        nonexistent_id = "00000000000000000000000000000000"
+
+        # Temporarily disable well_known_enabled
+        original_value = settings.well_known_enabled
+        settings.well_known_enabled = False
+        try:
+            response = await client.get(f"/servers/{nonexistent_id}/.well-known/robots.txt")
+            assert response.status_code == 404
+            # Both valid and invalid servers should return "Not found" - no information leakage
+            assert response.json()["detail"] == "Not found"
+        finally:
+            settings.well_known_enabled = original_value
