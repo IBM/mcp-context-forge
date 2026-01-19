@@ -71,6 +71,11 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
+    """Return the names available from this package.
+
+    Combines existing globals with lazily-exported service symbols so tools
+    like ``dir(mcp_gateway.services)`` and static analyzers see the full API.
+    """
     return sorted(list(globals().keys()) + list(_LAZY_ATTRS.keys()))
 
 
