@@ -88,6 +88,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
+from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Cache import (lazy to avoid circular dependencies)
@@ -520,6 +521,7 @@ class ToolService:
                 "passthrough_headers": gateway.passthrough_headers or [],
                 "auth_type": gateway.auth_type,
                 "auth_value": gateway.auth_value,
+                "auth_query_params": getattr(gateway, "auth_query_params", None),  # Query param auth
                 "oauth_config": getattr(gateway, "oauth_config", None),
                 "ca_certificate": getattr(gateway, "ca_certificate", None),
                 "ca_certificate_sig": getattr(gateway, "ca_certificate_sig", None),
@@ -676,12 +678,12 @@ class ToolService:
                 tool_dict["auth"] = {
                     "auth_type": "basic",
                     "username": username,
-                    "password": "********" if password else None,
+                    "password": settings.masked_auth_value if password else None,
                 }
             elif tool.auth_type == "bearer":
                 tool_dict["auth"] = {
                     "auth_type": "bearer",
-                    "token": "********" if decoded_auth_value["Authorization"] else None,
+                    "token": settings.masked_auth_value if decoded_auth_value["Authorization"] else None,
                 }
             elif tool.auth_type == "authheaders":
                 # Get first key
@@ -689,7 +691,7 @@ class ToolService:
                 tool_dict["auth"] = {
                     "auth_type": "authheaders",
                     "auth_header_key": first_key,
-                    "auth_header_value": "********" if decoded_auth_value[first_key] else None,
+                    "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,
                 }
             else:
                 tool_dict["auth"] = None
@@ -2565,11 +2567,29 @@ class ToolService:
         gateway_name = gateway_payload.get("name") if has_gateway else None
         gateway_auth_type = gateway_payload.get("auth_type") if has_gateway else None
         gateway_auth_value = gateway_payload.get("auth_value") if has_gateway else None
+        gateway_auth_query_params = gateway_payload.get("auth_query_params") if has_gateway else None
         gateway_oauth_config = gateway_payload.get("oauth_config") if has_gateway else None
         gateway_ca_cert = gateway_payload.get("ca_certificate") if has_gateway else None
         gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
+
+        # Decrypt and apply query param auth to URL if applicable
+        gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
+        if gateway_auth_type == "query_param" and gateway_auth_query_params:
+            # Decrypt the query param values
+            gateway_auth_query_params_decrypted = {}
+            for param_key, encrypted_value in gateway_auth_query_params.items():
+                if encrypted_value:
+                    try:
+                        decrypted = decode_auth(encrypted_value)
+                        gateway_auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                    except Exception:  # noqa: S110 - intentionally skip failed decryptions
+                        # Silently skip params that fail decryption (may be corrupted or use old key)
+                        logger.debug(f"Failed to decrypt query param '{param_key}' for tool invocation")
+            # Apply query params to gateway URL
+            if gateway_auth_query_params_decrypted and gateway_url:
+                gateway_url = apply_query_param_auth(gateway_url, gateway_auth_query_params_decrypted)
 
         # Create Pydantic models for plugins BEFORE HTTP calls (use ORM objects while still valid)
         # This prevents lazy loading during HTTP calls
@@ -2906,13 +2926,15 @@ class ToolService:
                         # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
+                        # Sanitize server_url to redact sensitive query params from logs
+                        server_url_sanitized = sanitize_url_for_logging(server_url, gateway_auth_query_params_decrypted)
                         mcp_start_time = time.time()
                         structured_logger.log(
                             level="INFO",
                             message=f"MCP tool call started: {tool_name_original}",
                             component="tool_service",
                             correlation_id=correlation_id,
-                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "sse"},
+                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url_sanitized, "transport": "sse"},
                         )
 
                         try:
@@ -2969,13 +2991,15 @@ class ToolService:
                                     root_cause = root_cause.exceptions[0]
                             # Log failed MCP call (using local variables)
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            # Sanitize error message to prevent URL secrets from leaking in logs
+                            sanitized_error = sanitize_exception_message(str(root_cause), gateway_auth_query_params_decrypted)
                             structured_logger.log(
                                 level="ERROR",
                                 message=f"MCP tool call failed: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={"error_type": type(root_cause).__name__, "error_message": str(root_cause)},
+                                error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
                             )
                             raise
@@ -3003,13 +3027,15 @@ class ToolService:
                         # still logged locally for tracing within the gateway.
 
                         # Log MCP call start (using local variables)
+                        # Sanitize server_url to redact sensitive query params from logs
+                        server_url_sanitized = sanitize_url_for_logging(server_url, gateway_auth_query_params_decrypted)
                         mcp_start_time = time.time()
                         structured_logger.log(
                             level="INFO",
                             message=f"MCP tool call started: {tool_name_original}",
                             component="tool_service",
                             correlation_id=correlation_id,
-                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url, "transport": "streamablehttp"},
+                            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "tool_id": tool_id, "server_url": server_url_sanitized, "transport": "streamablehttp"},
                         )
 
                         try:
@@ -3066,13 +3092,15 @@ class ToolService:
                                     root_cause = root_cause.exceptions[0]
                             # Log failed MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            # Sanitize error message to prevent URL secrets from leaking in logs
+                            sanitized_error = sanitize_exception_message(str(root_cause), gateway_auth_query_params_decrypted)
                             structured_logger.log(
                                 level="ERROR",
                                 message=f"MCP tool call failed: {tool_name_original}",
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={"error_type": type(root_cause).__name__, "error_message": str(root_cause)},
+                                error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp"},
                             )
                             raise

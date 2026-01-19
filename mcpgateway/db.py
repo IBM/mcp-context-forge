@@ -4334,8 +4334,14 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="Encrypted query parameters for auth. Format: {'param_name': 'encrypted_value'}",
+    )
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
@@ -4453,8 +4459,14 @@ class A2AAgent(Base):
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="Encrypted query parameters for auth. Format: {'param_name': 'encrypted_value'}",
+    )
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")

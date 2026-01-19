@@ -5102,7 +5102,50 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <option value="bearer">Bearer Token</option>
                   <option value="authheaders">Custom Headers</option>
                   <option value="oauth">OAuth 2.0</option>
+                  <option value="query_param">Query Parameter (INSECURE)</option>
                 </select>
+              </div>
+              <div id="auth-query_param-fields-gw" style="display: none">
+                <div class="p-3 mb-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-md">
+                  <p class="text-xs text-amber-700 dark:text-amber-400">
+                    <strong>Security Warning:</strong> API keys in URLs may appear in proxy logs, browser history, and server access logs.
+                    Only use when the upstream server requires this authentication method.
+                  </p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >Query Parameter Name</label
+                  >
+                  <input
+                    type="text"
+                    name="auth_query_param_key"
+                    placeholder="e.g., tavilyApiKey"
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                </div>
+                <div class="mt-2">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >API Key Value</label
+                  >
+                  <div class="relative">
+                    <input
+                      type="password"
+                      name="auth_query_param_value"
+                      id="auth-query-param-value-gw"
+                      data-sensitive-label="API key"
+                      class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
+                    />
+                    <button
+                      type="button"
+                      class="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-indigo-300"
+                      onclick="toggleInputMask('auth-query-param-value-gw', this)"
+                      aria-pressed="false"
+                      aria-label="Show API key"
+                    >
+                      Show
+                    </button>
+                  </div>
+                </div>
               </div>
               <div id="auth-basic-fields-gw" style="display: none">
                 <div>
@@ -9358,7 +9401,50 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <option value="bearer">Bearer Token</option>
                         <option value="authheaders">Custom Headers</option>
                         <option value="oauth">OAuth 2.0</option>
+                        <option value="query_param">Query Parameter (INSECURE)</option>
                       </select>
+                    </div>
+                    <div id="auth-query_param-fields-gw-edit" style="display: none">
+                      <div class="p-3 mb-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-md">
+                        <p class="text-xs text-amber-700 dark:text-amber-400">
+                          <strong>Security Warning:</strong> API keys in URLs may appear in proxy logs, browser history, and server access logs.
+                          Only use when the upstream server requires this authentication method.
+                        </p>
+                      </div>
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >Query Parameter Name</label
+                        >
+                        <input
+                          type="text"
+                          name="auth_query_param_key"
+                          placeholder="e.g., tavilyApiKey"
+                          class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                      </div>
+                      <div class="mt-2">
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >API Key Value</label
+                        >
+                        <div class="relative">
+                          <input
+                            type="password"
+                            name="auth_query_param_value"
+                            id="auth-query-param-value-gw-edit"
+                            data-sensitive-label="API key"
+                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
+                          />
+                          <button
+                            type="button"
+                            class="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-indigo-300"
+                            onclick="toggleInputMask('auth-query-param-value-gw-edit', this)"
+                            aria-pressed="false"
+                            aria-label="Show API key"
+                          >
+                            Show
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     <div id="auth-basic-fields-gw-edit" style="display: none">
                       <div>
