@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
-import json
+import orjson
 import logging
 import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
@@ -337,8 +337,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         # Create a stable, deterministic hash using JSON serialization
         # Prevents delimiter-collision or injection issues present in string joining
-        serialized_identity = json.dumps(identity_parts)
-        return hashlib.sha256(serialized_identity.encode()).hexdigest()
+        serialized_identity = orjson.dumps(identity_parts)
+        return hashlib.sha256(serialized_identity).hexdigest()
 
     def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType, user_identity: str) -> PoolKey:
         """Create composite pool key from URL, identity, transport type, and user identity."""
