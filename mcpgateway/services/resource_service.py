@@ -1637,6 +1637,7 @@ class ResourceService:
                         gateway_auth_query_params = getattr(gateway, "auth_query_params", None)
 
                         # Apply query param auth to URL if applicable
+                        auth_query_params_decrypted: Optional[Dict[str, str]] = None
                         if gateway_auth_type == "query_param" and gateway_auth_query_params:
                             auth_query_params_decrypted = {}
                             for param_key, encrypted_value in gateway_auth_query_params.items():
@@ -1732,7 +1733,7 @@ class ResourceService:
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
-                                sanitized_error = sanitize_exception_message(str(e))
+                                sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 logger.debug(f"Exception while connecting to sse gateway: {sanitized_error}")
                                 return None
 
@@ -1808,7 +1809,7 @@ class ResourceService:
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
-                                sanitized_error = sanitize_exception_message(str(e))
+                                sanitized_error = sanitize_exception_message(str(e), auth_query_params_decrypted)
                                 logger.debug(f"Exception while connecting to streamablehttp gateway: {sanitized_error}")
                                 return None
 
