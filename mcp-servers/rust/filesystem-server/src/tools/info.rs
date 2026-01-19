@@ -41,7 +41,7 @@ pub async fn get_file_info(sandbox: &Sandbox, path: &str) -> Result<String> {
         modified,
     };
 
-    Ok(serde_json::to_string(&result).context("failed to serialize file metadata to JSON")?)
+    serde_json::to_string(&result).context("failed to serialize file metadata to JSON")
 }
 
 #[cfg(test)]

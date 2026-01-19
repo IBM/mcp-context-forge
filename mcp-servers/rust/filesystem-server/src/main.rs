@@ -12,7 +12,7 @@ use std::sync::Arc;
 static DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:8084";
 static APP_NAME: &str = env!("CARGO_PKG_NAME");
 static APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-static MAX_FILE_SIZE: u64 = 1 * 1024 * 1024;
+static MAX_FILE_SIZE: u64 = 1024 * 1024;
 
 pub fn init_tracing() {
     let _ = tracing_subscriber::fmt()

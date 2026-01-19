@@ -179,13 +179,13 @@ impl FilesystemServer {
         &self,
         Parameters(CreateFileParameters { path, content }): Parameters<CreateFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = write::write_file(&self.ctx.sandbox, &path, content)
+        write::write_file(&self.ctx.sandbox, &path, content)
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Error writing file '{}': {}", path, e), None)
             })?;
 
-        let content = Content::json(&result).map_err(|e| {
+        let content = Content::json(()).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file content to JSON: {}", e),
                 None,
@@ -228,7 +228,7 @@ impl FilesystemServer {
             destination,
         }): Parameters<MoveFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = edit::move_file(&self.ctx.sandbox, &source, &destination)
+        edit::move_file(&self.ctx.sandbox, &source, &destination)
             .await
             .map_err(|e| {
                 McpError::internal_error(
@@ -240,7 +240,7 @@ impl FilesystemServer {
                 )
             })?;
 
-        let content = Content::json(&result).map_err(|e| {
+        let content = Content::json(()).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file content to JSON: {}", e),
                 None,

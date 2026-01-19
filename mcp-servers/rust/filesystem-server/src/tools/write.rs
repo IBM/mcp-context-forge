@@ -21,7 +21,7 @@ pub async fn write_file(sandbox: &Sandbox, path: &str, content: String) -> Resul
         .await?;
 
     let temp_name = canon_parent.join(format!("tempfile-{}", Uuid::new_v4()));
-    let canon_filepath = canon_parent.join(&filename);
+    let canon_filepath = canon_parent.join(filename);
 
     if let Err(e) = fs::write(&temp_name, &content).await {
         tracing::error!("Failed to write temp file: {}", e);
