@@ -274,7 +274,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                             additional_default_roles_path = Path(__file__).parent.parent.parent / settings.mcpgateway_bootstrap_roles_in_db_file
 
                     if not additional_default_roles_path.exists():
-                        logger.warning(f"Catalog file not found: {additional_default_roles_path}")
+                        logger.warning(f"Additional roles file not found: {additional_default_roles_path}")
                     else:
                         with open(additional_default_roles_path, "r", encoding="utf-8") as f:
                             additional_default_roles_data = json.load(f)
