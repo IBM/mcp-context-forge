@@ -2449,6 +2449,7 @@ class ToolService:
                 If provided, tool must be attached to this server.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
+            meta_data: Optional metadata dictionary for additional context (e.g., request ID).
 
         Returns:
             Tool invocation result.

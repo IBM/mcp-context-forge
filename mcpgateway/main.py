@@ -5386,7 +5386,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
-            
+
             meta_data = params.get("_meta", None)
 
             try:

@@ -1412,6 +1412,8 @@ class ResourceService:
                 Can be a string (email) or a dict with an 'email' key.
                 Defaults to "anonymous" for pool isolation if not provided.
                 OAuth token lookup always uses platform_admin_email (service account).
+            meta_data (Optional[Dict[str, Any]]):
+                Additional metadata to pass to the gateway during invocation.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` if the
@@ -1704,6 +1706,9 @@ class ResourceService:
                                     Optional dictionary of headers (e.g., OAuth Bearer tokens) to
                                     include in the SSE connection request. Defaults to an empty
                                     dictionary when not provided.
+                                meta_data (Optional[Dict[str, Any]]):
+                                    Optional metadata dictionary to pass to the gateway during
+                                    resource reading.
 
                             Returns:
                                 str | None:
@@ -1782,6 +1787,8 @@ class ResourceService:
                                 authentication (Optional[Dict[str, str]]):
                                     Optional dictionary of authentication headers (e.g., API keys or
                                     Bearer tokens). Defaults to an empty dictionary when not provided.
+                                meta_data (Optional[Dict[str, Any]]):
+                                    Optional metadata dictionary to pass to the gateway
 
                             Returns:
                                 str | None:
@@ -1913,6 +1920,7 @@ class ResourceService:
                 None = unrestricted admin, [] = public-only, [...] = team-scoped.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
+            meta_data: Optional metadata dictionary to pass to the gateway during resource reading.
 
         Returns:
             Resource content object
