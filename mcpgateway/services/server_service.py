@@ -832,7 +832,11 @@ class ServerService:
         # Team names are loaded via joinedload(DbServer.email_team)
         result = []
         for s in servers_db:
-            result.append(self.convert_server_to_read(s, include_metrics=False))
+            try:
+                result.append(self.convert_server_to_read(s, include_metrics=False))
+            except Exception as e:
+                logger.error(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining servers instead of failing completely
 
         # Return appropriate format based on pagination type
         if page is not None:

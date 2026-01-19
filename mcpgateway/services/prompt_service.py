@@ -1062,8 +1062,12 @@ class PromptService:
         # Convert to PromptRead (common for both pagination types)
         result = []
         for s in prompts_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self.convert_prompt_to_read(s, include_metrics=False))
+            try:
+                s.team = team_map.get(s.team_id) if s.team_id else None
+                result.append(self.convert_prompt_to_read(s, include_metrics=False))
+            except Exception as e:
+                logger.error(f"Failed to convert prompt {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining prompts instead of failing completely
         # Return appropriate format based on pagination type
         if page is not None:
             # Page-based format

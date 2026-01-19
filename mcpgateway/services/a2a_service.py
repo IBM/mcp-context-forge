@@ -687,8 +687,12 @@ class A2AAgentService:
         # Convert to A2AAgentRead (common for both pagination types)
         result = []
         for s in a2a_agents_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
+            try:
+                s.team = team_map.get(s.team_id) if s.team_id else None
+                result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
+            except Exception as e:
+                logger.error(f"Failed to convert A2A agent {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining agents instead of failing completely
 
         # Return appropriate format based on pagination type
         if page is not None:

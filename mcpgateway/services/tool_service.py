@@ -1792,7 +1792,11 @@ class ToolService:
         # Team names are loaded via joinedload(DbTool.email_team)
         result = []
         for s in tools_db:
-            result.append(self.convert_tool_to_read(s, include_metrics=False, include_auth=False))
+            try:
+                result.append(self.convert_tool_to_read(s, include_metrics=False, include_auth=False))
+            except Exception as e:
+                logger.error(f"Failed to convert tool {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining tools instead of failing completely
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -1918,7 +1922,11 @@ class ToolService:
 
         result = []
         for tool in tools:
-            result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics, include_auth=False))
+            try:
+                result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics, include_auth=False))
+            except Exception as e:
+                logger.error(f"Failed to convert tool {getattr(tool, 'id', 'unknown')} ({getattr(tool, 'name', 'unknown')}): {e}")
+                # Continue with remaining tools instead of failing completely
 
         return result
 
@@ -2045,7 +2053,11 @@ class ToolService:
         # Convert to ToolRead objects
         result = []
         for tool in tools:
-            result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False))
+            try:
+                result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False))
+            except Exception as e:
+                logger.error(f"Failed to convert tool {getattr(tool, 'id', 'unknown')} ({getattr(tool, 'name', 'unknown')}): {e}")
+                # Continue with remaining tools instead of failing completely
 
         next_cursor = None
         # Generate cursor if there are more results (cursor-based pagination)

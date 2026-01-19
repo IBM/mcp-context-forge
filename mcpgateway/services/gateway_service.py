@@ -1479,8 +1479,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Convert to GatewayRead (common for both pagination types)
         result = []
         for s in gateways_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self.convert_gateway_to_read(s))
+            try:
+                s.team = team_map.get(s.team_id) if s.team_id else None
+                result.append(self.convert_gateway_to_read(s))
+            except Exception as e:
+                logger.error(f"Failed to convert gateway {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining gateways instead of failing completely
 
         # Return appropriate format based on pagination type
         if page is not None:
