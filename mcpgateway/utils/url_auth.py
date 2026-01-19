@@ -15,6 +15,7 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
+import re
 from typing import Dict, FrozenSet, Optional
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -154,3 +155,47 @@ def sanitize_url_for_logging(
     # Reconstruct URL
     new_parsed = parsed._replace(query=new_query)
     return urlunparse(new_parsed)
+
+
+# Regex to match URLs in text (http:// or https://)
+_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+")
+
+
+def sanitize_exception_message(
+    message: str,
+    auth_query_params: Optional[Dict[str, str]] = None,
+) -> str:
+    """Sanitize URLs embedded within exception messages.
+
+    Exception messages from HTTP libraries (httpx, aiohttp, etc.) often include
+    the full URL, which may contain sensitive query parameters. This function
+    finds and sanitizes all URLs in the message.
+
+    Args:
+        message: The exception message (str(e)) to sanitize.
+        auth_query_params: Optional dict of known sensitive param names.
+
+    Returns:
+        Message with all embedded URLs sanitized.
+
+    Example:
+        >>> sanitize_exception_message(
+        ...     "Connection failed: https://api.tavily.com/mcp?tavilyApiKey=secret123",
+        ...     {"tavilyApiKey": "secret123"}
+        ... )
+        'Connection failed: https://api.tavily.com/mcp?tavilyApiKey=REDACTED'
+
+        >>> sanitize_exception_message(
+        ...     "Error connecting to https://api.example.com?api_key=abc&q=test"
+        ... )
+        'Error connecting to https://api.example.com?api_key=REDACTED&q=test'
+    """
+    if not message:
+        return message
+
+    def replace_url(match: re.Match) -> str:
+        """Replace a matched URL with its sanitized version."""
+        url = match.group(0)
+        return sanitize_url_for_logging(url, auth_query_params)
+
+    return _URL_PATTERN.sub(replace_url, message)

@@ -14,6 +14,7 @@ import pytest
 from mcpgateway.utils.url_auth import (
     STATIC_SENSITIVE_PARAMS,
     apply_query_param_auth,
+    sanitize_exception_message,
     sanitize_url_for_logging,
 )
 
@@ -173,3 +174,72 @@ class TestStaticSensitiveParams:
     def test_is_frozenset(self):
         """Static list is immutable frozenset."""
         assert isinstance(STATIC_SENSITIVE_PARAMS, frozenset)
+
+
+class TestSanitizeExceptionMessage:
+    """Test cases for sanitize_exception_message function."""
+
+    def test_empty_message_returns_empty(self):
+        """Empty message returns empty string."""
+        assert sanitize_exception_message("") == ""
+
+    def test_none_message_returns_none(self):
+        """None message returns None (falsy passthrough)."""
+        assert sanitize_exception_message(None) is None
+
+    def test_message_without_url_unchanged(self):
+        """Message without URLs returns unchanged."""
+        msg = "Connection refused: server not responding"
+        assert sanitize_exception_message(msg) == msg
+
+    def test_sanitizes_single_url_with_static_sensitive_param(self):
+        """Sanitize URL with static sensitive param in exception message."""
+        msg = "Connection failed: https://api.example.com?api_key=secret123"
+        result = sanitize_exception_message(msg)
+        assert "api_key=REDACTED" in result
+        assert "secret123" not in result
+        assert result.startswith("Connection failed:")
+
+    def test_sanitizes_url_with_gateway_specific_param(self):
+        """Sanitize URL with gateway-specific auth param."""
+        msg = "Error connecting to https://api.tavily.com/mcp?tavilyApiKey=mykey123"
+        result = sanitize_exception_message(msg, {"tavilyApiKey": "mykey123"})
+        assert "tavilyApiKey=REDACTED" in result
+        assert "mykey123" not in result
+
+    def test_sanitizes_multiple_urls_in_message(self):
+        """Sanitize multiple URLs in a single exception message."""
+        msg = "Redirect from https://api.example.com?token=tok1 to https://api.example.com/v2?api_key=key2"
+        result = sanitize_exception_message(msg)
+        assert "token=REDACTED" in result
+        assert "api_key=REDACTED" in result
+        assert "tok1" not in result
+        assert "key2" not in result
+
+    def test_preserves_non_sensitive_params_in_url(self):
+        """Non-sensitive params in URLs are preserved."""
+        msg = "Request to https://api.example.com?page=1&api_key=secret failed"
+        result = sanitize_exception_message(msg)
+        assert "page=1" in result
+        assert "api_key=REDACTED" in result
+        assert "secret" not in result
+
+    def test_handles_url_at_end_of_message(self):
+        """Handle URL at the end of message without trailing space."""
+        msg = "Failed to connect to https://api.example.com?token=abc123"
+        result = sanitize_exception_message(msg)
+        assert "token=REDACTED" in result
+        assert "abc123" not in result
+
+    def test_handles_url_without_query_params(self):
+        """URL without query params passes through unchanged."""
+        msg = "Connection to https://api.example.com/mcp failed"
+        result = sanitize_exception_message(msg)
+        assert result == msg
+
+    def test_handles_http_url(self):
+        """Handle non-HTTPS (HTTP) URLs as well."""
+        msg = "Error: http://localhost:8000?api_key=localkey"
+        result = sanitize_exception_message(msg)
+        assert "api_key=REDACTED" in result
+        assert "localkey" not in result

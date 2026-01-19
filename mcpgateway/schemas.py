@@ -3211,8 +3211,13 @@ class GatewayRead(BaseModelWithConfigDict):
         elif hasattr(data, "auth_query_params"):
             auth_query_params = getattr(data, "auth_query_params", None)
             if auth_query_params and isinstance(auth_query_params, dict):
-                # Convert ORM to dict for modification
+                # Convert ORM to dict for modification, preserving all attributes
+                # Start with table columns
                 data_dict = {c.name: getattr(data, c.name) for c in data.__table__.columns}
+                # Preserve dynamically added attributes like 'team' (from relationships)
+                for attr in ["team"]:
+                    if hasattr(data, attr):
+                        data_dict[attr] = getattr(data, attr)
                 first_key = next(iter(auth_query_params.keys()), None)
                 if first_key:
                     data_dict["auth_query_param_key"] = first_key

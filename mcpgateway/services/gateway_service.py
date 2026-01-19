@@ -89,6 +89,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
+from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, register_gateway_capabilities_for_notifications, TransportType
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -104,7 +105,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_url_for_logging
+from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -3337,9 +3338,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 Returns:
                     httpx.AsyncClient: Configured HTTPX async client
                 """
-                # First-Party
-                from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
-
                 return httpx.AsyncClient(
                     verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=True,
@@ -3354,9 +3352,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 )
 
             # Use isolated client for gateway health checks (each gateway may have custom CA cert)
-            # First-Party
-            from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
-
             # Use admin timeout for health checks (fail fast, don't wait 120s for slow upstreams)
             # Pass ssl_context if present, otherwise let get_isolated_http_client use skip_ssl_verify setting
             async with get_isolated_http_client(timeout=settings.httpx_admin_read_timeout, verify=ssl_context) as client:
@@ -3762,7 +3757,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return capabilities, tools, resources, prompts
         except Exception as e:
             sanitized_url = sanitize_url_for_logging(url, auth_query_params)
-            logger.error(f"Gateway initialization failed for {sanitized_url}: {str(e)}", exc_info=True)
+            sanitized_error = sanitize_exception_message(str(e), auth_query_params)
+            logger.error(f"Gateway initialization failed for {sanitized_url}: {sanitized_error}", exc_info=True)
             raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
@@ -5060,9 +5056,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     return capabilities, tools, resources, prompts
         except Exception as e:
             # Note: This function is for OAuth servers only, which don't use query param auth
+            # Still sanitize in case exception contains URL with static sensitive params
             sanitized_url = sanitize_url_for_logging(server_url)
-            logger.error(f"SSE connection error details: {type(e).__name__}: {str(e)}", exc_info=True)
-            raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {str(e)}")
+            sanitized_error = sanitize_exception_message(str(e))
+            logger.error(f"SSE connection error details: {type(e).__name__}: {sanitized_error}", exc_info=True)
+            raise GatewayConnectionError(f"Failed to connect to SSE server at {sanitized_url}: {sanitized_error}")
 
     async def connect_to_sse_server(
         self,
@@ -5104,9 +5102,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
-            # First-Party
-            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
-
             if ca_certificate:
                 ctx = self.create_ssl_context(ca_certificate)
             else:
@@ -5267,9 +5262,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             Returns:
                 httpx.AsyncClient: Configured HTTPX async client
             """
-            # First-Party
-            from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
-
             if ca_certificate:
                 ctx = self.create_ssl_context(ca_certificate)
             else:
