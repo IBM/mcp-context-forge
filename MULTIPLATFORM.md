@@ -5,6 +5,7 @@ This project supports building container images for multiple CPU architectures:
 - **amd64** (x86_64) - Intel/AMD processors
 - **arm64** (aarch64) - Apple Silicon, AWS Graviton, Raspberry Pi 4+
 - **s390x** - IBM Z mainframes
+- **ppc64le** - IBM POWER systems
 
 ## Quick Start
 
@@ -12,7 +13,7 @@ This project supports building container images for multiple CPU architectures:
 # Build for your local architecture only
 make container-build
 
-# Validate multiplatform build (all 3 architectures)
+# Validate multiplatform build (all 4 architectures)
 make container-build-multi
 
 # Build and push to a registry
@@ -26,7 +27,7 @@ make container-inspect-manifest REGISTRY=ghcr.io/ibm/mcp-context-forge:latest
 
 | File | Base Image | Platforms | Size | Use Case |
 |------|------------|-----------|------|----------|
-| `Containerfile.lite` | ubi10-minimal | amd64, arm64, s390x | ~150MB | Multiplatform builds, CI/CD |
+| `Containerfile.lite` | ubi10-minimal | amd64, arm64, s390x, ppc64le | ~150MB | Multiplatform builds, CI/CD |
 | `Containerfile.scratch` | scratch | amd64 only* | ~100MB | Smallest possible image |
 
 *`Containerfile.scratch` uses `dnf --installroot` which fails under QEMU emulation, so it only works for native builds.
@@ -72,6 +73,9 @@ docker pull ghcr.io/ibm/mcp-context-forge:latest
 
 # On s390x machine - pulls s390x image
 docker pull ghcr.io/ibm/mcp-context-forge:latest
+
+# On ppc64le machine - pulls ppc64le image
+docker pull ghcr.io/ibm/mcp-context-forge:latest
 ```
 
 ## GitHub Actions
@@ -83,6 +87,7 @@ The `.github/workflows/docker-multiplatform.yml` workflow:
    - amd64 on `ubuntu-latest` (native)
    - arm64 on `ubuntu-24.04-arm` (native)
    - s390x on `ubuntu-latest` with QEMU (emulated, slower)
+   - ppc64le on `ubuntu-latest` with QEMU (emulated, slower)
 3. **Creates** a multiplatform manifest
 4. **Scans** for vulnerabilities (Trivy, Grype)
 5. **Signs** with Cosign (keyless OIDC)
@@ -94,15 +99,16 @@ The `.github/workflows/docker-multiplatform.yml` workflow:
 | amd64 | Native | ~5-8 min |
 | arm64 | Native | ~5-8 min |
 | s390x | QEMU | ~30-45 min |
+| ppc64le | QEMU | ~30-45 min |
 
 ## Architecture Differences
 
-### s390x Specific
+### s390x and ppc64le Specific
 
-The s390x architecture requires OpenSSL instead of BoringSSL for grpcio. This is handled automatically in the Containerfile:
+The s390x and ppc64le architectures require OpenSSL instead of BoringSSL for grpcio. This is handled automatically in the Containerfile:
 
 ```dockerfile
-RUN if [ `uname -m` = "s390x" ]; then \
+RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     fi
 ```
@@ -151,6 +157,10 @@ Manifests:
   Name:      ghcr.io/ibm/mcp-context-forge:latest@sha256:jkl012...
   MediaType: application/vnd.oci.image.manifest.v1+json
   Platform:  linux/s390x
+
+  Name:      ghcr.io/ibm/mcp-context-forge:latest@sha256:mno345...
+  MediaType: application/vnd.oci.image.manifest.v1+json
+  Platform:  linux/ppc64le
 ```
 
 ## Local Registry Testing
@@ -173,7 +183,7 @@ docker pull --platform linux/arm64 localhost:5000/mcpgateway/mcpgateway:latest
 
 ## Troubleshooting
 
-### Build fails on s390x with QEMU
+### Build fails on s390x or ppc64le with QEMU
 
 If you see errors like:
 ```

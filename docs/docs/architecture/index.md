@@ -247,7 +247,7 @@ Sample runtimes:
 - **Red Hat OpenShift** (enterprise K8s)
 - **Docker Compose** (local multi-container)
 - **Podman** (rootless containers)
-- Multi-arch container images (amd64, arm64, s390x)
+- Multi-arch container images (amd64, arm64, s390x, ppc64le)
 
 **Multi-Regional Deployments:**
 
