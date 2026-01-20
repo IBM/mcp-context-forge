@@ -461,9 +461,13 @@ def get_request_session() -> Session:
     """Get or create a request-scoped SQLAlchemy Session.
 
     This returns the current request session if one exists, otherwise it
-    creates a new `SessionLocal()` instance, stores it in a ContextVar and
-    returns it. Sessions created outside of a request context (background
-    jobs) should continue to use `SessionLocal()` directly.
+    creates a new ``SessionLocal()`` instance, stores it in a ContextVar
+    and returns it. Sessions created outside of a request context
+    (background jobs) should continue to use ``SessionLocal()`` directly.
+
+    Returns:
+        Session: An active SQLAlchemy ``Session`` instance scoped to the
+        current request context.
     """
     session = _request_session.get()
     if session is None:

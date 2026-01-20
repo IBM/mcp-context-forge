@@ -28,6 +28,13 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
         This method forwards the request to the next handler and always
         attempts to close the request-scoped DB session afterward.
+
+        Args:
+            request: The incoming Starlette/FastAPI ``Request`` object.
+            call_next: The next ASGI callable to handle the request.
+
+        Returns:
+            Response: The response returned by the next handler.
         """
         try:
             response = await call_next(request)
