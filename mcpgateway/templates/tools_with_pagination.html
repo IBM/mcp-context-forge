@@ -159,8 +159,11 @@
     {% set base_url = root_path + '/admin/tools/partial' %}
     {% set hx_target = '#tools-table-body' %}
     {% set hx_indicator = '#tools-loading' %}
+    {% set table_name = 'tools' %}
     {% set query_params = {'include_inactive': include_inactive} %}
+    {% autoescape false %}
     {% include 'pagination_controls.html' %}
+    {% endautoescape %}
   </div>
 
   {% else %}

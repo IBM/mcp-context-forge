@@ -124,10 +124,12 @@
       }
 
       // Update URL when checkbox is toggled (namespaced)
+      // Also resets page to 1 since HTMX reloads from page 1 when filter changes
       function updateInactiveUrlState(tableName, checked) {
         const browserUrl = new URL(window.location.href);
         const prefix = tableName + '_';
         browserUrl.searchParams.set(prefix + 'inactive', checked.toString());
+        browserUrl.searchParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
         window.history.replaceState({}, '', browserUrl.toString());
       }
     </script>
