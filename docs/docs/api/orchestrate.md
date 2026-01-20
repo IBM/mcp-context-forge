@@ -1,5 +1,25 @@
 # Orchestrate API — Cancellation
 
+> **Configuration:** This feature is controlled by the `MCPGATEWAY_TOOL_CANCELLATION_ENABLED`
+> environment variable (default: `true`). When disabled, these endpoints will return 404
+> and tool executions will not be tracked for cancellation.
+
+## Configuration
+
+```bash
+# Enable tool cancellation (default)
+MCPGATEWAY_TOOL_CANCELLATION_ENABLED=true
+
+# Disable tool cancellation
+MCPGATEWAY_TOOL_CANCELLATION_ENABLED=false
+```
+
+When disabled:
+- `POST /orchestrate/cancel` returns 404
+- `GET /orchestrate/status/{id}` returns 404
+- Tool executions are not registered for cancellation
+- No overhead from cancellation tracking
+
 ## POST /orchestrate/cancel
 Request cancellation for a long-running tool execution (gateway-authoritative).
 

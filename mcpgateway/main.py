@@ -687,6 +687,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await streamable_http_session.initialize()
         await session_registry.initialize()
 
+        # Initialize OrchestrationService for tool cancellation if enabled
+        if settings.tool_cancellation_enabled:
+            await orchestration_service.initialize()
+            logger.info("Tool cancellation feature enabled")
+        else:
+            logger.info("Tool cancellation feature disabled")
+
         # Initialize elicitation service
         if settings.mcpgateway_elicitation_enabled:
             # First-Party
@@ -849,6 +856,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             streamable_http_session,
             session_registry,
         ]
+
+        # Add orchestration service if enabled
+        if settings.tool_cancellation_enabled:
+            services_to_shutdown.insert(0, orchestration_service)  # Shutdown early to stop accepting new cancellations
 
         if a2a_service:
             services_to_shutdown.insert(4, a2a_service)  # Insert after export_service
@@ -5200,7 +5211,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-            # Register the tool execution for cancellation tracking with task reference
+            # Register the tool execution for cancellation tracking with task reference (if enabled)
             run_id = str(req_id) if req_id else None
             tool_task: Optional[asyncio.Task] = None
 
@@ -5214,12 +5225,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     logger.info(f"Cancelling tool task for run_id={run_id}, reason={reason}")
                     tool_task.cancel()
 
-            if run_id:
+            if settings.tool_cancellation_enabled and run_id:
                 await orchestration_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
 
             try:
-                # Check if cancelled before execution
-                if run_id:
+                # Check if cancelled before execution (only if feature enabled)
+                if settings.tool_cancellation_enabled and run_id:
                     run_status = await orchestration_service.get_status(run_id)
                     if run_status and run_status.get("cancelled"):
                         raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id})
@@ -5255,8 +5266,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     logger.info(f"Tool execution cancelled for run_id={run_id}, tool={name}")
                     raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False})
             finally:
-                # Unregister the run when done
-                if run_id:
+                # Unregister the run when done (only if feature enabled)
+                if settings.tool_cancellation_enabled and run_id:
                     await orchestration_service.unregister_run(run_id)
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
@@ -6453,14 +6464,17 @@ if settings.toolops_enabled:
         logger.debug("Toolops router not available")
 
 # Orchestrate router (cancellation / orchestration helpers)
-try:
-    # First-Party
-    from mcpgateway.routers.orchestrate_router import router as orchestrate_router
+if settings.tool_cancellation_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.orchestrate_router import router as orchestrate_router
 
-    app.include_router(orchestrate_router)
-    logger.info("Orchestrate router included")
-except ImportError:
-    logger.debug("Orchestrate router not available")
+        app.include_router(orchestrate_router)
+        logger.info("Orchestrate router included (tool cancellation enabled)")
+    except ImportError:
+        logger.debug("Orchestrate router not available")
+else:
+    logger.info("Tool cancellation feature disabled - orchestration endpoints not available")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled

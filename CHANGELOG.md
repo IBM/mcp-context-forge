@@ -9,6 +9,9 @@
 ### Added
 
 #### **🛑 Gateway-Orchestrated Cancellation of Tool Runs** ([#1983](https://github.com/IBM/mcp-context-forge/issues/1983))
+* **Configurable feature** - Control via `MCPGATEWAY_TOOL_CANCELLATION_ENABLED` (default: `true`)
+  - Set to `false` to disable cancellation tracking and endpoints
+  - Zero overhead when disabled - no registration, no callbacks, no endpoints
 * **New `OrchestrationService`** - Tracks active tool executions with in-memory registry and Redis pubsub for multi-worker coordination
   - `register_run()`, `unregister_run()`, `cancel_run()`, `get_status()`, `is_registered()` methods
   - Automatic lifecycle management with `initialize()` and `shutdown()` hooks
