@@ -485,12 +485,12 @@ def close_request_session() -> None:
         try:
             if session.in_transaction():
                 session.rollback()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to rollback request-scoped session: %s", e)
         try:
             session.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to close request-scoped session: %s", e)
     finally:
         _request_session.set(None)
 

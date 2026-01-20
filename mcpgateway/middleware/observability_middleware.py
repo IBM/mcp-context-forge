@@ -29,12 +29,13 @@ from starlette.responses import Response
 from mcpgateway.config import settings
 from mcpgateway.db import get_request_session
 
-# Backwards-compatible alias for tests and older modules that patch
-# `SessionLocal` in middleware modules.
-SessionLocal = get_request_session
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
+
+# Backwards-compatible alias for tests and older modules that patch
+# `SessionLocal` in middleware modules.
+SessionLocal = get_request_session
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +153,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if db:
                 try:
                     db.rollback()  # Error path - rollback any partial transaction
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to rollback DB session during observability setup: %s", e)
             # Continue without tracing
             return await call_next(request)
 
@@ -227,5 +228,5 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 try:
                     if db.in_transaction():
                         db.rollback()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to rollback DB session in finally: %s", e)

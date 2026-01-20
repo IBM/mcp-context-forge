@@ -30,11 +30,12 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import get_request_session
 
+from mcpgateway.middleware.path_filter import should_skip_auth_context
+from mcpgateway.services.security_logger import get_security_logger
+
 # Backwards-compatible alias for tests and older modules that patch
 # `SessionLocal` in middleware modules.
 SessionLocal = get_request_session
-from mcpgateway.middleware.path_filter import should_skip_auth_context
-from mcpgateway.services.security_logger import get_security_logger
 
 logger = logging.getLogger(__name__)
 security_logger = get_security_logger()

@@ -14,7 +14,7 @@ functions for protecting routes.
 # Standard
 from functools import wraps
 import logging
-from typing import Callable, Generator, List, Optional
+from typing import Callable, List, Optional
 import uuid
 
 # Third-Party
@@ -26,11 +26,11 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, get_request_session
+from mcpgateway.services.permission_service import PermissionService
 
 # Backwards-compatible alias for tests and older modules that patch
 # `SessionLocal` in middleware modules.
 SessionLocal = get_request_session
-from mcpgateway.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
 
