@@ -485,14 +485,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     # Extract _meta from request context if available
     try:
         ctx = mcp_app.request_context
-        if ctx:
-            meta_data = getattr(ctx, "meta", None)
-            if meta_data is None and hasattr(ctx, "request"):
-                # Fallback to raw request params if needed
-                meta_data = getattr(ctx.request.params, "meta", None)
-
-            if meta_data is not None:
-                meta_data = meta_data.model_dump()
+        if ctx and ctx.meta is not None:
+            meta_data = ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -706,14 +700,8 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     # Extract _meta from request context if available
     try:
         ctx = mcp_app.request_context
-        if ctx:
-            meta_data = getattr(ctx, "meta", None)
-            if meta_data is None and hasattr(ctx, "request"):
-                # Fallback to raw request params if needed
-                meta_data = getattr(ctx.request.params, "meta", None)
-
-            if meta_data is not None:
-                meta_data = meta_data.model_dump()
+        if ctx and ctx.meta is not None:
+            meta_data = ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -836,14 +824,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     # Extract _meta from request context if available
     try:
         ctx = mcp_app.request_context
-        if ctx:
-            meta_data = getattr(ctx, "meta", None)
-            if meta_data is None and hasattr(ctx, "request"):
-                # Fallback to raw request params if needed
-                meta_data = getattr(ctx.request.params, "meta", None)
-
-            if meta_data is not None:
-                meta_data = meta_data.model_dump()
+        if ctx and ctx.meta is not None:
+            meta_data = ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
