@@ -15,7 +15,7 @@ functions for protecting routes.
 import functools
 from functools import wraps
 import logging
-from typing import Callable, List, Optional
+from typing import Callable, Generator, List, Optional
 import uuid
 
 # Third-Party
@@ -37,14 +37,19 @@ SessionLocal = get_request_session
 logger = logging.getLogger(__name__)
 
 
-def get_db():
+def get_db() -> Generator[Session, None, None]:
     """Local DB dependency for middleware module.
 
     Uses the module-level `SessionLocal` alias so tests can patch it.
-    If `SessionLocal` is the request-scoped `get_request_session` this
-    will return the request session (and not close it). If tests patch
-    `SessionLocal` to a callable that returns a session, this generator
-    will close that session when finished.
+
+    Yields:
+        Session: SQLAlchemy session instance. If `SessionLocal` is the
+        request-scoped `get_request_session`, the yielded session is the
+        shared request session and will not be closed by this generator.
+
+    Raises:
+        Exception: Re-raises any exception after attempting rollback and
+            session invalidation.
     """
     session = SessionLocal()
     # Determine whether SessionLocal is the request-scoped getter
@@ -70,6 +75,7 @@ def get_db():
                 session.close()
             except Exception:
                 pass
+
 
 # HTTP Bearer security scheme for token extraction
 security = HTTPBearer(auto_error=False)
