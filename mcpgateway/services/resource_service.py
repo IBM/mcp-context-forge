@@ -1767,9 +1767,7 @@ class ResourceService:
                                 logger.debug(f"Exception while connecting to sse gateway: {sanitized_error}")
                                 return None
 
-                        async def connect_to_streamablehttp_server(
-                            server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None
-                        ) -> str | None:
+                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
                             Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
 

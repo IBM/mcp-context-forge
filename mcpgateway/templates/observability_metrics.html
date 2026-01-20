@@ -53,12 +53,9 @@ window.createMetricsController = function() {
       };
       document.addEventListener('visibilitychange', this.visibilityHandler);
 
-      // Add cleanup on component destroy
-      this.$el.addEventListener('destroy', () => {
-        this.cleanup();
-      });
-
-      // Add cleanup on page unload as fallback
+      // Note: Alpine.js doesn't emit a 'destroy' DOM event. Cleanup is handled by:
+      // 1. Tab switching logic in admin.js (destroys charts when leaving observability tab)
+      // 2. Page unload event below
       window.addEventListener('beforeunload', () => this.cleanup());
     },
 

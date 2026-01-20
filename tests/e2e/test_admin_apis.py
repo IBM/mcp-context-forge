@@ -1680,13 +1680,6 @@ class TestAdminListingGracefulErrorHandling:
         assert corrupted_agent.name not in agent_names
 
 
-# Run tests with pytest
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
-
-
 @pytest.mark.asyncio
 async def test_observability_endpoints_with_database(client: AsyncClient):
     """Test all observability endpoints work with the database backend.
@@ -1716,3 +1709,8 @@ async def test_observability_endpoints_with_database(client: AsyncClient):
             assert "prompts" in data, f"{endpoint} missing 'prompts' key"
         elif "resources" in endpoint:
             assert "resources" in data, f"{endpoint} missing 'resources' key"
+
+
+# Run tests with pytest
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

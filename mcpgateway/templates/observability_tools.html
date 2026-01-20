@@ -39,10 +39,10 @@ window.createToolsController = function() {
       await this.loadAllMetrics();
       this.startAutoRefresh();
 
-      // Add cleanup on component destroy
-      this.$el.addEventListener('destroy', () => {
-        this.cleanup();
-      });
+      // Note: Alpine.js doesn't emit a 'destroy' DOM event. Cleanup is handled by:
+      // 1. Tab switching logic in admin.js (destroys charts when leaving observability tab)
+      // 2. Page unload event (handled in cleanup function)
+      window.addEventListener('beforeunload', () => this.cleanup());
     },
     async loadAllMetrics() {
       this.loading = true;

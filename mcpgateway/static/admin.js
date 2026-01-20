@@ -7199,6 +7199,7 @@ function showTab(tabName) {
             window.chartRegistry.destroyByPrefix("metrics-");
             window.chartRegistry.destroyByPrefix("tools-");
             window.chartRegistry.destroyByPrefix("prompts-");
+            window.chartRegistry.destroyByPrefix("resources-");
         }
 
         // Navigation styling (immediate)
@@ -7471,15 +7472,9 @@ function showTab(tabName) {
                     }
                 }
 
-                if (tabName === "observability") {
-                    // Ensure clean slate when entering observability tab
-                    console.log(
-                        "Entering observability tab, ensuring clean chart state...",
-                    );
-                    window.chartRegistry.destroyByPrefix("metrics-");
-                    window.chartRegistry.destroyByPrefix("tools-");
-                    window.chartRegistry.destroyByPrefix("prompts-");
-                }
+                // Note: Charts are already destroyed when leaving observability tab (see above),
+                // so we don't need to destroy them again on entry. The loaded partials will
+                // re-render charts on their next auto-refresh cycle or when the partial is reloaded.
 
                 if (tabName === "plugins") {
                     const pluginsPanel = safeGetElement("plugins-panel");
