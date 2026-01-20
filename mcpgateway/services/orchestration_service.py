@@ -25,6 +25,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.redis_client import get_redis_client
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -60,9 +61,6 @@ class OrchestrationService:
         self._initialized = True
 
         try:
-            # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client
-
             self._redis = await get_redis_client()
             if self._redis:
                 # Start listening for cancellation events from other workers

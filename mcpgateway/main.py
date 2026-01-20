@@ -5220,8 +5220,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             try:
                 # Check if cancelled before execution
                 if run_id:
-                    status = await orchestration_service.get_status(run_id)
-                    if status and status.get("cancelled"):
+                    run_status = await orchestration_service.get_status(run_id)
+                    if run_status and run_status.get("cancelled"):
                         raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id})
 
                 # Create task for tool execution to enable real cancellation
