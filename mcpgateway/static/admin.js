@@ -126,15 +126,6 @@ document.addEventListener("DOMContentLoaded", function () {
     // Initialize search functionality for all entity types
     initializeSearchInputs();
     initializePasswordValidation();
-
-    // Initialize checkbox states from URL parameter for inactive toggles
-    const urlParams = new URLSearchParams(window.location.search);
-    const includeInactive = urlParams.get("include_inactive") === "true";
-    const serversCheckbox = document.getElementById("show-inactive-servers");
-    const gatewaysCheckbox = document.getElementById("show-inactive-gateways");
-    if (serversCheckbox) serversCheckbox.checked = includeInactive;
-    if (gatewaysCheckbox) gatewaysCheckbox.checked = includeInactive;
-
     initializeAddMembersForms();
 
     // Event delegation for team member search - server-side search for unified view
@@ -10288,137 +10279,6 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
-function toggleInactiveItems(type) {
-    const checkbox = safeGetElement(`show-inactive-${type}`);
-    if (!checkbox) {
-        return;
-    }
-
-    // Update URL in address bar (no navigation) so state is reflected
-    try {
-        const urlObj = new URL(window.location);
-        if (checkbox.checked) {
-            urlObj.searchParams.set("include_inactive", "true");
-        } else {
-            urlObj.searchParams.delete("include_inactive");
-        }
-        // Use replaceState to avoid adding history entries for every toggle
-        window.history.replaceState({}, document.title, urlObj.toString());
-    } catch (e) {
-        // ignore (shouldn't happen)
-    }
-
-    // Try to find the HTMX container that loads this entity's partial
-    // Prefer an element with hx-get containing the admin partial endpoint
-    const selector = `[hx-get*="/admin/${type}/partial"]`;
-    let container = document.querySelector(selector);
-
-    // Fallback to conventional id naming used in templates
-    // tools, servers, and gateways use "-table" suffix; others use "-list-container"
-    if (!container) {
-        const tableTypes = ["tools", "servers", "gateways"];
-        const fallbackId = tableTypes.includes(type)
-            ? `${type}-table`
-            : `${type}-list-container`;
-        container = document.getElementById(fallbackId);
-    }
-
-    if (!container) {
-        // If we couldn't find a container, fallback to full-page reload
-        const fallbackUrl = new URL(window.location);
-        if (checkbox.checked) {
-            fallbackUrl.searchParams.set("include_inactive", "true");
-        } else {
-            fallbackUrl.searchParams.delete("include_inactive");
-        }
-        window.location = fallbackUrl;
-        return;
-    }
-
-    // Build request URL based on the hx-get attribute or container id
-    const base =
-        container.getAttribute("hx-get") ||
-        container.getAttribute("data-hx-get") ||
-        "";
-    let reqUrl;
-    try {
-        if (base) {
-            // base may already include query params; construct URL and set include_inactive/page
-            reqUrl = new URL(base, window.location.origin);
-            // reset to page 1 when toggling
-            reqUrl.searchParams.set("page", "1");
-            if (checkbox.checked) {
-                reqUrl.searchParams.set("include_inactive", "true");
-            } else {
-                reqUrl.searchParams.delete("include_inactive");
-            }
-        } else {
-            // construct from known pattern, preserving URL params like team_id
-            const root = window.ROOT_PATH || "";
-            const currentUrl = new URL(window.location);
-            // Read per_page from pagination select (Alpine.js state), fall back to URL, then default
-            const paginationControls = document.getElementById(
-                `${type}-pagination-controls`,
-            );
-            const paginationSelect = paginationControls?.querySelector(
-                'select[x-model="perPage"]',
-            );
-            const perPage =
-                paginationSelect?.value ||
-                currentUrl.searchParams.get("per_page") ||
-                "20";
-            const teamId = currentUrl.searchParams.get("team_id");
-            reqUrl = new URL(
-                `${root}/admin/${type}/partial?page=1&per_page=${perPage}`,
-                window.location.origin,
-            );
-            if (teamId) {
-                reqUrl.searchParams.set("team_id", teamId);
-            }
-            if (checkbox.checked) {
-                reqUrl.searchParams.set("include_inactive", "true");
-            }
-        }
-    } catch (e) {
-        // fallback to full reload
-        const fallbackUrl2 = new URL(window.location);
-        if (checkbox.checked) {
-            fallbackUrl2.searchParams.set("include_inactive", "true");
-        } else {
-            fallbackUrl2.searchParams.delete("include_inactive");
-        }
-        window.location = fallbackUrl2;
-        return;
-    }
-
-    // Determine indicator selector
-    const indicator =
-        container.getAttribute("hx-indicator") || `#${type}-loading`;
-
-    // Use HTMX to reload only the container (outerHTML swap)
-    if (window.htmx && typeof window.htmx.ajax === "function") {
-        try {
-            window.htmx.ajax("GET", reqUrl.toString(), {
-                target: container,
-                swap: "outerHTML",
-                indicator,
-            });
-            return;
-        } catch (e) {
-            // fall through to full reload
-        }
-    }
-
-    // Last resort: reload page with param
-    const finalUrl = new URL(window.location);
-    if (checkbox.checked) {
-        finalUrl.searchParams.set("include_inactive", "true");
-    } else {
-        finalUrl.searchParams.delete("include_inactive");
-    }
-    window.location = finalUrl;
-}
-
 function handleToggleSubmit(event, type) {
     event.preventDefault();
 
@@ -11085,7 +10945,11 @@ async function enrichTool(toolId) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-    const toolBody = document.getElementById("toolBody");
+    // Use #tool-ops-main-content-wrapper as the event delegation target because
+    // #toolBody gets replaced by HTMX swaps. The wrapper survives swaps.
+    const toolOpsWrapper = document.getElementById(
+        "tool-ops-main-content-wrapper",
+    );
     const selectedList = document.getElementById("selectedList");
     const selectedCount = document.getElementById("selectedCount");
     const searchBox = document.getElementById("searchBox");
@@ -11093,9 +10957,9 @@ document.addEventListener("DOMContentLoaded", () => {
     let selectedTools = [];
     let selectedToolIds = [];
 
-    if (toolBody !== null) {
-        // ✅ Use event delegation for dynamically added checkboxes
-        toolBody.addEventListener("change", (event) => {
+    if (toolOpsWrapper !== null) {
+        // ✅ Use event delegation on wrapper (survives HTMX swaps)
+        toolOpsWrapper.addEventListener("change", (event) => {
             const cb = event.target;
             if (cb.classList.contains("tool-checkbox")) {
                 const toolName = cb.getAttribute("data-tool");
@@ -11152,10 +11016,14 @@ document.addEventListener("DOMContentLoaded", () => {
     if (searchBox !== null) {
         searchBox.addEventListener("input", () => {
             const query = searchBox.value.trim().toLowerCase();
-            document.querySelectorAll("#toolBody tr").forEach((row) => {
-                const name = row.dataset.name;
-                row.style.display = name.includes(query) ? "" : "none";
-            });
+            // Search within #toolBody (which is inside #tool-ops-main-content-wrapper)
+            document
+                .querySelectorAll("#tool-ops-main-content-wrapper #toolBody tr")
+                .forEach((row) => {
+                    const name = row.dataset.name;
+                    row.style.display =
+                        name && name.includes(query) ? "" : "none";
+                });
         });
     }
     // Generic API call for Enrich/Validate
@@ -16256,21 +16124,8 @@ function filterServerTable(searchText) {
                 }
             });
 
-            const matchesSearch =
-                search === "" || textContent.toLowerCase().includes(search);
-
-            // Check if row should be visible based on inactive filter
-            const checkbox = document.getElementById("show-inactive-servers");
-            const showInactive = checkbox ? checkbox.checked : true;
-            const isEnabled = row.getAttribute("data-enabled") === "true";
-            const matchesFilter = showInactive || isEnabled;
-
-            // Only show row if it matches BOTH search AND filter
-            const shouldShow = matchesSearch && matchesFilter;
-
-            if (shouldShow) {
-                row.style.removeProperty("display");
-                row.style.removeProperty("visibility");
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
             } else {
                 row.style.display = "none";
             }
@@ -17202,12 +17057,45 @@ function initializeTabState() {
         "show-inactive-prompts",
         "show-inactive-gateways",
         "show-inactive-servers",
+        "show-inactive-a2a-agents",
+        "show-inactive-tools-toolops",
     ];
     checkboxes.forEach((id) => {
         const checkbox = safeGetElement(id);
         if (checkbox) {
             checkbox.checked = includeInactive;
         }
+    });
+
+    // Add URL state persistence for show-inactive toggles
+    document.querySelectorAll(".show-inactive-toggle").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+            const url = new URL(window.location);
+            if (checkbox.checked) {
+                url.searchParams.set("include_inactive", "true");
+            } else {
+                url.searchParams.delete("include_inactive");
+            }
+            window.history.replaceState({}, document.title, url.toString());
+        });
+
+        // Disable toggle until its target exists (prevents race with initial HTMX load)
+        const targetSelector = checkbox.getAttribute("hx-target");
+        if (targetSelector && !document.querySelector(targetSelector)) {
+            checkbox.disabled = true;
+        }
+    });
+
+    // Enable toggles after HTMX swaps complete
+    document.body.addEventListener("htmx:afterSettle", (event) => {
+        document
+            .querySelectorAll(".show-inactive-toggle[disabled]")
+            .forEach((checkbox) => {
+                const targetSelector = checkbox.getAttribute("hx-target");
+                if (targetSelector && document.querySelector(targetSelector)) {
+                    checkbox.disabled = false;
+                }
+            });
     });
 }
 
@@ -17235,7 +17123,6 @@ async function loadServers() {
     window.location.href = url.toString();
 }
 
-window.toggleInactiveItems = toggleInactiveItems;
 window.loadServers = loadServers;
 window.handleToggleSubmit = handleToggleSubmit;
 window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
