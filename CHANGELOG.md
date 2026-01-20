@@ -9,9 +9,34 @@
 ### Added
 
 #### **🛑 Gateway-Orchestrated Cancellation of Tool Runs** ([#1983](https://github.com/IBM/mcp-context-forge/issues/1983))
-* **New endpoints & service** - Added an `OrchestrationService` and `/orchestrate/cancel` endpoint to allow gateway-authoritative cancellation of long-running tool executions.
-  - The gateway will attempt local cancellation and broadcast `notifications/cancelled` JSON-RPC notifications to connected sessions for remote peers to act on the cancellation.
-  - Backwards compatible: existing inbound `notifications/cancelled` handling is unchanged and clients should continue to work as before.
+* **New `OrchestrationService`** - Tracks active tool executions with in-memory registry and Redis pubsub for multi-worker coordination
+  - `register_run()`, `unregister_run()`, `cancel_run()`, `get_status()`, `is_registered()` methods
+  - Automatic lifecycle management with `initialize()` and `shutdown()` hooks
+  - Redis pubsub on `orchestration:cancel` channel for cluster-wide cancellation propagation
+* **New REST API endpoints** - Gateway-authoritative cancellation control
+  - `POST /orchestrate/cancel` - Request cancellation with reason, broadcasts to all sessions
+  - `GET /orchestrate/status/{request_id}` - Query run status including cancellation state
+  - RBAC protected with `admin.system_config` permission
+* **Real task interruption** - Actual asyncio task cancellation, not just status marking
+  - Tool executions wrapped in `asyncio.Task` with cancel callbacks
+  - Handles `asyncio.CancelledError` with proper JSON-RPC error responses
+  - Immediate interruption of long-running operations
+* **JSON-RPC integration** - All `tools/call` requests automatically registered for cancellation
+  - Pre-execution cancellation check to avoid starting cancelled tasks
+  - Automatic unregistration on completion or error
+  - Compatible with new authorization context (`user_email`, `token_teams`, `server_id`)
+* **Session broadcasting** - `notifications/cancelled` sent to all connected MCP sessions
+  - Best-effort delivery with per-session error logging
+  - Allows external MCP servers to handle cancellation
+* **Multi-worker support** - Production-ready for distributed deployments
+  - Cancellations propagate across all workers via Redis pubsub
+  - Graceful degradation if Redis unavailable (local-only cancellation)
+* **Comprehensive testing** - 425 lines of test coverage
+  - Unit tests for service methods and error handling
+  - Integration tests for HTTP endpoints with auth
+  - Session broadcast verification
+* **Complete documentation** - API specs and implementation details in `docs/docs/api/orchestrate.md`
+* **Backwards compatible** - Existing inbound `notifications/cancelled` handling unchanged
 
 #### **🎛️ Execution Metrics Recording Switch** ([#1804](https://github.com/IBM/mcp-context-forge/issues/1804))
 * **New setting** `DB_METRICS_RECORDING_ENABLED` - Disable execution metrics database writes
