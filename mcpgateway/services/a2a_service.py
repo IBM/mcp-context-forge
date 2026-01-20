@@ -12,10 +12,12 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
+import binascii
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
+from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -687,8 +689,12 @@ class A2AAgentService:
         # Convert to A2AAgentRead (common for both pagination types)
         result = []
         for s in a2a_agents_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
+            try:
+                s.team = team_map.get(s.team_id) if s.team_id else None
+                result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert A2A agent {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining agents instead of failing completely
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -798,7 +804,15 @@ class A2AAgentService:
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
-        return [self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map) for agent in agents]
+        result = []
+        for agent in agents:
+            try:
+                result.append(self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert A2A agent {getattr(agent, 'id', 'unknown')} ({getattr(agent, 'name', 'unknown')}): {e}")
+                # Continue with remaining agents instead of failing completely
+
+        return result
 
     async def get_agent(
         self,

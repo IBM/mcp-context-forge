@@ -3268,3 +3268,164 @@ class TestToolAccessAuthorization:
 
         # Even owner with public-only token is denied
         assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=[]) is False
+
+
+class TestToolListingGracefulErrorHandling:
+    """Tests for graceful error handling when convert_tool_to_read fails.
+
+    These tests verify that when one tool fails to convert (e.g., due to corrupted data),
+    the listing operation continues with remaining tools instead of failing completely.
+    This prevents a single corrupted entity from breaking the entire listing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_list_tools_continues_on_conversion_error(self, caplog):
+        """Test that list_tools returns valid tools even when one fails conversion."""
+        import logging
+
+        caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
+
+        mock_db = Mock()
+
+        # Create mock tools - tool2 will fail conversion
+        tool1 = Mock(id="1", original_name="good_tool_1", team_id=None)
+        tool1.name = "good-tool-1"
+        tool2 = Mock(id="2", original_name="bad_tool", team_id=None)
+        tool2.name = "bad-tool"
+        tool3 = Mock(id="3", original_name="good_tool_2", team_id=None)
+        tool3.name = "good-tool-2"
+
+        # Mock DB to return all three tools
+        mock_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[tool1, tool2, tool3])))))
+        mock_db.commit = Mock()
+
+        # Create valid ToolRead objects for good tools
+        tool_read_1 = MagicMock()
+        tool_read_1.name = "good_tool_1"
+        tool_read_3 = MagicMock()
+        tool_read_3.name = "good_tool_2"
+
+        # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
+        def mock_convert(tool, include_metrics=False, include_auth=False):
+            if tool.id == "2":
+                raise ValueError("Simulated conversion error: corrupted auth_value")
+            elif tool.id == "1":
+                return tool_read_1
+            else:
+                return tool_read_3
+
+        service = ToolService()
+        service.convert_tool_to_read = Mock(side_effect=mock_convert)
+
+        # Call list_tools - should NOT raise an exception
+        result, next_cursor = await service.list_tools(mock_db)
+
+        # Verify we got the two valid tools
+        assert len(result) == 2
+        assert tool_read_1 in result
+        assert tool_read_3 in result
+
+        # Verify convert_tool_to_read was called for all three tools
+        assert service.convert_tool_to_read.call_count == 3
+
+        # Verify the error was logged (format: "Failed to convert tool {id} ({name}): {error}")
+        assert "Failed to convert tool 2" in caplog.text
+        assert "bad-tool" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_list_server_tools_continues_on_conversion_error(self, caplog):
+        """Test that list_server_tools returns valid tools even when one fails conversion."""
+        import logging
+
+        caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
+
+        mock_db = Mock()
+
+        # Create mock tools - tool2 will fail conversion
+        tool1 = Mock(enabled=True, team_id=None, team=None, id="1", original_name="good_tool_1")
+        tool1.name = "good-tool-1"
+        tool2 = Mock(enabled=True, team_id=None, team=None, id="2", original_name="bad_tool")
+        tool2.name = "bad-tool"
+        tool3 = Mock(enabled=True, team_id=None, team=None, id="3", original_name="good_tool_2")
+        tool3.name = "good-tool-2"
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [tool1, tool2, tool3]
+
+        service = ToolService()
+
+        # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
+        def mock_convert(tool, include_metrics=False, include_auth=False):
+            if tool.id == "2":
+                raise ValueError("Simulated conversion error")
+            return f"converted_{tool.original_name}"
+
+        service.convert_tool_to_read = Mock(side_effect=mock_convert)
+
+        # Call list_server_tools - should NOT raise an exception
+        tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
+
+        # Verify we got the two valid tools
+        assert len(tools) == 2
+        assert "converted_good_tool_1" in tools
+        assert "converted_good_tool_2" in tools
+
+        # Verify the error was logged
+        assert "Failed to convert tool 2" in caplog.text
+        assert "bad-tool" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_list_tools_for_user_continues_on_conversion_error(self, caplog):
+        """Test that list_tools_for_user returns valid tools even when one fails conversion."""
+        import logging
+
+        caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
+
+        mock_db = Mock()
+
+        # Create mock tools - tool2 will fail conversion
+        tool1 = Mock(id="1", original_name="good_tool_1", team_id=None)
+        tool1.name = "good-tool-1"
+        tool2 = Mock(id="2", original_name="bad_tool", team_id=None)
+        tool2.name = "bad-tool"
+        tool3 = Mock(id="3", original_name="good_tool_2", team_id=None)
+        tool3.name = "good-tool-2"
+
+        # Mock DB to return all three tools
+        mock_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[tool1, tool2, tool3])))))
+        mock_db.commit = Mock()
+
+        # Create valid ToolRead objects for good tools
+        tool_read_1 = MagicMock()
+        tool_read_1.name = "good_tool_1"
+        tool_read_3 = MagicMock()
+        tool_read_3.name = "good_tool_2"
+
+        # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
+        def mock_convert(tool, include_metrics=False, include_auth=False):
+            if tool.id == "2":
+                raise ValueError("Simulated conversion error: corrupted data")
+            elif tool.id == "1":
+                return tool_read_1
+            else:
+                return tool_read_3
+
+        service = ToolService()
+        service.convert_tool_to_read = Mock(side_effect=mock_convert)
+
+        # Mock TeamManagementService for user context
+        mock_team = MagicMock(id="team-1", is_personal=True)
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+
+            # Call list_tools_for_user - should NOT raise an exception
+            # Returns tuple[List[ToolRead], Optional[str]]
+            result, next_cursor = await service.list_tools_for_user(mock_db, user_email="user@example.com")
+
+        # Verify we got the two valid tools
+        assert len(result) == 2
+        assert tool_read_1 in result
+        assert tool_read_3 in result
+
+        # Verify the error was logged
+        assert "Failed to convert tool 2" in caplog.text
+        assert "bad-tool" in caplog.text
