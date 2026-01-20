@@ -193,7 +193,7 @@ document.addEventListener("DOMContentLoaded", function () {
     document.body.addEventListener("htmx:afterSwap", function (event) {
         const target = event.detail.target;
         const relevantPanels = [
-            "servers-panel",
+            "catalog-panel",
             "gateways-panel",
             "tools-panel",
             "resources-panel",
