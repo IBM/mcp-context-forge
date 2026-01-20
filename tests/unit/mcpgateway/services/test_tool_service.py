@@ -1775,7 +1775,7 @@ class TestToolService:
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"})
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None)
 
         # Our ToolResult bubbled back out
         assert result.content[0].text == "MCP response"
@@ -1999,7 +1999,7 @@ class TestToolService:
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"})
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None)
 
         sse_ctx.__aenter__.assert_awaited_once()
 
@@ -2041,6 +2041,46 @@ class TestToolService:
             assert call_kwargs["tool_id"] == str(mock_tool.id)
             assert call_kwargs["success"] is False
             assert call_kwargs["error_message"] == "HTTP error"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_with_metadata(self, tool_service, mock_tool, test_db):
+        """Test invoking a tool with metadata."""
+        # Configure tool as MCP/SSE
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "SSE"
+        mock_tool.url = "http://example.com/sse"
+        mock_tool.auth_value = None
+
+        # Mock DB
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock SSE client and session
+        sse_ctx = AsyncMock()
+        sse_ctx.__aenter__.return_value = ["read", "write"]
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="MCP response")]))
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+
+        meta_data = {"trace_id": "123", "user": "test"}
+
+        # Mock metrics buffer service
+        mock_metrics_buffer = Mock()
+
+        with (
+            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None, meta_data=meta_data)
+
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {}, meta=meta_data)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_error_exception_group_unwrapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
