@@ -4290,7 +4290,7 @@ class Gateway(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+    tags: Mapped[List[Dict[str, str]]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
     created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

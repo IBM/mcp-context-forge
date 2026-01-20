@@ -4089,9 +4089,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if isinstance(gateway.auth_value, dict):
             gateway_dict["auth_value"] = encode_auth(gateway.auth_value)
 
-        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
         if gateway.tags:
-            gateway_dict["tags"] = validate_tags_field(gateway.tags)
+            # Check tags are list of strings or list of Dict[str, str]
+            if isinstance(gateway.tags[0], str):
+                # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
+                gateway_dict["tags"] = validate_tags_field(gateway.tags)
+            else:
+                gateway_dict["tags"] = gateway.tags
         else:
             gateway_dict["tags"] = []
 
@@ -4111,23 +4115,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Prepare a gateway object for GatewayRead validation.
 
         Ensures auth_value is in the correct format (encoded string) for the schema.
-        Converts tags from List[str] (database format) to List[Dict[str, str]] (schema format).
 
         Args:
             gateway: Gateway database object
 
         Returns:
-            Gateway object with properly formatted auth_value and tags
+            Gateway object with properly formatted auth_value
         """
         # If auth_value is a dict, encode it to string for GatewayRead schema
         if isinstance(gateway.auth_value, dict):
             gateway.auth_value = encode_auth(gateway.auth_value)
-
-        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
-        # Database stores: ["git", "development"]
-        # GatewayRead expects: [{"id": "git", "label": "git"}, {"id": "development", "label": "development"}]
-        if gateway.tags:
-            gateway.tags = validate_tags_field(gateway.tags)
 
         return gateway
 
