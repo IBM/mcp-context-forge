@@ -396,6 +396,9 @@ class Settings(BaseSettings):
     # UI Tool Test Configuration
     mcpgateway_ui_tool_test_timeout: int = Field(default=60000, description="Tool test timeout in milliseconds for the admin UI")
 
+    # Tool Execution Cancellation
+    mcpgateway_tool_cancellation_enabled: bool = Field(default=True, description="Enable gateway-authoritative tool execution cancellation with REST API endpoints")
+
     # A2A (Agent-to-Agent) Feature Flags
     mcpgateway_a2a_enabled: bool = True
     mcpgateway_a2a_max_agents: int = 100

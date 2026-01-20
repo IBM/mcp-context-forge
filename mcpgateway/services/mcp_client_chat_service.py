@@ -92,6 +92,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
 
 logging_service = LoggingService()
@@ -2763,6 +2764,27 @@ class MCPChatService:
 
                         tool_runs[run_id] = {"name": name, "start": now_iso, "input": input_data}
 
+                        # Register run for cancellation tracking with gateway-level Cancellation service
+                        async def _noop_cancel_cb(reason: Optional[str]) -> None:
+                            """
+                            No-op cancel callback used when a run is started.
+
+                            Args:
+                                reason: Optional textual reason for cancellation.
+
+                            Returns:
+                                None
+                            """
+                            # Default no-op; kept for potential future intra-process cancellation
+                            return None
+
+                        # Register with cancellation service only if feature is enabled
+                        if settings.mcpgateway_tool_cancellation_enabled:
+                            try:
+                                await cancellation_service.register_run(run_id, name=name, cancel_callback=_noop_cancel_cb)
+                            except Exception:
+                                logger.exception("Failed to register run %s with CancellationService", run_id)
+
                         yield {"type": "tool_start", "id": run_id, "tool": name, "input": input_data, "start": now_iso}
 
                         # NOTE: Do NOT clear from dropped_tool_ends here. If an end was dropped (TTL/buffer-full)
@@ -2810,6 +2832,13 @@ class MCPChatService:
                                     dropped_overflow_count += 1
                                     logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track run_id {run_id} (overflow count: {dropped_overflow_count})")
 
+                        # Unregister run from cancellation service when finished (only if feature is enabled)
+                        if settings.mcpgateway_tool_cancellation_enabled:
+                            try:
+                                await cancellation_service.unregister_run(run_id)
+                            except Exception:
+                                logger.exception("Failed to unregister run %s", run_id)
+
                     elif kind == "on_tool_error":
                         run_id = str(event.get("run_id") or uuid4())
                         error = str(event.get("data", {}).get("error", "Unknown error"))
@@ -2823,6 +2852,13 @@ class MCPChatService:
                         dropped_tool_ends.discard(run_id)
 
                         yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
+
+                        # Unregister run on error (only if feature is enabled)
+                        if settings.mcpgateway_tool_cancellation_enabled:
+                            try:
+                                await cancellation_service.unregister_run(run_id)
+                            except Exception:
+                                logger.exception("Failed to unregister run %s after error", run_id)
 
                     elif kind == "on_chat_model_stream":
                         chunk = event.get("data", {}).get("chunk")
