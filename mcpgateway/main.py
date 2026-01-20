@@ -5064,6 +5064,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "resources/read":
             uri = params.get("uri")
             request_id = params.get("requestId", None)
+            meta_data = params.get("_meta", None)
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
@@ -5090,6 +5091,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     token_teams=auth_token_teams,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
+                    meta_data=meta_data,
                 )
                 if hasattr(result, "model_dump"):
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
@@ -5139,6 +5141,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "prompts/get":
             name = params.get("name")
             arguments = params.get("arguments", {})
+            meta_data = params.get("_meta", None)
             if not name:
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
@@ -5162,6 +5165,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams=auth_token_teams,
                 plugin_context_table=plugin_context_table,
                 plugin_global_context=plugin_global_context,
+                _meta_data=meta_data,
             )
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
@@ -5173,6 +5177,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             headers = {k.lower(): v for k, v in request.headers.items()}
             name = params.get("name")
             arguments = params.get("arguments", {})
+            meta_data = params.get("_meta", None)
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
@@ -5201,6 +5206,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     server_id=server_id,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
+                    meta_data=meta_data,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
@@ -5380,6 +5386,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
+            meta_data = params.get("_meta", None)
+
             try:
                 result = await tool_service.invoke_tool(
                     db=db,
@@ -5392,6 +5401,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     server_id=server_id,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
+                    meta_data=meta_data,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)

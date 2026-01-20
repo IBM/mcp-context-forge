@@ -1166,6 +1166,7 @@ class TestRPCEndpoints:
             server_id=None,
             plugin_context_table=None,
             plugin_global_context=ANY,
+            meta_data=None,
         )
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
@@ -1197,6 +1198,7 @@ class TestRPCEndpoints:
             token_teams=[],
             plugin_context_table=None,
             plugin_global_context=ANY,
+            _meta_data=None,
         )
 
     @patch("mcpgateway.main.tool_service.list_tools")

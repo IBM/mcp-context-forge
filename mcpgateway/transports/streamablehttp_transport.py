@@ -481,6 +481,16 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     server_id = server_id_var.get()
     user_context = user_context_var.get()
 
+    meta_data = None
+    # Extract _meta from request context if available
+    try:
+        ctx = mcp_app.request_context
+        if ctx and ctx.meta is not None:
+            meta_data = ctx.meta.model_dump()
+    except LookupError:
+        # request_context might not be active in some edge cases (e.g. tests)
+        logger.debug("No active request context found")
+
     # Extract authorization parameters from user context (same pattern as list_tools)
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
@@ -506,6 +516,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 user_email=user_email,
                 token_teams=token_teams,
                 server_id=server_id,
+                meta_data=meta_data,
             )
             if not result or not result.content:
                 logger.warning(f"No content returned by tool: {name}")
@@ -685,6 +696,16 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    meta_data = None
+    # Extract _meta from request context if available
+    try:
+        ctx = mcp_app.request_context
+        if ctx and ctx.meta is not None:
+            meta_data = ctx.meta.model_dump()
+    except LookupError:
+        # request_context might not be active in some edge cases (e.g. tests)
+        logger.debug("No active request context found")
+
     try:
         async with get_db() as db:
             try:
@@ -695,6 +716,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     user=user_email,
                     server_id=server_id,
                     token_teams=token_teams,
+                    _meta_data=meta_data,
                 )
             except Exception as e:
                 logger.exception(f"Error getting prompt '{prompt_id}': {e}")
@@ -798,6 +820,16 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    meta_data = None
+    # Extract _meta from request context if available
+    try:
+        ctx = mcp_app.request_context
+        if ctx and ctx.meta is not None:
+            meta_data = ctx.meta.model_dump()
+    except LookupError:
+        # request_context might not be active in some edge cases (e.g. tests)
+        logger.debug("No active request context found")
+
     try:
         async with get_db() as db:
             try:
@@ -807,6 +839,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     user=user_email,
                     server_id=server_id,
                     token_teams=token_teams,
+                    meta_data=meta_data,
                 )
             except Exception as e:
                 logger.exception(f"Error reading resource '{resource_uri}': {e}")
