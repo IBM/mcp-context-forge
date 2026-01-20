@@ -21,6 +21,11 @@ class SessionMiddleware(BaseHTTPMiddleware):
     """Ensure the request-scoped DB session is closed after each request."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """Dispatch request and ensure DB session cleanup after response.
+
+        This method forwards the request to the next handler and always
+        attempts to close the request-scoped DB session afterward.
+        """
         try:
             response = await call_next(request)
             return response
