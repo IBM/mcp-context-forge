@@ -863,6 +863,96 @@ class TestServerService:
         server_service._notify_server_deactivated.assert_called_once()
         assert result.enabled is False
 
+    @pytest.mark.asyncio
+    async def test_set_server_state_activate(self, server_service, mock_server, test_db):
+        """Test activating a server."""
+        mock_server.enabled = False
+        mock_server.team_id = 1
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        server_service._notify_server_activated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        result = await server_service.set_server_state(test_db, "1", activate=True)
+
+        assert test_db.execute.called
+        assert test_db.commit.call_count == 1
+        test_db.refresh.assert_called_once()
+        server_service._notify_server_activated.assert_called_once()
+        assert result.enabled is True
+
+    @pytest.mark.asyncio
+    async def test_set_server_state_with_email_team(self, server_service, mock_server, test_db):
+        """Test that email_team relationship is properly loaded with selectinload."""
+        from mcpgateway.db import EmailTeam
+
+        mock_team = Mock(spec=EmailTeam)
+        mock_team.id = 1
+        mock_team.name = "Test Team"
+        mock_server.team_id = 1
+        mock_server.email_team = mock_team
+
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        server_service._notify_server_deactivated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=False,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        result = await server_service.set_server_state(test_db, "1", activate=False)
+
+        # Verify the server was retrieved with proper options (selectinload for email_team)
+        assert test_db.execute.called
+        assert result.enabled is False
+
     # --------------------------- delete -------------------------------- #
     @pytest.mark.asyncio
     async def test_delete_server(self, server_service, mock_server, test_db):

@@ -1114,7 +1114,7 @@ class ServerService:
                     selectinload(DbServer.resources),
                     selectinload(DbServer.prompts),
                     selectinload(DbServer.a2a_agents),
-                    joinedload(DbServer.email_team),
+                    selectinload(DbServer.email_team),
                 ],
             )
             if not server:
@@ -1432,7 +1432,7 @@ class ServerService:
                     selectinload(DbServer.resources),
                     selectinload(DbServer.prompts),
                     selectinload(DbServer.a2a_agents),
-                    joinedload(DbServer.email_team),
+                    selectinload(DbServer.email_team),
                 ],
             )
             if not server:

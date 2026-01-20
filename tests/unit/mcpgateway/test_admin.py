@@ -469,15 +469,76 @@ class TestAdminServerRoutes:
         assert server_update.oauth_config is None
 
     @patch.object(ServerService, "set_server_state")
+    async def test_admin_set_server_state_activate(self, mock_set_state, mock_request, mock_db):
+        """Test activating a server."""
+        form_data = FakeForm({"activate": "true", "is_inactive_checked": "false"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+
+        mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user")
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert result.headers["location"] == "/admin#catalog"
+
+    @patch.object(ServerService, "set_server_state")
+    async def test_admin_set_server_state_deactivate(self, mock_set_state, mock_request, mock_db):
+        """Test deactivating a server."""
+        form_data = FakeForm({"activate": "false", "is_inactive_checked": "false"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+
+        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert result.headers["location"] == "/admin#catalog"
+
+    @patch.object(ServerService, "set_server_state")
+    async def test_admin_set_server_state_with_inactive_checked(self, mock_set_state, mock_request, mock_db):
+        """Test setting server state with inactive checkbox checked."""
+        form_data = FakeForm({"activate": "false", "is_inactive_checked": "true"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+
+        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+
+        mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert result.headers["location"] == "/admin/?include_inactive=true#catalog"
+
+    @patch.object(ServerService, "set_server_state")
     async def test_admin_set_server_state_with_exception(self, mock_toggle_status, mock_request, mock_db):
         """Test setting server state with exception handling."""
+        form_data = FakeForm({"activate": "true", "is_inactive_checked": "false"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
         mock_toggle_status.side_effect = Exception("Toggle operation failed")
 
-        # Should still return redirect
         result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
+        assert "error=" in result.headers["location"]
+        assert "#catalog" in result.headers["location"]
+
+    @patch.object(ServerService, "set_server_state")
+    async def test_admin_set_server_state_permission_error(self, mock_set_state, mock_request, mock_db):
+        """Test setting server state with permission error."""
+        form_data = FakeForm({"activate": "true", "is_inactive_checked": "false"})
+        mock_request.form = AsyncMock(return_value=form_data)
+        mock_request.scope = {"root_path": ""}
+        mock_set_state.side_effect = PermissionError("Only the owner can activate the Server")
+
+        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert "error=" in result.headers["location"]
+        assert "Only%20the%20owner" in result.headers["location"]
 
     @patch.object(ServerService, "delete_server")
     async def test_admin_delete_server_with_inactive_checkbox(self, mock_delete_server, mock_request, mock_db):
