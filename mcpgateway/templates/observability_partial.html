@@ -431,10 +431,20 @@
         } catch (e) {
             console.error('Failed to delete query:', e);
         }
+    },
+    resetLoadedFlags() {
+        // Reset loaded flags so partials will reload when returning to the tab
+        this.metricsLoaded = false;
+        this.toolsLoaded = false;
+        this.promptsLoaded = false;
+        this.resourcesLoaded = false;
+        console.log('Observability loaded flags reset');
     }
 }" x-init="
     startPolling();
     loadSavedQueries();
+    // Listen for tab leave event to reset state
+    document.addEventListener('observability:leave', () => resetLoadedFlags());
     $watch('timeRange', () => applyFilters());
     $watch('statusFilter', () => applyFilters());
     $watch('minDuration', () => { if(minDuration) applyFilters(); });

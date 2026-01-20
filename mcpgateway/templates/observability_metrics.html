@@ -53,9 +53,14 @@ window.createMetricsController = function() {
       };
       document.addEventListener('visibilitychange', this.visibilityHandler);
 
-      // Note: Alpine.js doesn't emit a 'destroy' DOM event. Cleanup is handled by:
-      // 1. Tab switching logic in admin.js (destroys charts when leaving observability tab)
-      // 2. Page unload event below
+      // Listen for tab leave event to stop auto-refresh and cleanup
+      this.leaveHandler = () => {
+        console.log('Metrics: received observability:leave event, stopping auto-refresh');
+        this.cleanup();
+      };
+      document.addEventListener('observability:leave', this.leaveHandler);
+
+      // Cleanup on page unload as fallback
       window.addEventListener('beforeunload', () => this.cleanup());
     },
 
@@ -67,6 +72,9 @@ window.createMetricsController = function() {
       this.stopAutoRefresh();
       if (this.visibilityHandler) {
         document.removeEventListener('visibilitychange', this.visibilityHandler);
+      }
+      if (this.leaveHandler) {
+        document.removeEventListener('observability:leave', this.leaveHandler);
       }
     },
     /**

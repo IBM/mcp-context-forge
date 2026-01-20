@@ -7188,18 +7188,21 @@ function showTab(tabName) {
             clearTimeout(tabSwitchTimeout);
         }
 
-        // Destroy observability charts when leaving the observability tab
+        // Cleanup observability tab when leaving
         const currentPanel = document.querySelector(".tab-panel:not(.hidden)");
         if (
             currentPanel &&
             currentPanel.id === "observability-panel" &&
             tabName !== "observability"
         ) {
-            console.log("Leaving observability tab, destroying charts...");
+            console.log("Leaving observability tab, triggering cleanup...");
+            // Destroy all observability charts
             window.chartRegistry.destroyByPrefix("metrics-");
             window.chartRegistry.destroyByPrefix("tools-");
             window.chartRegistry.destroyByPrefix("prompts-");
             window.chartRegistry.destroyByPrefix("resources-");
+            // Dispatch event so Alpine components can stop intervals and reset state
+            document.dispatchEvent(new CustomEvent("observability:leave"));
         }
 
         // Navigation styling (immediate)

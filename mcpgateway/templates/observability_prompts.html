@@ -30,6 +30,9 @@ window.createPromptsController = function() {
     cleanup() {
       this.destroyAllCharts();
       this.stopAutoRefresh();
+      if (this.leaveHandler) {
+        document.removeEventListener('observability:leave', this.leaveHandler);
+      }
     },
 
     async init() {
@@ -39,9 +42,14 @@ window.createPromptsController = function() {
       await this.loadAllMetrics();
       this.startAutoRefresh();
 
-      // Note: Alpine.js doesn't emit a 'destroy' DOM event. Cleanup is handled by:
-      // 1. Tab switching logic in admin.js (destroys charts when leaving observability tab)
-      // 2. Page unload event (handled in cleanup function)
+      // Listen for tab leave event to stop auto-refresh and cleanup
+      this.leaveHandler = () => {
+        console.log('Prompts: received observability:leave event, stopping auto-refresh');
+        this.cleanup();
+      };
+      document.addEventListener('observability:leave', this.leaveHandler);
+
+      // Cleanup on page unload as fallback
       window.addEventListener('beforeunload', () => this.cleanup());
     },
     async loadAllMetrics() {
