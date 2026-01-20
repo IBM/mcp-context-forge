@@ -59,22 +59,22 @@ def get_db() -> Generator[Session, None, None]:
         try:
             session.commit()
         except Exception:
-            pass
+            logger.debug("Failed to commit middleware session: %s", Exception())
     except Exception:
         try:
             session.rollback()
         except Exception:
             try:
                 session.invalidate()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to invalidate middleware session during rollback cleanup: %s", e)
         raise
     finally:
         if close_after:
             try:
                 session.close()
             except Exception:
-                pass
+                logger.debug("Failed to close middleware ephemeral session: %s", Exception())
 
 
 # HTTP Bearer security scheme for token extraction
