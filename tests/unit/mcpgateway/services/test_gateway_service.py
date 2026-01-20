@@ -136,6 +136,13 @@ def mock_gateway():
     gw.transport = "sse"
     gw.auth_value = {}
     gw.team_id = 1  # Ensure team_id is a real value, not a MagicMock
+
+    # Mock email_team relationship and team property
+    # Use instance-level assignment (MagicMock allows this)
+    mock_email_team = MagicMock()
+    mock_email_team.name = "Test Team"
+    gw.email_team = mock_email_team
+    gw.team = "Test Team"  # Instance-level mock for the team property
     return gw
 
 
@@ -613,8 +620,8 @@ class TestGatewayService:
 
         result, next_cursor = await gateway_service.list_gateways(test_db)
 
-        # Assert that execute was called twice
-        assert test_db.execute.call_count == 2
+        # Assert that execute was called once (query with eager load)
+        assert test_db.execute.call_count == 1
         # Optionally, print or check call arguments for debugging
         # print(test_db.execute.call_args_list)
         assert len(result) == 1
@@ -625,16 +632,16 @@ class TestGatewayService:
         """Gateway is fetched and returned by ID."""
         mock_gateway.masked = Mock(return_value=mock_gateway)
         mock_gateway.team_id = 1  # Ensure team_id is a real value
-        test_db.get = Mock(return_value=mock_gateway)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         result = await gateway_service.get_gateway(test_db, 1)
-        test_db.get.assert_called_once_with(DbGateway, 1)
+        test_db.execute.assert_called_once()
         assert result.name == "test_gateway"
         assert result.capabilities == mock_gateway.capabilities
 
     @pytest.mark.asyncio
     async def test_get_gateway_not_found(self, gateway_service, test_db):
         """Missing ID → GatewayNotFoundError."""
-        test_db.get = Mock(return_value=None)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         with pytest.raises(GatewayNotFoundError):
             await gateway_service.get_gateway(test_db, 999)
 
@@ -644,7 +651,7 @@ class TestGatewayService:
         mock_gateway.enabled = False
         mock_gateway.id = 1
         mock_gateway.team_id = 1  # Ensure team_id is a real value
-        test_db.get = Mock(return_value=mock_gateway)
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
 
         # Create a mock for GatewayRead with a masked method
         mock_gateway_read = Mock()
@@ -658,7 +665,7 @@ class TestGatewayService:
             assert not result.enabled
 
             # Now test the inactive = False path
-            test_db.get = Mock(return_value=mock_gateway)
+            test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
             with pytest.raises(GatewayNotFoundError):
                 await gateway_service.get_gateway(test_db, 1, include_inactive=False)
 
@@ -1655,6 +1662,7 @@ class TestGatewayService:
         mock_query.order_by.return_value = mock_query
         mock_query.where.return_value = mock_query
         mock_query.limit.return_value = mock_query
+        mock_query.options.return_value = mock_query
 
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]

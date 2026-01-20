@@ -60,7 +60,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 try:
     # Third-Party - check if redis is available
@@ -75,7 +75,7 @@ except ImportError:
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, fresh_db_session
+from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, get_for_update
 from mcpgateway.db import Prompt as DbPrompt
@@ -551,21 +551,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self._active_gateways.clear()
         logger.info("Gateway service shutdown complete")
 
-    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
-        """Retrieve the team name given a team ID.
-
-        Args:
-            db (Session): Database session for querying teams.
-            team_id (Optional[str]): The ID of the team.
-
-        Returns:
-            Optional[str]: The name of the team if found, otherwise None.
-        """
-        if not team_id:
-            return None
-        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        return team.name if team else None
-
     def _check_gateway_uniqueness(
         self,
         db: Session,
@@ -1024,8 +1009,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db=db,
             )
 
-            # Add team name for response
-            db_gateway.team = self._get_team_name(db, db_gateway.team_id)
             return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
@@ -1155,6 +1138,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
+                    joinedload(DbGateway.email_team),
                 )
                 .where(DbGateway.id == gateway_id)
             ).scalar_one_or_none()
@@ -1411,7 +1395,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 return (cached_gateways, cached.get("next_cursor"))
 
         # Build base query with ordering
-        query = select(DbGateway).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
+        query = select(DbGateway).options(joinedload(DbGateway.email_team)).order_by(desc(DbGateway.created_at), desc(DbGateway.id))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -1468,20 +1452,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Cursor-based: pag_result is a tuple
             gateways_db, next_cursor = pag_result
 
-        # Fetch team names for the gateways (common for both pagination types)
-        team_ids_set = {s.team_id for s in gateways_db if s.team_id}
-        team_map = {}
-        if team_ids_set:
-            teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
-            team_map = {team.id: team.name for team in teams}
-
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Convert to GatewayRead (common for both pagination types)
         result = []
         for s in gateways_db:
             try:
-                s.team = team_map.get(s.team_id) if s.team_id else None
                 result.append(self.convert_gateway_to_read(s))
             except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
                 logger.exception(f"Failed to convert gateway {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
@@ -1536,7 +1512,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        query = select(DbGateway)
+        # Use joinedload to eager load email_team relationship (avoids N+1 queries)
+        query = select(DbGateway).options(joinedload(DbGateway.email_team))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -1581,18 +1558,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         gateways = db.execute(query).scalars().all()
 
-        # Batch fetch team names to avoid N+1 queries
-        gateway_team_ids = {g.team_id for g in gateways if g.team_id}
-        team_names = {}
-        if gateway_team_ids:
-            teams = db.query(EmailTeam).filter(EmailTeam.id.in_(gateway_team_ids), EmailTeam.is_active.is_(True)).all()
-            team_names = {team.id: team.name for team in teams}
-
         db.commit()  # Release transaction to avoid idle-in-transaction
 
+        # Team names are loaded via joinedload(DbGateway.email_team)
         result = []
         for g in gateways:
-            g.team = team_names.get(g.team_id) if g.team_id else None
             logger.info(f"Gateway: {g.team_id}, Team: {g.team}")
             result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
         return result
@@ -1644,6 +1614,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
+                    selectinload(DbGateway.email_team),  # Use selectinload to avoid locking email_teams
                 ],
             )
             if not gateway:
@@ -2122,8 +2093,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db=db,
                 )
 
-                gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
-
                 return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
@@ -2224,7 +2193,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> db = MagicMock()
             >>> gateway_mock = MagicMock()
             >>> gateway_mock.enabled = True
-            >>> db.get.return_value = gateway_mock
+            >>> db.execute.return_value.scalar_one_or_none.return_value = gateway_mock
             >>> mocked_gateway_read = MagicMock()
             >>> mocked_gateway_read.masked.return_value = 'gateway_read'
             >>> GatewayRead.model_validate = MagicMock(return_value=mocked_gateway_read)
@@ -2240,7 +2209,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             True
 
             >>> # Test gateway not found
-            >>> db.get.return_value = None
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> try:
             ...     asyncio.run(service.get_gateway(db, 'missing_id'))
             ... except GatewayNotFoundError as e:
@@ -2249,21 +2218,29 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             >>> # Test inactive gateway with include_inactive=False
             >>> gateway_mock.enabled = False
-            >>> db.get.return_value = gateway_mock
+            >>> db.execute.return_value.scalar_one_or_none.return_value = gateway_mock
             >>> try:
             ...     asyncio.run(service.get_gateway(db, 'gateway_id', include_inactive=False))
             ... except GatewayNotFoundError as e:
             ...     'Gateway not found: gateway_id' in str(e)
             True
         """
-        gateway = db.get(DbGateway, gateway_id)
+        # Use eager loading to avoid N+1 queries for relationships and team name
+        gateway = db.execute(
+            select(DbGateway)
+            .options(
+                selectinload(DbGateway.tools),
+                selectinload(DbGateway.resources),
+                selectinload(DbGateway.prompts),
+                joinedload(DbGateway.email_team),
+            )
+            .where(DbGateway.id == gateway_id)
+        ).scalar_one_or_none()
 
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
-            gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
-
             # Structured logging: Log gateway view
             structured_logger.log(
                 level="INFO",
@@ -2315,6 +2292,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
+                    joinedload(DbGateway.email_team),
                 )
                 .where(DbGateway.id == gateway_id)
             ).scalar_one_or_none()
@@ -2542,7 +2520,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db=db,
                 )
 
-            gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         except PermissionError as e:
@@ -2616,7 +2593,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> service = GatewayService()
             >>> db = MagicMock()
             >>> gateway = MagicMock()
-            >>> db.get.return_value = gateway
+            >>> db.execute.return_value.scalar_one_or_none.return_value = gateway
             >>> db.delete = MagicMock()
             >>> db.commit = MagicMock()
             >>> service._notify_gateway_deleted = MagicMock()
@@ -2634,6 +2611,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     selectinload(DbGateway.tools),
                     selectinload(DbGateway.resources),
                     selectinload(DbGateway.prompts),
+                    joinedload(DbGateway.email_team),
                 )
                 .where(DbGateway.id == gateway_id)
             ).scalar_one_or_none()
