@@ -103,6 +103,41 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
     return True
 
 
+def get_attr(obj: Any, attr: str, default: Any = "") -> Any:
+    """Get attribute from object or dictionary with defensive access.
+
+    This utility function provides a consistent way to access attributes
+    on objects that may be either ORM model instances or plain dictionaries.
+
+    Args:
+        obj: The object or dictionary to get the attribute from.
+        attr: The attribute name to retrieve.
+        default: The default value to return if attribute is not found.
+
+    Returns:
+        The attribute value, or the default if not found or obj is None.
+
+    Examples:
+        >>> get_attr({"name": "test"}, "name")
+        'test'
+        >>> get_attr({"name": "test"}, "missing", "default")
+        'default'
+        >>> get_attr(None, "name", "fallback")
+        'fallback'
+        >>> class Obj:
+        ...     name = "obj_name"
+        >>> get_attr(Obj(), "name")
+        'obj_name'
+    """
+    if obj is None:
+        return default
+    if hasattr(obj, attr):
+        return getattr(obj, attr, default) or default
+    if isinstance(obj, dict):
+        return obj.get(attr, default) or default
+    return default
+
+
 def get_matchable_value(payload: Any, hook_type: str) -> Optional[str]:
     """Extract the matchable value from a payload based on hook type.
 

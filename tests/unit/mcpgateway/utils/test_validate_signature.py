@@ -115,3 +115,59 @@ def test_resign_data_valid_old_signature(ed25519_keys):
     new_signature = resign_data(data, old_public_pem, old_signature, new_private_pem)
     assert isinstance(new_signature, str)
     assert len(new_signature) > 0
+
+
+def test_signature_validation_cached(ed25519_keys):
+    """Verify that signature validation results are cached."""
+    from mcpgateway.utils.validate_signature import clear_signature_caches
+    clear_signature_caches()
+
+    private_pem, public_pem, private_key, _ = ed25519_keys
+    data = b"test message"
+    signature = private_key.sign(data)
+
+    # First call validates
+    result1 = validate_signature(data, signature, public_pem)
+    # Second call should use cache
+    result2 = validate_signature(data, signature, public_pem)
+
+    assert result1 == result2 == True
+
+
+def test_clear_signature_caches(ed25519_keys):
+    """Verify that clearing signature caches works correctly."""
+    from mcpgateway.utils.validate_signature import clear_signature_caches
+
+    private_pem, public_pem, private_key, _ = ed25519_keys
+    data = b"test"
+    signature = private_key.sign(data)
+
+    # Warm cache
+    validate_signature(data, signature, public_pem)
+
+    # Clear caches
+    clear_signature_caches()
+
+    # Should still work after clearing
+    result = validate_signature(data, signature, public_pem)
+    assert result == True
+
+
+def test_public_key_caching(ed25519_keys):
+    """Verify that public keys are cached."""
+    from mcpgateway.utils.validate_signature import clear_signature_caches
+    clear_signature_caches()
+
+    private_pem, public_pem, private_key, _ = ed25519_keys
+
+    # Multiple validations with same public key
+    data1 = b"message1"
+    data2 = b"message2"
+    sig1 = private_key.sign(data1)
+    sig2 = private_key.sign(data2)
+
+    result1 = validate_signature(data1, sig1, public_pem)
+    result2 = validate_signature(data2, sig2, public_pem)
+
+    assert result1 == True
+    assert result2 == True

@@ -1255,13 +1255,22 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `JWT_PRIVATE_KEY_PATH`      | If an asymmetric algorithm is used, a private key is required                | (empty)             | path to pem |
 | `JWT_AUDIENCE`              | JWT audience claim for token validation                                      | `mcpgateway-api`    | string      |
 | `JWT_AUDIENCE_VERIFICATION` | Disables jwt audience verification (useful for DCR)                          | `true`              | boolean     |
+| `JWT_ISSUER_VERIFICATION`   | Disables jwt issuer verification (useful for custom auth)                    | `true`              | boolean     |
 | `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
 | `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
 | `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |
+| `REQUIRE_JTI`               | Require JTI (JWT ID) claim in all tokens for revocation support              | `false`             | bool        |
+| `REQUIRE_USER_IN_DB`        | Require all authenticated users to exist in the database                     | `false`             | bool        |
+| `EMBED_ENVIRONMENT_IN_TOKENS` | Embed environment claim in gateway-issued JWTs                             | `false`             | bool        |
+| `VALIDATE_TOKEN_ENVIRONMENT` | Reject tokens with mismatched environment claim                             | `false`             | bool        |
 | `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
 | `OAUTH_DEFAULT_TIMEOUT`         | Default OAuth token timeout in seconds                                     | `3600`                 | int > 0     |
+| `INSECURE_ALLOW_QUERYPARAM_AUTH` | Enable query parameter authentication for gateways (see security warning) | `false`             | bool        |
+| `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` | JSON array of hosts allowed to use query param auth               | `[]`                | JSON array  |
+
+> ⚠️ **Query Parameter Authentication (INSECURE)**: The `INSECURE_ALLOW_QUERYPARAM_AUTH` setting enables API key authentication via URL query parameters. This is inherently insecure (CWE-598) as API keys may appear in proxy logs, browser history, and server access logs. Only enable this when the upstream MCP server (e.g., Tavily) requires this authentication method. Always configure `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` to restrict which hosts can use this feature.
 
 > 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
 >
@@ -1505,10 +1514,15 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
+| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only | `false` | bool |
 | `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
 | `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
 > 🔐 **MCP Client Auth**: When `MCP_CLIENT_AUTH_ENABLED=false`, you must set `TRUST_PROXY_AUTH=true` if using a trusted authentication proxy. This is a security-sensitive setting.
+
+> 🔒 **MCP Require Auth**: When `MCP_REQUIRE_AUTH=true`, all `/mcp` endpoint requests must include a valid Bearer token. When `false` (default), unauthenticated requests are allowed but can only access public tools, resources, and prompts.
+
+> ⚠️ **MCP Access Control Dependencies**: Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
 
 ### SSO (Single Sign-On) Configuration
 
@@ -1618,6 +1632,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
 | `JWT_AUDIENCE_VERIFICATION`                | JWT audience verification (disable for DCR)                    | `true`                         | bool          |
+| `JWT_ISSUER_VERIFICATION`                  | JWT issuer verification (disable if needed)                    | `true`                         | bool          |
 
 **Documentation:**
 - [DCR Configuration Guide](https://ibm.github.io/mcp-context-forge/manage/dcr/) - Complete DCR setup and troubleshooting
@@ -1958,7 +1973,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `OBSERVABILITY_TRACE_RETENTION_DAYS` | Number of days to retain trace data                   | `7`                                                  | int (≥ 1)        |
 | `OBSERVABILITY_MAX_TRACES`           | Maximum number of traces to retain                    | `100000`                                             | int (≥ 1000)     |
 | `OBSERVABILITY_SAMPLE_RATE`          | Trace sampling rate (0.0-1.0)                        | `1.0`                                                | float (0.0-1.0)  |
-| `OBSERVABILITY_EXCLUDE_PATHS`        | Paths to exclude from tracing (regex patterns)        | `/health,/healthz,/ready,/metrics,/static/.*`        | comma-separated  |
+| `OBSERVABILITY_INCLUDE_PATHS`        | Regex patterns to include for tracing                | `["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]` | JSON array |
+| `OBSERVABILITY_EXCLUDE_PATHS`        | Regex patterns to exclude (after include patterns)   | `["/health","/healthz","/ready","/metrics","/static/.*"]` | JSON array |
 | `OBSERVABILITY_METRICS_ENABLED`      | Enable metrics collection                             | `true`                                               | bool             |
 | `OBSERVABILITY_EVENTS_ENABLED`       | Enable event logging within spans                     | `true`                                               | bool             |
 
@@ -1967,12 +1983,14 @@ The gateway includes built-in observability features for tracking HTTP requests,
 - 🔍 **Admin UI integration**: View traces, spans, and metrics in the diagnostics tab
 - 🎯 **Sampling control**: Configure sampling rate to reduce overhead in high-traffic scenarios
 - 🕐 **Automatic cleanup**: Old traces automatically purged based on retention settings
-- 🚫 **Path filtering**: Exclude health checks and static resources from tracing
+- 🚫 **Path filtering**: Only include-listed endpoints are traced by default (MCP/A2A); regex excludes apply after includes
 
 **Configuration Effects:**
 - `OBSERVABILITY_ENABLED=false`: Completely disables internal observability (no database writes, zero overhead)
 - `OBSERVABILITY_SAMPLE_RATE=0.1`: Traces 10% of requests (useful for high-volume production)
-- `OBSERVABILITY_EXCLUDE_PATHS=/health,/metrics`: Prevents noisy endpoints from creating traces
+- `OBSERVABILITY_INCLUDE_PATHS=["^/mcp(?:/|$)","^/a2a(?:/|$)"]`: Limits tracing to MCP and A2A endpoints
+- `OBSERVABILITY_INCLUDE_PATHS=[]`: Traces all endpoints (still subject to exclude patterns)
+- `OBSERVABILITY_EXCLUDE_PATHS=["/health","/metrics"]`: Prevents noisy endpoints from creating traces
 
 > 📝 **Note**: This is separate from OpenTelemetry. You can use both systems simultaneously - internal observability for Admin UI visibility and OpenTelemetry for external systems like Phoenix/Jaeger.
 >
@@ -2039,6 +2057,8 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `METRICS_ROLLUP_LATE_DATA_HOURS`     | Hours to re-process for late-arriving data       | `1`      | 1-48        |
 | `METRICS_DELETE_RAW_AFTER_ROLLUP`    | Delete raw metrics after rollup exists           | `true`   | bool        |
 | `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` | Hours to retain raw when rollup exists        | `1`      | 1-8760      |
+| `USE_POSTGRESDB_PERCENTILES`         | Use PostgreSQL-native percentile_cont for p50/p95/p99 | `true` | bool     |
+| `YIELD_BATCH_SIZE`                   | Rows per batch when streaming rollup queries     | `1000`   | 100-10000   |
 
 **Key Features:**
 - 📊 **Hourly rollup**: Pre-aggregated summaries with p50/p95/p99 percentiles
@@ -2537,9 +2557,9 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle active status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/tools/1/toggle?activate=false
+     http://localhost:4444/tools/1/state?activate=false
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/tools/1/toggle?activate=true
+     http://localhost:4444/tools/1/state?activate=true
 
 # Delete tool
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
@@ -2599,7 +2619,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle agent status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/a2a/agent-id/toggle?activate=false
+     http://localhost:4444/a2a/agent-id/state?activate=false
 
 # Delete agent
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -2649,7 +2669,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle active status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/gateways/1/toggle?activate=false
+     http://localhost:4444/gateways/1/state?activate=false
 
 # Delete gateway
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways/1
@@ -2735,7 +2755,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle active
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/prompts/5/toggle?activate=false
+     http://localhost:4444/prompts/5/state?activate=false
 
 # Delete prompt
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/prompts/greet
@@ -2793,7 +2813,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle active
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/servers/UUID_OF_SERVER_1/toggle?activate=false
+     http://localhost:4444/servers/UUID_OF_SERVER_1/state?activate=false
 ```
 
 </details>

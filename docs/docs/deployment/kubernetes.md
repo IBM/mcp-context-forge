@@ -314,6 +314,7 @@ data:
   JWT_AUDIENCE: "mcpgateway-production"
   JWT_ISSUER: "your-organization"
   JWT_AUDIENCE_VERIFICATION: "true"
+  JWT_ISSUER_VERIFICATION: "true"
   REQUIRE_TOKEN_EXPIRATION: "true"
 
   # Security settings

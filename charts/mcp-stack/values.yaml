@@ -8,6 +8,26 @@ global:
   fullnameOverride: ""          # fully-qualified name override (optional)
 
 ########################################################################
+# SERVICE ACCOUNT
+# Configure ServiceAccount for all pods in the release.
+# Note: All pods (gateway, postgres, redis, minio, etc.) share the same
+# ServiceAccount. For fine-grained IAM control, deploy components in
+# separate releases or use Kustomize overlays.
+########################################################################
+serviceAccount:
+  # -- Create a ServiceAccount for all pods in this release
+  create: false
+  # -- ServiceAccount name. If empty and create=true, uses release fullname. If create=false, uses this name or "default"
+  name: ""
+  # -- Annotations for the ServiceAccount (e.g., AWS IRSA, GCP Workload Identity)
+  # @default -- `{}`
+  annotations: {}
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/my-role
+    # iam.gke.io/gcp-service-account: my-sa@project.iam.gserviceaccount.com
+  # -- Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting)
+  automountServiceAccountToken: true
+
+########################################################################
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:
@@ -42,6 +62,7 @@ mcpContextForge:
   service:
     type: ClusterIP
     port: 80                    # external port → containerPort below
+    annotations: {}             # Service annotations (e.g., for AWS NLB configuration)
 
   containerPort: 4444           # port the app listens on inside the pod
 
@@ -316,6 +337,12 @@ mcpContextForge:
     SECURE_COOKIES: "true"           # force secure cookie flags
     COOKIE_SAMESITE: lax             # cookie SameSite attribute
 
+    # ─ Query Parameter Authentication (INSECURE) ─
+    # WARNING: API keys in URLs may appear in proxy logs, browser history, server logs.
+    # See CWE-598. Only use when upstream MCP server (e.g., Tavily) requires it.
+    INSECURE_ALLOW_QUERYPARAM_AUTH: "false"  # enable query param auth (default: disabled)
+    INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS: "[]"  # JSON array of allowed hosts, e.g. '["mcp.tavily.com"]'
+
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_FORMAT: json                 # json or text format
@@ -361,6 +388,8 @@ mcpContextForge:
     METRICS_ROLLUP_LATE_DATA_HOURS: "1" # hours to re-process for late-arriving data (1-48)
     METRICS_DELETE_RAW_AFTER_ROLLUP: "true" # delete raw metrics after hourly rollup exists
     METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS: "1" # hours to retain raw when rollup exists (1-8760)
+    USE_POSTGRESDB_PERCENTILES: "true" # use PostgreSQL-native percentile_cont for p50/p95/p99
+    YIELD_BATCH_SIZE: "1000" # rows per batch when streaming rollup queries (100-10000)
 
     # ─ Transports ─
     TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
@@ -487,7 +516,8 @@ mcpContextForge:
     OBSERVABILITY_TRACE_RETENTION_DAYS: "7"      # number of days to retain trace data
     OBSERVABILITY_MAX_TRACES: "100000"           # maximum number of traces to retain
     OBSERVABILITY_SAMPLE_RATE: "1.0"             # trace sampling rate (0.0-1.0, 1.0 = trace everything)
-    OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]' # paths to exclude from tracing
+    OBSERVABILITY_INCLUDE_PATHS: '["^/rpc/?$", "^/sse$", "^/message$", "^/mcp(?:/|$)", "^/servers/[^/]+/mcp/?$", "^/servers/[^/]+/sse$", "^/servers/[^/]+/message$", "^/a2a(?:/|$)"]' # paths to include for tracing
+    OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]' # paths to exclude from tracing after include patterns
     OBSERVABILITY_METRICS_ENABLED: "true"        # enable metrics collection
     OBSERVABILITY_EVENTS_ENABLED: "true"         # enable event logging within spans
 
@@ -552,12 +582,15 @@ mcpContextForge:
     BASIC_AUTH_USER: admin                 # username for basic-auth login
     BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
+    MCP_REQUIRE_AUTH: "false"              # require auth for /mcp endpoints (false = allow public-only access)
     JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
     TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
     REQUIRE_TOKEN_EXPIRATION: "false"      # require all JWT tokens to have expiration claims
+    REQUIRE_JTI: "false"                   # require JTI (JWT ID) claim for revocation support
+    REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
     AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
 
     # ─ Email-Based Authentication ─
@@ -604,8 +637,11 @@ mcpContextForge:
 
     # ─ JWT Configuration (Advanced) ─
     JWT_AUDIENCE_VERIFICATION: "true"      # JWT audience verification (disable for DCR)
+    JWT_ISSUER_VERIFICATION: "true"        # JWT issuer verification (disable if needed)
     JWT_PRIVATE_KEY_PATH: ""               # path to JWT private key file (RSA/ECDSA algorithms)
     JWT_PUBLIC_KEY_PATH: ""                # path to JWT public key file (RSA/ECDSA algorithms)
+    EMBED_ENVIRONMENT_IN_TOKENS: "false"   # embed env claim in gateway-issued JWTs
+    VALIDATE_TOKEN_ENVIRONMENT: "false"    # reject tokens with mismatched env claim
 
     # ─ SSO (Single Sign-On) Configuration ─
     SSO_ENABLED: "false"                   # master switch for Single Sign-On authentication
@@ -614,7 +650,7 @@ mcpContextForge:
     SSO_PRESERVE_ADMIN_AUTH: "true"        # preserve local admin authentication when SSO enabled
     SSO_REQUIRE_ADMIN_APPROVAL: "false"    # require admin approval for new SSO registrations
     SSO_AUTO_ADMIN_DOMAINS: "[]"           # email domains that automatically get admin privileges
-    SSO_ISSUERS: ""                        # optional JSON array of issuer URLs for SSO providers
+    SSO_ISSUERS: "[]"                      # optional JSON array of issuer URLs for SSO providers
 
     # ─ GitHub OAuth ─
     SSO_GITHUB_ENABLED: "false"            # enable GitHub OAuth authentication
@@ -708,6 +744,25 @@ mcpContextForge:
     - configMapRef:
         name: mcp-gateway-config
 
+  ## -- Additional environment variables from secrets or configmaps
+  ## Example:
+  ##   extraEnvFrom:
+  ##     - secretRef:
+  ##         name: my-secret
+  extraEnvFrom: []
+
+  ## -- Additional environment variables to inject directly
+  ## Example:
+  ##   extraEnv:
+  ##     - name: MY_VAR
+  ##       value: my-value
+  ##     - name: SECRET_VAR
+  ##       valueFrom:
+  ##         secretKeyRef:
+  ##           name: my-secret
+  ##           key: secret-key
+  extraEnv: []
+
 ########################################################################
 # DATABASE MIGRATION (Alembic)
 # Runs as a Job before mcpgateway deployment
@@ -790,6 +845,32 @@ postgres:
       memory: 64Mi
 
   # ─── Health & readiness probes ───
+
+  # ─── External Database Configuration ───
+  # If enabled, uses these connection details instead of the internal postgres pod.
+  # Can map keys from an existingSecret (e.g. created by CloudNativePG).
+  external:
+    enabled: false
+    # Secret name containing connection details
+    existingSecret: ""
+
+    # Connection details.
+    # If *Key is provided and existingSecret is set, the value is pulled from the secret.
+    # Otherwise, the direct value (host, port, etc.) is used.
+    host: ""
+    hostKey: "host"
+
+    port: 5432
+    portKey: "port"
+
+    database: ""
+    databaseKey: "dbname"
+
+    user: ""
+    userKey: "user"
+
+    password: ""
+    passwordKey: "password"
   probes:
     readiness:
       type: exec

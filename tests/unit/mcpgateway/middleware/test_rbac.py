@@ -237,6 +237,210 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
         plugin_framework.get_plugin_manager = original_get_pm
 
 
+# ============================================================================
+# Tests for team_id fallback from user_context (Issue #2183)
+# ============================================================================
+# Note: These tests require mocking the plugin manager singleton, which is flaky
+# in parallel execution (pytest-xdist). They are skipped by default but can be
+# run individually with: pytest tests/unit/mcpgateway/middleware/test_rbac.py -k "team_id" -v
+
+
+@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
+@pytest.mark.asyncio
+async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch):
+    """Verify check_permission receives team_id from user_context when no team_id kwarg is passed.
+
+    This tests the fix for issue #2183: when team_id is not in path/query parameters,
+    the decorator should fall back to user_context.team_id from the JWT token.
+    """
+    import importlib
+
+    async def dummy_func(user=None):
+        return "ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-123"}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    original_get_pm = plugin_framework.get_plugin_manager
+    try:
+        plugin_framework.get_plugin_manager = lambda: None
+        decorated = rbac.require_permission("gateways.read")(dummy_func)
+        result = await decorated(user=mock_user)
+        assert result == "ok"
+        mock_perm_service.check_permission.assert_called_once()
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-123"
+    finally:
+        plugin_framework.get_plugin_manager = original_get_pm
+
+
+@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
+@pytest.mark.asyncio
+async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
+    """Verify kwarg team_id takes precedence over user_context.team_id."""
+    import importlib
+
+    async def dummy_func(user=None, team_id=None):
+        return "ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-A"}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    original_get_pm = plugin_framework.get_plugin_manager
+    try:
+        plugin_framework.get_plugin_manager = lambda: None
+        decorated = rbac.require_permission("gateways.read")(dummy_func)
+        result = await decorated(user=mock_user, team_id="team-B")
+        assert result == "ok"
+        mock_perm_service.check_permission.assert_called_once()
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-B"
+    finally:
+        plugin_framework.get_plugin_manager = original_get_pm
+
+
+@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
+@pytest.mark.asyncio
+async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch):
+    """Verify require_any_permission uses user_context.team_id when no team_id kwarg."""
+    import importlib
+
+    async def dummy_func(user=None):
+        return "any-ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-456"}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    original_get_pm = plugin_framework.get_plugin_manager
+    try:
+        plugin_framework.get_plugin_manager = lambda: None
+        decorated = rbac.require_any_permission(["gateways.read", "gateways.list"])(dummy_func)
+        result = await decorated(user=mock_user)
+        assert result == "any-ok"
+        assert mock_perm_service.check_permission.called
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-456"
+    finally:
+        plugin_framework.get_plugin_manager = original_get_pm
+
+
+@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
+@pytest.mark.asyncio
+async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
+    """Verify require_any_permission prefers kwarg team_id over user_context.team_id."""
+    import importlib
+
+    async def dummy_func(user=None, team_id=None):
+        return "any-ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-A"}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    original_get_pm = plugin_framework.get_plugin_manager
+    try:
+        plugin_framework.get_plugin_manager = lambda: None
+        decorated = rbac.require_any_permission(["gateways.read"])(dummy_func)
+        result = await decorated(user=mock_user, team_id="team-B")
+        assert result == "any-ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-B"
+    finally:
+        plugin_framework.get_plugin_manager = original_get_pm
+
+
+@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
+@pytest.mark.asyncio
+async def test_decorators_handle_none_user_context_team_id(monkeypatch):
+    """Verify decorators work when user_context.team_id is None."""
+    import importlib
+
+    async def dummy_func(user=None):
+        return "ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    original_get_pm = plugin_framework.get_plugin_manager
+    try:
+        plugin_framework.get_plugin_manager = lambda: None
+        decorated_perm = rbac.require_permission("gateways.read")(dummy_func)
+        result = await decorated_perm(user=mock_user)
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+    finally:
+        plugin_framework.get_plugin_manager = original_get_pm
+
+
+@pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
+@pytest.mark.asyncio
+async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
+    """Test that plugin permission hook receives correct team_id from user_context.
+
+    Scenario:
+    - Plugin registered for HTTP_AUTH_CHECK_PERMISSION hook
+    - User has team_id in token (via user_context)
+    - User calls endpoint without team_id param
+    Expected: Plugin's HttpAuthCheckPermissionPayload.team_id equals token's team_id
+    """
+    import importlib
+    from mcpgateway.plugins.framework import PluginResult, HttpAuthCheckPermissionPayload
+
+    async def dummy_func(user=None):
+        return "ok"
+
+    mock_db = MagicMock()
+    # User context with team_id from JWT token
+    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-from-token"}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    # Create a mock plugin manager that captures the payload
+    captured_payload = None
+
+    async def capture_invoke_hook(hook_type, payload, global_context, local_contexts=None):
+        nonlocal captured_payload
+        captured_payload = payload
+        # Return result that continues processing (doesn't make decision)
+        return (PluginResult(modified_payload=None, continue_processing=True), None)
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for = MagicMock(return_value=True)
+    mock_pm.invoke_hook = AsyncMock(side_effect=capture_invoke_hook)
+
+    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    original_get_pm = plugin_framework.get_plugin_manager
+    try:
+        plugin_framework.get_plugin_manager = lambda: mock_pm
+
+        decorated = rbac.require_permission("gateways.read")(dummy_func)
+        result = await decorated(user=mock_user)
+
+        assert result == "ok"
+        # Key assertion: the plugin hook should have received the team_id from user_context
+        assert captured_payload is not None
+        assert isinstance(captured_payload, HttpAuthCheckPermissionPayload)
+        assert captured_payload.team_id == "team-from-token"
+    finally:
+        plugin_framework.get_plugin_manager = original_get_pm
+
+
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch):

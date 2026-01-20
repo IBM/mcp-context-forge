@@ -757,6 +757,16 @@ class TokenScopingMiddleware:
             HTTPException: If token scoping restrictions are violated
         """
         try:
+            # Skip if already scoped (prevents double-scoping for /mcp requests)
+            # MCPPathRewriteMiddleware runs scoping via dispatch, then routes through
+            # middleware stack which hits BaseHTTPMiddleware's scoping again.
+            # Use request.state flag which persists across middleware invocations.
+            if getattr(request.state, "_token_scoping_done", False):
+                return await call_next(request)
+
+            # Mark as scoped before doing any work
+            request.state._token_scoping_done = True
+
             # Skip scoping for certain paths (truly public endpoints only)
             skip_paths = [
                 "/health",
@@ -774,6 +784,10 @@ class TokenScopingMiddleware:
                 return await call_next(request)
 
             if any(request.url.path.startswith(path) for path in skip_paths):
+                return await call_next(request)
+
+            # Skip server-specific well-known endpoints (RFC 9728)
+            if re.match(r"^/servers/[^/]+/\.well-known/", request.url.path):
                 return await call_next(request)
 
             # Extract full token payload (not just scopes)

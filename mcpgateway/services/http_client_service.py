@@ -76,6 +76,7 @@ class SharedHttpClient:
         """Initialize the SharedHttpClient wrapper (not the actual client)."""
         self._client: Optional[httpx.AsyncClient] = None
         self._initialized: bool = False
+        self._limits: Optional[httpx.Limits] = None
 
     @classmethod
     async def get_instance(cls) -> "SharedHttpClient":
@@ -105,7 +106,7 @@ class SharedHttpClient:
         # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
-        limits = httpx.Limits(
+        self._limits = httpx.Limits(
             max_connections=settings.httpx_max_connections,
             max_keepalive_connections=settings.httpx_max_keepalive_connections,
             keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -119,7 +120,7 @@ class SharedHttpClient:
         )
 
         self._client = httpx.AsyncClient(
-            limits=limits,
+            limits=self._limits,
             timeout=timeout,
             http2=settings.httpx_http2_enabled,
             follow_redirects=True,
@@ -149,12 +150,39 @@ class SharedHttpClient:
             raise RuntimeError("SharedHttpClient not initialized. Call get_instance() first.")
         return self._client
 
+    def get_pool_stats(self) -> dict[str, int]:
+        """
+        Get connection pool configuration limits.
+
+        Returns:
+            dict: Connection pool limit metrics:
+                - max_connections: Maximum allowed connections
+                - max_keepalive: Maximum idle connections to retain
+
+        Note:
+            Returns empty dict if client is not initialized.
+            Actual connection counts are not exposed by httpx.
+        """
+        if self._client is None:
+            return {}
+
+        # Return pool configuration limits (actual connection counts not exposed by httpx)
+        if self._limits is not None:
+            return {
+                "max_connections": self._limits.max_connections,
+                "max_keepalive": self._limits.max_keepalive_connections,
+            }
+
+        # Fallback if _limits somehow not set (should never happen)
+        return {}
+
     async def close(self) -> None:
         """Close the shared HTTP client and release all connections."""
         if self._client:
             await self._client.aclose()
             self._client = None
             self._initialized = False
+            self._limits = None
             logger.info("Shared HTTP client closed")
 
     @classmethod
@@ -210,6 +238,8 @@ def get_http_limits() -> httpx.Limits:
 def get_http_timeout(
     read_timeout: Optional[float] = None,
     connect_timeout: Optional[float] = None,
+    write_timeout: Optional[float] = None,
+    pool_timeout: Optional[float] = None,
 ) -> httpx.Timeout:
     """
     Get configured HTTPX Timeout for use with custom clients.
@@ -219,6 +249,8 @@ def get_http_timeout(
     Args:
         read_timeout: Override for read timeout (seconds).
         connect_timeout: Override for connect timeout (seconds).
+        write_timeout: Override for write timeout (seconds).
+        pool_timeout: Override for pool timeout (seconds).
 
     Returns:
         httpx.Timeout: Configured timeout from settings with optional overrides.
@@ -227,10 +259,10 @@ def get_http_timeout(
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
     return httpx.Timeout(
-        connect=connect_timeout or settings.httpx_connect_timeout,
-        read=read_timeout or settings.httpx_read_timeout,
-        write=settings.httpx_write_timeout,
-        pool=settings.httpx_pool_timeout,
+        connect=connect_timeout if connect_timeout is not None else settings.httpx_connect_timeout,
+        read=read_timeout if read_timeout is not None else settings.httpx_read_timeout,
+        write=write_timeout if write_timeout is not None else settings.httpx_write_timeout,
+        pool=pool_timeout if pool_timeout is not None else settings.httpx_pool_timeout,
     )
 
 
@@ -278,6 +310,9 @@ async def get_isolated_http_client(
     verify: Optional[bool | ssl.SSLContext] = None,
     auth: Optional[httpx.Auth] = None,
     http2: Optional[bool] = None,
+    connect_timeout: Optional[float] = None,
+    write_timeout: Optional[float] = None,
+    pool_timeout: Optional[float] = None,
 ) -> AsyncIterator[httpx.AsyncClient]:
     """
     Create an isolated HTTP client with custom settings.
@@ -295,6 +330,9 @@ async def get_isolated_http_client(
                 If None, uses skip_ssl_verify setting to determine default.
         auth: Optional authentication handler.
         http2: Override HTTP/2 setting (default: use settings).
+        connect_timeout: Optional connect timeout override (seconds).
+        write_timeout: Optional write timeout override (seconds).
+        pool_timeout: Optional pool timeout override (seconds).
 
     Yields:
         httpx.AsyncClient: A new isolated client instance.
@@ -307,7 +345,12 @@ async def get_isolated_http_client(
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
     limits = get_http_limits()
-    timeout_config = get_http_timeout(read_timeout=timeout)
+    timeout_config = get_http_timeout(
+        read_timeout=timeout,
+        connect_timeout=connect_timeout,
+        write_timeout=write_timeout,
+        pool_timeout=pool_timeout,
+    )
 
     # Use skip_ssl_verify setting if no explicit verify value provided
     effective_verify: bool | ssl.SSLContext = verify if verify is not None else get_default_verify()

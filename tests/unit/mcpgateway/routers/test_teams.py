@@ -17,7 +17,7 @@ from fastapi import HTTPException, status
 import pytest
 from sqlalchemy.orm import Session
 
-from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember
+from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember, EmailUser
 from mcpgateway.schemas import (
     EmailUserResponse,
     TeamCreateRequest,
@@ -228,23 +228,47 @@ class TestTeamsRouter:
     async def test_list_teams_admin(self, mock_admin_context, mock_team):
         """Test listing teams as admin (sees all teams)."""
         teams = [mock_team]
-        total = 1
+        next_cursor = None  # No more pages
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.list_teams = AsyncMock(return_value=(teams, total))
+            # Service returns (teams, next_cursor) tuple for cursor pagination
+            mock_service.list_teams = AsyncMock(return_value=(teams, next_cursor))
             # Mock the batch cached method for member counts
             mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, current_user_ctx=mock_admin_context)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context)
 
             assert len(result.teams) == 1
-            assert result.total == total
             assert result.teams[0].id == mock_team.id
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0)
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None)
+
+    @pytest.mark.asyncio
+    async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team):
+        """Test listing teams as admin with include_pagination=True returns cursor format."""
+        teams = [mock_team]
+        next_cursor = "eyJjcmVhdGVkX2F0IjogIjIwMjYtMDEtMTQiLCAiaWQiOiAiMTIzIn0="  # Base64 encoded cursor
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            # Service returns (teams, next_cursor) tuple for cursor pagination
+            mock_service.list_teams = AsyncMock(return_value=(teams, next_cursor))
+            mock_service.get_teams_count = AsyncMock(return_value=100)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, current_user_ctx=mock_admin_context)
+
+            # With include_pagination=True, should return CursorPaginatedTeamsResponse
+            assert hasattr(result, "teams")
+            assert hasattr(result, "next_cursor")
+            assert len(result.teams) == 1
+            assert result.next_cursor == next_cursor
 
     @pytest.mark.asyncio
     async def test_list_teams_regular_user(self, mock_user_context, mock_team):
@@ -260,7 +284,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, current_user_ctx=mock_user_context)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_user_context)
 
             assert len(result.teams) == 1
             assert result.total == 1
@@ -300,7 +324,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_teams
 
             # Test pagination - skip 5, limit 3
-            result = await list_teams(skip=5, limit=3, current_user_ctx=mock_user_context)
+            result = await list_teams(skip=5, limit=3, cursor=None, include_pagination=False, current_user_ctx=mock_user_context)
 
             assert len(result.teams) == 3
             assert result.total == 10
@@ -526,18 +550,33 @@ class TestTeamsRouter:
     async def test_list_team_members_success(self, mock_current_user, mock_db, mock_team_member):
         """Test listing team members successfully."""
         team_id = str(uuid4())
-        members = [mock_team_member]
+
+        # Mock user object to pair with membership
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = mock_team_member.user_email
+        mock_user.full_name = "Test User"
+
+        # When cursor=None and limit=None, get_team_members returns just a list
+        members_tuples = [(mock_user, mock_team_member)]
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
-            mock_service.get_team_members = AsyncMock(return_value=members)
+            mock_service.get_team_members = AsyncMock(return_value=members_tuples)
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import list_team_members
 
-            result = await list_team_members(team_id, current_user=mock_current_user, db=mock_db)
+            result = await list_team_members(
+                team_id=team_id,
+                cursor=None,
+                limit=None,
+                include_pagination=False,
+                current_user=mock_current_user,
+                db=mock_db
+            )
 
+            assert isinstance(result, list)
             assert len(result) == 1
             assert result[0].user_email == mock_team_member.user_email
             assert result[0].role == mock_team_member.role

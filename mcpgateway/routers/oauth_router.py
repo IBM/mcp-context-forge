@@ -15,6 +15,7 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 # Standard
 import logging
 from typing import Any, Dict
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -32,6 +33,38 @@ from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) -> str | None:
+    """Normalize URL for use as RFC 8707 resource parameter.
+
+    Per RFC 8707 Section 2:
+    - resource MUST be an absolute URI (scheme required; supports both URLs and URNs)
+    - resource MUST NOT include a fragment component
+    - resource SHOULD NOT include a query component (but allowed when necessary)
+
+    Args:
+        url: The resource URL to normalize
+        preserve_query: If True, preserve query component (for explicitly configured resources).
+                       If False, strip query (for auto-derived resources per RFC 8707 SHOULD NOT).
+
+    Returns:
+        Normalized URL suitable for RFC 8707 resource parameter, or None if invalid
+    """
+    if not url:
+        return None
+    parsed = urlparse(url)
+    # RFC 8707: resource MUST be an absolute URI (requires scheme)
+    # Support both hierarchical URIs (https://...) and URNs (urn:example:app)
+    if not parsed.scheme:
+        logger.warning(f"Invalid resource URL (must be absolute URI with scheme): {url}")
+        return None
+    # Remove fragment (MUST NOT per RFC 8707)
+    # Query: strip for auto-derived (SHOULD NOT), preserve for explicit config (allowed when necessary)
+    query = parsed.query if preserve_query else ""
+    normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
+    return normalized
+
 
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
@@ -83,6 +116,24 @@ async def initiate_oauth_flow(
             raise HTTPException(status_code=400, detail="Gateway is not configured for Authorization Code flow")
 
         oauth_config = gateway.oauth_config.copy()  # Work with a copy to avoid mutating the original
+
+        # RFC 8707: Set resource parameter for JWT access tokens
+        # Respect pre-configured resource (e.g., for providers requiring pre-registered resources)
+        # Only derive from gateway.url if not explicitly configured
+        if oauth_config.get("resource"):
+            # Normalize existing resource - preserve query for explicit config (RFC 8707 allows when necessary)
+            existing = oauth_config["resource"]
+            if isinstance(existing, list):
+                original_count = len(existing)
+                normalized = [_normalize_resource_url(r, preserve_query=True) for r in existing]
+                oauth_config["resource"] = [r for r in normalized if r]
+                if not oauth_config["resource"] and original_count > 0:
+                    logger.warning(f"All {original_count} configured resource values were invalid and removed")
+            else:
+                oauth_config["resource"] = _normalize_resource_url(existing, preserve_query=True)
+        else:
+            # Default to gateway.url as the resource (strip query per RFC 8707 SHOULD NOT)
+            oauth_config["resource"] = _normalize_resource_url(gateway.url)
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
@@ -284,7 +335,27 @@ async def oauth_callback(
         # Complete OAuth flow
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
 
-        result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, gateway.oauth_config)
+        # RFC 8707: Add resource parameter for JWT access tokens
+        # Must be set here in callback, not just in /authorize, because complete_authorization_code_flow
+        # needs it for the token exchange request
+        # Respect pre-configured resource; only derive from gateway.url if not explicitly configured
+        oauth_config_with_resource = gateway.oauth_config.copy()
+        if oauth_config_with_resource.get("resource"):
+            # Preserve query for explicit config (RFC 8707 allows when necessary)
+            existing = oauth_config_with_resource["resource"]
+            if isinstance(existing, list):
+                original_count = len(existing)
+                normalized = [_normalize_resource_url(r, preserve_query=True) for r in existing]
+                oauth_config_with_resource["resource"] = [r for r in normalized if r]
+                if not oauth_config_with_resource["resource"] and original_count > 0:
+                    logger.warning(f"All {original_count} configured resource values were invalid and removed")
+            else:
+                oauth_config_with_resource["resource"] = _normalize_resource_url(existing, preserve_query=True)
+        else:
+            # Strip query for auto-derived (RFC 8707 SHOULD NOT)
+            oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
+
+        result = await oauth_manager.complete_authorization_code_flow(gateway_id, code, state, oauth_config_with_resource)
 
         logger.info(f"Completed OAuth flow for gateway {gateway_id}, user {result.get('user_id')}")
 

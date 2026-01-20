@@ -24,9 +24,98 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
+    """Upgrade schema.
+
+    Raises:
+        RuntimeError: If partial or inconsistent migration state is detected.
+    """
     conn = op.get_bind()
+    inspector = sa.inspect(conn)
     dialect = conn.dialect.name if hasattr(conn, "dialect") else None
+
+    # Skip if fresh database (tables created via create_all + stamp)
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
+    # Skip if prompts table doesn't exist (fresh database)
+    if not inspector.has_table("prompts"):
+        print("prompts table not found. Skipping migration.")
+        return
+
+    # Analyze current state of both tables
+    # Check if id is integer type (needs migration) vs non-integer (already migrated)
+    # Non-integer includes: VARCHAR, STRING, TEXT, UUID, CHAR, etc.
+    # Use exact matching to avoid false positives (e.g., POINT, INTERVAL contain "INT")
+    integer_type_names = {
+        "INTEGER",
+        "INT",
+        "BIGINT",
+        "SMALLINT",
+        "TINYINT",
+        "MEDIUMINT",  # Standard SQL
+        "SERIAL",
+        "BIGSERIAL",
+        "SMALLSERIAL",  # PostgreSQL auto-increment
+    }
+
+    def is_integer_type(type_str: str) -> bool:
+        """Check if type string represents an integer type using exact word matching.
+
+        Args:
+            type_str: The database column type as a string (e.g., "INTEGER", "VARCHAR(36)").
+
+        Returns:
+            True if the type is a known integer type, False otherwise.
+        """
+        # Extract base type name (first word only), handling:
+        # - "INTEGER(11)" -> "INTEGER"
+        # - "BIGINT UNSIGNED" -> "BIGINT"
+        # - "INT UNSIGNED ZEROFILL" -> "INT"
+        base_type = type_str.upper().split("(")[0].split()[0].strip()
+        return base_type in integer_type_names
+
+    prompts_columns = {col["name"]: col for col in inspector.get_columns("prompts")}
+    prompts_id_type = str(prompts_columns.get("id", {}).get("type", ""))
+    prompts_is_integer = is_integer_type(prompts_id_type)
+    prompts_has_id_new = "id_new" in prompts_columns
+
+    # Check resources table existence explicitly - both tables are required
+    if not inspector.has_table("resources"):
+        raise RuntimeError(
+            f"Cannot proceed: resources table is missing. "
+            f"prompts.id type is {prompts_id_type} ({'needs migration' if prompts_is_integer else 'possibly already migrated'}). "
+            "This migration requires both prompts and resources tables to exist. "
+            "Please verify your database schema."
+        )
+
+    resources_columns = {col["name"]: col for col in inspector.get_columns("resources")}
+    resources_id_type = str(resources_columns.get("id", {}).get("type", ""))
+    resources_is_integer = is_integer_type(resources_id_type)
+    resources_has_id_new = "id_new" in resources_columns
+
+    # Check for partial migration states that require manual intervention
+    if prompts_has_id_new or resources_has_id_new:
+        raise RuntimeError(
+            "Partial migration detected: id_new column exists in prompts or resources. "
+            "This indicates a previous migration attempt failed midway. "
+            "Manual cleanup required: DROP the id_new column and verify data integrity, "
+            "or restore from backup before retrying."
+        )
+
+    # Check for inconsistent states - this migration must convert both tables atomically
+    if prompts_is_integer != resources_is_integer:
+        raise RuntimeError(
+            f"Inconsistent migration state: prompts.id is {prompts_id_type}, "
+            f"resources.id is {resources_id_type}. "
+            "This migration converts both tables atomically and cannot auto-repair partial states. "
+            "Manual intervention required to align the schemas before retrying."
+        )
+
+    # If both are already non-integer (string/uuid/text), migration is complete
+    if not prompts_is_integer and not resources_is_integer:
+        print(f"prompts.id ({prompts_id_type}) and resources.id ({resources_id_type}) are non-integer. Skipping migration.")
+        return
 
     # 1) Add temporary id_new column to prompts and populate with uuid.hex
     op.add_column("prompts", sa.Column("id_new", sa.String(36), nullable=True))

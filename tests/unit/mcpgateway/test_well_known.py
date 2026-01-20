@@ -354,3 +354,304 @@ class TestWellKnownRegistry:
 
         for file in text_files:
             assert WELL_KNOWN_REGISTRY[file]["content_type"] == "text/plain"
+
+
+class TestOAuthProtectedResourceEndpoint:
+    """Test RFC 9728 OAuth Protected Resource Metadata endpoint."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a test client for the FastAPI app."""
+        return TestClient(app)
+
+    @pytest.fixture
+    def mock_db_with_server(self):
+        """Create a mock database with a test server."""
+        # Standard
+        from unittest.mock import MagicMock
+
+        # First-Party
+        from mcpgateway.db import get_db
+
+        def _create_mock(server_data):
+            mock_db = MagicMock()
+            if server_data is None:
+                mock_db.get.return_value = None
+            else:
+                mock_server = MagicMock()
+                for key, value in server_data.items():
+                    setattr(mock_server, key, value)
+                mock_db.get.return_value = mock_server
+            app.dependency_overrides[get_db] = lambda: mock_db
+            return mock_db
+
+        yield _create_mock
+        app.dependency_overrides.pop(get_db, None)
+
+    def test_oauth_protected_resource_no_server_id(self, client):
+        """Test that OAuth protected resource returns 404 when server_id is not provided."""
+        response = client.get("/.well-known/oauth-protected-resource")
+        # Should return 404 when server_id is not provided (avoid exposing Admin UI SSO config)
+        assert response.status_code == 404
+        assert "Not found" in response.text
+
+    def test_oauth_protected_resource_server_not_found(self, client, mock_db_with_server):
+        """Test OAuth protected resource returns 404 for non-existent server."""
+        mock_db_with_server(None)  # Server not found
+        response = client.get("/.well-known/oauth-protected-resource?server_id=non-existent-server")
+        assert response.status_code == 404
+
+    def test_oauth_protected_resource_oauth_disabled(self, client, mock_db_with_server):
+        """Test OAuth protected resource returns 404 when OAuth is disabled on server."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "public",
+                "oauth_enabled": False,
+                "oauth_config": None,
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 404
+
+    def test_oauth_protected_resource_server_disabled(self, client, mock_db_with_server):
+        """Test OAuth protected resource returns 404 for disabled server."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": False,  # Server is disabled
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {"authorization_server": "https://idp.example.com"},
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 404
+
+    def test_oauth_protected_resource_non_public_visibility(self, client, mock_db_with_server):
+        """Test OAuth protected resource returns 404 for non-public server."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "private",  # Non-public
+                "oauth_enabled": True,
+                "oauth_config": {"authorization_server": "https://idp.example.com"},
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 404
+
+    def test_oauth_protected_resource_success(self, client, mock_db_with_server):
+        """Test OAuth protected resource returns RFC 9728 metadata for OAuth-enabled server."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {
+                    "authorization_server": "https://idp.example.com",
+                    "token_endpoint": "https://idp.example.com/oauth/token",
+                    "scopes_supported": ["openid", "profile", "email"],
+                },
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+
+        data = response.json()
+        # Verify RFC 9728 response format
+        assert "resource" in data
+        assert "authorization_servers" in data
+        assert isinstance(data["authorization_servers"], list)
+        assert "https://idp.example.com" in data["authorization_servers"]
+
+    def test_oauth_protected_resource_cache_headers(self, client, mock_db_with_server):
+        """Test OAuth protected resource includes cache headers."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {"authorization_server": "https://idp.example.com"},
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+        assert "Cache-Control" in response.headers
+        assert "public" in response.headers["Cache-Control"]
+
+    def test_oauth_protected_resource_content_type(self, client, mock_db_with_server):
+        """Test OAuth protected resource returns correct content type."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {"authorization_server": "https://idp.example.com"},
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/json"
+
+    def test_oauth_protected_resource_scopes(self, client, mock_db_with_server):
+        """Test OAuth protected resource includes scopes when configured."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {
+                    "authorization_server": "https://idp.example.com",
+                    "scopes_supported": ["read", "write", "admin"],
+                },
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "scopes_supported" in data
+        assert data["scopes_supported"] == ["read", "write", "admin"]
+
+    def test_oauth_protected_resource_bearer_methods(self, client, mock_db_with_server):
+        """Test OAuth protected resource includes bearer methods supported."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {"authorization_server": "https://idp.example.com"},
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+
+        data = response.json()
+        # RFC 9728 requires bearer_methods_supported
+        assert "bearer_methods_supported" in data
+        assert "header" in data["bearer_methods_supported"]
+
+    def test_oauth_protected_resource_authorization_servers_list(self, client, mock_db_with_server):
+        """Test OAuth protected resource supports authorization_servers as list."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {
+                    "authorization_servers": ["https://idp1.example.com", "https://idp2.example.com"],
+                },
+            }
+        )
+        response = client.get("/.well-known/oauth-protected-resource?server_id=test-server-id")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "authorization_servers" in data
+        assert len(data["authorization_servers"]) == 2
+        assert "https://idp1.example.com" in data["authorization_servers"]
+        assert "https://idp2.example.com" in data["authorization_servers"]
+
+
+class TestServerRouterOAuthProtectedResource:
+    """Test server router OAuth Protected Resource endpoint (/servers/{server_id}/.well-known/oauth-protected-resource)."""
+
+    @pytest.fixture
+    def client(self):
+        """Create a test client for the FastAPI app."""
+        return TestClient(app)
+
+    @pytest.fixture
+    def mock_db_with_server(self):
+        """Create a mock database with a test server."""
+        # Standard
+        from unittest.mock import MagicMock
+
+        # First-Party
+        # main.py defines its own get_db locally, not imported from mcpgateway.db
+        from mcpgateway.db import get_db as db_get_db
+        from mcpgateway.main import get_db
+
+        def _create_mock(server_data):
+            mock_db = MagicMock()
+            if server_data is None:
+                mock_db.get.return_value = None
+            else:
+                mock_server = MagicMock()
+                for key, value in server_data.items():
+                    setattr(mock_server, key, value)
+                mock_db.get.return_value = mock_server
+            app.dependency_overrides[get_db] = lambda: mock_db
+            app.dependency_overrides[db_get_db] = lambda: mock_db  # Also override db module's get_db
+            return mock_db
+
+        yield _create_mock
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(db_get_db, None)
+
+    def test_server_oauth_protected_resource_not_found(self, client, mock_db_with_server):
+        """Test server OAuth protected resource returns 404 for non-existent server."""
+        mock_db_with_server(None)
+        response = client.get("/servers/non-existent-server/.well-known/oauth-protected-resource")
+        assert response.status_code == 404
+
+    def test_server_oauth_protected_resource_disabled_server(self, client, mock_db_with_server):
+        """Test server OAuth protected resource returns 404 for disabled server."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": False,
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {"authorization_server": "https://idp.example.com"},
+            }
+        )
+        response = client.get("/servers/test-server-id/.well-known/oauth-protected-resource")
+        assert response.status_code == 404
+
+    def test_server_oauth_protected_resource_non_public(self, client, mock_db_with_server):
+        """Test server OAuth protected resource returns 404 for non-public server."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "private",
+                "oauth_enabled": True,
+                "oauth_config": {"authorization_server": "https://idp.example.com"},
+            }
+        )
+        response = client.get("/servers/test-server-id/.well-known/oauth-protected-resource")
+        assert response.status_code == 404
+
+    def test_server_oauth_protected_resource_success(self, client, mock_db_with_server):
+        """Test server OAuth protected resource returns RFC 9728 metadata."""
+        mock_db_with_server(
+            {
+                "id": "test-server-id",
+                "enabled": True,
+                "visibility": "public",
+                "oauth_enabled": True,
+                "oauth_config": {
+                    "authorization_server": "https://idp.example.com",
+                    "scopes_supported": ["openid", "profile"],
+                },
+            }
+        )
+        response = client.get("/servers/test-server-id/.well-known/oauth-protected-resource")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "resource" in data
+        assert "authorization_servers" in data
+        assert "https://idp.example.com" in data["authorization_servers"]
+        assert "bearer_methods_supported" in data
+        assert "scopes_supported" in data

@@ -1043,7 +1043,7 @@ class EmailUser(Base):
     # Core identity fields
     email: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Status fields
@@ -1056,6 +1056,7 @@ class EmailUser(Base):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     password_change_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    password_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -1441,6 +1442,9 @@ class EmailTeam(Base):
     invitations: Mapped[List["EmailTeamInvitation"]] = relationship("EmailTeamInvitation", back_populates="team", cascade="all, delete-orphan")
     api_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="team", cascade="all, delete-orphan")
     creator: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[created_by])
+
+    # Index for search and pagination performance
+    __table_args__ = (Index("ix_email_teams_name_id", "name", "id"),)
 
     def __repr__(self) -> str:
         """String representation of the team.
@@ -4239,6 +4243,11 @@ class Server(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+    # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
+    oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
     # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading
@@ -4325,8 +4334,14 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="Encrypted query parameters for auth. Format: {'param_name': 'encrypted_value'}",
+    )
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
@@ -4444,8 +4459,14 @@ class A2AAgent(Base):
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="Encrypted query parameters for auth. Format: {'param_name': 'encrypted_value'}",
+    )
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
@@ -5090,7 +5111,10 @@ class SSOProvider(Base):
     auto_create_users: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     team_mapping: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
-    # Metadata
+    # Provider-specific metadata (e.g., role mappings, claim configurations)
+    provider_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+    # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
@@ -5293,6 +5317,58 @@ def get_db() -> Generator[Session, Any, None]:
         raise
     finally:
         db.close()
+
+
+def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = False, options: Optional[List] = None):
+    """Get entity with row lock for update operations.
+
+    Args:
+        db: SQLAlchemy Session
+        model: ORM model class
+        entity_id: Primary key value (optional if `where` provided)
+        where: Optional SQLAlchemy WHERE clause to locate rows for conflict detection
+        skip_locked: If False (default), wait for locked rows. If True, skip locked
+            rows (returns None if row is locked). Use False for conflict checks and
+            entity updates to ensure consistency. Use True only for job-queue patterns.
+        options: Optional list of loader options (e.g., selectinload(...))
+
+    Returns:
+        The model instance or None
+
+    Notes:
+        - On PostgreSQL this acquires a FOR UPDATE row lock.
+        - On SQLite (or other backends that don't support FOR UPDATE) it
+          falls back to a regular select; when ``options`` is None it uses
+          ``db.get`` for efficiency, otherwise it executes a select with
+          the provided loader options.
+    """
+    dialect = ""
+    try:
+        dialect = db.bind.dialect.name
+    except Exception:
+        dialect = ""
+
+    # Build base select statement. Prefer `where` when provided, otherwise use primary key `entity_id`.
+    if where is not None:
+        stmt = select(model).where(where)
+    elif entity_id is not None:
+        stmt = select(model).where(model.id == entity_id)
+    else:
+        return None
+
+    if options:
+        stmt = stmt.options(*options)
+
+    if dialect != "postgresql":
+        # SQLite and others: no FOR UPDATE support
+        # Use db.get optimization only when querying by primary key without loader options
+        if not options and where is None and entity_id is not None:
+            return db.get(model, entity_id)
+        return db.execute(stmt).scalar_one_or_none()
+
+    # PostgreSQL: apply FOR UPDATE
+    stmt = stmt.with_for_update(skip_locked=skip_locked)
+    return db.execute(stmt).scalar_one_or_none()
 
 
 @contextmanager

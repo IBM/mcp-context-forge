@@ -60,3 +60,54 @@ def test_get_key_without_secret_raises(monkeypatch):
     monkeypatch.setattr(settings, "auth_encryption_secret", "")
     with pytest.raises(ValueError):
         get_key()
+
+
+def test_crypto_cache_reuse(monkeypatch):
+    """Verify that AESGCM and key are cached and reused."""
+    from mcpgateway.utils.services_auth import clear_crypto_cache
+    clear_crypto_cache()
+
+    monkeypatch.setattr(settings, "auth_encryption_secret", "test-secret")
+
+    # Get key twice - should return same bytes object
+    key1 = get_key()
+    key2 = get_key()
+    assert key1 == key2
+    assert isinstance(key1, bytes)
+
+
+def test_clear_crypto_cache(monkeypatch):
+    """Verify that clearing crypto cache works correctly."""
+    from mcpgateway.utils.services_auth import clear_crypto_cache
+
+    monkeypatch.setattr(settings, "auth_encryption_secret", "secret1")
+
+    # Warm cache
+    get_key()
+    encode_auth({"test": "data"})
+
+    # Clear cache
+    clear_crypto_cache()
+
+    # Should still work after clearing
+    monkeypatch.setattr(settings, "auth_encryption_secret", "secret2")
+    key = get_key()
+    assert isinstance(key, bytes)
+
+
+def test_encode_decode_uses_cached_aesgcm(monkeypatch):
+    """Verify that encode/decode operations use cached AESGCM."""
+    from mcpgateway.utils.services_auth import clear_crypto_cache
+    clear_crypto_cache()
+
+    monkeypatch.setattr(settings, "auth_encryption_secret", "cache-test")
+
+    # Multiple encode/decode operations
+    data1 = {"user": "alice"}
+    data2 = {"user": "bob"}
+
+    token1 = encode_auth(data1)
+    token2 = encode_auth(data2)
+
+    assert decode_auth(token1) == data1
+    assert decode_auth(token2) == data2

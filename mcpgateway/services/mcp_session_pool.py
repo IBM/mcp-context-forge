@@ -40,6 +40,12 @@ import httpx
 from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared.session import RequestResponder
+import mcp.types as mcp_types
+import orjson
+
+# First-Party
+from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 # JSON-RPC standard error code for method not found
 METHOD_NOT_FOUND = -32601
@@ -69,9 +75,11 @@ class PooledSession:
     session: ClientSession
     transport_context: Any  # The transport context manager (kept open)
     url: str
-    identity_key: str
     transport_type: TransportType
     headers: Dict[str, str]  # Original headers (for reconnection)
+    identity_key: str  # Identity hash component for headers
+    user_identity: str = "anonymous"  # for user isolation
+    gateway_id: str = ""  # Gateway ID for notification attribution
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
@@ -110,8 +118,9 @@ class PooledSession:
 
 
 # Type aliases
-# Pool key includes transport type to prevent returning wrong transport for same URL
-PoolKey = Tuple[str, str, str]  # (url, identity_hash, transport_type)
+# Pool key includes transport type and gateway_id to prevent returning wrong transport for same URL
+# and to ensure correct notification attribution when notifications are enabled
+PoolKey = Tuple[str, str, str, str, str]  # (user_identity_hash, url, identity_hash, transport_type, gateway_id)
 HttpxClientFactory = Callable[
     [Optional[Dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
     httpx.AsyncClient,
@@ -122,10 +131,21 @@ HttpxClientFactory = Callable[
 # Extracts stable identity from headers (e.g., decode JWT to get user_id)
 IdentityExtractor = Callable[[Dict[str, str]], Optional[str]]
 
+# Type alias for message handler factory
+# Factory that creates message handlers given URL and optional gateway_id
+# The handler receives ServerNotification, ServerRequest responders, or Exceptions
+MessageHandlerFactory = Callable[
+    [str, Optional[str]],  # (url, gateway_id)
+    Callable[
+        [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
+        Any,  # Coroutine
+    ],
+]
+
 
 class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     """
-    Pool of MCP ClientSessions keyed by (server URL, identity hash, transport type).
+    Pool of MCP ClientSessions keyed by (user_identity, server URL, identity hash, transport type, gateway_id).
 
     Thread-Safety:
         This pool is designed for asyncio concurrency. It uses asyncio.Lock
@@ -140,6 +160,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
     Transport Isolation:
         Sessions are also isolated by transport type (SSE vs STREAMABLE_HTTP).
         The same URL with different transports will use separate pools.
+
+    Gateway Isolation:
+        Sessions are isolated by gateway_id for correct notification attribution.
+        When notifications are enabled, each gateway gets its own pooled sessions
+        even if they share the same URL and authentication.
 
     Features:
         - Session reuse across requests (10-20x latency improvement)
@@ -200,6 +225,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         default_transport_timeout_seconds: float = 30.0,
         health_check_methods: Optional[list[str]] = None,
         health_check_timeout_seconds: float = 5.0,
+        message_handler_factory: Optional[MessageHandlerFactory] = None,
     ):
         """
         Initialize the session pool.
@@ -222,6 +248,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                                  Options: ping, list_tools, list_prompts, list_resources, skip.
                                  Default: ["ping", "skip"] (try ping, skip if unsupported).
             health_check_timeout_seconds: Timeout for each health check attempt.
+            message_handler_factory: Optional factory for creating message handlers.
+                                    Called with (url, gateway_id) to create handlers for
+                                    each new session. Enables notification handling.
         """
         # Configuration
         self._max_sessions = max_sessions_per_key
@@ -237,6 +266,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         self._default_transport_timeout = default_transport_timeout_seconds
         self._health_check_methods = health_check_methods or ["ping", "skip"]
         self._health_check_timeout = health_check_timeout_seconds
+        self._message_handler_factory = message_handler_factory
 
         # State - protected by _global_lock for creation, per-key locks for access
         self._global_lock = asyncio.Lock()
@@ -333,14 +363,37 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             )
             return "anonymous"
 
-        # Create stable hash (full SHA-256 for collision resistance)
-        identity_string = "|".join(identity_parts)
-        return hashlib.sha256(identity_string.encode()).hexdigest()
+        # Create a stable, deterministic hash using JSON serialization
+        # Prevents delimiter-collision or injection issues present in string joining
+        serialized_identity = orjson.dumps(identity_parts)
+        return hashlib.sha256(serialized_identity).hexdigest()
 
-    def _make_pool_key(self, url: str, headers: Optional[Dict[str, str]], transport_type: TransportType) -> PoolKey:
-        """Create composite pool key from URL, identity, and transport type."""
+    def _make_pool_key(
+        self,
+        url: str,
+        headers: Optional[Dict[str, str]],
+        transport_type: TransportType,
+        user_identity: str,
+        gateway_id: Optional[str] = None,
+    ) -> PoolKey:
+        """Create composite pool key from URL, identity, transport type, user identity, and gateway_id.
+
+        Including gateway_id ensures correct notification attribution when multiple gateways
+        share the same URL/auth. Sessions are isolated per gateway for proper event routing.
+        """
         identity_hash = self._compute_identity_hash(headers)
-        return (url, identity_hash, transport_type.value)
+
+        # Anonymize user identity by hashing it (unless it's commonly "anonymous")
+        # Use full hash for collision resistance - truncate only for display in logs/metrics
+        if user_identity == "anonymous":
+            user_hash = "anonymous"
+        else:
+            user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
+
+        # Use empty string for None gateway_id to maintain consistent key type
+        gw_id = gateway_id or ""
+
+        return (user_hash, url, identity_hash, transport_type.value, gw_id)
 
     async def _get_or_create_lock(self, pool_key: PoolKey) -> asyncio.Lock:
         """Get or create a lock for the given pool key (thread-safe)."""
@@ -366,7 +419,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Circuit breaker reset
             del self._circuit_open_until[url]
             self._failures[url] = 0
-            logger.info(f"Circuit breaker reset for {url}")
+            logger.info(f"Circuit breaker reset for {sanitize_url_for_logging(url)}")
             return False
         return True
 
@@ -376,7 +429,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if self._failures[url] >= self._circuit_breaker_threshold:
             self._circuit_open_until[url] = time.time() + self._circuit_breaker_reset
             self._circuit_breaker_trips += 1
-            logger.warning(f"Circuit breaker opened for {url} after {self._failures[url]} failures. " f"Will reset in {self._circuit_breaker_reset}s")
+            logger.warning(f"Circuit breaker opened for {sanitize_url_for_logging(url)} after {self._failures[url]} failures. " f"Will reset in {self._circuit_breaker_reset}s")
 
     def _record_success(self, url: str) -> None:
         """Record a success, resetting failure count."""
@@ -389,6 +442,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         transport_type: TransportType = TransportType.STREAMABLE_HTTP,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
         timeout: Optional[float] = None,
+        user_identity: Optional[str] = None,
+        gateway_id: Optional[str] = None,
     ) -> PooledSession:
         """
         Acquire a session for the given URL, identity, and transport type.
@@ -403,6 +458,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             httpx_client_factory: Optional factory for creating httpx clients
                                   (for custom SSL/timeout configuration).
             timeout: Optional timeout in seconds for transport connection.
+            gateway_id: Optional gateway ID for notification handler context.
 
         Returns:
             PooledSession ready for use.
@@ -421,7 +477,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Use default timeout if not provided
         effective_timeout = timeout if timeout is not None else self._default_transport_timeout
 
-        pool_key = self._make_pool_key(url, headers, transport_type)
+        user_id = user_identity or "anonymous"
+        pool_key = self._make_pool_key(url, headers, transport_type, user_id, gateway_id)
         pool = await self._get_or_create_pool(pool_key)
 
         # Update pool key last used time IMMEDIATELY after getting pool
@@ -455,7 +512,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._hits += 1
                 async with lock:
                     self._active[pool_key].add(pooled)
-                logger.debug(f"Pool hit for {url} (identity={pool_key[1][:8]}, transport={transport_type.value})")
+                logger.debug(f"Pool hit for {sanitize_url_for_logging(url)} (identity={pool_key[2][:8]}, transport={transport_type.value})")
                 return pooled
 
             # Session invalid, close it
@@ -470,26 +527,30 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             if not acquired:
                 raise asyncio.TimeoutError("Failed to acquire session slot")
         except asyncio.TimeoutError:
-            raise asyncio.TimeoutError(f"Timeout waiting for available session for {url}") from None
+            raise asyncio.TimeoutError(f"Timeout waiting for available session for {sanitize_url_for_logging(url)}") from None
 
         # Create new session (semaphore acquired)
         try:
             pooled = await asyncio.wait_for(
-                self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout),
+                self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout, gateway_id),
                 timeout=self._session_create_timeout,
             )
+            # Store identity components for key reconstruction
+            pooled.identity_key = pool_key[2]
+            pooled.user_identity = user_id
+
             self._misses += 1
             self._record_success(url)
             async with lock:
                 self._active[pool_key].add(pooled)
-            logger.debug(f"Pool miss for {url} - created new session (transport={transport_type.value})")
+            logger.debug(f"Pool miss for {sanitize_url_for_logging(url)} - created new session (transport={transport_type.value})")
             return pooled
         except BaseException as e:
             # Release semaphore on ANY failure (including CancelledError)
             semaphore.release()
             if not isinstance(e, asyncio.CancelledError):
                 self._record_failure(url)
-                logger.warning(f"Failed to create session for {url}: {e}")
+                logger.warning(f"Failed to create session for {sanitize_url_for_logging(url)}: {e}")
             raise
 
     async def release(self, pooled: PooledSession) -> None:
@@ -503,8 +564,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             logger.warning("Attempted to release already-closed session")
             return
 
-        # Pool key includes transport type
-        pool_key = (pooled.url, pooled.identity_key, pooled.transport_type.value)
+        # Pool key includes transport type, user identity, and gateway_id
+        # Re-compute user hash from stored raw identity (full hash for collision resistance)
+        user_hash = "anonymous"
+        if pooled.user_identity != "anonymous":
+            user_hash = hashlib.sha256(pooled.user_identity.encode()).hexdigest()
+
+        pool_key = (user_hash, pooled.url, pooled.identity_key, pooled.transport_type.value, pooled.gateway_id)
         lock = await self._get_or_create_lock(pool_key)
         pool = await self._get_or_create_pool(pool_key)
 
@@ -533,7 +599,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         try:
             pool.put_nowait(pooled)
-            logger.debug(f"Session returned to pool for {pooled.url}")
+            logger.debug(f"Session returned to pool for {sanitize_url_for_logging(pooled.url)}")
         except asyncio.QueueFull:
             # Pool full (shouldn't happen with semaphore), close session
             await self._close_session(pooled)
@@ -614,13 +680,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 self._semaphores.pop(pool_key, None)
                 self._pool_last_used.pop(pool_key, None)
                 self._pool_keys_evicted += 1
-                logger.debug(f"Evicted idle pool key: {pool_key[0]}|{pool_key[1][:8]}|{pool_key[2]}")
+                logger.debug(f"Evicted idle pool key: {pool_key[0][:8]}|{pool_key[1]}|{pool_key[2][:8]}")
 
         # Close sessions outside the lock (I/O operations)
         for session in sessions_to_close:
             await self._close_session(session)
             self._sessions_reaped += 1
-            logger.debug(f"Reaped stale session for {session.url} (age={session.age_seconds:.1f}s)")
+            logger.debug(f"Reaped stale session for {sanitize_url_for_logging(session.url)} (age={session.age_seconds:.1f}s)")
 
     async def _validate_session(self, pooled: PooledSession) -> bool:
         """
@@ -666,22 +732,22 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             try:
                 if method == "ping":
                     await asyncio.wait_for(pooled.session.send_ping(), timeout=self._health_check_timeout)
-                    logger.debug(f"Health check passed: ping (url={pooled.url})")
+                    logger.debug(f"Health check passed: ping (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_tools":
                     await asyncio.wait_for(pooled.session.list_tools(), timeout=self._health_check_timeout)
-                    logger.debug(f"Health check passed: list_tools (url={pooled.url})")
+                    logger.debug(f"Health check passed: list_tools (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_prompts":
                     await asyncio.wait_for(pooled.session.list_prompts(), timeout=self._health_check_timeout)
-                    logger.debug(f"Health check passed: list_prompts (url={pooled.url})")
+                    logger.debug(f"Health check passed: list_prompts (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "list_resources":
                     await asyncio.wait_for(pooled.session.list_resources(), timeout=self._health_check_timeout)
-                    logger.debug(f"Health check passed: list_resources (url={pooled.url})")
+                    logger.debug(f"Health check passed: list_resources (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 if method == "skip":
-                    logger.debug(f"Health check skipped per configuration (url={pooled.url})")
+                    logger.debug(f"Health check skipped per configuration (url={sanitize_url_for_logging(pooled.url)})")
                     return True
                 logger.warning(f"Unknown health check method '{method}', skipping")
                 continue
@@ -717,6 +783,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         transport_type: TransportType,
         httpx_client_factory: Optional[HttpxClientFactory],
         timeout: Optional[float] = None,
+        gateway_id: Optional[str] = None,
     ) -> PooledSession:
         """
         Create a new initialized MCP session.
@@ -727,6 +794,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             transport_type: Transport type to use.
             httpx_client_factory: Optional factory for httpx clients.
             timeout: Optional timeout in seconds for transport connection.
+            gateway_id: Optional gateway ID for notification handler context.
 
         Returns:
             Initialized PooledSession.
@@ -763,22 +831,32 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # pylint: disable=unnecessary-dunder-call,no-member
                 read_stream, write_stream, _ = await transport_ctx.__aenter__()  # Must call directly for manual lifecycle management
 
+            # Create message handler if factory is configured
+            message_handler = None
+            if self._message_handler_factory:
+                try:
+                    message_handler = self._message_handler_factory(url, gateway_id)
+                    logger.debug(f"Created message handler for session {sanitize_url_for_logging(url)} (gateway={gateway_id})")
+                except Exception as e:
+                    logger.warning(f"Failed to create message handler for {sanitize_url_for_logging(url)}: {e}")
+
             # Create and initialize session
-            session = ClientSession(read_stream, write_stream)
+            session = ClientSession(read_stream, write_stream, message_handler=message_handler)
             # pylint: disable=unnecessary-dunder-call
             await session.__aenter__()  # Must call directly for manual lifecycle management
             await session.initialize()
 
-            logger.info(f"Created new MCP session for {url} (transport={transport_type.value})")
+            logger.info(f"Created new MCP session for {sanitize_url_for_logging(url)} (transport={transport_type.value})")
             success = True
 
             return PooledSession(
                 session=session,
                 transport_context=transport_ctx,
                 url=url,
-                identity_key=identity_key,
                 transport_type=transport_type,
                 headers=merged_headers,
+                identity_key=identity_key,
+                gateway_id=gateway_id or "",
             )
 
         except asyncio.CancelledError:  # pylint: disable=try-except-raise
@@ -825,7 +903,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         except Exception as e:
             logger.debug(f"Error closing transport: {e}")
 
-        logger.debug(f"Closed session for {pooled.url} (uses={pooled.use_count})")
+        logger.debug(f"Closed session for {sanitize_url_for_logging(pooled.url)} (uses={pooled.use_count})")
 
     async def close_all(self) -> None:
         """
@@ -878,12 +956,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
             "pools": {
-                f"{url}|{identity[:8]}|{transport}": {
+                f"{url}|{identity[:8]}|{transport}|{user}|{gw_id[:8] if gw_id else 'none'}": {
                     "available": pool.qsize(),
-                    "active": len(self._active.get((url, identity, transport), set())),
+                    "active": len(self._active.get((user, url, identity, transport, gw_id), set())),
                     "max": self._max_sessions,
                 }
-                for (url, identity, transport), pool in self._pools.items()
+                for (user, url, identity, transport, gw_id), pool in self._pools.items()
             },
             "circuit_breakers": {
                 url: {
@@ -902,6 +980,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         transport_type: TransportType = TransportType.STREAMABLE_HTTP,
         httpx_client_factory: Optional[HttpxClientFactory] = None,
         timeout: Optional[float] = None,
+        user_identity: Optional[str] = None,
+        gateway_id: Optional[str] = None,
     ) -> "AsyncIterator[PooledSession]":
         """
         Context manager for acquiring and releasing a session.
@@ -916,11 +996,13 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             transport_type: Transport type to use.
             httpx_client_factory: Optional factory for httpx clients.
             timeout: Optional timeout in seconds for transport connection.
+            user_identity: Optional user identity for strict isolation.
+            gateway_id: Optional gateway ID for notification handler context.
 
         Yields:
             PooledSession ready for use.
         """
-        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout)
+        pooled = await self.acquire(url, headers, transport_type, httpx_client_factory, timeout, user_identity, gateway_id)
         try:
             yield pooled
         finally:
@@ -959,16 +1041,49 @@ def init_mcp_session_pool(
     default_transport_timeout_seconds: float = 30.0,
     health_check_methods: Optional[list[str]] = None,
     health_check_timeout_seconds: float = 5.0,
+    message_handler_factory: Optional[MessageHandlerFactory] = None,
+    enable_notifications: bool = True,
+    notification_debounce_seconds: float = 5.0,
 ) -> MCPSessionPool:
     """Initialize the global MCP session pool.
 
     Args:
         See MCPSessionPool.__init__ for argument descriptions.
+        enable_notifications: Enable automatic notification service for list_changed events.
+        notification_debounce_seconds: Debounce interval for notification-triggered refreshes.
 
     Returns:
         The initialized MCPSessionPool instance.
     """
     global _mcp_session_pool  # pylint: disable=global-statement
+
+    # Auto-create notification service if enabled and no custom handler provided
+    effective_handler_factory = message_handler_factory
+    if enable_notifications and message_handler_factory is None:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            init_notification_service,
+        )
+
+        # Initialize notification service (will be started during acquire with gateway context)
+        notification_svc = init_notification_service(debounce_seconds=notification_debounce_seconds)
+
+        # Create default handler factory that uses notification service
+        def default_handler_factory(url: str, gateway_id: Optional[str]):
+            """Create a message handler for MCP session notifications.
+
+            Args:
+                url: The MCP server URL for the session.
+                gateway_id: Optional gateway ID for attribution, falls back to URL if not provided.
+
+            Returns:
+                A message handler that forwards notifications to the notification service.
+            """
+            return notification_svc.create_message_handler(gateway_id or url, url)
+
+        effective_handler_factory = default_handler_factory
+        logger.info("MCP notification service created (debounce=%ss)", notification_debounce_seconds)
+
     _mcp_session_pool = MCPSessionPool(
         max_sessions_per_key=max_sessions_per_key,
         session_ttl_seconds=session_ttl_seconds,
@@ -983,15 +1098,89 @@ def init_mcp_session_pool(
         default_transport_timeout_seconds=default_transport_timeout_seconds,
         health_check_methods=health_check_methods,
         health_check_timeout_seconds=health_check_timeout_seconds,
+        message_handler_factory=effective_handler_factory,
     )
     logger.info("MCP session pool initialized")
     return _mcp_session_pool
 
 
 async def close_mcp_session_pool() -> None:
-    """Close the global MCP session pool."""
+    """Close the global MCP session pool and notification service."""
     global _mcp_session_pool  # pylint: disable=global-statement
     if _mcp_session_pool is not None:
         await _mcp_session_pool.close_all()
         _mcp_session_pool = None
         logger.info("MCP session pool closed")
+
+    # Close notification service if it was initialized
+    try:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            close_notification_service,
+        )
+
+        await close_notification_service()
+    except (ImportError, RuntimeError):
+        pass  # Notification service not initialized
+
+
+async def start_pool_notification_service(gateway_service: Any = None) -> None:
+    """Start the notification service background worker.
+
+    Call this after gateway_service is initialized to enable event-driven refresh.
+
+    Args:
+        gateway_service: Optional GatewayService instance for triggering refreshes.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            get_notification_service,
+        )
+
+        notification_svc = get_notification_service()
+        await notification_svc.initialize(gateway_service)
+        logger.info("MCP notification service started")
+    except RuntimeError:
+        logger.debug("Notification service not configured, skipping start")
+
+
+def register_gateway_capabilities_for_notifications(gateway_id: str, capabilities: Dict[str, Any]) -> None:
+    """Register gateway capabilities for notification handling.
+
+    Call this after gateway initialization to enable list_changed notifications.
+
+    Args:
+        gateway_id: The gateway ID.
+        capabilities: Server capabilities from initialization response.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            get_notification_service,
+        )
+
+        notification_svc = get_notification_service()
+        notification_svc.register_gateway_capabilities(gateway_id, capabilities)
+    except RuntimeError:
+        pass  # Notification service not initialized
+
+
+def unregister_gateway_from_notifications(gateway_id: str) -> None:
+    """Unregister a gateway from notification handling.
+
+    Call this when a gateway is deleted.
+
+    Args:
+        gateway_id: The gateway ID to unregister.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.notification_service import (  # pylint: disable=import-outside-toplevel
+            get_notification_service,
+        )
+
+        notification_svc = get_notification_service()
+        notification_svc.unregister_gateway(gateway_id)
+    except RuntimeError:
+        pass  # Notification service not initialized

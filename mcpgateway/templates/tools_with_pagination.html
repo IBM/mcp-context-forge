@@ -128,14 +128,14 @@
           <!-- Row 3: Deactivate/Activate | Delete -->
           <div class="col-span-2 flex flex-col space-y-1">
             {% if tool.enabled %}
-              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
+              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
                 <input type="hidden" name="activate" value="false" />
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors" x-tooltip="'💡Temporarily disable this tool'">
                   Deactivate
                 </button>
               </form>
             {% else %}
-              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
+              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
                 <input type="hidden" name="activate" value="true" />
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors" x-tooltip="'💡Re-enable this tool'">
                   Activate
@@ -159,8 +159,11 @@
     {% set base_url = root_path + '/admin/tools/partial' %}
     {% set hx_target = '#tools-table-body' %}
     {% set hx_indicator = '#tools-loading' %}
+    {% set table_name = 'tools' %}
     {% set query_params = {'include_inactive': include_inactive} %}
+    {% autoescape false %}
     {% include 'pagination_controls.html' %}
+    {% endautoescape %}
   </div>
 
   {% else %}
@@ -285,14 +288,14 @@
           <!-- Row 3: Deactivate/Activate | Delete -->
           <div class="col-span-2 flex flex-col space-y-1">
             {% if tool.enabled %}
-              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
+              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
                 <input type="hidden" name="activate" value="false" />
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors" x-tooltip="'💡Temporarily disable this tool'">
                   Deactivate
                 </button>
               </form>
             {% else %}
-              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
+              <form method="POST" action="{{ root_path }}/admin/tools/{{ tool.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'tools')">
                 <input type="hidden" name="activate" value="true" />
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors" x-tooltip="'💡Re-enable this tool'">
                   Activate

@@ -183,7 +183,13 @@ async def bootstrap_admin_user(conn: Connection) -> None:
             from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
 
             admin_user.email_verified_at = utc_now()
-            admin_user.password_change_required = True  # Force admin to change default password
+            # Respect configuration: only require password change on bootstrap when enabled
+            if getattr(settings, "password_change_enforcement_enabled", True) and getattr(settings, "admin_require_password_change_on_bootstrap", True):
+                admin_user.password_change_required = True  # Force admin to change default password
+            try:
+                admin_user.password_changed_at = utc_now()
+            except Exception as exc:
+                logger.debug("Failed to set admin password_changed_at: %s", exc)
             db.commit()
 
             # Personal team is automatically created during user creation if enabled

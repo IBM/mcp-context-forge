@@ -120,6 +120,18 @@
       "title": "Require Token Expiration",
       "type": "boolean"
     },
+    "embed_environment_in_tokens": {
+      "default": false,
+      "description": "Embed environment claim in gateway-issued JWTs for environment isolation",
+      "title": "Embed Environment In Tokens",
+      "type": "boolean"
+    },
+    "validate_token_environment": {
+      "default": false,
+      "description": "Reject tokens with mismatched environment claim (tokens without env claim are allowed)",
+      "title": "Validate Token Environment",
+      "type": "boolean"
+    },
     "sso_enabled": {
       "default": false,
       "description": "Enable Single Sign-On authentication",
@@ -1540,8 +1552,16 @@
       "title": "Observability Sample Rate",
       "type": "number"
     },
+    "observability_include_paths": {
+      "description": "Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Observability Include Paths",
+      "type": "array"
+    },
     "observability_exclude_paths": {
-      "description": "Paths to exclude from tracing (regex)",
+      "description": "Regex patterns to exclude from tracing (applies after include patterns)",
       "items": {
         "type": "string"
       },

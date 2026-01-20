@@ -8,10 +8,12 @@ Basic tests for Email Authentication Service functionality.
 """
 
 # Standard
+import base64
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import orjson
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -846,104 +848,11 @@ class TestEmailAuthServiceUserListing:
         mock_result.scalars.return_value.all.return_value = mock_users[:3]  # Return first 3
         mock_db.execute.return_value = mock_result
 
-        result = await service.list_users(limit=3, offset=0)
+        result = await service.list_users(cursor=None, limit=3)
 
         assert len(result.data) == 3
         assert result.data[0].email == "user0@example.com"
         mock_db.execute.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cursor_paginate_users_next_cursor(self, service, mock_db):
-        """Test cursor pagination returns next_cursor when more results exist."""
-        query = MagicMock()
-        query.limit.return_value = query
-        query.where.return_value = query
-
-        users = []
-        for i in range(3):
-            user = MagicMock(spec=EmailUser)
-            user.email = f"user{i}@example.com"
-            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-            users.append(user)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = users
-        mock_db.execute.return_value = mock_result
-
-        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=2)
-
-        assert len(result_users) == 2
-        assert next_cursor is not None
-        query.limit.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cursor_paginate_users_last_page(self, service, mock_db):
-        """Test cursor pagination returns no next_cursor on final page."""
-        query = MagicMock()
-        query.limit.return_value = query
-        query.where.return_value = query
-
-        users = []
-        for i in range(2):
-            user = MagicMock(spec=EmailUser)
-            user.email = f"user{i}@example.com"
-            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-            users.append(user)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = users
-        mock_db.execute.return_value = mock_result
-
-        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=2)
-
-        assert len(result_users) == 2
-        assert next_cursor is None
-
-    @pytest.mark.asyncio
-    async def test_cursor_paginate_users_invalid_cursor(self, service, mock_db):
-        """Test cursor pagination ignores invalid cursor values."""
-        query = MagicMock()
-        query.limit.return_value = query
-        query.where.return_value = query
-
-        users = []
-        for i in range(3):
-            user = MagicMock(spec=EmailUser)
-            user.email = f"user{i}@example.com"
-            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-            users.append(user)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = users
-        mock_db.execute.return_value = mock_result
-
-        result_users, next_cursor = await service._cursor_paginate_users(query, cursor="not-base64", limit=2)
-
-        assert len(result_users) == 2
-        assert next_cursor is not None
-
-    @pytest.mark.asyncio
-    async def test_cursor_paginate_users_no_limit(self, service, mock_db):
-        """Test cursor pagination returns all users when limit=0."""
-        query = MagicMock()
-        query.where.return_value = query
-
-        users = []
-        for i in range(3):
-            user = MagicMock(spec=EmailUser)
-            user.email = f"user{i}@example.com"
-            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-            users.append(user)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = users
-        mock_db.execute.return_value = mock_result
-
-        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=0)
-
-        assert len(result_users) == 3
-        assert next_cursor is None
-        query.limit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_users_database_error(self, service, mock_db):
@@ -953,6 +862,68 @@ class TestEmailAuthServiceUserListing:
         result = await service.list_users()
 
         assert result.data == []
+
+    @pytest.mark.asyncio
+    async def test_list_users_generates_cursor_using_email(self, service, mock_db, mock_users):
+        """Test that list_users generates cursor using (created_at, email) keyset."""
+        # Create mock users with created_at timestamps
+        users_with_timestamps = []
+        for i, user in enumerate(mock_users[:3]):
+            user.created_at = datetime(2024, 1, 15, 10, 0, i, tzinfo=timezone.utc)
+            users_with_timestamps.append(user)
+
+        # Return 4 items to trigger has_more (limit=3 + 1)
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = users_with_timestamps + [mock_users[3]]
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users(cursor=None, limit=3)
+
+        # Should return 3 items and a next_cursor
+        assert len(result.data) == 3
+        assert result.next_cursor is not None
+
+        # Decode and verify cursor uses (created_at, email)
+        cursor_json = base64.urlsafe_b64decode(result.next_cursor.encode()).decode()
+        cursor_data = orjson.loads(cursor_json)
+        assert "created_at" in cursor_data
+        assert "email" in cursor_data
+        assert cursor_data["email"] == mock_users[2].email  # Last item's email
+
+    @pytest.mark.asyncio
+    async def test_list_users_with_cursor_applies_keyset_filter(self, service, mock_db, mock_users):
+        """Test that list_users with cursor applies correct keyset filter."""
+        # Create a cursor for the second page
+        cursor_data = {
+            "created_at": "2024-01-15T10:00:02+00:00",
+            "email": "user2@example.com",
+        }
+        cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
+
+        # Mock the result
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_users[3:]  # Remaining users
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users(cursor=cursor, limit=10)
+
+        # Verify that execute was called (the filter is applied internally)
+        mock_db.execute.assert_called_once()
+        # Result should contain remaining users
+        assert len(result.data) == 2
+
+    @pytest.mark.asyncio
+    async def test_list_users_cursor_handles_invalid_cursor(self, service, mock_db, mock_users):
+        """Test that list_users handles invalid cursor gracefully."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_users
+        mock_db.execute.return_value = mock_result
+
+        # Invalid base64 cursor should be ignored
+        result = await service.list_users(cursor="invalid-cursor", limit=10)
+
+        # Should still return results (cursor ignored)
+        assert len(result.data) == 5
 
     @pytest.mark.asyncio
     async def test_get_all_users(self, service, mock_db, mock_users):

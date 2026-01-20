@@ -1,0 +1,19 @@
+qr_generation:
+  default_size: 10
+  default_border: 4
+  default_error_correction: "M"  # L=7%, M=15%, Q=25%, H=30%
+  max_data_length: 4296  # Max characters for QR code
+  supported_formats: ["png", "svg", "ascii"]
+
+output:
+  default_directory: "./output/"
+  max_batch_size: 100
+  enable_zip_export: true
+
+decoding:
+  preprocessing_enabled: true
+  max_image_size: "10MB"
+  supported_image_formats: ["png", "jpg", "jpeg", "gif", "bmp", "tiff"]
+
+performance:
+  max_concurrent_requests: 10

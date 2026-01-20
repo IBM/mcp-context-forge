@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
 # Third-Party
+import orjson
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
@@ -87,6 +88,51 @@ class SSOService:
             return decrypted
 
         return None
+
+    def _decode_jwt_claims(self, token: str) -> Optional[Dict[str, Any]]:
+        """Decode JWT token payload without verification.
+
+        This is used to extract claims from ID tokens where we've already
+        validated the OAuth flow. The token signature is not verified here
+        because the token was received directly from the trusted token endpoint.
+
+        Args:
+            token: JWT token string
+
+        Returns:
+            Decoded payload dict or None if decoding fails
+
+        Examples:
+            >>> from unittest.mock import Mock
+            >>> service = SSOService(Mock())
+            >>> # Valid JWT structure (header.payload.signature)
+            >>> import base64
+            >>> payload = base64.urlsafe_b64encode(b'{"sub":"123","groups":["admin"]}').decode().rstrip('=')
+            >>> token = f"eyJhbGciOiJSUzI1NiJ9.{payload}.signature"
+            >>> claims = service._decode_jwt_claims(token)
+            >>> claims is not None
+            True
+        """
+        try:
+            # JWT format: header.payload.signature
+            parts = token.split(".")
+            if len(parts) != 3:
+                logger.warning("Invalid JWT format: expected 3 parts")
+                return None
+
+            # Decode payload (middle part) - add padding if needed
+            payload_b64 = parts[1]
+            # Add padding for base64 decoding
+            padding = 4 - len(payload_b64) % 4
+            if padding != 4:
+                payload_b64 += "=" * padding
+
+            payload_bytes = base64.urlsafe_b64decode(payload_b64)
+            return orjson.loads(payload_bytes)
+
+        except (ValueError, orjson.JSONDecodeError, UnicodeDecodeError) as e:
+            logger.warning(f"Failed to decode JWT claims: {e}")
+            return None
 
     def list_enabled_providers(self) -> List[SSOProvider]:
         """Get list of enabled SSO providers.
@@ -366,8 +412,8 @@ class SSOService:
             >>> svc.db.execute.return_value.scalar_one_or_none.return_value = auth_session
             >>> # Patch token exchange and user info retrieval
             >>> async def _ex(p, sess, c):
-            ...     return {'access_token': 'tok'}
-            >>> async def _ui(p, access):
+            ...     return {'access_token': 'tok', 'id_token': 'id_tok'}
+            >>> async def _ui(p, access, token_data=None):
             ...     return {'email': 'user@example.com'}
             >>> svc._exchange_code_for_tokens = _ex
             >>> svc._get_user_info = _ui
@@ -416,8 +462,8 @@ class SSOService:
                 return None
             logger.info(f"Token exchange successful for provider {provider_id}")
 
-            # Get user info from provider
-            user_info = await self._get_user_info(provider, token_data["access_token"])
+            # Get user info from provider (pass full token_data for id_token parsing)
+            user_info = await self._get_user_info(provider, token_data["access_token"], token_data)
             if not user_info:
                 logger.error(f"Failed to get user info for provider {provider_id}")
                 return None
@@ -468,12 +514,13 @@ class SSOService:
 
         return None
 
-    async def _get_user_info(self, provider: SSOProvider, access_token: str) -> Optional[Dict[str, Any]]:
+    async def _get_user_info(self, provider: SSOProvider, access_token: str, token_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """Get user information from provider using access token.
 
         Args:
             provider: SSO provider configuration
             access_token: OAuth access token
+            token_data: Optional full token response containing id_token for OIDC providers
 
         Returns:
             User info dict or None if failed
@@ -500,6 +547,48 @@ class SSOService:
                 except Exception as e:
                     logger.warning(f"Error fetching GitHub organizations: {e}")
                     user_data["organizations"] = []
+
+            # For Entra ID, extract groups/roles from id_token since userinfo doesn't include them
+            # Microsoft's /oidc/userinfo endpoint only returns basic claims (sub, name, email, picture)
+            # Groups and roles are included in the id_token when configured in Azure Portal
+            if provider.id == "entra" and token_data and "id_token" in token_data:
+                id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+                if id_token_claims:
+                    # Detect group overage - when user has too many groups (>200), EntraID returns
+                    # _claim_names/_claim_sources instead of the actual groups array.
+                    # See: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
+                    claim_names = id_token_claims.get("_claim_names", {})
+                    if isinstance(claim_names, dict) and "groups" in claim_names:
+                        user_email = user_data.get("email") or user_data.get("preferred_username") or "unknown"
+                        logger.warning(
+                            f"Group overage detected for user {user_email} - token contains too many groups (>200). "
+                            f"Role mapping may be incomplete. Consider using App Roles or Azure group filtering. "
+                            f"See docs/docs/manage/sso-entra-role-mapping.md#token-size-considerations"
+                        )
+
+                    # Extract groups from id_token (Security Groups as Object IDs)
+                    if "groups" in id_token_claims:
+                        user_data["groups"] = id_token_claims["groups"]
+                        logger.debug(f"Extracted {len(id_token_claims['groups'])} groups from Entra ID token")
+
+                    # Extract roles from id_token (App Roles)
+                    if "roles" in id_token_claims:
+                        user_data["roles"] = id_token_claims["roles"]
+                        logger.debug(f"Extracted {len(id_token_claims['roles'])} roles from Entra ID token")
+
+                    # Also extract any missing basic claims from id_token
+                    for claim in ["email", "name", "preferred_username", "oid", "sub"]:
+                        if claim not in user_data and claim in id_token_claims:
+                            user_data[claim] = id_token_claims[claim]
+
+            # For Keycloak, also extract groups/roles from id_token if available
+            if provider.id == "keycloak" and token_data and "id_token" in token_data:
+                id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+                if id_token_claims:
+                    # Keycloak includes realm_access, resource_access, and groups in id_token
+                    for claim in ["realm_access", "resource_access", "groups"]:
+                        if claim in id_token_claims and claim not in user_data:
+                            user_data[claim] = id_token_claims[claim]
 
             # Normalize user info across providers
             return self._normalize_user_info(provider, user_data)
@@ -564,7 +653,7 @@ class SSOService:
 
         # Handle Keycloak provider with role mapping
         if provider.id == "keycloak":
-            metadata = provider.metadata or {}
+            metadata = provider.provider_metadata or {}
             username_claim = metadata.get("username_claim", "preferred_username")
             email_claim = metadata.get("email_claim", "email")
             groups_claim = metadata.get("groups_claim", "groups")
@@ -601,8 +690,11 @@ class SSOService:
                 "groups": list(set(groups)),  # Deduplicate
             }
 
-        # Handle Microsoft Entra ID provider
+        # Handle Microsoft Entra ID provider with role mapping
         if provider.id == "entra":
+            metadata = provider.provider_metadata or {}
+            groups_claim = metadata.get("groups_claim", "groups")
+
             # Microsoft's userinfo endpoint often omits the email claim
             # Fallback: preferred_username (UPN) or upn claim
             email = user_data.get("email") or user_data.get("preferred_username") or user_data.get("upn")
@@ -614,6 +706,21 @@ class SSOService:
             elif email:
                 username = email.split("@")[0]
 
+            # Extract groups from token
+            groups = []
+
+            # Check configured groups claim (default: 'groups')
+            if groups_claim in user_data:
+                groups_value = user_data.get(groups_claim, [])
+                if isinstance(groups_value, list):
+                    groups.extend(groups_value)
+
+            # Also check 'roles' claim for App Role assignments
+            if "roles" in user_data:
+                roles_value = user_data.get("roles", [])
+                if isinstance(roles_value, list):
+                    groups.extend(roles_value)
+
             return {
                 "email": email,
                 "full_name": user_data.get("name") or email,  # Fallback to email if name missing
@@ -621,6 +728,7 @@ class SSOService:
                 "provider_id": user_data.get("sub") or user_data.get("oid"),
                 "username": username,
                 "provider": "entra",
+                "groups": list(set(groups)),  # Deduplicate
             }
 
         # Generic OIDC format for all other providers
@@ -662,7 +770,33 @@ class SSOService:
             user.email_verified = True
             user.last_login = utc_now()
 
+            # Synchronize is_admin status based on current group membership
+            # NOTE: Only UPGRADE is_admin via SSO, never downgrade
+            # This preserves manual admin grants made via Admin UI/API
+            # To revoke admin access, use the Admin UI/API directly
+            provider = self.get_provider(user_info.get("provider"))
+            if provider:
+                should_be_admin = self._should_user_be_admin(email, user_info, provider)
+                if should_be_admin and not user.is_admin:
+                    logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
+                    user.is_admin = True
+
             self.db.commit()
+
+            # Determine if syncing should happen (default True, respect provider-level and Entra setting)
+            should_sync = True
+            if provider:
+                # Check provider-level sync_roles flag in provider_metadata (allows disabling per-provider)
+                metadata = provider.provider_metadata or {}
+                if "sync_roles" in metadata:
+                    should_sync = metadata.get("sync_roles", True)
+                # Legacy Entra-specific setting (fallback for backwards compatibility)
+                elif provider.id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
+                    should_sync = settings.sso_entra_sync_roles_on_login
+
+            if provider and should_sync:
+                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider)
+                await self._sync_user_roles(email, role_assignments, provider)
         else:
             # Auto-create user if enabled
             provider = self.get_provider(user_info.get("provider"))
@@ -721,6 +855,19 @@ class SSOService:
             )
             if not user:
                 return None
+
+            # Assign RBAC roles based on SSO groups (or default role if no groups)
+            # Check provider-level sync_roles flag in provider_metadata
+            metadata = provider.provider_metadata or {}
+            should_sync = metadata.get("sync_roles", True)
+            # Legacy Entra-specific setting (fallback for backwards compatibility)
+            if "sync_roles" not in metadata and provider.id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
+                should_sync = settings.sso_entra_sync_roles_on_login
+
+            if should_sync:
+                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider)
+                if role_assignments:
+                    await self._sync_user_roles(email, role_assignments, provider)
 
             # If user was created from approved request, mark request as used
             if settings.sso_require_admin_approval:
@@ -786,4 +933,154 @@ class SSOService:
             if domain in [d.lower() for d in settings.sso_google_admin_domains]:
                 return True
 
+        # Check EntraID admin groups
+        if provider.id == "entra" and settings.sso_entra_admin_groups:
+            user_groups = user_info.get("groups", [])
+            if any(group.lower() in [g.lower() for g in settings.sso_entra_admin_groups] for group in user_groups):
+                return True
+
         return False
+
+    async def _map_groups_to_roles(self, user_email: str, user_groups: List[str], provider: SSOProvider) -> List[Dict[str, Any]]:
+        """Map SSO groups to Context Forge RBAC roles.
+
+        Args:
+            user_email: User's email address
+            user_groups: List of groups from SSO provider
+            provider: SSO provider configuration
+
+        Returns:
+            List of role assignments: [{"role_name": str, "scope": str, "scope_id": Optional[str]}]
+        """
+        # pylint: disable=import-outside-toplevel
+        # First-Party
+        from mcpgateway.services.role_service import RoleService
+
+        role_assignments = []
+
+        # Generic Role Mapping Logic
+        metadata = provider.provider_metadata or {}
+        role_mappings = metadata.get("role_mappings", {})
+
+        # Merge with legacy Entra specific settings if applicable
+        has_entra_admin_groups = provider.id == "entra" and settings.sso_entra_admin_groups
+        has_entra_default_role = provider.id == "entra" and settings.sso_entra_default_role
+
+        if provider.id == "entra":
+            # Use generic role_mappings fallback to legacy setting
+            if not role_mappings and settings.sso_entra_role_mappings:
+                role_mappings = settings.sso_entra_role_mappings
+
+        # Early exit: Skip role mapping if no configuration exists
+        if not role_mappings and not has_entra_admin_groups and not has_entra_default_role:
+            logger.debug(f"No role mappings configured for provider {provider.id}, skipping role sync")
+            return role_assignments
+
+        # Handle EntraID admin groups -> platform_admin
+        if has_entra_admin_groups:
+            admin_groups_lower = [g.lower() for g in settings.sso_entra_admin_groups]
+            for group in user_groups:
+                if group.lower() in admin_groups_lower:
+                    role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
+                    logger.debug(f"Mapped EntraID admin group to platform_admin role for {user_email}")
+                    break  # Only need one admin assignment
+
+        # Batch role lookups: collect all role names that need to be looked up
+        role_names_to_lookup = set()
+        for group in user_groups:
+            if group in role_mappings:
+                role_name = role_mappings[group]
+                if role_name not in ["admin", "platform_admin"]:
+                    role_names_to_lookup.add(role_name)
+
+        # Add default role to lookup if needed
+        if has_entra_default_role:
+            role_names_to_lookup.add(settings.sso_entra_default_role)
+
+        # Pre-fetch all roles by name in batches (reduces DB round-trips)
+        role_service = RoleService(self.db)
+        role_cache: Dict[str, Any] = {}
+        for role_name in role_names_to_lookup:
+            # Try team scope first, then global
+            role = await role_service.get_role_by_name(role_name, scope="team")
+            if not role:
+                role = await role_service.get_role_by_name(role_name, scope="global")
+            if role:
+                role_cache[role_name] = role
+
+        # Process role mappings for ALL providers
+        for group in user_groups:
+            if group in role_mappings:
+                role_name = role_mappings[group]
+                # Special case for "admin"/"platform_admin" shorthand
+                if role_name in ["admin", "platform_admin"]:
+                    role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
+                    logger.debug(f"Mapped group to platform_admin role for {user_email}")
+                    continue
+
+                # Use pre-fetched role from cache
+                role = role_cache.get(role_name)
+                if role:
+                    # Avoid duplicate assignments
+                    if not any(r["role_name"] == role.name for r in role_assignments):
+                        role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": None})
+                        logger.debug(f"Mapped group to role '{role.name}' for {user_email}")
+                else:
+                    logger.warning(f"Role '{role_name}' not found for group mapping")
+
+        # Apply default role if no mappings found (Entra legacy fallback)
+        if not role_assignments and has_entra_default_role:
+            default_role = role_cache.get(settings.sso_entra_default_role)
+            if default_role:
+                role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": None})
+                logger.info(f"Assigned default role '{default_role.name}' to {user_email}")
+
+        return role_assignments
+
+    async def _sync_user_roles(self, user_email: str, role_assignments: List[Dict[str, Any]], _provider: SSOProvider) -> None:
+        """Synchronize user's SSO-based role assignments.
+
+        Args:
+            user_email: User's email address
+            role_assignments: List of role assignments to apply
+            _provider: SSO provider configuration (reserved for future use)
+        """
+        # pylint: disable=import-outside-toplevel
+        # First-Party
+        from mcpgateway.services.role_service import RoleService
+
+        role_service = RoleService(self.db)
+
+        # Get current SSO-granted roles (granted_by='sso_system')
+        current_roles = await role_service.list_user_roles(user_email, include_expired=False)
+        sso_roles = [r for r in current_roles if r.granted_by == "sso_system"]
+
+        # Build set of desired role assignments
+        desired_roles = {(r["role_name"], r["scope"], r.get("scope_id")) for r in role_assignments}
+
+        # Revoke roles that are no longer in the desired set
+        for user_role in sso_roles:
+            role_tuple = (user_role.role.name, user_role.scope, user_role.scope_id)
+            if role_tuple not in desired_roles:
+                await role_service.revoke_role_from_user(user_email=user_email, role_id=user_role.role_id, scope=user_role.scope, scope_id=user_role.scope_id)
+                logger.info(f"Revoked SSO role '{user_role.role.name}' from {user_email} (no longer in groups)")
+
+        # Assign new roles
+        for assignment in role_assignments:
+            try:
+                # Get role by name
+                role = await role_service.get_role_by_name(assignment["role_name"], scope=assignment["scope"])
+                if not role:
+                    logger.warning(f"Role '{assignment['role_name']}' not found, skipping assignment for {user_email}")
+                    continue
+
+                # Check if assignment already exists
+                existing = await role_service.get_user_role_assignment(user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"))
+
+                if not existing or not existing.is_active:
+                    # Assign role to user
+                    await role_service.assign_role_to_user(user_email=user_email, role_id=role.id, scope=assignment["scope"], scope_id=assignment.get("scope_id"), granted_by="sso_system")
+                    logger.info(f"Assigned SSO role '{role.name}' to {user_email}")
+
+            except Exception as e:
+                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {user_email}: {e}")

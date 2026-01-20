@@ -92,9 +92,12 @@ async def make_authenticated_request(method: str, url: str, json_data: Optional[
     gateway_url = f"http://{settings.host}:{settings.port}"
     full_url = f"{gateway_url}{url}"
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0), follow_redirects=True) as client:
+    # First-Party
+    from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+    async with get_isolated_http_client(timeout=300.0, headers=headers, connect_timeout=300.0, write_timeout=300.0, pool_timeout=300.0) as client:
         try:
-            response = await client.request(method=method, url=full_url, json=json_data, params=params, headers=headers)
+            response = await client.request(method=method, url=full_url, json=json_data, params=params)
             if response.status_code >= 400:
                 error_text = response.text
                 raise CLIError(f"API request failed ({response.status_code}): {error_text}")
@@ -139,8 +142,7 @@ async def export_command(args: argparse.Namespace) -> None:
 
         # Write export data
         output_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_file, "wb") as f:
-            f.write(orjson.dumps(export_data, option=orjson.OPT_INDENT_2))
+        await asyncio.to_thread(output_file.write_bytes, orjson.dumps(export_data, option=orjson.OPT_INDENT_2))
 
         # Print summary
         metadata = export_data.get("metadata", {})
@@ -181,8 +183,8 @@ async def import_command(args: argparse.Namespace) -> None:
         print(f"Importing configuration from {input_file}")
 
         # Load import data
-        with open(input_file, "rb") as f:
-            import_data = orjson.loads(f.read())
+        content = await asyncio.to_thread(input_file.read_bytes)
+        import_data = orjson.loads(content)
 
         # Build request data
         request_data = {

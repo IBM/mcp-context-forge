@@ -1,12 +1,11 @@
 # mcp-stack
 
-![Version: 1.0.0-BETA-1](https://img.shields.io/badge/Version-1.0.0--BETA--1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-BETA-1](https://img.shields.io/badge/AppVersion-1.0.0--BETA--1-informational?style=flat-square)
+![Version: 1.0.0-BETA-2](https://img.shields.io/badge/Version-1.0.0--BETA--2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-BETA-2](https://img.shields.io/badge/AppVersion-1.0.0--BETA--2-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
   - MCP Gateway application (HTTP / WebSocket server)
   - PostgreSQL database with persistent storage
-  - Optional PgBouncer connection pooler for high concurrency
   - Redis cache for sessions & completions
   - Optional PgAdmin and Redis-Commander web UIs
 
@@ -33,21 +32,39 @@ Kubernetes: `>=1.21.0-0`
 | global.fullnameOverride | string | `""` |  |
 | global.imagePullSecrets | list | `[]` |  |
 | global.nameOverride | string | `""` |  |
+| mcpContextForge.config.ADMIN_STATS_CACHE_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.ADMIN_STATS_CACHE_OBSERVABILITY_TTL | string | `"30"` |  |
+| mcpContextForge.config.ADMIN_STATS_CACHE_PERFORMANCE_TTL | string | `"60"` |  |
+| mcpContextForge.config.ADMIN_STATS_CACHE_PLUGINS_TTL | string | `"120"` |  |
+| mcpContextForge.config.ADMIN_STATS_CACHE_SYSTEM_TTL | string | `"60"` |  |
+| mcpContextForge.config.ADMIN_STATS_CACHE_TAGS_TTL | string | `"120"` |  |
 | mcpContextForge.config.ALLOWED_ORIGINS | string | `"[\"http://localhost\",\"http://localhost:4444\"]"` |  |
 | mcpContextForge.config.APP_DOMAIN | string | `"http://localhost"` |  |
 | mcpContextForge.config.APP_NAME | string | `"MCP_Gateway"` |  |
 | mcpContextForge.config.APP_ROOT_PATH | string | `""` |  |
+| mcpContextForge.config.AUDIT_TRAIL_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.AUTH_CACHE_BATCH_QUERIES | string | `"true"` |  |
+| mcpContextForge.config.AUTH_CACHE_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.AUTH_CACHE_REVOCATION_TTL | string | `"30"` |  |
+| mcpContextForge.config.AUTH_CACHE_ROLE_TTL | string | `"60"` |  |
+| mcpContextForge.config.AUTH_CACHE_TEAMS_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.AUTH_CACHE_TEAMS_TTL | string | `"60"` |  |
+| mcpContextForge.config.AUTH_CACHE_TEAM_TTL | string | `"60"` |  |
+| mcpContextForge.config.AUTH_CACHE_USER_TTL | string | `"60"` |  |
+| mcpContextForge.config.AUTO_REFRESH_SERVERS | string | `"false"` |  |
 | mcpContextForge.config.CACHE_PREFIX | string | `"mcpgw:"` |  |
 | mcpContextForge.config.CACHE_TYPE | string | `"redis"` |  |
 | mcpContextForge.config.COOKIE_SAMESITE | string | `"lax"` |  |
 | mcpContextForge.config.CORS_ALLOW_CREDENTIALS | string | `"true"` |  |
 | mcpContextForge.config.CORS_ENABLED | string | `"true"` |  |
-| mcpContextForge.config.DB_MAX_OVERFLOW | string | `"10"` |  |
-| mcpContextForge.config.DB_MAX_RETRIES | string | `"30"` | Max DB connection retries at startup (exponential backoff) |
+| mcpContextForge.config.DB_MAX_BACKOFF_SECONDS | string | `"30"` |  |
+| mcpContextForge.config.DB_MAX_OVERFLOW | string | `"30"` |  |
+| mcpContextForge.config.DB_MAX_RETRIES | string | `"30"` |  |
+| mcpContextForge.config.DB_METRICS_RECORDING_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.DB_POOL_RECYCLE | string | `"3600"` |  |
-| mcpContextForge.config.DB_POOL_SIZE | string | `"200"` |  |
+| mcpContextForge.config.DB_POOL_SIZE | string | `"15"` |  |
 | mcpContextForge.config.DB_POOL_TIMEOUT | string | `"30"` |  |
-| mcpContextForge.config.DB_RETRY_INTERVAL_MS | string | `"2000"` | Base retry interval in ms (doubles each attempt, max 30s) |
+| mcpContextForge.config.DB_RETRY_INTERVAL_MS | string | `"2000"` |  |
 | mcpContextForge.config.DEBUG | string | `"false"` |  |
 | mcpContextForge.config.DEFAULT_PASSTHROUGH_HEADERS | string | `"[\"X-Tenant-Id\", \"X-Trace-Id\"]"` |  |
 | mcpContextForge.config.DEFAULT_ROOTS | string | `"[]"` |  |
@@ -59,11 +76,18 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.ENVIRONMENT | string | `"development"` |  |
 | mcpContextForge.config.FEDERATION_TIMEOUT | string | `"120"` |  |
 | mcpContextForge.config.FILELOCK_NAME | string | `"gateway_healthcheck_init.lock"` |  |
+| mcpContextForge.config.GATEWAY_HEALTH_CHECK_TIMEOUT | string | `"5.0"` |  |
 | mcpContextForge.config.GATEWAY_MODEL | string | `"gpt-4o"` |  |
 | mcpContextForge.config.GATEWAY_TEMPERATURE | string | `"0.7"` |  |
 | mcpContextForge.config.GATEWAY_TOOL_NAME_SEPARATOR | string | `"-"` |  |
 | mcpContextForge.config.GATEWAY_VALIDATION_TIMEOUT | string | `"5"` |  |
 | mcpContextForge.config.GLOBAL_CONFIG_CACHE_TTL | string | `"60"` |  |
+| mcpContextForge.config.GRANIAN_BACKLOG | string | `"4096"` |  |
+| mcpContextForge.config.GRANIAN_BACKPRESSURE | string | `"64"` |  |
+| mcpContextForge.config.GRANIAN_BLOCKING_THREADS | string | `"1"` |  |
+| mcpContextForge.config.GRANIAN_HTTP1_BUFFER_SIZE | string | `"524288"` |  |
+| mcpContextForge.config.GRANIAN_RESPAWN_FAILED | string | `"true"` |  |
+| mcpContextForge.config.GRANIAN_WORKERS | string | `"auto"` |  |
 | mcpContextForge.config.GUNICORN_DEV_MODE | string | `"false"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS | string | `"100000"` |  |
 | mcpContextForge.config.GUNICORN_MAX_REQUESTS_JITTER | string | `"100"` |  |
@@ -76,6 +100,16 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.HSTS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.HSTS_INCLUDE_SUBDOMAINS | string | `"true"` |  |
 | mcpContextForge.config.HSTS_MAX_AGE | string | `"31536000"` |  |
+| mcpContextForge.config.HTTPX_ADMIN_READ_TIMEOUT | string | `"30.0"` |  |
+| mcpContextForge.config.HTTPX_CONNECT_TIMEOUT | string | `"5.0"` |  |
+| mcpContextForge.config.HTTPX_HTTP2_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.HTTPX_KEEPALIVE_EXPIRY | string | `"30.0"` |  |
+| mcpContextForge.config.HTTPX_MAX_CONNECTIONS | string | `"200"` |  |
+| mcpContextForge.config.HTTPX_MAX_KEEPALIVE_CONNECTIONS | string | `"100"` |  |
+| mcpContextForge.config.HTTPX_POOL_TIMEOUT | string | `"10.0"` |  |
+| mcpContextForge.config.HTTPX_READ_TIMEOUT | string | `"120.0"` |  |
+| mcpContextForge.config.HTTPX_WRITE_TIMEOUT | string | `"30.0"` |  |
+| mcpContextForge.config.HTTP_SERVER | string | `"gunicorn"` |  |
 | mcpContextForge.config.JSON_RESPONSE_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.LLMCHAT_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.LLM_API_PREFIX | string | `"/v1"` |  |
@@ -84,6 +118,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.LLM_STREAMING_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.LOG_BACKUP_COUNT | string | `"5"` |  |
 | mcpContextForge.config.LOG_BUFFER_SIZE_MB | string | `"1.0"` |  |
+| mcpContextForge.config.LOG_DETAILED_MAX_BODY_SIZE | string | `"16384"` |  |
 | mcpContextForge.config.LOG_FILE | string | `""` |  |
 | mcpContextForge.config.LOG_FILEMODE | string | `"a+"` |  |
 | mcpContextForge.config.LOG_FOLDER | string | `""` |  |
@@ -91,7 +126,6 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.LOG_LEVEL | string | `"INFO"` |  |
 | mcpContextForge.config.LOG_MAX_SIZE_MB | string | `"1"` |  |
 | mcpContextForge.config.LOG_REQUESTS | string | `"false"` |  |
-| mcpContextForge.config.LOG_DETAILED_MAX_BODY_SIZE | string | `"16384"` |  |
 | mcpContextForge.config.LOG_ROTATION_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.LOG_TO_FILE | string | `"false"` |  |
 | mcpContextForge.config.MAX_PROMPT_SIZE | string | `"102400"` |  |
@@ -114,18 +148,43 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.MCPGATEWAY_UI_AIRGAPPED | string | `"false"` |  |
 | mcpContextForge.config.MCPGATEWAY_UI_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT | string | `"60000"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_ACQUIRE_TIMEOUT | string | `"30.0"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET | string | `"60.0"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD | string | `"5"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_CREATE_TIMEOUT | string | `"30.0"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC | string | `"false"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL | string | `"60.0"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_HEALTH_CHECK_METHODS | string | `"[\"ping\", \"skip\"]"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT | string | `"5.0"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_IDLE_EVICTION | string | `"600.0"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_MAX_PER_KEY | string | `"10"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_TRANSPORT_TIMEOUT | string | `"30.0"` |  |
+| mcpContextForge.config.MCP_SESSION_POOL_TTL | string | `"300.0"` |  |
 | mcpContextForge.config.MESSAGE_TTL | string | `"600"` |  |
-| mcpContextForge.config.DB_METRICS_RECORDING_ENABLED | string | `"true"` | Enable execution metrics recording |
 | mcpContextForge.config.METRICS_BUFFER_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.METRICS_BUFFER_FLUSH_INTERVAL | string | `"60"` |  |
 | mcpContextForge.config.METRICS_BUFFER_MAX_SIZE | string | `"1000"` |  |
+| mcpContextForge.config.METRICS_CACHE_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.METRICS_CACHE_TTL_SECONDS | string | `"60"` |  |
+| mcpContextForge.config.METRICS_CLEANUP_BATCH_SIZE | string | `"10000"` |  |
+| mcpContextForge.config.METRICS_CLEANUP_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.METRICS_CLEANUP_INTERVAL_HOURS | string | `"1"` |  |
 | mcpContextForge.config.METRICS_CUSTOM_LABELS | string | `""` |  |
+| mcpContextForge.config.METRICS_DELETE_RAW_AFTER_ROLLUP | string | `"true"` |  |
+| mcpContextForge.config.METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS | string | `"1"` |  |
 | mcpContextForge.config.METRICS_EXCLUDED_HANDLERS | string | `""` |  |
 | mcpContextForge.config.METRICS_NAMESPACE | string | `"default"` |  |
+| mcpContextForge.config.METRICS_RETENTION_DAYS | string | `"7"` |  |
+| mcpContextForge.config.METRICS_ROLLUP_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.METRICS_ROLLUP_INTERVAL_HOURS | string | `"1"` |  |
+| mcpContextForge.config.METRICS_ROLLUP_LATE_DATA_HOURS | string | `"1"` |  |
+| mcpContextForge.config.METRICS_ROLLUP_RETENTION_DAYS | string | `"365"` |  |
 | mcpContextForge.config.METRICS_SUBSYSTEM | string | `""` |  |
 | mcpContextForge.config.OBSERVABILITY_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.OBSERVABILITY_EVENTS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.OBSERVABILITY_EXCLUDE_PATHS | string | `"[\"/health\", \"/healthz\", \"/ready\", \"/metrics\", \"/static/.*\"]"` |  |
+| mcpContextForge.config.OBSERVABILITY_INCLUDE_PATHS | string | `"[\"^/rpc/?$\", \"^/sse$\", \"^/message$\", \"^/mcp(?:/|$)\", \"^/servers/[^/]+/mcp/?$\", \"^/servers/[^/]+/sse$\", \"^/servers/[^/]+/message$\", \"^/a2a(?:/|$)\"]"` |  |
 | mcpContextForge.config.OBSERVABILITY_MAX_TRACES | string | `"100000"` |  |
 | mcpContextForge.config.OBSERVABILITY_METRICS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.OBSERVABILITY_SAMPLE_RATE | string | `"1.0"` |  |
@@ -150,6 +209,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.PAGINATION_MAX_OFFSET | string | `"100000"` |  |
 | mcpContextForge.config.PAGINATION_MAX_PAGE_SIZE | string | `"500"` |  |
 | mcpContextForge.config.PAGINATION_MIN_PAGE_SIZE | string | `"1"` |  |
+| mcpContextForge.config.PASSTHROUGH_HEADERS_SOURCE | string | `"db"` |  |
 | mcpContextForge.config.PLUGINS_CLI_COMPLETION | string | `"false"` |  |
 | mcpContextForge.config.PLUGINS_CLI_MARKUP_MODE | string | `"rich"` |  |
 | mcpContextForge.config.PLUGINS_ENABLED | string | `"false"` |  |
@@ -169,12 +229,21 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.REDIS_LEADER_HEARTBEAT_INTERVAL | string | `"5"` |  |
 | mcpContextForge.config.REDIS_LEADER_KEY | string | `"gateway_service_leader"` |  |
 | mcpContextForge.config.REDIS_LEADER_TTL | string | `"15"` |  |
+| mcpContextForge.config.REDIS_MAX_BACKOFF_SECONDS | string | `"30"` |  |
 | mcpContextForge.config.REDIS_MAX_CONNECTIONS | string | `"50"` |  |
-| mcpContextForge.config.REDIS_MAX_RETRIES | string | `"30"` | Max Redis connection retries at startup (exponential backoff) |
-| mcpContextForge.config.REDIS_RETRY_INTERVAL_MS | string | `"2000"` | Base retry interval in ms (doubles each attempt, max 30s) |
+| mcpContextForge.config.REDIS_MAX_RETRIES | string | `"30"` |  |
+| mcpContextForge.config.REDIS_RETRY_INTERVAL_MS | string | `"2000"` |  |
 | mcpContextForge.config.REDIS_RETRY_ON_TIMEOUT | string | `"true"` |  |
 | mcpContextForge.config.REDIS_SOCKET_CONNECT_TIMEOUT | string | `"2.0"` |  |
 | mcpContextForge.config.REDIS_SOCKET_TIMEOUT | string | `"2.0"` |  |
+| mcpContextForge.config.REGISTRY_CACHE_AGENTS_TTL | string | `"20"` |  |
+| mcpContextForge.config.REGISTRY_CACHE_CATALOG_TTL | string | `"300"` |  |
+| mcpContextForge.config.REGISTRY_CACHE_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.REGISTRY_CACHE_GATEWAYS_TTL | string | `"20"` |  |
+| mcpContextForge.config.REGISTRY_CACHE_PROMPTS_TTL | string | `"15"` |  |
+| mcpContextForge.config.REGISTRY_CACHE_RESOURCES_TTL | string | `"15"` |  |
+| mcpContextForge.config.REGISTRY_CACHE_SERVERS_TTL | string | `"20"` |  |
+| mcpContextForge.config.REGISTRY_CACHE_TOOLS_TTL | string | `"20"` |  |
 | mcpContextForge.config.RELOAD | string | `"false"` |  |
 | mcpContextForge.config.REMOVE_SERVER_HEADERS | string | `"true"` |  |
 | mcpContextForge.config.RESOURCE_CACHE_SIZE | string | `"1000"` |  |
@@ -190,12 +259,21 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.SSE_KEEPALIVE_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.SSE_KEEPALIVE_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.SSE_RETRY_TIMEOUT | string | `"5000"` |  |
+| mcpContextForge.config.TEAM_MEMBER_COUNT_CACHE_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.TEAM_MEMBER_COUNT_CACHE_TTL | string | `"300"` |  |
+| mcpContextForge.config.TEMPLATES_AUTO_RELOAD | string | `"false"` |  |
 | mcpContextForge.config.TOOLOPS_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.TOOL_CONCURRENT_LIMIT | string | `"10"` |  |
+| mcpContextForge.config.TOOL_LOOKUP_CACHE_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.TOOL_LOOKUP_CACHE_L1_MAXSIZE | string | `"10000"` |  |
+| mcpContextForge.config.TOOL_LOOKUP_CACHE_L2_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS | string | `"10"` |  |
+| mcpContextForge.config.TOOL_LOOKUP_CACHE_TTL_SECONDS | string | `"60"` |  |
 | mcpContextForge.config.TOOL_RATE_LIMIT | string | `"100"` |  |
 | mcpContextForge.config.TOOL_TIMEOUT | string | `"60"` |  |
 | mcpContextForge.config.TRANSPORT_TYPE | string | `"all"` |  |
 | mcpContextForge.config.UNHEALTHY_THRESHOLD | string | `"3"` |  |
+| mcpContextForge.config.USE_POSTGRESDB_PERCENTILES | string | `"true"` |  |
 | mcpContextForge.config.USE_STATEFUL_SESSIONS | string | `"false"` |  |
 | mcpContextForge.config.VALIDATION_ALLOWED_MIME_TYPES | string | `"[\"text/plain\", \"text/html\", \"text/css\", \"text/markdown\", \"text/javascript\", \"application/json\", \"application/xml\", \"application/pdf\", \"image/png\", \"image/jpeg\", \"image/gif\", \"image/svg+xml\", \"application/octet-stream\"]"` |  |
 | mcpContextForge.config.VALIDATION_ALLOWED_URL_SCHEMES | string | `"[\"http://\", \"https://\", \"ws://\", \"wss://\"]"` |  |
@@ -226,6 +304,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.X_DOWNLOAD_OPTIONS_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.X_FRAME_OPTIONS | string | `"DENY"` |  |
 | mcpContextForge.config.X_XSS_PROTECTION_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.YIELD_BATCH_SIZE | string | `"1000"` |  |
 | mcpContextForge.containerPort | int | `4444` |  |
 | mcpContextForge.env.host | string | `"0.0.0.0"` |  |
 | mcpContextForge.env.postgres.db | string | `"postgresdb"` |  |
@@ -235,6 +314,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.env.redis.port | int | `6379` |  |
 | mcpContextForge.envFrom[0].secretRef.name | string | `"mcp-gateway-secret"` |  |
 | mcpContextForge.envFrom[1].configMapRef.name | string | `"mcp-gateway-config"` |  |
+| mcpContextForge.extraEnv | list | `[]` |  |
+| mcpContextForge.extraEnvFrom | list | `[]` |  |
 | mcpContextForge.hpa | object | `{"enabled":true,"maxReplicas":10,"minReplicas":2,"targetCPUUtilizationPercentage":90,"targetMemoryUtilizationPercentage":90}` | ------------------------------------------------------------------ |
 | mcpContextForge.image.pullPolicy | string | `"Always"` |  |
 | mcpContextForge.image.repository | string | `"ghcr.io/ibm/mcp-context-forge"` |  |
@@ -306,6 +387,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.JWT_AUDIENCE | string | `"mcpgateway-api"` |  |
 | mcpContextForge.secret.JWT_AUDIENCE_VERIFICATION | string | `"true"` |  |
 | mcpContextForge.secret.JWT_ISSUER | string | `"mcpgateway"` |  |
+| mcpContextForge.secret.JWT_ISSUER_VERIFICATION | string | `"true"` |  |
 | mcpContextForge.secret.JWT_PRIVATE_KEY_PATH | string | `""` |  |
 | mcpContextForge.secret.JWT_PUBLIC_KEY_PATH | string | `""` |  |
 | mcpContextForge.secret.JWT_SECRET_KEY | string | `"my-test-key"` |  |
@@ -339,6 +421,10 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.REQUIRE_EMAIL_VERIFICATION_FOR_INVITES | string | `"true"` |  |
 | mcpContextForge.secret.REQUIRE_STRONG_SECRETS | string | `"false"` |  |
 | mcpContextForge.secret.REQUIRE_TOKEN_EXPIRATION | string | `"false"` |  |
+| mcpContextForge.secret.REQUIRE_JTI | string | `"false"` |  |
+| mcpContextForge.secret.REQUIRE_USER_IN_DB | string | `"false"` |  |
+| mcpContextForge.secret.EMBED_ENVIRONMENT_IN_TOKENS | string | `"false"` | Embed env claim in gateway-issued JWTs |
+| mcpContextForge.secret.VALIDATE_TOKEN_ENVIRONMENT | string | `"false"` | Reject tokens with mismatched env claim |
 | mcpContextForge.secret.SSO_AUTO_ADMIN_DOMAINS | string | `"[]"` |  |
 | mcpContextForge.secret.SSO_AUTO_CREATE_USERS | string | `"true"` |  |
 | mcpContextForge.secret.SSO_ENABLED | string | `"false"` |  |
@@ -368,7 +454,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.SSO_IBM_VERIFY_CLIENT_SECRET | string | `""` |  |
 | mcpContextForge.secret.SSO_IBM_VERIFY_ENABLED | string | `"false"` |  |
 | mcpContextForge.secret.SSO_IBM_VERIFY_ISSUER | string | `""` |  |
-| mcpContextForge.secret.SSO_ISSUERS | string | `""` |  |
+| mcpContextForge.secret.SSO_ISSUERS | string | `"[]"` |  |
 | mcpContextForge.secret.SSO_KEYCLOAK_BASE_URL | string | `""` |  |
 | mcpContextForge.secret.SSO_KEYCLOAK_CLIENT_ID | string | `""` |  |
 | mcpContextForge.secret.SSO_KEYCLOAK_CLIENT_SECRET | string | `""` |  |
@@ -480,11 +566,66 @@ Kubernetes: `>=1.21.0-0`
 | pgadmin.resources.requests.memory | string | `"128Mi"` |  |
 | pgadmin.service.port | int | `80` |  |
 | pgadmin.service.type | string | `"ClusterIP"` |  |
+| pgbouncer.authType | string | `"scram-sha-256"` |  |
+| pgbouncer.enabled | bool | `false` |  |
+| pgbouncer.image.pullPolicy | string | `"IfNotPresent"` |  |
+| pgbouncer.image.repository | string | `"edoburu/pgbouncer"` |  |
+| pgbouncer.image.tag | string | `"latest"` |  |
+| pgbouncer.pool.defaultPoolSize | int | `120` |  |
+| pgbouncer.pool.maxClientConn | int | `3000` |  |
+| pgbouncer.pool.maxDbConnections | int | `200` |  |
+| pgbouncer.pool.maxUserConnections | int | `200` |  |
+| pgbouncer.pool.minPoolSize | int | `10` |  |
+| pgbouncer.pool.mode | string | `"transaction"` |  |
+| pgbouncer.pool.reservePoolSize | int | `25` |  |
+| pgbouncer.pool.reservePoolTimeout | int | `5` |  |
+| pgbouncer.pool.serverIdleTimeout | int | `600` |  |
+| pgbouncer.pool.serverLifetime | int | `3600` |  |
+| pgbouncer.probes.liveness.command[0] | string | `"pg_isready"` |  |
+| pgbouncer.probes.liveness.command[1] | string | `"-h"` |  |
+| pgbouncer.probes.liveness.command[2] | string | `"localhost"` |  |
+| pgbouncer.probes.liveness.command[3] | string | `"-p"` |  |
+| pgbouncer.probes.liveness.command[4] | string | `"6432"` |  |
+| pgbouncer.probes.liveness.failureThreshold | int | `5` |  |
+| pgbouncer.probes.liveness.initialDelaySeconds | int | `10` |  |
+| pgbouncer.probes.liveness.periodSeconds | int | `15` |  |
+| pgbouncer.probes.liveness.successThreshold | int | `1` |  |
+| pgbouncer.probes.liveness.timeoutSeconds | int | `5` |  |
+| pgbouncer.probes.liveness.type | string | `"exec"` |  |
+| pgbouncer.probes.readiness.command[0] | string | `"pg_isready"` |  |
+| pgbouncer.probes.readiness.command[1] | string | `"-h"` |  |
+| pgbouncer.probes.readiness.command[2] | string | `"localhost"` |  |
+| pgbouncer.probes.readiness.command[3] | string | `"-p"` |  |
+| pgbouncer.probes.readiness.command[4] | string | `"6432"` |  |
+| pgbouncer.probes.readiness.failureThreshold | int | `3` |  |
+| pgbouncer.probes.readiness.initialDelaySeconds | int | `10` |  |
+| pgbouncer.probes.readiness.periodSeconds | int | `10` |  |
+| pgbouncer.probes.readiness.successThreshold | int | `1` |  |
+| pgbouncer.probes.readiness.timeoutSeconds | int | `5` |  |
+| pgbouncer.probes.readiness.type | string | `"exec"` |  |
+| pgbouncer.resources.limits.cpu | string | `"500m"` |  |
+| pgbouncer.resources.limits.memory | string | `"256Mi"` |  |
+| pgbouncer.resources.requests.cpu | string | `"100m"` |  |
+| pgbouncer.resources.requests.memory | string | `"128Mi"` |  |
+| pgbouncer.service.port | int | `6432` |  |
+| pgbouncer.service.type | string | `"ClusterIP"` |  |
 | postgres.credentials.database | string | `"postgresdb"` |  |
 | postgres.credentials.password | string | `"test123"` |  |
 | postgres.credentials.user | string | `"admin"` |  |
 | postgres.enabled | bool | `true` |  |
 | postgres.existingSecret | string | `""` |  |
+| postgres.external.database | string | `""` |  |
+| postgres.external.databaseKey | string | `"dbname"` |  |
+| postgres.external.enabled | bool | `false` |  |
+| postgres.external.existingSecret | string | `""` |  |
+| postgres.external.host | string | `""` |  |
+| postgres.external.hostKey | string | `"host"` |  |
+| postgres.external.password | string | `""` |  |
+| postgres.external.passwordKey | string | `"password"` |  |
+| postgres.external.port | int | `5432` |  |
+| postgres.external.portKey | string | `"port"` |  |
+| postgres.external.user | string | `""` |  |
+| postgres.external.userKey | string | `"user"` |  |
 | postgres.image.pullPolicy | string | `"IfNotPresent"` |  |
 | postgres.image.repository | string | `"postgres"` |  |
 | postgres.image.tag | string | `"17"` |  |
@@ -521,27 +662,6 @@ Kubernetes: `>=1.21.0-0`
 | postgres.upgrade.backupCompleted | bool | `false` |  |
 | postgres.upgrade.enabled | bool | `false` |  |
 | postgres.upgrade.targetVersion | string | `"18"` |  |
-| pgbouncer.enabled | bool | `false` | Enable PgBouncer connection pooling |
-| pgbouncer.image.repository | string | `"edoburu/pgbouncer"` | PgBouncer image repository |
-| pgbouncer.image.tag | string | `"latest"` | PgBouncer image tag |
-| pgbouncer.image.pullPolicy | string | `"IfNotPresent"` | Image pull policy |
-| pgbouncer.service.type | string | `"ClusterIP"` | Service type |
-| pgbouncer.service.port | int | `6432` | PgBouncer listen port |
-| pgbouncer.pool.mode | string | `"transaction"` | Pool mode (transaction, session, statement) |
-| pgbouncer.pool.maxClientConn | int | `3000` | Max connections from application |
-| pgbouncer.pool.defaultPoolSize | int | `120` | Connections per user/database pair |
-| pgbouncer.pool.minPoolSize | int | `10` | Minimum connections to keep open |
-| pgbouncer.pool.reservePoolSize | int | `25` | Extra connections for burst traffic |
-| pgbouncer.pool.reservePoolTimeout | int | `5` | Seconds before using reserve pool |
-| pgbouncer.pool.maxDbConnections | int | `200` | Max connections to PostgreSQL |
-| pgbouncer.pool.maxUserConnections | int | `200` | Max connections per user |
-| pgbouncer.pool.serverLifetime | int | `3600` | Max server connection age (seconds) |
-| pgbouncer.pool.serverIdleTimeout | int | `600` | Close idle connections after (seconds) |
-| pgbouncer.authType | string | `"scram-sha-256"` | Authentication type |
-| pgbouncer.resources.limits.cpu | string | `"500m"` | CPU limit |
-| pgbouncer.resources.limits.memory | string | `"256Mi"` | Memory limit |
-| pgbouncer.resources.requests.cpu | string | `"100m"` | CPU request |
-| pgbouncer.resources.requests.memory | string | `"128Mi"` | Memory request |
 | redis.enabled | bool | `true` |  |
 | redis.image.pullPolicy | string | `"IfNotPresent"` |  |
 | redis.image.repository | string | `"redis"` |  |
@@ -600,3 +720,7 @@ Kubernetes: `>=1.21.0-0`
 | redisCommander.resources.requests.memory | string | `"128Mi"` |  |
 | redisCommander.service.port | int | `8081` |  |
 | redisCommander.service.type | string | `"ClusterIP"` |  |
+| serviceAccount.annotations | object | `{}` | Annotations for the ServiceAccount (e.g., AWS IRSA, GCP Workload Identity) |
+| serviceAccount.automountServiceAccountToken | bool | `true` | Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting) |
+| serviceAccount.create | bool | `false` | Create a ServiceAccount for all pods in this release |
+| serviceAccount.name | string | `""` | ServiceAccount name. If empty and create=true, uses release fullname. If create=false, uses this name or "default" |

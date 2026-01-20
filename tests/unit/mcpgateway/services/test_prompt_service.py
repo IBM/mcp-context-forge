@@ -65,6 +65,9 @@ def mock_prompt():
     prompt.template = "Hello!"
     prompt.argument_schema = {}
     prompt.version = 1
+    prompt.visibility = "public"
+    prompt.team_id = None
+    prompt.owner_email = None
 
     return prompt
 
@@ -419,11 +422,11 @@ class TestPromptService:
         assert "Failed to update prompt" in str(exc_info.value)
 
     # ──────────────────────────────────────────────────────────────────
-    #   toggle status
+    #   set state
     # ──────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_toggle_prompt_status(self, prompt_service, test_db):
+    async def test_set_prompt_state(self, prompt_service, test_db):
         # Ensure the mock prompt has a real id and primitive attributes
         p = MagicMock(spec=DbPrompt)
         p.id = 1
@@ -436,27 +439,27 @@ class TestPromptService:
         test_db.refresh = Mock()
         prompt_service._notify_prompt_deactivated = AsyncMock()
 
-        res = await prompt_service.toggle_prompt_status(test_db, 1, activate=False)
+        res = await prompt_service.set_prompt_state(test_db, 1, activate=False)
 
         assert p.enabled is False
         prompt_service._notify_prompt_deactivated.assert_called_once()
         assert res["enabled"] is False
 
     @pytest.mark.asyncio
-    async def test_toggle_prompt_status_not_found(self, prompt_service, test_db):
+    async def test_set_prompt_state_not_found(self, prompt_service, test_db):
         test_db.get = Mock(return_value=None)
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.toggle_prompt_status(test_db, 999, activate=True)
+            await prompt_service.set_prompt_state(test_db, 999, activate=True)
         assert "Prompt not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_prompt_status_exception(self, prompt_service, test_db):
+    async def test_set_prompt_state_exception(self, prompt_service, test_db):
         p = _build_db_prompt(is_active=True)
         test_db.get = Mock(return_value=p)
         test_db.commit = Mock(side_effect=Exception("fail"))
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.toggle_prompt_status(test_db, 1, activate=False)
-        assert "Failed to toggle prompt status" in str(exc_info.value)
+            await prompt_service.set_prompt_state(test_db, 1, activate=False)
+        assert "Failed to set prompt state" in str(exc_info.value)
 
     # ──────────────────────────────────────────────────────────────────
     #   delete_prompt
@@ -714,3 +717,79 @@ class TestJinjaTemplateCaching:
             template = "Hello, {name}!"
             result = service._render_template(template, {"name": "Alice"})
             assert result == "Hello, Alice!"
+
+
+class TestPromptAccessAuthorization:
+    """Tests for _check_prompt_access authorization logic."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        """Create a prompt service instance."""
+        return PromptService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session."""
+        db = MagicMock()
+        db.commit = Mock()
+        return db
+
+    def _create_mock_prompt(self, visibility="public", owner_email=None, team_id=None):
+        """Helper to create mock prompt."""
+        prompt = MagicMock()
+        prompt.visibility = visibility
+        prompt.owner_email = owner_email
+        prompt.team_id = team_id
+        return prompt
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_public_always_allowed(self, prompt_service, mock_db):
+        """Public prompts should be accessible to anyone."""
+        public_prompt = self._create_mock_prompt(visibility="public")
+
+        # Unauthenticated
+        assert await prompt_service._check_prompt_access(mock_db, public_prompt, user_email=None, token_teams=[]) is True
+        # Authenticated
+        assert await prompt_service._check_prompt_access(mock_db, public_prompt, user_email="user@test.com", token_teams=["team-1"]) is True
+        # Admin
+        assert await prompt_service._check_prompt_access(mock_db, public_prompt, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_admin_bypass(self, prompt_service, mock_db):
+        """Admin (user_email=None, token_teams=None) should have full access."""
+        private_prompt = self._create_mock_prompt(visibility="private", owner_email="secret@test.com", team_id="secret-team")
+
+        # Admin bypass: both None = unrestricted access
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_private_denied_to_unauthenticated(self, prompt_service, mock_db):
+        """Private prompts should be denied to unauthenticated users."""
+        private_prompt = self._create_mock_prompt(visibility="private", owner_email="owner@test.com")
+
+        # Unauthenticated (public-only token)
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email=None, token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_private_allowed_to_owner(self, prompt_service, mock_db):
+        """Private prompts should be accessible to the owner."""
+        private_prompt = self._create_mock_prompt(visibility="private", owner_email="owner@test.com")
+
+        # Owner with non-empty token_teams
+        assert await prompt_service._check_prompt_access(mock_db, private_prompt, user_email="owner@test.com", token_teams=["some-team"]) is True
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_team_prompt_allowed_to_member(self, prompt_service, mock_db):
+        """Team prompts should be accessible to team members."""
+        team_prompt = self._create_mock_prompt(visibility="team", owner_email="owner@test.com", team_id="team-abc")
+
+        # Team member via token_teams
+        assert await prompt_service._check_prompt_access(mock_db, team_prompt, user_email="member@test.com", token_teams=["team-abc"]) is True
+
+    @pytest.mark.asyncio
+    async def test_check_prompt_access_team_prompt_denied_to_non_member(self, prompt_service, mock_db):
+        """Team prompts should be denied to non-members."""
+        team_prompt = self._create_mock_prompt(visibility="team", owner_email="owner@test.com", team_id="team-abc")
+
+        # Non-member
+        assert await prompt_service._check_prompt_access(mock_db, team_prompt, user_email="outsider@test.com", token_teams=["other-team"]) is False

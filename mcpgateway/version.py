@@ -31,9 +31,9 @@ Examples:
     True
     >>> _is_secret("HOSTNAME")
     False
-    >>> _sanitize_url("redis://user:pass@localhost:6379/0")
+    >>> _sanitize_url("redis://user:xxxxx@localhost:6379/0")
     'redis://user@localhost:6379/0'
-    >>> _sanitize_url("postgresql://admin:secret@db.example.com/mydb")
+    >>> _sanitize_url("postgresql://admin:xxxxx@db.example.com/mydb")
     'postgresql://admin@db.example.com/mydb'
     >>> _sanitize_url("https://example.com/path")
     'https://example.com/path'
@@ -187,15 +187,15 @@ def _public_env() -> Dict[str, str]:
         >>> os.environ.update({
         ...     "HOME": "/home/user",
         ...     "PATH": "/usr/bin:/bin",
-        ...     "DATABASE_PASSWORD": "secret123",
-        ...     "API_KEY": "abc123",
+        ...     "DATABASE_PASSWORD": "xxxxx",
+        ...     "API_KEY": "xxxxx",
         ...     "DEBUG": "true",
         ...     "BASIC_AUTH_USER": "admin",
-        ...     "BASIC_AUTH_PASSWORD": "pass123",
-        ...     "JWT_SECRET_KEY": "jwt-secret",
-        ...     "AUTH_ENCRYPTION_SECRET": "enc-secret",
-        ...     "DATABASE_URL": "postgresql://user:pass@localhost/db",
-        ...     "REDIS_URL": "redis://user:pass@localhost:6379",
+        ...     "BASIC_AUTH_PASSWORD": "xxxxx",
+        ...     "JWT_SECRET_KEY": "xxxxx",
+        ...     "AUTH_ENCRYPTION_SECRET": "xxxxx",
+        ...     "DATABASE_URL": "postgresql://user:xxxxx@localhost/db",
+        ...     "REDIS_URL": "redis://user:xxxxx@localhost:6379",
         ...     "APP_NAME": "MyApp",
         ...     "PORT": "8080"
         ... })
@@ -260,19 +260,19 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
         'http://localhost:8080/path'
 
         >>> # URL with username and password
-        >>> _sanitize_url("postgresql://user:password@localhost:5432/db")
+        >>> _sanitize_url("postgresql://user:xxxxx@localhost:5432/db")
         'postgresql://user@localhost:5432/db'
 
         >>> # Redis URL with auth
-        >>> _sanitize_url("redis://admin:secret123@redis.example.com:6379/0")
+        >>> _sanitize_url("redis://admin:xxxxx@redis.example.com:6379/0")
         'redis://admin@redis.example.com:6379/0'
 
         >>> # URL with only password (no username)
-        >>> _sanitize_url("redis://:password@localhost:6379")
+        >>> _sanitize_url("redis://:xxxxx@localhost:6379")
         'redis://localhost:6379'
 
         >>> # Complex URL with query params
-        >>> _sanitize_url("mysql://root:pass@db.local:3306/mydb?charset=utf8")
+        >>> _sanitize_url("mysql://root:xxxxx@db.local:3306/mydb?charset=utf8")
         'mysql://root@db.local:3306/mydb?charset=utf8'
     """
     if not url:

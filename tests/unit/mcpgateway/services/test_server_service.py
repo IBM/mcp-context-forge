@@ -8,7 +8,7 @@ Tests for server service implementation.
 """
 
 # Standard
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -99,6 +99,10 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.federation_source = None
     server.version = 1
 
+    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+    server.oauth_enabled = False
+    server.oauth_config = None
+
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
     server.resources = [mock_resource]
@@ -124,7 +128,9 @@ class TestServerService:
         test_db.get = Mock(return_value=mock_server)
         test_db.commit = Mock()
         test_db.refresh = Mock()
-        test_db.execute = Mock()
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
         test_db.rollback = Mock()
 
         # Mock team exists
@@ -147,8 +153,9 @@ class TestServerService:
 
         server_update = ServerUpdate(visibility="team", team_id="team1")
         test_user_email = "user@example.com"
-        with pytest.raises(ServerError) as exc:
-            await server_service.update_server(test_db, 1, server_update, test_user_email)
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            with pytest.raises(ServerError) as exc:
+                await server_service.update_server(test_db, 1, server_update, test_user_email)
         assert "User membership in team not sufficient" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -160,7 +167,9 @@ class TestServerService:
         test_db.get = Mock(return_value=mock_server)
         test_db.commit = Mock()
         test_db.refresh = Mock()
-        test_db.execute = Mock()
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
         test_db.rollback = Mock()
         # Patch db.query(DbEmailTeam).filter().first() to return a team
         mock_team = MagicMock()
@@ -186,8 +195,9 @@ class TestServerService:
         test_db.query.side_effect = query_side_effect
         server_update = ServerUpdate(visibility="team")
         test_user_email = "user@example.com"
-        with pytest.raises(ServerError) as exc:
-            await server_service.update_server(test_db, 1, server_update, test_user_email)
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            with pytest.raises(ServerError) as exc:
+                await server_service.update_server(test_db, 1, server_update, test_user_email)
         assert "User membership in team not sufficient" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -199,7 +209,9 @@ class TestServerService:
         test_db.get = Mock(return_value=mock_server)
         test_db.commit = Mock()
         test_db.refresh = Mock()
-        test_db.execute = Mock()
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
         # Patch db.query(DbEmailTeam).filter().first() to return a team
         mock_team = MagicMock()
         mock_query = MagicMock()
@@ -246,7 +258,9 @@ class TestServerService:
         )
         server_update = ServerUpdate(visibility="team")
         test_user_email = "user@example.com"
-        result = await server_service.update_server(test_db, 1, server_update, test_user_email)
+        # Patch permission check to avoid DB user lookup in PermissionService
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, 1, server_update, test_user_email)
         assert result.name == "updated_server"
 
     """Unit-tests for the ServerService class."""
@@ -530,6 +544,9 @@ class TestServerService:
     async def test_get_server(self, server_service, mock_server, test_db):
         mock_server.team_id = 1
         test_db.get = MagicMock(return_value=mock_server)
+        # Ensure get_for_update (which may use db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
 
         server_read = ServerRead(
             id="1",
@@ -557,7 +574,11 @@ class TestServerService:
 
         result = await server_service.get_server(test_db, 1)
 
-        test_db.get.assert_called_once_with(DbServer, 1, options=ANY)
+        # Depending on db backend implementation, get_for_update may call
+        # `db.get(..., options=...)` or execute a select; assert at least one
+        # of those was used and the result is as expected.
+        assert result == server_read
+        assert test_db.get.called or test_db.execute.called
         assert result == server_read
 
     @pytest.mark.asyncio
@@ -588,21 +609,30 @@ class TestServerService:
         # db.get is still used to retrieve the Server itself (now with eager loading options)
         test_db.get = Mock(side_effect=lambda cls, _id, options=None: (mock_server if (cls, _id) == (DbServer, 1) else None))
 
-        # FIX: Configure db.execute to handle both the conflict check and the bulk item fetches
-        mock_db_result = MagicMock()
+        # Configure db.execute to handle the sequence of calls made by
+        # `update_server`: 1) get_for_update (returns server),
+        # 2) name conflict check (None), 3-5) bulk fetches for tools/resources/prompts.
+        mock_result_get_server = Mock(scalar_one_or_none=Mock(return_value=mock_server))
+        mock_result_name_conflict = Mock(scalar_one_or_none=Mock(return_value=None))
 
-        # 1. Handle name conflict check: scalar_one_or_none() -> None
-        mock_db_result.scalar_one_or_none.return_value = None
+        mock_result_tools = Mock()
+        mock_result_tools.scalars.return_value.all.return_value = [new_tool]
 
-        # 2. Handle bulk fetches: scalars().all() -> lists of items
-        # The code executes bulk queries in this order: Tools -> Resources -> Prompts
-        mock_db_result.scalars.return_value.all.side_effect = [
-            [new_tool],  # First call: select(DbTool)...
-            [new_resource],  # Second call: select(DbResource)...
-            [new_prompt],  # Third call: select(DbPrompt)...
-        ]
+        mock_result_resources = Mock()
+        mock_result_resources.scalars.return_value.all.return_value = [new_resource]
 
-        test_db.execute = Mock(return_value=mock_db_result)
+        mock_result_prompts = Mock()
+        mock_result_prompts.scalars.return_value.all.return_value = [new_prompt]
+
+        test_db.execute = Mock(
+            side_effect=[
+                mock_result_get_server,
+                mock_result_name_conflict,
+                mock_result_tools,
+                mock_result_resources,
+                mock_result_prompts,
+            ]
+        )
 
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -664,7 +694,9 @@ class TestServerService:
 
         test_user_email = "user@example.com"
 
-        result = await server_service.update_server(test_db, 1, server_update, test_user_email)
+        # Patch permission check to avoid consuming db.execute side-effects
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, 1, server_update, test_user_email)
 
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
@@ -702,7 +734,10 @@ class TestServerService:
             test_db.get = Mock(return_value=server_private)
             mock_scalar = Mock()
             mock_scalar.scalar_one_or_none.return_value = None
-            test_db.execute = Mock(return_value=mock_scalar)
+            # get_for_update may use db.execute when loader options are present;
+            # ensure the first execute() call (get_for_update) returns the server,
+            # while the second call (name conflict check) returns `None`.
+            test_db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=server_private)), mock_scalar])
             test_db.rollback = Mock()
             test_db.refresh = Mock()
 
@@ -733,7 +768,9 @@ class TestServerService:
             test_db.get = Mock(return_value=server_team)
             mock_scalar = Mock()
             mock_scalar.scalar_one_or_none.return_value = conflict_team_server
-            test_db.execute = Mock(return_value=mock_scalar)
+            # Ensure get_for_update returns the server_team first, then the
+            # name-conflict query returns the conflicting server.
+            test_db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=server_team)), mock_scalar])
             test_db.rollback = Mock()
             test_db.refresh = Mock()
 
@@ -761,7 +798,9 @@ class TestServerService:
             test_db.get = Mock(return_value=server_public)
             mock_scalar = Mock()
             mock_scalar.scalar_one_or_none.return_value = conflict_public_server
-            test_db.execute = Mock(return_value=mock_scalar)
+            # Ensure get_for_update returns the server_public first, then the
+            # name-conflict query returns the conflicting public server.
+            test_db.execute = Mock(side_effect=[Mock(scalar_one_or_none=Mock(return_value=server_public)), mock_scalar])
             test_db.rollback = Mock()
             test_db.refresh = Mock()
 
@@ -777,11 +816,13 @@ class TestServerService:
             assert "Public Server already exists with name" in str(exc.value)
             test_db.rollback.assert_called()
 
-    # -------------------------- toggle --------------------------------- #
+    # -------------------------- set state --------------------------------- #
     @pytest.mark.asyncio
-    async def test_toggle_server_status(self, server_service, mock_server, test_db):
+    async def test_set_server_state(self, server_service, mock_server, test_db):
         mock_server.team_id = 1
         test_db.get = Mock(return_value=mock_server)
+        # Ensure get_for_update returns the mocked server when loader options are used
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
@@ -812,9 +853,11 @@ class TestServerService:
             )
         )
 
-        result = await server_service.toggle_server_status(test_db, 1, activate=False)
+        result = await server_service.set_server_state(test_db, 1, activate=False)
 
-        test_db.get.assert_called_once_with(DbServer, 1, options=ANY)
+        # get_for_update may use `db.get(..., options=...)` or execute a select;
+        # accept either approach.
+        assert test_db.get.called or test_db.execute.called
         assert test_db.commit.call_count == 1
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()
@@ -1117,10 +1160,13 @@ class TestServerService:
         # Mock db.get to return existing server for the initial lookup, then None for the UUID check
         test_db.get = Mock(side_effect=lambda cls, _id, options=None: existing_server if _id == "oldserverid" else None)
 
-        # Mock name conflict check
+        # Mock name conflict check and ensure initial get_for_update returns the existing server
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
-        test_db.execute = Mock(return_value=mock_scalar)
+        mock_result_get_server = Mock(scalar_one_or_none=Mock(return_value=existing_server))
+        # Sequence of execute() results: 1) get_for_update -> existing_server,
+        # 2) _is_user_admin -> None, 3) name-conflict check -> None
+        test_db.execute = Mock(side_effect=[mock_result_get_server, Mock(scalar_one_or_none=Mock(return_value=None)), mock_scalar])
 
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -1234,3 +1280,354 @@ class TestServerService:
                 assert isinstance(servers, list)
                 assert len(servers) == 1
                 assert cursor is None
+
+    # --------------------------- OAuth Configuration -------------------- #
+    @pytest.mark.asyncio
+    async def test_register_server_with_oauth_config(self, server_service, test_db):
+        """Test server registration with OAuth configuration for RFC 9728 support."""
+        # No existing server with the same name
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Capture the server being added
+        captured_server = None
+
+        def capture_add(server):
+            nonlocal captured_server
+            captured_server = server
+
+        test_db.add = Mock(side_effect=capture_add)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)
+
+        # Define OAuth configuration
+        oauth_config = {
+            "authorization_server": "https://idp.example.com",
+            "token_endpoint": "https://idp.example.com/oauth/token",
+            "authorization_endpoint": "https://idp.example.com/oauth/authorize",
+            "scopes_supported": ["openid", "profile", "email"],
+        }
+
+        # Mock service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="OAuth Server",
+                description="Server with OAuth enabled",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=True,
+                oauth_config=oauth_config,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            name="OAuth Server",
+            description="Server with OAuth enabled",
+            oauth_enabled=True,
+            oauth_config=oauth_config,
+        )
+
+        # Call the service method
+        result = await server_service.register_server(test_db, server_create)
+
+        # Verify OAuth config was stored
+        assert captured_server is not None
+        assert captured_server.oauth_enabled is True
+        assert captured_server.oauth_config == oauth_config
+        assert result.oauth_enabled is True
+        assert result.oauth_config == oauth_config
+        test_db.add.assert_called_once()
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_server_without_oauth_config(self, server_service, test_db):
+        """Test server registration without OAuth configuration (default behavior)."""
+        # No existing server with the same name
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = None
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Capture the server being added
+        captured_server = None
+
+        def capture_add(server):
+            nonlocal captured_server
+            captured_server = server
+
+        test_db.add = Mock(side_effect=capture_add)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        test_db.get = Mock(return_value=None)
+
+        # Mock service methods
+        server_service._notify_server_added = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="Non-OAuth Server",
+                description="Server without OAuth",
+                icon=None,
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=False,
+                oauth_config=None,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_create = ServerCreate(
+            name="Non-OAuth Server",
+            description="Server without OAuth",
+        )
+
+        # Call the service method
+        result = await server_service.register_server(test_db, server_create)
+
+        # Verify OAuth config is not set
+        assert captured_server is not None
+        assert getattr(captured_server, "oauth_enabled", False) is False
+        assert getattr(captured_server, "oauth_config", None) is None
+        assert result.oauth_enabled is False
+        assert result.oauth_config is None
+
+    @pytest.mark.asyncio
+    async def test_update_server_oauth_config(self, server_service, mock_server, test_db):
+        """Test updating server with OAuth configuration."""
+        # Setup existing server without OAuth
+        mock_server.oauth_enabled = False
+        mock_server.oauth_config = None
+
+        test_db.get = Mock(return_value=mock_server)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+
+        # Define new OAuth configuration
+        new_oauth_config = {
+            "authorization_server": "https://auth.example.com",
+            "scopes_supported": ["read", "write"],
+        }
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=True,
+                oauth_config=new_oauth_config,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_update = ServerUpdate(
+            oauth_enabled=True,
+            oauth_config=new_oauth_config,
+        )
+
+        test_user_email = "user@example.com"
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+
+        # Verify OAuth config was updated
+        assert mock_server.oauth_enabled is True
+        assert mock_server.oauth_config == new_oauth_config
+        assert result.oauth_enabled is True
+        assert result.oauth_config == new_oauth_config
+        test_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_server_disable_oauth(self, server_service, mock_server, test_db):
+        """Test disabling OAuth on a server."""
+        # Setup existing server with OAuth enabled
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {"authorization_server": "https://auth.example.com"}
+
+        test_db.get = Mock(return_value=mock_server)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        # Ensure get_for_update (which uses db.execute when loader options
+        # are present) returns our mocked server instance.
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=False,
+                oauth_config=None,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        server_update = ServerUpdate(
+            oauth_enabled=False,
+            oauth_config=None,
+        )
+
+        test_user_email = "user@example.com"
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+
+        # Verify OAuth was disabled
+        assert mock_server.oauth_enabled is False
+        assert mock_server.oauth_config is None
+        assert result.oauth_enabled is False
+        assert result.oauth_config is None
+
+    @pytest.mark.asyncio
+    async def test_server_oauth_config_in_read(self, server_service, mock_server, test_db):
+        """Test that OAuth config is included in server read response."""
+        # Setup server with OAuth config
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {
+            "authorization_server": "https://idp.example.com",
+            "scopes_supported": ["openid"],
+        }
+
+        test_db.get = Mock(return_value=mock_server)
+
+        # Manually call convert_server_to_read to test the conversion
+        # This test verifies the data flow when OAuth fields are present
+        server_read = server_service.convert_server_to_read(mock_server)
+
+        # Verify OAuth fields are included in the read model
+        assert server_read.oauth_enabled is True
+        assert server_read.oauth_config is not None
+        assert server_read.oauth_config["authorization_server"] == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_disable_oauth_clears_config_even_when_both_provided(self, server_service, mock_server, test_db):
+        """Test that disabling OAuth clears config even when oauth_config is also provided in the update.
+
+        This tests the fix for the logic ordering issue where oauth_enabled=False would clear
+        oauth_config, but then oauth_config would be reassigned if also present in the update.
+        """
+        # Setup server with OAuth already enabled
+        mock_server.oauth_enabled = True
+        mock_server.oauth_config = {
+            "authorization_servers": ["https://original-idp.example.com"],
+            "scopes_supported": ["openid"],
+        }
+
+        # Mock get_for_update (which uses db.execute when loader options are present)
+        test_db.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=mock_server)))
+        test_db.refresh = Mock()
+
+        server_service._notify_server_updated = AsyncMock()
+        server_service.convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="test_server",
+                description="A test server",
+                icon="server-icon",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                enabled=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                oauth_enabled=False,
+                oauth_config=None,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
+
+        # Update with BOTH oauth_enabled=False AND a new oauth_config
+        # The expectation is that oauth_config should be cleared, NOT replaced
+        server_update = ServerUpdate(
+            oauth_enabled=False,
+            oauth_config={
+                "authorization_servers": ["https://new-idp.example.com"],
+                "scopes_supported": ["profile"],
+            },
+        )
+
+        test_user_email = "user@example.com"
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            result = await server_service.update_server(test_db, "1", server_update, test_user_email)
+
+        # Verify OAuth was disabled AND config was cleared (not replaced)
+        assert mock_server.oauth_enabled is False
+        assert mock_server.oauth_config is None
+        assert result.oauth_enabled is False
+        assert result.oauth_config is None

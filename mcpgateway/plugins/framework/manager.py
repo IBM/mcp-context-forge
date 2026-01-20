@@ -281,11 +281,11 @@ class PluginExecutor:
         except PluginViolationError:
             raise
         except PluginError as pe:
-            logger.error("Plugin %s failed with error: %s", hook_ref.plugin_ref.name, str(pe), exc_info=True)
+            logger.error("Plugin %s failed with error: %s", hook_ref.plugin_ref.name, str(pe))
             if (self.config and self.config.plugin_settings.fail_on_plugin_error) or hook_ref.plugin_ref.plugin.mode == PluginMode.ENFORCE:
                 raise
         except Exception as e:
-            logger.error("Plugin %s failed with error: %s", hook_ref.plugin_ref.name, str(e), exc_info=True)
+            logger.error("Plugin %s failed with error: %s", hook_ref.plugin_ref.name, str(e))
             if (self.config and self.config.plugin_settings.fail_on_plugin_error) or hook_ref.plugin_ref.plugin.mode == PluginMode.ENFORCE:
                 raise PluginError(error=convert_exception_to_error(e, hook_ref.plugin_ref.name)) from e
             # In permissive or enforce_ignore_error mode, continue with next plugin
@@ -358,7 +358,7 @@ class PluginExecutor:
 
         except Exception as e:
             # If observability setup fails, continue without instrumentation
-            logger.debug(f"Plugin observability setup failed: {e}")
+            logger.debug("Plugin observability setup failed: %s", e)
             return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
 
     def _validate_payload_size(self, payload: Any) -> None:
@@ -692,7 +692,7 @@ class PluginManager:
         name: str,
         hook_type: str,
         payload: Union[PluginPayload, dict[str, Any], str],
-        context: PluginContext,
+        context: Union[PluginContext, GlobalContext],
         violations_as_exceptions: bool = False,
         payload_as_json: bool = False,
     ) -> PluginResult:
@@ -706,7 +706,7 @@ class PluginManager:
             name: The name of the plugin to invoke.
             hook_type: The type of hook to execute (e.g., "prompt_pre_fetch").
             payload: The plugin payload to be processed by the hook.
-            context: Plugin execution context with local and global state.
+            context: Plugin execution context (PluginContext) or GlobalContext (will be wrapped).
             violations_as_exceptions: Raise violations as exceptions rather than returns.
             payload_as_json: payload passed in as json rather than pydantic.
 
@@ -730,6 +730,10 @@ class PluginManager:
             >>> #     context=context
             >>> # )
         """
+        # Auto-wrap GlobalContext in PluginContext for convenience
+        if isinstance(context, GlobalContext):
+            context = PluginContext(global_context=context)
+
         hook_ref = self._registry.get_plugin_hook_by_name(name, hook_type)
         if not hook_ref:
             raise PluginError(

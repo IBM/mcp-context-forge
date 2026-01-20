@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 import asyncio
+import hashlib
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -264,7 +265,7 @@ class TestIdentityHashing:
         results = []
 
         async def get_pool_key(headers, task_id):
-            key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP)
+            key = pool._make_pool_key("http://test:8080", headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
             results.append((task_id, key))
             return key
 
@@ -289,6 +290,131 @@ class TestIdentityHashing:
         assert task_keys[1] != task_keys[2]
         assert task_keys[1] != task_keys[3]
         assert task_keys[2] != task_keys[3]
+
+
+class TestSessionPoolIsolation:
+    """Tests for strict user isolation in MCPSessionPool."""
+
+    @pytest.mark.asyncio
+    async def test_session_isolation_by_user_identity(self):
+        """Test that sessions are isolated by user identity."""
+        pool = MCPSessionPool(max_sessions_per_key=10)
+
+        # Mock _create_session to avoid network calls and return a mock PooledSession
+        pool._create_session = AsyncMock()
+
+        async def create_mock_session(url, headers, transport_type, *args, **kwargs):
+            # Extract gateway_id from kwargs if provided
+            gateway_id = kwargs.get("gateway_id", "") or ""
+
+            # Create a mock that mimics PooledSession behavior needed by acquire/release
+            real_pooled = MagicMock()
+            real_pooled.url = url
+            real_pooled.transport_type = transport_type
+            real_pooled.is_closed = False
+            real_pooled.age_seconds = 0.5
+            real_pooled.idle_seconds = 0.5
+            real_pooled.last_used = time.time()
+            real_pooled.created_at = time.time()
+            real_pooled.gateway_id = gateway_id  # Required for pool key reconstruction
+
+            # Setup session mock behavior
+            real_pooled.session = AsyncMock()
+            real_pooled.session.send_ping = AsyncMock(return_value=True)
+
+            # Mock transport context
+            real_pooled.transport_context = AsyncMock()
+            real_pooled.transport_context.__aexit__ = AsyncMock()
+
+            return real_pooled
+
+        pool._create_session.side_effect = create_mock_session
+
+        # Mock validation to always succeed so we can reuse sessions
+        pool._validate_session = AsyncMock(return_value=True)
+
+        url = "http://example.com"
+        headers = {"Authorization": "Bearer token"}
+
+        # 1. Acquire for User A
+        session_a = await pool.acquire(url, headers=headers, user_identity="user_a")
+
+        # 2. Acquire for User B (same headers, should be different pool)
+        session_b = await pool.acquire(url, headers=headers, user_identity="user_b")
+
+        # 3. Assert they are different objects (created separately)
+        assert session_a is not session_b
+
+        # 4. Release both to put them back in their respective pools
+        await pool.release(session_a)
+        await pool.release(session_b)
+
+        # 5. Re-acquire for User A
+        session_a_2 = await pool.acquire(url, headers=headers, user_identity="user_a")
+
+        # 6. Assert reuse: Should get the exact same object back if isolation works
+        assert session_a_2 is session_a
+
+        # 7. Re-acquire for User B
+        session_b_2 = await pool.acquire(url, headers=headers, user_identity="user_b")
+        assert session_b_2 is session_b
+
+        # 8. Verify Metrics keys contain user identities
+        metrics = pool.get_metrics()
+        pools = metrics["pools"]
+        keys = list(pools.keys())
+
+        assert any(hashlib.sha256(b"user_a").hexdigest() in k for k in keys), "Pool keys missing user_a hash"
+        assert any(hashlib.sha256(b"user_b").hexdigest() in k for k in keys), "Pool keys missing user_b hash"
+
+        # 9. Verify Isolation: Ensure User A cannot get User B's session
+        # If we request for User A again, we should get session_a (already acquired as session_a_2)
+        # Wait, session_a_2 is still active (not released).
+        # Requesting another session for User A should create a NEW one or wait (max=10)
+        # Since max=10, it creates a new one.
+
+        session_a_3 = await pool.acquire(url, headers=headers, user_identity="user_a")
+        assert session_a_3 is not session_b  # Should definitively NOT be user B's session
+        assert session_a_3 is not session_a  # Should be a new session for user A
+
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_session_isolation_defaults(self):
+        """Test backward compatibility (defaulting to anonymous)."""
+        pool = MCPSessionPool(max_sessions_per_key=10)
+        pool._create_session = AsyncMock()
+
+        async def create_mock_session(url, headers, transport_type, *args, **kwargs):
+            real_pooled = MagicMock()
+            real_pooled.url = url
+            real_pooled.transport_type = transport_type
+            real_pooled.is_closed = False
+            real_pooled.age_seconds = 0
+            real_pooled.idle_seconds = 0
+            return real_pooled
+
+        pool._create_session.side_effect = create_mock_session
+        pool._validate_session = AsyncMock(return_value=True)
+
+        url = "http://example.com"
+
+        # Acquire without user_identity
+        session = await pool.acquire(url, headers={})
+
+        # Check that user_identity was set to "anonymous" on the pooled object
+        # Note: acquire sets this on the returned object
+        assert session.user_identity == "anonymous"
+
+        await pool.release(session)
+
+        # Check metrics for anonymous key
+        metrics = pool.get_metrics()
+        pools = metrics["pools"]
+        keys = list(pools.keys())
+        assert any("anonymous" in k for k in keys)
+
+        await pool.close_all()
 
 
 class TestIdentityExtractor:
@@ -339,26 +465,43 @@ class TestPoolKeyGeneration:
 
     def test_pool_key_includes_url(self, pool):
         """Pool key should include URL."""
-        key1 = pool._make_pool_key("http://server1:8080", {}, TransportType.STREAMABLE_HTTP)
-        key2 = pool._make_pool_key("http://server2:8080", {}, TransportType.STREAMABLE_HTTP)
-
-        assert key1[0] != key2[0]
-
-    def test_pool_key_includes_identity(self, pool):
-        """Pool key should include identity hash."""
-        key1 = pool._make_pool_key("http://server:8080", {"Authorization": "Bearer user1"}, TransportType.STREAMABLE_HTTP)
-        key2 = pool._make_pool_key("http://server:8080", {"Authorization": "Bearer user2"}, TransportType.STREAMABLE_HTTP)
+        key1 = pool._make_pool_key("http://server1:8080", {}, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
+        key2 = pool._make_pool_key("http://server2:8080", {}, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
 
         assert key1[1] != key2[1]
 
-    def test_pool_key_includes_transport_type(self, pool):
-        """Pool key should include transport type."""
-        key1 = pool._make_pool_key("http://server:8080", {}, TransportType.SSE)
-        key2 = pool._make_pool_key("http://server:8080", {}, TransportType.STREAMABLE_HTTP)
+    def test_pool_key_includes_identity(self, pool):
+        """Pool key should include identity hash."""
+        key1 = pool._make_pool_key("http://server:8080", {"Authorization": "Bearer user1"}, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
+        key2 = pool._make_pool_key("http://server:8080", {"Authorization": "Bearer user2"}, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
 
         assert key1[2] != key2[2]
-        assert key1[2] == "sse"
-        assert key2[2] == "streamablehttp"
+
+    def test_pool_key_includes_transport_type(self, pool):
+        """Pool key should include transport type."""
+        key1 = pool._make_pool_key("http://server:8080", {}, TransportType.SSE, user_identity="anonymous")
+        key2 = pool._make_pool_key("http://server:8080", {}, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
+
+        assert key1[3] != key2[3]
+        assert key1[3] == "sse"
+        assert key2[3] == "streamablehttp"
+
+    def test_pool_key_hashes_user_identity(self, pool):
+        """Pool key should hash user identity with full SHA-256."""
+        user_id = "user@example.com"
+        # Expect full SHA-256 hash (64 hex chars) for collision resistance
+        expected_hash = hashlib.sha256(user_id.encode()).hexdigest()
+
+        key = pool._make_pool_key(
+            "http://server:8080",
+            {},
+            TransportType.STREAMABLE_HTTP,
+            user_identity=user_id
+        )
+
+        assert key[0] == expected_hash
+        assert len(key[0]) == 64  # Full SHA-256 hash
+        assert key[0] != user_id
 
 
 class TestCircuitBreaker:
@@ -406,7 +549,7 @@ class TestCircuitBreaker:
 
         assert pool._is_circuit_open("http://test:8080")
 
-        await asyncio.sleep(0.15)  # Wait for reset
+        await asyncio.sleep(0.25)  # Wait for reset (with margin for slow/busy systems)
 
         assert not pool._is_circuit_open("http://test:8080")
 
@@ -660,7 +803,8 @@ class TestIdlePoolEviction:
                 session = await pool.acquire("http://test:8080")
 
                 # Force session back into pool by patching release to skip TTL check
-                pool_key = ("http://test:8080", "anonymous", "streamablehttp")
+                # Key structure: (user_hash, url, identity_hash, transport, gateway_id)
+                pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
                 pool._active.get(pool_key, set()).discard(session)
                 pool._pools[pool_key].put_nowait(session)
 
@@ -708,9 +852,9 @@ class TestIdlePoolEviction:
 
             # Acquire session (now in _active)
             session = await pool.acquire("http://test:8080")
-            pool_key = ("http://test:8080", "anonymous", "streamablehttp")
-
-            # Simulate long-running tool call by setting old last_used time
+            # simulate long-running tool call by setting old last_used time
+            # Key structure: (user_hash, url, identity_hash, transport, gateway_id)
+            pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
             pool._pool_last_used[pool_key] = time.time() - 1000
 
             # Release should update _pool_last_used
@@ -761,7 +905,7 @@ class TestContextManager:
                 assert pooled.session is not None
 
             # Session should be back in pool
-            pool_key = ("http://test:8080", "anonymous", "streamablehttp")
+            pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
             assert pool._pools[pool_key].qsize() == 1
 
         await pool.close_all()

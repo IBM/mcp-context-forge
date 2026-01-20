@@ -23,6 +23,7 @@ spec:
         app.kubernetes.io/component: migration
     spec:
       restartPolicy: {{ .Values.migration.restartPolicy }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
 
       containers:
         - name: migration
@@ -45,21 +46,54 @@ spec:
           env:
             # ---------- POSTGRES ----------
             - name: POSTGRES_HOST
+              {{- if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.hostKey | default "host" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.host | quote }}
+              {{- end }}
+              {{- else }}
               value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              {{- end }}
             - name: POSTGRES_PORT
+              {{- if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.portKey | default "port" }}
+              {{- else }}
+              value: "{{ .Values.postgres.external.port }}"
+              {{- end }}
+              {{- else }}
               value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              {{- end }}
             - name: POSTGRES_DB
+              {{- if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.databaseKey | default "dbname" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.database | quote }}
+              {{- end }}
+              {{- else }}
               value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+              {{- end }}
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: POSTGRES_USER
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.userKey | default "user" }}{{ else }}POSTGRES_USER{{ end }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: POSTGRES_PASSWORD
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
             # ---------- DERIVED URLS ----------
             - name: DATABASE_URL
               value: >-

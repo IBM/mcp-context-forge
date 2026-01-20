@@ -1004,6 +1004,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `JWT_PRIVATE_KEY_PATH`      | If an asymmetric algorithm is used, a private key is required                | (empty)             | path to pem |
 | `JWT_AUDIENCE`              | JWT audience claim for token validation                                      | `mcpgateway-api`    | string      |
 | `JWT_AUDIENCE_VERIFICATION` | Disables jwt audience verification (useful for DCR)                          | `true`              | boolean     |
+| `JWT_ISSUER_VERIFICATION`   | Disables jwt issuer verification (useful for custom auth)                    | `true`              | boolean     |
 | `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
 | `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
 | `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |
@@ -1718,9 +1719,9 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle active status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/tools/1/toggle?activate=false
+     http://localhost:4444/tools/1/state?activate=false
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/tools/1/toggle?activate=true
+     http://localhost:4444/tools/1/state?activate=true
 
 # Delete tool
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools/1
@@ -1780,7 +1781,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle agent status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/a2a/agent-id/toggle?activate=false
+     http://localhost:4444/a2a/agent-id/state?activate=false
 
 # Delete agent
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -1830,7 +1831,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle active status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/gateways/1/toggle?activate=false
+     http://localhost:4444/gateways/1/state?activate=false
 
 # Delete gateway
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/gateways/1
@@ -1916,7 +1917,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle active
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/prompts/5/toggle?activate=false
+     http://localhost:4444/prompts/5/state?activate=false
 
 # Delete prompt
 curl -X DELETE -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/prompts/greet
@@ -1974,7 +1975,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Toggle active
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-     http://localhost:4444/servers/UUID_OF_SERVER_1/toggle?activate=false
+     http://localhost:4444/servers/UUID_OF_SERVER_1/state?activate=false
 ```
 
 </details>

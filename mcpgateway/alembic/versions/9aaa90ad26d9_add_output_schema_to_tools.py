@@ -23,11 +23,33 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Add output_schema column to tools table
-    op.add_column("tools", sa.Column("output_schema", sa.JSON(), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    # Skip if fresh database (tables created via create_all + stamp)
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
+    # Add output_schema column to tools table if it exists and column is missing
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+        if "output_schema" not in columns:
+            op.add_column("tools", sa.Column("output_schema", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # Remove output_schema column from tools table
-    op.drop_column("tools", "output_schema")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    # Skip if fresh database
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
+    # Remove output_schema column from tools table if it exists
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+        if "output_schema" in columns:
+            op.drop_column("tools", "output_schema")

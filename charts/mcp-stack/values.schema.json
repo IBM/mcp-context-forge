@@ -30,6 +30,36 @@
       },
       "additionalProperties": false
     },
+    "serviceAccount": {
+      "type": "object",
+      "description": "ServiceAccount configuration for all pods in the release",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create a ServiceAccount",
+          "default": false
+        },
+        "name": {
+          "type": "string",
+          "description": "ServiceAccount name (uses fullname if empty)",
+          "default": ""
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations for the ServiceAccount (e.g., IRSA, Workload Identity)",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean",
+          "description": "Mount the ServiceAccount token in pods",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
     "mcpContextForge": {
       "type": "object",
       "description": "MCP Context-Forge Gateway configuration",
@@ -40,6 +70,72 @@
           "minimum": 1,
           "maximum": 100,
           "default": 2
+        },
+        "extraEnvFrom": {
+            "type": "array",
+            "description": "Additional environment variables from secrets or configmaps",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "secretRef": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" }
+                        },
+                        "required": ["name"]
+                    },
+                    "configMapRef": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" }
+                        },
+                        "required": ["name"]
+                    },
+                    "prefix": { "type": "string" }
+                }
+            },
+            "default": []
+        },
+        "extraEnv": {
+            "type": "array",
+            "description": "Additional environment variables",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "value": { "type": "string" },
+                    "valueFrom": {
+                        "type": "object",
+                        "properties": {
+                            "secretKeyRef": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "key": { "type": "string" }
+                                },
+                                "required": ["name", "key"]
+                            },
+                            "configMapKeyRef": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "key": { "type": "string" }
+                                },
+                                "required": ["name", "key"]
+                            },
+                            "fieldRef": {
+                                "type": "object",
+                                "properties": {
+                                    "fieldPath": { "type": "string" }
+                                },
+                                "required": ["fieldPath"]
+                            }
+                        }
+                    }
+                },
+                "required": ["name"]
+            },
+            "default": []
         },
         "hpa": {
           "type": "object",
@@ -121,6 +217,14 @@
               "minimum": 1,
               "maximum": 65535,
               "default": 80
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Service annotations (e.g., for AWS NLB, GCP load balancer configuration)",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
             }
           },
           "additionalProperties": false
@@ -402,7 +506,7 @@
             "CACHE_TYPE": {
               "type": "string",
               "description": "Cache backend type",
-              "enum": ["redis", "memory", "database"],
+              "enum": ["redis", "memory", "none", "database"],
               "default": "redis"
             },
             "CACHE_PREFIX": {
@@ -973,6 +1077,33 @@
           "type": "boolean",
           "description": "Enable PostgreSQL",
           "default": true
+        },
+        "external": {
+          "type": "object",
+          "description": "External PostgreSQL configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable external PostgreSQL",
+              "default": false
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Secret containing connection details",
+              "default": ""
+            },
+            "host": { "type": "string" },
+            "hostKey": { "type": "string", "default": "host" },
+            "port": { "type": "integer", "default": 5432 },
+            "portKey": { "type": "string", "default": "port" },
+            "database": { "type": "string" },
+            "databaseKey": { "type": "string", "default": "dbname" },
+            "user": { "type": "string" },
+            "userKey": { "type": "string", "default": "user" },
+            "password": { "type": "string" },
+            "passwordKey": { "type": "string", "default": "password" }
+          },
+          "additionalProperties": false
         },
         "image": {
           "type": "object",

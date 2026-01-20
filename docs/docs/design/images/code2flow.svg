@@ -1306,7 +1306,7 @@
 <g id="node16" class="node">
 <title>node_7cd26d76</title>
 <path fill="#cccccc" stroke="black" d="M2042,-24530C2042,-24530 1889,-24530 1889,-24530 1883,-24530 1877,-24524 1877,-24518 1877,-24518 1877,-24506 1877,-24506 1877,-24500 1883,-24494 1889,-24494 1889,-24494 2042,-24494 2042,-24494 2048,-24494 2054,-24500 2054,-24506 2054,-24506 2054,-24518 2054,-24518 2054,-24524 2048,-24530 2042,-24530"/>
-<text text-anchor="middle" x="1965.5" y="-24508.3" font-family="Arial" font-size="14.00">419: toggle_agent_status()</text>
+<text text-anchor="middle" x="1965.5" y="-24508.3" font-family="Arial" font-size="14.00">419: set_agent_state()</text>
 </g>
 <!-- node_7cd26d76&#45;&gt;node_574dcb68 -->
 <g id="edge30" class="edge">
@@ -3093,7 +3093,7 @@
 <g id="node79" class="node">
 <title>node_1b63b77c</title>
 <path fill="#966f33" stroke="black" d="M1385,-36319C1385,-36319 1193,-36319 1193,-36319 1187,-36319 1181,-36313 1181,-36307 1181,-36307 1181,-36295 1181,-36295 1181,-36289 1187,-36283 1193,-36283 1193,-36283 1385,-36283 1385,-36283 1391,-36283 1397,-36289 1397,-36295 1397,-36295 1397,-36307 1397,-36307 1397,-36313 1391,-36319 1385,-36319"/>
-<text text-anchor="middle" x="1289" y="-36297.3" font-family="Arial" font-size="14.00">8588: admin_toggle_a2a_agent()</text>
+<text text-anchor="middle" x="1289" y="-36297.3" font-family="Arial" font-size="14.00">8588: admin_set_a2a_agent_state()</text>
 </g>
 <!-- node_1b63b77c&#45;&gt;node_7cd26d76 -->
 <g id="edge215" class="edge">
@@ -3105,7 +3105,7 @@
 <g id="node80" class="node">
 <title>node_5de30b09</title>
 <path fill="#966f33" stroke="black" d="M1378.5,-37777C1378.5,-37777 1199.5,-37777 1199.5,-37777 1193.5,-37777 1187.5,-37771 1187.5,-37765 1187.5,-37765 1187.5,-37753 1187.5,-37753 1187.5,-37747 1193.5,-37741 1199.5,-37741 1199.5,-37741 1378.5,-37741 1378.5,-37741 1384.5,-37741 1390.5,-37747 1390.5,-37753 1390.5,-37753 1390.5,-37765 1390.5,-37765 1390.5,-37771 1384.5,-37777 1378.5,-37777"/>
-<text text-anchor="middle" x="1289" y="-37755.3" font-family="Arial" font-size="14.00">1596: admin_toggle_gateway()</text>
+<text text-anchor="middle" x="1289" y="-37755.3" font-family="Arial" font-size="14.00">1596: admin_set_gateway_state()</text>
 </g>
 <!-- node_5de30b09&#45;&gt;node_cd86d046 -->
 <g id="edge216" class="edge">
@@ -3117,7 +3117,7 @@
 <g id="node81" class="node">
 <title>node_7a5e44f1</title>
 <path fill="#966f33" stroke="black" d="M1374.5,-38749C1374.5,-38749 1203.5,-38749 1203.5,-38749 1197.5,-38749 1191.5,-38743 1191.5,-38737 1191.5,-38737 1191.5,-38725 1191.5,-38725 1191.5,-38719 1197.5,-38713 1203.5,-38713 1203.5,-38713 1374.5,-38713 1374.5,-38713 1380.5,-38713 1386.5,-38719 1386.5,-38725 1386.5,-38725 1386.5,-38737 1386.5,-38737 1386.5,-38743 1380.5,-38749 1374.5,-38749"/>
-<text text-anchor="middle" x="1289" y="-38727.3" font-family="Arial" font-size="14.00">6872: admin_toggle_prompt()</text>
+<text text-anchor="middle" x="1289" y="-38727.3" font-family="Arial" font-size="14.00">6872: admin_set_prompt_state()</text>
 </g>
 <!-- node_7a5e44f1&#45;&gt;node_cd86d046 -->
 <g id="edge217" class="edge">
@@ -3129,7 +3129,7 @@
 <g id="node82" class="node">
 <title>node_bc807ceb</title>
 <path fill="#966f33" stroke="black" d="M1379.5,-38209C1379.5,-38209 1198.5,-38209 1198.5,-38209 1192.5,-38209 1186.5,-38203 1186.5,-38197 1186.5,-38197 1186.5,-38185 1186.5,-38185 1186.5,-38179 1192.5,-38173 1198.5,-38173 1198.5,-38173 1379.5,-38173 1379.5,-38173 1385.5,-38173 1391.5,-38179 1391.5,-38185 1391.5,-38185 1391.5,-38197 1391.5,-38197 1391.5,-38203 1385.5,-38209 1379.5,-38209"/>
-<text text-anchor="middle" x="1289" y="-38187.3" font-family="Arial" font-size="14.00">6378: admin_toggle_resource()</text>
+<text text-anchor="middle" x="1289" y="-38187.3" font-family="Arial" font-size="14.00">6378: admin_set_resource_state()</text>
 </g>
 <!-- node_bc807ceb&#45;&gt;node_cd86d046 -->
 <g id="edge218" class="edge">
@@ -3141,7 +3141,7 @@
 <g id="node83" class="node">
 <title>node_ddba35fe</title>
 <path fill="#966f33" stroke="black" d="M1372,-38155C1372,-38155 1206,-38155 1206,-38155 1200,-38155 1194,-38149 1194,-38143 1194,-38143 1194,-38131 1194,-38131 1194,-38125 1200,-38119 1206,-38119 1206,-38119 1372,-38119 1372,-38119 1378,-38119 1384,-38125 1384,-38131 1384,-38131 1384,-38143 1384,-38143 1384,-38149 1378,-38155 1372,-38155"/>
-<text text-anchor="middle" x="1289" y="-38133.3" font-family="Arial" font-size="14.00">1080: admin_toggle_server()</text>
+<text text-anchor="middle" x="1289" y="-38133.3" font-family="Arial" font-size="14.00">1080: admin_set_server_state()</text>
 </g>
 <!-- node_ddba35fe&#45;&gt;node_cd86d046 -->
 <g id="edge219" class="edge">
@@ -3153,7 +3153,7 @@
 <g id="node84" class="node">
 <title>node_880f2772</title>
 <path fill="#966f33" stroke="black" d="M1364,-38101C1364,-38101 1214,-38101 1214,-38101 1208,-38101 1202,-38095 1202,-38089 1202,-38089 1202,-38077 1202,-38077 1202,-38071 1208,-38065 1214,-38065 1214,-38065 1364,-38065 1364,-38065 1370,-38065 1376,-38071 1376,-38077 1376,-38077 1376,-38089 1376,-38089 1376,-38095 1370,-38101 1364,-38101"/>
-<text text-anchor="middle" x="1289" y="-38079.3" font-family="Arial" font-size="14.00">5257: admin_toggle_tool()</text>
+<text text-anchor="middle" x="1289" y="-38079.3" font-family="Arial" font-size="14.00">5257: admin_set_tool_state()</text>
 </g>
 <!-- node_880f2772&#45;&gt;node_cd86d046 -->
 <g id="edge220" class="edge">
@@ -6813,7 +6813,7 @@
 <g id="node332" class="node">
 <title>node_d8cf5c91</title>
 <path fill="#cccccc" stroke="black" d="M2054,-44559C2054,-44559 1877,-44559 1877,-44559 1871,-44559 1865,-44553 1865,-44547 1865,-44547 1865,-44535 1865,-44535 1865,-44529 1871,-44523 1877,-44523 1877,-44523 2054,-44523 2054,-44523 2060,-44523 2066,-44529 2066,-44535 2066,-44535 2066,-44547 2066,-44547 2066,-44553 2060,-44559 2054,-44559"/>
-<text text-anchor="middle" x="1965.5" y="-44537.3" font-family="Arial" font-size="14.00">1291: toggle_gateway_status()</text>
+<text text-anchor="middle" x="1965.5" y="-44537.3" font-family="Arial" font-size="14.00">1291: set_gateway_state()</text>
 </g>
 <!-- node_59707e37&#45;&gt;node_d8cf5c91 -->
 <g id="edge603" class="edge">
@@ -10234,7 +10234,7 @@
 <g id="node467" class="node">
 <title>node_8d8912a8</title>
 <path fill="#966f33" stroke="black" d="M1069.5,-43733C1069.5,-43733 892.5,-43733 892.5,-43733 886.5,-43733 880.5,-43727 880.5,-43721 880.5,-43721 880.5,-43709 880.5,-43709 880.5,-43703 886.5,-43697 892.5,-43697 892.5,-43697 1069.5,-43697 1069.5,-43697 1075.5,-43697 1081.5,-43703 1081.5,-43709 1081.5,-43709 1081.5,-43721 1081.5,-43721 1081.5,-43727 1075.5,-43733 1069.5,-43733"/>
-<text text-anchor="middle" x="981" y="-43711.3" font-family="Arial" font-size="14.00">3044: toggle_gateway_status()</text>
+<text text-anchor="middle" x="981" y="-43711.3" font-family="Arial" font-size="14.00">3044: set_gateway_state()</text>
 </g>
 <!-- node_8d8912a8&#45;&gt;node_d8cf5c91 -->
 <g id="edge962" class="edge">
@@ -10246,13 +10246,13 @@
 <g id="node468" class="node">
 <title>node_64a5110c</title>
 <path fill="#966f33" stroke="black" d="M1066,-42200C1066,-42200 896,-42200 896,-42200 890,-42200 884,-42194 884,-42188 884,-42188 884,-42176 884,-42176 884,-42170 890,-42164 896,-42164 896,-42164 1066,-42164 1066,-42164 1072,-42164 1078,-42170 1078,-42176 1078,-42176 1078,-42188 1078,-42188 1078,-42194 1072,-42200 1066,-42200"/>
-<text text-anchor="middle" x="981" y="-42178.3" font-family="Arial" font-size="14.00">2658: toggle_prompt_status()</text>
+<text text-anchor="middle" x="981" y="-42178.3" font-family="Arial" font-size="14.00">2658: set_prompt_state()</text>
 </g>
 <!-- node_bb7af980 -->
 <g id="node582" class="node">
 <title>node_bb7af980</title>
 <path fill="#cccccc" stroke="black" d="M1679,-28310C1679,-28310 1517,-28310 1517,-28310 1511,-28310 1505,-28304 1505,-28298 1505,-28298 1505,-28286 1505,-28286 1505,-28280 1511,-28274 1517,-28274 1517,-28274 1679,-28274 1679,-28274 1685,-28274 1691,-28280 1691,-28286 1691,-28286 1691,-28298 1691,-28298 1691,-28304 1685,-28310 1679,-28310"/>
-<text text-anchor="middle" x="1598" y="-28288.3" font-family="Arial" font-size="14.00">773: toggle_prompt_status()</text>
+<text text-anchor="middle" x="1598" y="-28288.3" font-family="Arial" font-size="14.00">773: set_prompt_state()</text>
 </g>
 <!-- node_64a5110c&#45;&gt;node_bb7af980 -->
 <g id="edge963" class="edge">
@@ -10264,13 +10264,13 @@
 <g id="node469" class="node">
 <title>node_5e76168a</title>
 <path fill="#966f33" stroke="black" d="M1070.5,-41930C1070.5,-41930 891.5,-41930 891.5,-41930 885.5,-41930 879.5,-41924 879.5,-41918 879.5,-41918 879.5,-41906 879.5,-41906 879.5,-41900 885.5,-41894 891.5,-41894 891.5,-41894 1070.5,-41894 1070.5,-41894 1076.5,-41894 1082.5,-41900 1082.5,-41906 1082.5,-41906 1082.5,-41918 1082.5,-41918 1082.5,-41924 1076.5,-41930 1070.5,-41930"/>
-<text text-anchor="middle" x="981" y="-41908.3" font-family="Arial" font-size="14.00">2338: toggle_resource_status()</text>
+<text text-anchor="middle" x="981" y="-41908.3" font-family="Arial" font-size="14.00">2338: set_resource_state()</text>
 </g>
 <!-- node_b0cb6099 -->
 <g id="node649" class="node">
 <title>node_b0cb6099</title>
 <path fill="#cccccc" stroke="black" d="M1684,-27550C1684,-27550 1512,-27550 1512,-27550 1506,-27550 1500,-27544 1500,-27538 1500,-27538 1500,-27526 1500,-27526 1500,-27520 1506,-27514 1512,-27514 1512,-27514 1684,-27514 1684,-27514 1690,-27514 1696,-27520 1696,-27526 1696,-27526 1696,-27538 1696,-27538 1696,-27544 1690,-27550 1684,-27550"/>
-<text text-anchor="middle" x="1598" y="-27528.3" font-family="Arial" font-size="14.00">717: toggle_resource_status()</text>
+<text text-anchor="middle" x="1598" y="-27528.3" font-family="Arial" font-size="14.00">717: set_resource_state()</text>
 </g>
 <!-- node_5e76168a&#45;&gt;node_b0cb6099 -->
 <g id="edge964" class="edge">
@@ -10282,13 +10282,13 @@
 <g id="node470" class="node">
 <title>node_f1ffc7ad</title>
 <path fill="#966f33" stroke="black" d="M1063,-41606C1063,-41606 899,-41606 899,-41606 893,-41606 887,-41600 887,-41594 887,-41594 887,-41582 887,-41582 887,-41576 893,-41570 899,-41570 899,-41570 1063,-41570 1063,-41570 1069,-41570 1075,-41576 1075,-41582 1075,-41582 1075,-41594 1075,-41594 1075,-41600 1069,-41606 1063,-41606"/>
-<text text-anchor="middle" x="981" y="-41584.3" font-family="Arial" font-size="14.00">1484: toggle_server_status()</text>
+<text text-anchor="middle" x="981" y="-41584.3" font-family="Arial" font-size="14.00">1484: set_server_state()</text>
 </g>
 <!-- node_2aaac624 -->
 <g id="node785" class="node">
 <title>node_2aaac624</title>
 <path fill="#cccccc" stroke="black" d="M1676.5,-26319C1676.5,-26319 1519.5,-26319 1519.5,-26319 1513.5,-26319 1507.5,-26313 1507.5,-26307 1507.5,-26307 1507.5,-26295 1507.5,-26295 1507.5,-26289 1513.5,-26283 1519.5,-26283 1519.5,-26283 1676.5,-26283 1676.5,-26283 1682.5,-26283 1688.5,-26289 1688.5,-26295 1688.5,-26295 1688.5,-26307 1688.5,-26307 1688.5,-26313 1682.5,-26319 1676.5,-26319"/>
-<text text-anchor="middle" x="1598" y="-26297.3" font-family="Arial" font-size="14.00">833: toggle_server_status()</text>
+<text text-anchor="middle" x="1598" y="-26297.3" font-family="Arial" font-size="14.00">833: set_server_state()</text>
 </g>
 <!-- node_f1ffc7ad&#45;&gt;node_2aaac624 -->
 <g id="edge965" class="edge">
@@ -10300,13 +10300,13 @@
 <g id="node471" class="node">
 <title>node_c67b693a</title>
 <path fill="#966f33" stroke="black" d="M1055.5,-43172C1055.5,-43172 906.5,-43172 906.5,-43172 900.5,-43172 894.5,-43166 894.5,-43160 894.5,-43160 894.5,-43148 894.5,-43148 894.5,-43142 900.5,-43136 906.5,-43136 906.5,-43136 1055.5,-43136 1055.5,-43136 1061.5,-43136 1067.5,-43142 1067.5,-43148 1067.5,-43148 1067.5,-43160 1067.5,-43160 1067.5,-43166 1061.5,-43172 1055.5,-43172"/>
-<text text-anchor="middle" x="981" y="-43150.3" font-family="Arial" font-size="14.00">2277: toggle_tool_status()</text>
+<text text-anchor="middle" x="981" y="-43150.3" font-family="Arial" font-size="14.00">2277: set_tool_state()</text>
 </g>
 <!-- node_0ddbe8ce -->
 <g id="node989" class="node">
 <title>node_0ddbe8ce</title>
 <path fill="#cccccc" stroke="black" d="M2036,-39444C2036,-39444 1895,-39444 1895,-39444 1889,-39444 1883,-39438 1883,-39432 1883,-39432 1883,-39420 1883,-39420 1883,-39414 1889,-39408 1895,-39408 1895,-39408 2036,-39408 2036,-39408 2042,-39408 2048,-39414 2048,-39420 2048,-39420 2048,-39432 2048,-39432 2048,-39438 2042,-39444 2036,-39444"/>
-<text text-anchor="middle" x="1965.5" y="-39422.3" font-family="Arial" font-size="14.00">707: toggle_tool_status()</text>
+<text text-anchor="middle" x="1965.5" y="-39422.3" font-family="Arial" font-size="14.00">707: set_tool_state()</text>
 </g>
 <!-- node_c67b693a&#45;&gt;node_0ddbe8ce -->
 <g id="edge966" class="edge">

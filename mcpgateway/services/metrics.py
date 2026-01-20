@@ -127,6 +127,39 @@ def setup_metrics(app):
         url_scheme = database_url.split("://", maxsplit=1)[0] if "://" in database_url else "unknown"
         db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
 
+        # Add HTTP connection pool metrics with lazy initialization
+        # These gauges are updated from app lifespan after SharedHttpClient is ready
+        http_pool_max_connections = Gauge(
+            "http_pool_max_connections",
+            "Maximum allowed HTTP connections in the pool",
+            registry=REGISTRY,
+        )
+        http_pool_max_keepalive = Gauge(
+            "http_pool_max_keepalive_connections",
+            "Maximum idle keepalive connections to retain",
+            registry=REGISTRY,
+        )
+
+        # Store update function as a module-level attribute so it can be called
+        # from the application lifespan after SharedHttpClient is initialized
+        def update_http_pool_metrics():
+            """Update HTTP connection pool metrics from SharedHttpClient stats."""
+            try:
+                # First-Party
+                from mcpgateway.services.http_client_service import SharedHttpClient  # pylint: disable=import-outside-toplevel
+
+                # Only update if client is initialized
+                if SharedHttpClient._instance and SharedHttpClient._instance._initialized:  # pylint: disable=protected-access
+                    stats = SharedHttpClient._instance.get_pool_stats()  # pylint: disable=protected-access
+                    http_pool_max_connections.set(stats.get("max_connections", 0))
+                    http_pool_max_keepalive.set(stats.get("max_keepalive", 0))
+                    # Note: httpx doesn't expose current connection count, only limits
+            except Exception:  # nosec B110
+                pass  # Silently skip if client not initialized or error occurs
+
+        # Make the update function available at module level for lifespan calls
+        app.state.update_http_pool_metrics = update_http_pool_metrics
+
         # Create instrumentator instance
         instrumentator = Instrumentator(
             should_group_status_codes=False,

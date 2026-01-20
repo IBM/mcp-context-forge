@@ -161,14 +161,29 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
             # End span successfully
             if span_id:
-                self.service.end_span(
-                    db, span_id, status="ok" if status_code < 400 else "error", attributes={"http.status_code": status_code, "http.response_size": response.headers.get("content-length")}
-                )
+                try:
+                    self.service.end_span(
+                        db,
+                        span_id,
+                        status="ok" if status_code < 400 else "error",
+                        attributes={"http.status_code": status_code, "http.response_size": response.headers.get("content-length")},
+                    )
+                except Exception as end_span_error:
+                    logger.warning(f"Failed to end span {span_id}: {end_span_error}")
 
             # End trace
             if trace_id:
                 duration_ms = (time.time() - start_time) * 1000
-                self.service.end_trace(db, trace_id, status="ok" if status_code < 400 else "error", http_status_code=status_code, attributes={"response_time_ms": duration_ms})
+                try:
+                    self.service.end_trace(
+                        db,
+                        trace_id,
+                        status="ok" if status_code < 400 else "error",
+                        http_status_code=status_code,
+                        attributes={"response_time_ms": duration_ms},
+                    )
+                except Exception as end_trace_error:
+                    logger.warning(f"Failed to end trace {trace_id}: {end_trace_error}")
 
             return response
 
@@ -206,7 +221,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Always close database session - observability service handles its own commits
             if db:
                 try:
-                    db.commit()  # End transaction cleanly
+                    if db.in_transaction():
+                        db.rollback()
                     db.close()
                 except Exception as close_error:
                     logger.warning(f"Failed to close database session: {close_error}")

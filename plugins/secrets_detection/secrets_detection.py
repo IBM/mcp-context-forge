@@ -37,7 +37,7 @@ from mcpgateway.plugins.framework import (
 
 PATTERNS = {
     "aws_access_key_id": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    "aws_secret_access_key": re.compile(r"(?i)aws(.{0,20})?(secret|access)(.{0,20})?=\s*([A-Za-z0-9/+=]{40})"),
+    "aws_secret_access_key": re.compile(r"(?i)aws.{0,20}(?:secret|access).{0,20}=\s*([A-Za-z0-9/+=]{40})"),
     "google_api_key": re.compile(r"\bAIza[0-9A-Za-z\-_]{35}\b"),
     "slack_token": re.compile(r"\bxox[abpqr]-[0-9A-Za-z\-]{10,48}\b"),
     "private_key_block": re.compile(r"-----BEGIN (?:RSA|DSA|EC|OPENSSH) PRIVATE KEY-----"),

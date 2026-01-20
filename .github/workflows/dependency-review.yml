@@ -75,6 +75,7 @@ jobs:
             RPL-1.5,
             OSL-3.0,
             CPAL-1.0
+          allow-dependencies-licenses: "pkg:pypi/pylint-pydantic"
           license-check: true # (default)
           # ───────── UX tweaks ─────────
           warn-only: false # actually fail the workflow

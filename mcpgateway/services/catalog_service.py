@@ -6,6 +6,7 @@ easily registered with one-click from the admin UI.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -73,8 +74,8 @@ class CatalogService:
                 logger.warning(f"Catalog file not found: {catalog_path}")
                 return {"catalog_servers": [], "categories": [], "auth_types": []}
 
-            with open(catalog_path, "r", encoding="utf-8") as f:
-                catalog_data = yaml.safe_load(f)
+            content = await asyncio.to_thread(catalog_path.read_text, encoding="utf-8")
+            catalog_data = yaml.safe_load(content)
 
             # Update cache
             self._catalog_cache = catalog_data
@@ -140,19 +141,34 @@ class CatalogService:
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
-                stmt = select(DbGateway.url).where(DbGateway.enabled)
+                # Query all gateways (enabled and disabled) to properly track registration status
+                # Include auth_type and oauth_config to distinguish OAuth servers needing setup
+                # from OAuth servers that were manually disabled after configuration
+                stmt = select(DbGateway.url, DbGateway.enabled, DbGateway.auth_type, DbGateway.oauth_config)
                 result = db.execute(stmt)
-                registered_urls = {row[0] for row in result}
+                registered_urls = set()
+                oauth_disabled_urls = set()
+                for row in result:
+                    url, enabled, auth_type, oauth_config = row
+                    registered_urls.add(url)
+                    # Only mark as requiring OAuth config if:
+                    # - disabled AND OAuth auth_type AND oauth_config is empty/None
+                    # This distinguishes unconfigured OAuth servers from manually disabled ones
+                    if not enabled and auth_type == "oauth" and not oauth_config:
+                        oauth_disabled_urls.add(url)
             except Exception as e:
                 logger.warning(f"Failed to check registered servers: {e}")
                 # Continue without marking registered servers
                 registered_urls = set()
+                oauth_disabled_urls = set()
 
         # Convert to CatalogServer objects and mark registered ones
         catalog_servers = []
         for server_data in servers:
             server = CatalogServer(**server_data)
             server.is_registered = server.url in registered_urls
+            # Mark servers that are registered but disabled due to OAuth config needed
+            server.requires_oauth_config = server.url in oauth_disabled_urls
             # Set availability based on registration status (registered servers are assumed available)
             # Individual health checks can be done via the /status endpoint
             server.is_available = server.is_registered or server_data.get("is_available", True)
@@ -326,7 +342,7 @@ class CatalogService:
                     tags=gateway_data.get("tags", []),
                     transport=gateway_data["transport"],
                     capabilities={},
-                    auth_type=None,  # Will be set during OAuth configuration
+                    auth_type="oauth",  # Mark as OAuth so it can be identified after page refresh
                     enabled=False,  # Disabled until OAuth is configured
                     created_via="catalog",
                     visibility="public",
@@ -375,6 +391,7 @@ class CatalogService:
                     server_id=str(gateway_read.id),
                     message=f"Successfully registered {gateway_read.name} - OAuth configuration required before activation",
                     error=None,
+                    oauth_required=True,
                 )
 
             gateway_create = GatewayCreate(**gateway_data)
@@ -385,6 +402,7 @@ class CatalogService:
                 gateway=gateway_create,
                 created_via="catalog",
                 visibility="public",  # Catalog servers should be public
+                initialize_timeout=settings.httpx_admin_read_timeout,
             )
 
             logger.info(f"Registered catalog server: {gateway_read.name} ({catalog_id})")

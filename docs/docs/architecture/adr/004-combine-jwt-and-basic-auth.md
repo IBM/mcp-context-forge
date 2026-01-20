@@ -84,6 +84,7 @@ JWT_ALGORITHM=RS256
 JWT_PUBLIC_KEY_PATH=jwt/public.pem
 JWT_PRIVATE_KEY_PATH=jwt/private.pem
 JWT_AUDIENCE_VERIFICATION=true
+JWT_ISSUER_VERIFICATION=true
 ```
 
 ### Benefits of Asymmetric Support
@@ -125,3 +126,64 @@ JWT_AUDIENCE_VERIFICATION=true
 - **Key Rotation**: Implement regular key rotation procedures for asymmetric keys
 - **Algorithm Selection**: Choose algorithm based on security requirements and performance needs
 - **Audience Verification**: Can be disabled for Dynamic Client Registration (DCR) scenarios
+
+---
+
+## Update: MCP Endpoint Authentication Configuration
+
+- *Date:* 2025-01-16
+- *Status:* Extended
+- *Enhancement By:* Core Engineering Team
+
+### Enhancement Overview
+
+A new `MCP_REQUIRE_AUTH` configuration option provides fine-grained control over authentication requirements for MCP protocol endpoints (`/mcp/*`), independent of the global `AUTH_REQUIRED` setting.
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `MCP_REQUIRE_AUTH` | `false` | When `true`, all `/mcp` requests must include a valid Bearer token. When `false`, unauthenticated requests are allowed but can only access public tools, resources, and prompts. |
+
+### Behavior Matrix
+
+| `AUTH_REQUIRED` | `MCP_REQUIRE_AUTH` | REST API | MCP Endpoints |
+|-----------------|-------------------|----------|---------------|
+| `true` | `false` (default) | Auth required | Public-only access without token |
+| `true` | `true` | Auth required | Auth required |
+| `false` | `false` | No auth | Public-only access without token |
+| `false` | `true` | No auth | Auth required |
+
+### Use Cases
+
+**Default (`MCP_REQUIRE_AUTH=false`):**
+
+- Suitable for public MCP services offering public tools
+- Unauthenticated clients can discover and invoke public tools only
+- Team-scoped and private tools require authentication
+
+**Strict Mode (`MCP_REQUIRE_AUTH=true`):**
+
+- Recommended for multi-tenant deployments
+- All MCP clients must authenticate before any operation
+- Prevents anonymous enumeration of available tools
+
+### Security Considerations
+
+- When `MCP_REQUIRE_AUTH=false`, unauthenticated requests receive an empty team list (`teams=[]`), restricting access to `visibility=public` items only
+- Private and team-scoped tools, resources, and prompts are never exposed to unauthenticated users
+- The service layer enforces access control regardless of this setting
+
+### Configuration Dependencies
+
+Full MCP access control (visibility + team scoping + membership validation) requires:
+
+1. `MCP_CLIENT_AUTH_ENABLED=true` (default) - enables JWT authentication for MCP endpoints
+2. Valid Bearer tokens with `teams` claim for team-scoped access
+3. Team membership validation runs on each request (60s cache TTL)
+
+When `MCP_CLIENT_AUTH_ENABLED=false`:
+
+- Access control relies on `MCP_REQUIRE_AUTH` + tool/resource visibility only
+- Team membership validation is skipped (no JWT to extract teams from)
+- Use `TRUST_PROXY_AUTH=true` with a reverse proxy for user identification

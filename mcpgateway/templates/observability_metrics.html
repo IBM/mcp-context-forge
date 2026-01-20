@@ -12,7 +12,7 @@ window.createMetricsController = function() {
     error: null,
     autoRefreshInterval: null,
     visibilityHandler: null,
-    
+
     /**
      * Destroy all Chart.js instances to prevent canvas reuse errors
      */
@@ -28,20 +28,20 @@ window.createMetricsController = function() {
         }
       });
     },
-    
+
     /**
      * Initialize the metrics dashboard with proper cleanup
      */
     async init() {
       // Clean up any existing charts first
       this.destroyAllCharts();
-      
+
       // Load initial data
       await this.loadAllMetrics();
-      
+
       // Start auto-refresh
       this.startAutoRefresh();
-      
+
       // Handle visibility changes to pause updates when tab is hidden
       this.visibilityHandler = () => {
         if (document.hidden) {
@@ -55,11 +55,11 @@ window.createMetricsController = function() {
         }
       };
       document.addEventListener('visibilitychange', this.visibilityHandler);
-      
+
       // Add cleanup on page unload as fallback
       window.addEventListener('beforeunload', () => this.cleanup());
     },
-    
+
     /**
      * Cleanup resources on component destroy
      */
@@ -79,14 +79,14 @@ window.createMetricsController = function() {
         console.log('Refresh already in progress, skipping');
         return;
       }
-      
+
       this.loading = true;
       this.error = null;
-      
+
       try {
         // Destroy existing charts before loading new data
         this.destroyAllCharts();
-        
+
         // Load all metrics in parallel
         await Promise.all([
           this.loadPercentiles(),
@@ -350,9 +350,9 @@ window.createMetricsController = function() {
         .map(
           (ep, idx) => `
             <tr>
-              <td class="px-4 py-2 text-sm text-gray-700">${idx + 1}</td>
-              <td class="px-4 py-2 text-sm font-mono text-gray-900">${ep.endpoint}</td>
-              <td class="px-4 py-2 text-sm text-gray-600">${ep.count}</td>
+              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-500">${idx + 1}</td>
+              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-300">${ep.endpoint}</td>
+              <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">${ep.count}</td>
               <td class="px-4 py-2 text-sm text-orange-600 font-medium">${ep.avg_duration_ms} ms</td>
               <td class="px-4 py-2 text-sm text-red-600">${ep.max_duration_ms} ms</td>
             </tr>
@@ -368,10 +368,10 @@ window.createMetricsController = function() {
         .map(
           (ep, idx) => `
             <tr>
-              <td class="px-4 py-2 text-sm text-gray-700">${idx + 1}</td>
-              <td class="px-4 py-2 text-sm font-mono text-gray-900">${ep.endpoint}</td>
+              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-500">${idx + 1}</td>
+              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-300">${ep.endpoint}</td>
               <td class="px-4 py-2 text-sm font-medium text-blue-600">${ep.count}</td>
-              <td class="px-4 py-2 text-sm text-gray-600">${ep.avg_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">${ep.avg_duration_ms} ms</td>
             </tr>
           `
         )
@@ -385,9 +385,9 @@ window.createMetricsController = function() {
         .map(
           (ep, idx) => `
             <tr>
-              <td class="px-4 py-2 text-sm text-gray-700">${idx + 1}</td>
-              <td class="px-4 py-2 text-sm font-mono text-gray-900">${ep.endpoint}</td>
-              <td class="px-4 py-2 text-sm text-gray-600">${ep.total_count}</td>
+              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-500">${idx + 1}</td>
+              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-300">${ep.endpoint}</td>
+              <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">${ep.total_count}</td>
               <td class="px-4 py-2 text-sm text-red-600 font-medium">${ep.error_count}</td>
               <td class="px-4 py-2 text-sm text-red-700 font-bold">${ep.error_rate}%</td>
             </tr>
@@ -517,7 +517,7 @@ window.createMetricsController = function() {
       if (this.autoRefreshInterval) {
         clearInterval(this.autoRefreshInterval);
       }
-      
+
       // Refresh every 60 seconds, only if not already loading
       this.autoRefreshInterval = setInterval(() => {
         if (!this.loading) {
@@ -646,27 +646,27 @@ window.createMetricsController = function() {
           <thead class="bg-gray-50 dark:bg-gray-700">
             <tr>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 #
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Endpoint
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Count
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Avg
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Max
               </th>
@@ -689,22 +689,22 @@ window.createMetricsController = function() {
           <thead class="bg-gray-50 dark:bg-gray-700">
             <tr>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 #
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Endpoint
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Requests
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Avg
               </th>
@@ -727,27 +727,27 @@ window.createMetricsController = function() {
           <thead class="bg-gray-50 dark:bg-gray-700">
             <tr>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 #
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Endpoint
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Total
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Errors
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
               >
                 Rate
               </th>

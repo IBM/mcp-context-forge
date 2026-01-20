@@ -43,7 +43,7 @@ def mock_require_admin_permission():
 with patch("mcpgateway.middleware.rbac.require_permission", mock_require_permission_decorator):
     with patch("mcpgateway.middleware.rbac.require_admin_permission", mock_require_admin_permission):
         # Now import mcpgateway modules with mocked decorators
-        from mcpgateway.db import EmailTeam, EmailTeamMember
+        from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser
         from mcpgateway.routers import teams
         from mcpgateway.schemas import (
             EmailUserResponse,
@@ -230,16 +230,31 @@ class TestTeamsRouterV2:
     async def test_list_team_members_success(self, mock_current_user, mock_db, mock_team_member):
         """Test listing team members successfully."""
         team_id = str(uuid4())
-        members = [mock_team_member]
+
+        # Mock user object to pair with membership
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = mock_team_member.user_email
+        mock_user.full_name = "Test User"
+
+        # When cursor=None and limit=None, get_team_members returns just a list
+        members_tuples = [(mock_user, mock_team_member)]
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
-            mock_service.get_team_members = AsyncMock(return_value=members)
+            mock_service.get_team_members = AsyncMock(return_value=members_tuples)
             MockService.return_value = mock_service
 
-            result = await teams.list_team_members(team_id, current_user=mock_current_user, db=mock_db)
+            result = await teams.list_team_members(
+                team_id=team_id,
+                cursor=None,
+                limit=None,
+                include_pagination=False,
+                current_user=mock_current_user,
+                db=mock_db
+            )
 
+            assert isinstance(result, list)
             assert len(result) == 1
             assert result[0].user_email == mock_team_member.user_email
             assert result[0].role == mock_team_member.role

@@ -20,7 +20,7 @@ Examples:
 """
 
 # Standard
-from typing import Any, cast, List
+from typing import Any, cast, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -28,10 +28,13 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
+    CursorPaginatedTeamsResponse,
     EmailUserResponse,
+    PaginatedTeamMembersResponse,
     SuccessResponse,
     TeamCreateRequest,
     TeamDiscoveryResponse,
@@ -109,13 +112,15 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create team")
 
 
-@teams_router.get("/", response_model=TeamListResponse)
+@teams_router.get("/", response_model=Union[TeamListResponse, CursorPaginatedTeamsResponse])
 @require_permission("teams.read")
 async def list_teams(
     skip: int = Query(0, ge=0, description="Number of teams to skip"),
     limit: int = Query(50, ge=1, le=100, description="Number of teams to return"),
+    cursor: Optional[str] = Query(None, description="Pagination cursor"),
+    include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
-) -> TeamListResponse:
+) -> Union[TeamListResponse, CursorPaginatedTeamsResponse]:
     """List teams visible to the caller.
 
     - Administrators see all non-personal teams (paginated)
@@ -124,33 +129,47 @@ async def list_teams(
     Args:
         skip: Number of teams to skip for pagination
         limit: Maximum number of teams to return
+        cursor: Pagination cursor
+        include_pagination: Include pagination metadata
         current_user_ctx: Current user context with permissions and database session
 
     Returns:
-        TeamListResponse: List of teams and total count
+        Union[TeamListResponse, CursorPaginatedTeamsResponse]: List of teams
 
     Raises:
         HTTPException: If there's an error listing teams
-
-    Examples:
-        >>> import asyncio
-        >>> asyncio.iscoroutinefunction(list_teams)
-        True
     """
     try:
         db = current_user_ctx["db"]
         service = TeamManagementService(db)
 
+        teams_data = []
+        next_cursor = None
+        total = 0
+
         if current_user_ctx.get("is_admin"):
-            teams, total = await service.list_teams(limit=limit, offset=skip)
+            # Use updated list_teams logic
+            # If current request uses offset (skip), mapped to offset.
+            # If cursor, mapped to cursor.
+            # page is None, so returns Tuple
+            result = await service.list_teams(
+                limit=limit,
+                offset=skip,
+                cursor=cursor,
+            )
+            # Result is tuple (list, next_cursor)
+            teams_data, next_cursor = result
+
+            # Get accurate total count for API consumers
+            total = await service.get_teams_count()
         else:
             # Fallback to user teams and apply pagination locally
             user_teams = await service.get_user_teams(current_user_ctx["email"], include_personal=True)
             total = len(user_teams)
-            teams = user_teams[skip : skip + limit]
+            teams_data = user_teams[skip : skip + limit]
 
         # Batch fetch member counts with caching (N+1 elimination)
-        team_ids = [str(team.id) for team in teams]
+        team_ids = [str(team.id) for team in teams_data]
         member_counts = await service.get_member_counts_batch_cached(team_ids)
 
         team_responses = [
@@ -168,8 +187,11 @@ async def list_teams(
                 updated_at=team.updated_at,
                 is_active=team.is_active,
             )
-            for team in teams
+            for team in teams_data
         ]
+
+        if include_pagination:
+            return CursorPaginatedTeamsResponse(teams=team_responses, nextCursor=next_cursor)
 
         return TeamListResponse(teams=team_responses, total=total)
     except Exception as e:
@@ -323,18 +345,29 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
 # ---------------------------------------------------------------------------
 
 
-@teams_router.get("/{team_id}/members", response_model=List[TeamMemberResponse])
+@teams_router.get("/{team_id}/members", response_model=Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]])
 @require_permission("teams.read")
-async def list_team_members(team_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> List[TeamMemberResponse]:
-    """List team members.
+async def list_team_members(
+    team_id: str,
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    limit: Optional[int] = Query(None, ge=1, le=settings.pagination_max_page_size, description="Maximum number of members to return (default: 50)"),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    current_user: EmailUserResponse = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]]:
+    """List team members with cursor-based pagination.
 
     Args:
         team_id: Team UUID
+        cursor: Pagination cursor for fetching the next set of results
+        limit: Maximum number of members to return (default: 50)
+        include_pagination: Whether to include cursor pagination metadata in the response (default: false)
         current_user: Currently authenticated user
         db: Database session
 
     Returns:
-        List[TeamMemberResponse]: List of team members
+        PaginatedTeamMembersResponse with members and nextCursor if include_pagination=true, or
+        List of team members if include_pagination=false
 
     Raises:
         HTTPException: If team not found or access denied
@@ -347,12 +380,38 @@ async def list_team_members(team_id: str, current_user: EmailUserResponse = Depe
         if not user_role:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
 
-        members = await service.get_team_members(team_id)
+        # Get members - service returns different types based on parameters:
+        # - cursor=None, limit=None: List[Tuple] (backward compat)
+        # - cursor or limit provided: Tuple[List[Tuple], next_cursor]
+        result = await service.get_team_members(team_id, cursor=cursor, limit=limit)
 
+        # Handle different return types from service
+        if cursor is not None or limit is not None:
+            # Cursor pagination was used - result is a tuple
+            members, next_cursor = result
+        else:
+            # No pagination - result is a plain list
+            members = result
+            next_cursor = None
+
+        # Convert to response objects
         member_responses = []
-        for member in members:
-            m = cast(Any, member)
-            member_responses.append(TeamMemberResponse(id=m.id, team_id=m.team_id, user_email=m.user_email, role=m.role, joined_at=m.joined_at, invited_by=m.invited_by, is_active=m.is_active))
+        for user, membership in members:
+            member_responses.append(
+                TeamMemberResponse(
+                    id=membership.id,
+                    team_id=membership.team_id,
+                    user_email=membership.user_email,
+                    role=membership.role,
+                    joined_at=membership.joined_at,
+                    invited_by=membership.invited_by,
+                    is_active=membership.is_active,
+                )
+            )
+
+        # Return with pagination metadata if requested
+        if include_pagination:
+            return PaginatedTeamMembersResponse(members=member_responses, nextCursor=next_cursor)
 
         return member_responses
     except HTTPException:

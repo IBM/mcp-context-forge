@@ -108,6 +108,41 @@ async def test_verify_jwt_token_invalid_signature(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_verify_jwt_token_skip_issuer_verification_only(monkeypatch):
+    """Test that issuer verification can be disabled independently of audience verification."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", False, raising=False)  # Disable issuer verification
+    monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)  # Keep audience verification enabled
+    monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
+
+    # Token with correct audience but wrong/missing issuer
+    token = jwt.encode({"sub": "user-wrong-iss", "aud": "mcpgateway-api", "iss": "wrong-issuer"}, SECRET, algorithm=ALGO)
+
+    # Should succeed because issuer verification is disabled, but audience is still checked
+    data = await vc.verify_jwt_token(token)
+    assert data["sub"] == "user-wrong-iss"
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_skip_both_verifications(monkeypatch):
+    """Test that both issuer and audience verification can be disabled together."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", False, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_audience_verification", False, raising=False)
+
+    # Token without issuer or audience claims
+    token = jwt.encode({"sub": "no-iss-aud"}, SECRET, algorithm=ALGO)
+
+    # Should succeed even without ISS/AUD claims
+    data = await vc.verify_jwt_token(token)
+    assert data["sub"] == "no-iss-aud"
+
+
+@pytest.mark.asyncio
 async def test_verify_credentials_enriches(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
@@ -388,6 +423,7 @@ async def test_verify_jwt_token_invalid_signature_before_missing_exp(monkeypatch
     monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", True, raising=False)
 
     # Create token with wrong secret AND no exp claim
     bad_token = jwt.encode(
@@ -416,6 +452,7 @@ async def test_verify_jwt_token_cached_returns_cached_payload(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", True, raising=False)
 
     token = _token({"sub": "cached_user"})
 
@@ -450,6 +487,7 @@ async def test_verify_jwt_token_cached_without_request(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", True, raising=False)
 
     token = _token({"sub": "no_cache_user"})
 
@@ -467,6 +505,7 @@ async def test_verify_jwt_token_cached_handles_object_without_state(monkeypatch)
     monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", True, raising=False)
 
     token = _token({"sub": "no_state_user"})
 
@@ -490,6 +529,7 @@ async def test_verify_credentials_cached_does_not_mutate_cache(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", True, raising=False)
 
     token = _token({"sub": "creds_user"})
 
@@ -521,6 +561,7 @@ async def test_verify_jwt_token_cached_different_tokens(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", True, raising=False)
 
     token1 = _token({"sub": "user1"})
     token2 = _token({"sub": "user2"})
@@ -543,3 +584,135 @@ async def test_verify_jwt_token_cached_different_tokens(monkeypatch):
 
     # Cache should now hold token2
     assert request.state._jwt_verified_payload[0] == token2
+
+
+# ---------------------------------------------------------------------------
+# JTI (JWT ID) validation tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_verify_jwt_token_require_jti_enabled_rejects_missing_jti(monkeypatch):
+    """When require_jti is enabled, tokens without JTI should be rejected."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_jti", True, raising=False)
+
+    # Token without JTI claim
+    token = _token({"sub": "user-no-jti"})
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.verify_jwt_token(token)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "missing required JTI claim" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_require_jti_enabled_accepts_with_jti(monkeypatch):
+    """When require_jti is enabled, tokens with JTI should be accepted."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_jti", True, raising=False)
+
+    # Token with JTI claim
+    token_payload = {"sub": "user-with-jti", "jti": "test-jti-12345", "iss": "mcpgateway", "aud": "mcpgateway-api"}
+    token = jwt.encode(token_payload, SECRET, algorithm=ALGO)
+
+    payload = await vc.verify_jwt_token(token)
+    assert payload["sub"] == "user-with-jti"
+    assert payload["jti"] == "test-jti-12345"
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_require_jti_disabled_accepts_missing_jti(monkeypatch, caplog):
+    """When require_jti is disabled, tokens without JTI should be accepted with warning."""
+    import logging
+
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "require_jti", False, raising=False)
+
+    # Token without JTI claim
+    token = _token({"sub": "user-no-jti-allowed"})
+
+    with caplog.at_level(logging.WARNING):
+        payload = await vc.verify_jwt_token(token)
+
+    assert payload["sub"] == "user-no-jti-allowed"
+    # Verify warning was logged
+    assert any("JWT token without JTI accepted" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Environment claim validation tests
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_verify_jwt_token_validate_environment_rejects_mismatch(monkeypatch):
+    """When validate_token_environment is enabled, tokens with mismatched env claim should be rejected."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "validate_token_environment", True, raising=False)
+    monkeypatch.setattr(vc.settings, "environment", "production", raising=False)
+
+    # Token with env claim for different environment
+    token = _token({"sub": "user@example.com", "env": "development"})
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.verify_jwt_token(token)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "environment mismatch" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_validate_environment_accepts_matching(monkeypatch):
+    """When validate_token_environment is enabled, tokens with matching env claim should be accepted."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "validate_token_environment", True, raising=False)
+    monkeypatch.setattr(vc.settings, "environment", "production", raising=False)
+
+    # Token with matching env claim
+    token = _token({"sub": "user@example.com", "env": "production"})
+
+    payload = await vc.verify_jwt_token(token)
+    assert payload["sub"] == "user@example.com"
+    assert payload["env"] == "production"
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_validate_environment_allows_missing(monkeypatch):
+    """When validate_token_environment is enabled, tokens without env claim should be allowed (backward compat)."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "validate_token_environment", True, raising=False)
+    monkeypatch.setattr(vc.settings, "environment", "production", raising=False)
+
+    # Token without env claim (legacy token or external IdP token)
+    token = _token({"sub": "user@example.com"})
+
+    payload = await vc.verify_jwt_token(token)
+    assert payload["sub"] == "user@example.com"
+    assert "env" not in payload
+
+
+@pytest.mark.asyncio
+async def test_verify_jwt_token_validate_environment_disabled_ignores_mismatch(monkeypatch):
+    """When validate_token_environment is disabled, mismatched env claims should be ignored."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
+    monkeypatch.setattr(vc.settings, "validate_token_environment", False, raising=False)
+    monkeypatch.setattr(vc.settings, "environment", "production", raising=False)
+
+    # Token with mismatched env claim - should be accepted when validation is disabled
+    token = _token({"sub": "user@example.com", "env": "development"})
+
+    payload = await vc.verify_jwt_token(token)
+    assert payload["sub"] == "user@example.com"
+    assert payload["env"] == "development"

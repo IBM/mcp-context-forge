@@ -241,13 +241,13 @@ class TestGrpcService:
         with pytest.raises(GrpcServiceNameConflictError):
             await service.update_service(mock_db, sample_db_service.id, update_data)
 
-    async def test_toggle_service(self, service, mock_db, sample_db_service):
-        """Test toggling service enabled status."""
+    async def test_set_service_state(self, service, mock_db, sample_db_service):
+        """Test setting service enabled state."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        result = await service.toggle_service(mock_db, sample_db_service.id, activate=False)
+        result = await service.set_service_state(mock_db, sample_db_service.id, activate=False)
 
         assert result.enabled is False
         mock_db.commit.assert_called()

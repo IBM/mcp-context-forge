@@ -349,7 +349,10 @@ JWT_PRIVATE_KEY_PATH=jwt/private.pem   # Required for asymmetric algorithms (RS*
 JWT_AUDIENCE=mcpgateway-api
 JWT_ISSUER=mcpgateway
 JWT_AUDIENCE_VERIFICATION=true         # Set to false for Dynamic Client Registration
+JWT_ISSUER_VERIFICATION=true           # Set to false if issuer validation is not needed
 REQUIRE_TOKEN_EXPIRATION=true
+EMBED_ENVIRONMENT_IN_TOKENS=false      # Embed env claim in tokens for environment isolation
+VALIDATE_TOKEN_ENVIRONMENT=false       # Reject tokens with mismatched env claim
 
 # Basic Auth (Admin UI)
 BASIC_AUTH_USER=admin
@@ -769,6 +772,7 @@ JWT_SECRET_KEY=your-256-bit-secret-key-here
 JWT_AUDIENCE=mcpgateway-api
 JWT_ISSUER=mcpgateway
 JWT_AUDIENCE_VERIFICATION=true
+JWT_ISSUER_VERIFICATION=true
 ```
 
 ### RSA (Asymmetric) - Enterprise Deployments
@@ -783,6 +787,7 @@ JWT_PRIVATE_KEY_PATH=certs/jwt/private.pem    # Path to RSA private key
 JWT_AUDIENCE=mcpgateway-api
 JWT_ISSUER=mcpgateway
 JWT_AUDIENCE_VERIFICATION=true
+JWT_ISSUER_VERIFICATION=true
 ```
 
 #### Generate RSA Keys
@@ -836,6 +841,7 @@ JWT_ALGORITHM=RS256
 JWT_PUBLIC_KEY_PATH=certs/jwt/public.pem
 JWT_PRIVATE_KEY_PATH=certs/jwt/private.pem
 JWT_AUDIENCE_VERIFICATION=false         # Disable audience validation for DCR
+JWT_ISSUER_VERIFICATION=false           # Disable issuer validation for DCR
 JWT_ISSUER=your-identity-provider
 ```
 
@@ -1123,6 +1129,17 @@ METRICS_DELETE_RAW_AFTER_ROLLUP=true   # Delete raw after rollup (default: true)
 METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=1  # Hours before deletion (default: 1)
 ```
 
+**Performance Optimization (PostgreSQL):**
+
+```bash
+USE_POSTGRESDB_PERCENTILES=true  # Use PostgreSQL-native percentile_cont (default: true)
+YIELD_BATCH_SIZE=1000            # Rows per batch for streaming queries (default: 1000)
+```
+
+When `USE_POSTGRESDB_PERCENTILES=true` (default), PostgreSQL uses native `percentile_cont()` for p50/p95/p99 calculations, which is 5-10x faster than Python-based percentile computation. For SQLite or when disabled, falls back to Python linear interpolation.
+
+`YIELD_BATCH_SIZE` controls memory usage by streaming query results in batches instead of loading all rows into RAM at once.
+
 #### Configuration Examples
 
 **Default (recommended for most deployments):**
@@ -1198,8 +1215,11 @@ OBSERVABILITY_MAX_TRACES=100000
 # 1.0 = trace everything, 0.1 = trace 10% of requests
 OBSERVABILITY_SAMPLE_RATE=1.0
 
-# Paths to exclude from tracing (comma-separated regex patterns)
-OBSERVABILITY_EXCLUDE_PATHS=/health,/healthz,/ready,/metrics,/static/.*
+# Paths to include for tracing (JSON array of regex patterns)
+OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]
+
+# Paths to exclude from tracing (JSON array of regex patterns, applied after include patterns)
+OBSERVABILITY_EXCLUDE_PATHS=["/health","/healthz","/ready","/metrics","/static/.*"]
 
 # Enable metrics collection
 OBSERVABILITY_METRICS_ENABLED=true

@@ -62,7 +62,7 @@ class TestPoolMetricsSecurityOutput:
             "Cookie": "session=sensitive-session-id",
         }
 
-        pool_key = pool._make_pool_key("http://test:8080", sensitive_headers, TransportType.STREAMABLE_HTTP)
+        pool_key = pool._make_pool_key("http://test:8080", sensitive_headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
 
         # Convert pool key to string for checking
         pool_key_str = str(pool_key)
@@ -210,7 +210,7 @@ class TestPoolMetricsEvictionTracking:
                     await pool.release(s)
 
                     # Verify pool has the key before eviction
-                    pool_key = ("http://test:8080", "anonymous", "streamablehttp")
+                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
                     assert pool_key in pool._pools
                     assert pool.get_metrics()["pool_key_count"] == 1
 
@@ -256,7 +256,7 @@ class TestPoolMetricsEvictionTracking:
                     s = await pool.acquire("http://test:8080")
 
                     # Force session back into pool
-                    pool_key = ("http://test:8080", "anonymous", "streamablehttp")
+                    pool_key = ("anonymous", "http://test:8080", "anonymous", "streamablehttp", "")
                     pool._active.get(pool_key, set()).discard(s)
                     pool._pools[pool_key].put_nowait(s)
 
@@ -285,12 +285,12 @@ class TestSecurityValidation:
         anonymous_headers = {}
         authenticated_headers = {"Authorization": "Bearer token"}
 
-        anon_key = pool._make_pool_key("http://test:8080", anonymous_headers, TransportType.STREAMABLE_HTTP)
-        auth_key = pool._make_pool_key("http://test:8080", authenticated_headers, TransportType.STREAMABLE_HTTP)
+        anon_key = pool._make_pool_key("http://test:8080", anonymous_headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
+        auth_key = pool._make_pool_key("http://test:8080", authenticated_headers, TransportType.STREAMABLE_HTTP, user_identity="anonymous")
 
         assert anon_key != auth_key
-        assert anon_key[1] == "anonymous"
-        assert auth_key[1] != "anonymous"
+        assert anon_key[2] == "anonymous"
+        assert auth_key[2] != "anonymous"
 
     def test_header_case_normalization_consistent(self, pool):
         """Header case normalization should not create identity collisions."""

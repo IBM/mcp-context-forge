@@ -2,92 +2,106 @@
 <table id="gateways-table" class="min-w-full divide-y divide-gray-200">
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">S. No.</th>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Name</th>
-      <th class="px-2 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider w-24">URL</th>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Tags</th>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Status</th>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Last Seen</th>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Owner</th>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Team</th>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Visibility</th>
-      <th class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Actions</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Actions</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">S. No.</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Name</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider w-24">URL</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Tags</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Status</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Last Seen</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Owner</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Team</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider">Visibility</th>
     </tr>
   </thead>
   <tbody id="gateways-table-body" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
-{% for gateway in data %}
-{% set gateway_label = gateway.name or gateway.id %}
-<tr id="gateway-row-{{ gateway.id }}">
-    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ gateway.name }}</td>
-    <td class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-24 max-w-xs">{{ gateway.url }}</td>
-    <td class="px-6 py-4 whitespace-nowrap">
-      {% if gateway.tags %}
-        {% for tag in gateway.tags %}
-        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">
-          {% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}
-        </span>
-        {% endfor %}
-      {% else %}
-        <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
-      {% endif %}
-    </td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm">
-      {% if gateway.enabled %}
-      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
-      {% else %}
-      <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>
-      {% endif %}
-    </td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
-      {% if gateway.lastSeen %}{{ gateway.lastSeen[:19] if gateway.lastSeen is string else gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}Never{% endif %}
-    </td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
-      {% if gateway.ownerEmail %}{{ gateway.ownerEmail }}{% else %}<span class="text-gray-400">N/A</span>{% endif %}
-    </td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
-      {% if gateway.team %}{{ gateway.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}
-    </td>
-    <td class="px-6 py-4 whitespace-nowrap">
-      {% if gateway.visibility == 'private' %}
-      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">🔒 Private</span>
-      {% elif gateway.visibility == 'team' %}
-      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">👥 Team</span>
-      {% elif gateway.visibility == 'public' %}
-      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">🌍 Public</span>
-      {% else %}
-      <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
-      {% endif %}
-    </td>
-    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-      <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-        <!-- Row 1: Test -->
-        <button
-          onclick="testGateway('{{ gateway.url }}')"
-          class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
-          x-tooltip="'💡Test this gateway with sample arguments'"
-        >
-          Test
-        </button>
+    {% for gateway in data %}
+      {% set gateway_label = gateway.name or gateway.id %}
+      <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}">
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+          <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
+            <!-- Row 1: Test -->
+            <button
+              onclick="testGateway('{{ gateway.url }}')"
+              class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
+              x-tooltip="'💡Test this gateway with sample arguments'"
+            >
+              Test
+            </button>
 
-        <!-- Row 2: View | Edit -->
-        <button onclick="viewGateway('{{ gateway.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
-        <button onclick="editGateway('{{ gateway.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+            {% if gateway.authType == 'oauth' %}
+            <!-- Row 2: OAuth Authorize | Fetch Tools -->
+            <a href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
+              class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
+              x-tooltip="'🔐 Authorize Users for OAuth'">
+              🔐 Authorize
+            </a>
+            <button onclick="fetchToolsForGateway({{ gateway.id|tojson }}, {{ gateway.name|tojson }})"
+              class="flex items-center justify-center px-1 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
+              x-tooltip="'🔧 Fetch Tools from MCP Server'" id="fetch-tools-{{ gateway.id }}">
+              🔧 Fetch Tools
+            </button>
+            {% endif %}
 
-        <!-- Row 3 & 4: Activate/Deactivate | Delete -->
-        <div class="col-span-2 flex flex-col space-y-1">
-          <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle" class="contents" onsubmit="return handleToggleSubmit(event, 'gateways')">
-            <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
-            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if gateway.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if gateway.enabled %}Deactivate{% else %}Activate{% endif %}</button>
-          </form>
-          <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'gateway', '{{ gateway_label }}', 'gateways')">
-            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
-          </form>
-        </div>
-      </div>
-    </td>
-  </tr>
-{% endfor %}
+            <!-- Row 3: View | Edit -->
+            <button onclick="viewGateway('{{ gateway.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+            <button onclick="editGateway('{{ gateway.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+
+            <!-- Row 4: Activate/Deactivate | Delete -->
+            <div class="col-span-2 flex flex-col space-y-1">
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'gateways')">
+                <input type="hidden" name="activate" value="{{ 'false' if gateway.enabled else 'true' }}" />
+                <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if gateway.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if gateway.enabled %}Deactivate{% else %}Activate{% endif %}</button>
+              </form>
+              <form method="POST" action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'gateway', '{{ gateway_label }}', 'gateways')">
+                <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
+              </form>
+            </div>
+          </div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">{{ gateway.name }}</td>
+        <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-24 max-w-xs">{{ gateway.url }}</td>
+        <td class="px-6 py-4 whitespace-nowrap">
+          {% if gateway.tags %}
+            {% for tag in gateway.tags %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">
+              {% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}
+            </span>
+            {% endfor %}
+          {% else %}
+            <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm">
+          {% if gateway.enabled %}
+          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">Active</span>
+          {% else %}
+          <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">Inactive</span>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+          {% if gateway.lastSeen %}{{ gateway.lastSeen[:19] if gateway.lastSeen is string else gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') }}{% else %}Never{% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+          {% if gateway.ownerEmail %}{{ gateway.ownerEmail }}{% else %}<span class="text-gray-400">N/A</span>{% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">
+          {% if gateway.team %}{{ gateway.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap">
+          {% if gateway.visibility == 'private' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">🔒 Private</span>
+          {% elif gateway.visibility == 'team' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">👥 Team</span>
+          {% elif gateway.visibility == 'public' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">🌍 Public</span>
+          {% else %}
+          <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
   </tbody>
 </table>
 
@@ -96,6 +110,9 @@
   {% set base_url = root_path + '/admin/gateways/partial' %}
   {% set hx_target = '#gateways-table' %}
   {% set hx_indicator = '#gateways-loading' %}
+  {% set table_name = 'gateways' %}
   {% set query_params = {'include_inactive': include_inactive} %}
+  {% autoescape false %}
   {% include 'pagination_controls.html' %}
+  {% endautoescape %}
 </div>
