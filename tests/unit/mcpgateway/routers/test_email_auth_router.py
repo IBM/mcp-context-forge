@@ -9,6 +9,8 @@ This module tests email authentication endpoints including login with password c
 """
 
 # Standard
+import base64
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -88,6 +90,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
             assert response.headers.get("X-Password-Change-Required") == "true"
 
             # Verify response body
+            # Third-Party
             import orjson
 
             body = orjson.loads(response.body)
@@ -178,3 +181,127 @@ class TestEmailAuthLoginPasswordChangeRequired:
                         assert isinstance(response, AuthenticationResponse)
                         assert response.access_token == "test_token_123"
                         assert response.token_type == "bearer"
+
+
+class TestCreateAccessTokenTeamsFormat:
+    """Test cases for create_access_token teams claim format consistency.
+
+    Ensures login tokens emit teams as List[str] (team IDs only) to match /tokens behavior.
+    See issue #1486 for background on the UUID/int casting bug this prevents.
+    """
+
+    @pytest.fixture
+    def mock_user_with_teams(self):
+        """Create mock user with team memberships."""
+        user = MagicMock(spec=EmailUser)
+        user.email = "test@example.com"
+        user.full_name = "Test User"
+        user.is_admin = False
+        user.auth_provider = "local"
+
+        # Create mock teams
+        team1 = MagicMock()
+        team1.id = "550e8400-e29b-41d4-a716-446655440001"
+        team1.name = "Engineering"
+        team1.slug = "engineering"
+        team1.is_personal = False
+
+        team2 = MagicMock()
+        team2.id = "550e8400-e29b-41d4-a716-446655440002"
+        team2.name = "Personal Team"
+        team2.slug = "personal-team"
+        team2.is_personal = True
+
+        user.get_teams = MagicMock(return_value=[team1, team2])
+
+        # Mock team memberships for role lookup
+        membership1 = MagicMock()
+        membership1.team_id = team1.id
+        membership1.role = "member"
+
+        membership2 = MagicMock()
+        membership2.team_id = team2.id
+        membership2.role = "owner"
+
+        user.team_memberships = [membership1, membership2]
+        return user
+
+    @pytest.mark.asyncio
+    async def test_create_access_token_teams_are_list_of_strings(self, mock_user_with_teams):
+        """Test that create_access_token emits teams as List[str] of IDs, not List[dict].
+
+        This is a regression test for issue #1486 where login tokens used int() casting
+        on UUID team IDs and returned full team dicts instead of just IDs.
+        """
+        # First-Party
+        from mcpgateway.routers.email_auth import create_access_token
+
+        with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+            mock_settings.token_expiry = 60
+            mock_settings.jwt_issuer = "test-issuer"
+            mock_settings.jwt_audience = "test-audience"
+
+            with patch("mcpgateway.routers.email_auth.create_jwt_token") as mock_jwt:
+                # Capture the payload passed to create_jwt_token
+                captured_payload = None
+
+                async def capture_payload(payload, expires_in_minutes=None):
+                    nonlocal captured_payload
+                    captured_payload = payload
+                    return "mock_token"
+
+                mock_jwt.side_effect = capture_payload
+
+                # Call create_access_token
+                token, expires_in = await create_access_token(mock_user_with_teams)
+
+                # Verify teams claim is List[str], not List[dict]
+                assert "teams" in captured_payload, "teams claim missing from payload"
+                teams = captured_payload["teams"]
+
+                assert isinstance(teams, list), "teams should be a list"
+                assert len(teams) == 2, "should have 2 teams"
+
+                # Each team entry should be a string (team ID), not a dict
+                for team_id in teams:
+                    assert isinstance(team_id, str), f"team entry should be string, got {type(team_id)}"
+                    assert "-" in team_id, "team ID should be a UUID string"
+
+                # Verify the actual team IDs are present
+                assert "550e8400-e29b-41d4-a716-446655440001" in teams
+                assert "550e8400-e29b-41d4-a716-446655440002" in teams
+
+    @pytest.mark.asyncio
+    async def test_create_access_token_admin_omits_teams(self):
+        """Test that admin users do not have teams claim in token (unrestricted access)."""
+        # First-Party
+        from mcpgateway.routers.email_auth import create_access_token
+
+        # Create admin user
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@example.com"
+        admin_user.full_name = "Admin User"
+        admin_user.is_admin = True
+        admin_user.auth_provider = "local"
+        admin_user.get_teams = MagicMock(return_value=[])
+        admin_user.team_memberships = []
+
+        with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+            mock_settings.token_expiry = 60
+            mock_settings.jwt_issuer = "test-issuer"
+            mock_settings.jwt_audience = "test-audience"
+
+            with patch("mcpgateway.routers.email_auth.create_jwt_token") as mock_jwt:
+                captured_payload = None
+
+                async def capture_payload(payload, expires_in_minutes=None):
+                    nonlocal captured_payload
+                    captured_payload = payload
+                    return "mock_token"
+
+                mock_jwt.side_effect = capture_payload
+
+                await create_access_token(admin_user)
+
+                # Admin tokens should NOT have teams key (for unrestricted access)
+                assert "teams" not in captured_payload, "admin tokens should omit teams key"
