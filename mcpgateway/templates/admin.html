@@ -1829,7 +1829,7 @@
                     <div class="grid grid-cols-2 gap-4">
                       <div>
                         <label for="llm-provider-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Name *</label>
-                        <input type="text" id="llm-provider-name" name="name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
+                        <input type="text" id="llm-provider-name" name="name" required class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
                       </div>
                       <div>
                         <label for="llm-provider-type" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Provider Type *</label>
@@ -1853,7 +1853,7 @@
                     </div>
                     <div>
                       <label for="llm-provider-description" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
-                      <textarea id="llm-provider-description" name="description" rows="2" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm"></textarea>
+                      <textarea id="llm-provider-description" name="description" rows="2" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm"></textarea>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                       <div>
@@ -1861,26 +1861,26 @@
                           API Key
                           <span id="llm-provider-api-key-required" class="text-red-500 hidden">*</span>
                         </label>
-                        <input type="password" id="llm-provider-api-key" name="api_key" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Leave blank to keep existing">
+                        <input type="password" id="llm-provider-api-key" name="api_key" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Leave blank to keep existing">
                       </div>
                       <div>
                         <label for="llm-provider-api-base" class="block text-sm font-medium text-gray-700 dark:text-gray-300">API Base URL</label>
-                        <input type="text" id="llm-provider-api-base" name="api_base" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Auto-filled based on provider type">
+                        <input type="text" id="llm-provider-api-base" name="api_base" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Auto-filled based on provider type">
                         <p class="mt-1 text-xs text-gray-400">Will be auto-filled when you select a provider type</p>
                       </div>
                     </div>
                     <div class="grid grid-cols-3 gap-4">
                       <div>
                         <label for="llm-provider-default-model" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Default Model</label>
-                        <input type="text" id="llm-provider-default-model" name="default_model" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="gpt-4o">
+                        <input type="text" id="llm-provider-default-model" name="default_model" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="gpt-4o">
                       </div>
                       <div>
                         <label for="llm-provider-temperature" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Temperature</label>
-                        <input type="number" id="llm-provider-temperature" name="default_temperature" step="0.1" min="0" max="2" value="0.7" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
+                        <input type="number" id="llm-provider-temperature" name="default_temperature" step="0.1" min="0" max="2" value="0.7" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
                       </div>
                       <div>
                         <label for="llm-provider-max-tokens" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Max Tokens</label>
-                        <input type="number" id="llm-provider-max-tokens" name="default_max_tokens" min="1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="4096">
+                        <input type="number" id="llm-provider-max-tokens" name="default_max_tokens" min="1" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="4096">
                       </div>
                     </div>
                     <!-- Dynamic Provider-Specific Configuration Fields -->
@@ -1934,7 +1934,7 @@
                       <div>
                         <label for="llm-model-model-id" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Model ID *</label>
                         <div class="flex mt-1">
-                          <input type="text" id="llm-model-model-id" name="model_id" required list="llm-model-suggestions" class="block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first...">
+                          <input type="text" id="llm-model-model-id" name="model_id" required list="llm-model-suggestions" class="px-1.5 block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first...">
                           <datalist id="llm-model-suggestions"></datalist>
                           <button type="button" onclick="fetchModelsForModelModal()" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-gray-600 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-500" title="Fetch available models">
                             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1948,25 +1948,25 @@
                     <div class="grid grid-cols-2 gap-4">
                       <div>
                         <label for="llm-model-name" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Display Name *</label>
-                        <input type="text" id="llm-model-name" name="model_name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="GPT-4o">
+                        <input type="text" id="llm-model-name" name="model_name" required class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="GPT-4o">
                       </div>
                       <div>
                         <label for="llm-model-alias" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Alias</label>
-                        <input type="text" id="llm-model-alias" name="model_alias" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Optional alias">
+                        <input type="text" id="llm-model-alias" name="model_alias" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Optional alias">
                       </div>
                     </div>
                     <div>
                       <label for="llm-model-description" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
-                      <textarea id="llm-model-description" name="description" rows="2" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm"></textarea>
+                      <textarea id="llm-model-description" name="description" rows="2" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm"></textarea>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                       <div>
                         <label for="llm-model-context-window" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Context Window</label>
-                        <input type="number" id="llm-model-context-window" name="context_window" min="1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="128000">
+                        <input type="number" id="llm-model-context-window" name="context_window" min="1" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="128000">
                       </div>
                       <div>
                         <label for="llm-model-max-output" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Max Output Tokens</label>
-                        <input type="number" id="llm-model-max-output" name="max_output_tokens" min="1" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="4096">
+                        <input type="number" id="llm-model-max-output" name="max_output_tokens" min="1" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="4096">
                       </div>
                     </div>
                     <div class="grid grid-cols-2 gap-4">
