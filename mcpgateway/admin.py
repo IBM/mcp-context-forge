@@ -7879,7 +7879,7 @@ async def admin_gateways_partial_html(
     team_ids = [t.id for t in user_teams]
 
     # Build base query
-    query = select(DbGateway)
+    query = select(DbGateway).options(joinedload(DbGateway.email_team))
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
@@ -7937,17 +7937,6 @@ async def admin_gateways_partial_html(
     gateways_db = paginated_result["data"]
     pagination = paginated_result["pagination"]
     links = paginated_result["links"]
-
-    # Batch fetch team names for the gateways to avoid N+1 queries
-    team_ids_set = {p.team_id for p in gateways_db if p.team_id}
-    team_map = {}
-    if team_ids_set:
-        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
-        team_map = {team.id: team.name for team in teams}
-
-    # Apply team names to DB objects before conversion
-    for p in gateways_db:
-        p.team = team_map.get(p.team_id) if p.team_id else None
 
     # Batch convert to Pydantic models using gateway service
     # This eliminates the N+1 query problem from calling get_gateway_details() in a loop

@@ -4351,6 +4351,25 @@ class Gateway(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # Relationship for loading team names (only active teams)
+    # Uses default lazy loading - team name is only loaded when accessed
+    # For list/admin views, use explicit joinedload(DbGateway.email_team) for single-query loading
+    # This avoids adding overhead to hot paths that don't need team names
+    email_team: Mapped[Optional["EmailTeam"]] = relationship(
+        "EmailTeam",
+        primaryjoin="and_(Gateway.team_id == EmailTeam.id, EmailTeam.is_active == True)",
+        foreign_keys=[team_id],
+    )
+
+    @property
+    def team(self) -> Optional[str]:
+        """Return the team name from the `email_team` relationship.
+
+        Returns:
+            Optional[str]: The team name if the gateway belongs to an active team, otherwise None.
+        """
+        return self.email_team.name if self.email_team else None
+
     # Per-gateway refresh configuration
     refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
