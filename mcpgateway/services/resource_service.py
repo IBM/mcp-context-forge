@@ -1745,7 +1745,8 @@ class ResourceService:
                                         user_identity=pool_user_identity,
                                         gateway_id=gateway_id,
                                     ) as pooled:
-                                        resource_response = await pooled.session.read_resource(uri=uri, meta=meta_data)
+                                        # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
+                                        resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback to per-call sessions when pool disabled or not initialized
@@ -1756,7 +1757,8 @@ class ResourceService:
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            resource_response = await session.read_resource(uri=uri, meta=meta_data)
+                                            # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
+                                            resource_response = await session.read_resource(uri=uri)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
@@ -1825,7 +1827,8 @@ class ResourceService:
                                         user_identity=pool_user_identity,
                                         gateway_id=gateway_id,
                                     ) as pooled:
-                                        resource_response = await pooled.session.read_resource(uri=uri, meta=meta_data)
+                                        # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
+                                        resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
                                 else:
                                     # Fallback to per-call sessions when pool disabled or not initialized
@@ -1836,7 +1839,8 @@ class ResourceService:
                                     ):
                                         async with ClientSession(read_stream, write_stream) as session:
                                             _ = await session.initialize()
-                                            resource_response = await session.read_resource(uri=uri, meta=meta_data)
+                                            # Note: MCP SDK 1.25.0 read_resource() does not support meta parameter
+                                            resource_response = await session.read_resource(uri=uri)
                                             return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 # Sanitize error message to prevent URL secrets from leaking in logs
