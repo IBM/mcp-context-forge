@@ -5199,26 +5199,65 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
-            try:
-                result = await tool_service.invoke_tool(
-                    db=db,
-                    name=name,
-                    arguments=arguments,
-                    request_headers=headers,
-                    app_user_email=oauth_user_email,
-                    user_email=auth_user_email,
-                    token_teams=auth_token_teams,
-                    server_id=server_id,
-                    plugin_context_table=plugin_context_table,
-                    plugin_global_context=plugin_global_context,
-                    meta_data=meta_data,
+
+            # Register the tool execution for cancellation tracking with task reference
+            run_id = str(req_id) if req_id else None
+            tool_task: Optional[asyncio.Task] = None
+
+            async def cancel_tool_task(reason: Optional[str] = None):
+                """Cancel callback that actually cancels the asyncio task."""
+                if tool_task and not tool_task.done():
+                    logger.info(f"Cancelling tool task for run_id={run_id}, reason={reason}")
+                    tool_task.cancel()
+
+            if run_id:
+                await orchestration_service.register_run(
+                    run_id,
+                    name=f"tool:{name}",
+                    cancel_callback=cancel_tool_task
                 )
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
-            except ValueError:
-                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
+
+            try:
+                # Check if cancelled before execution
+                if run_id:
+                    status = await orchestration_service.get_status(run_id)
+                    if status and status.get("cancelled"):
+                        raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id})
+
+                # Create task for tool execution to enable real cancellation
+                async def execute_tool():
+                    try:
+                        return await tool_service.invoke_tool(
+                            db=db,
+                            name=name,
+                            arguments=arguments,
+                            request_headers=headers,
+                            app_user_email=oauth_user_email,
+                            user_email=auth_user_email,
+                            token_teams=auth_token_teams,
+                            server_id=server_id,
+                            plugin_context_table=plugin_context_table,
+                            plugin_global_context=plugin_global_context,
+                            meta_data=meta_data,
+                        )
+                    except ValueError:
+                        # Fallback to gateway forwarding
+                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                
+                tool_task = asyncio.create_task(execute_tool())
+                
+                try:
+                    result = await tool_task
+                    if hasattr(result, "model_dump"):
+                        result = result.model_dump(by_alias=True, exclude_none=True)
+                except asyncio.CancelledError:
+                    # Task was cancelled - return partial result or error
+                    logger.info(f"Tool execution cancelled for run_id={run_id}, tool={name}")
+                    raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False})
+            finally:
+                # Unregister the run when done
+                if run_id:
+                    await orchestration_service.unregister_run(run_id)
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             # MCP spec-compliant resource templates list endpoint

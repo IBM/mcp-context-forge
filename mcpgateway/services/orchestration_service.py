@@ -19,6 +19,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import json
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -38,12 +39,100 @@ class OrchestrationService:
     suitable for gateway-local run tracking. The gateway will also broadcast
     a `notifications/cancelled` message to connected sessions to inform remote
     peers of the cancellation request.
+    
+    Multi-worker deployments: When Redis is available, cancellation events are
+    published to the "orchestration:cancel" channel to propagate across workers.
     """
 
     def __init__(self) -> None:
         """Initialize the orchestration service."""
         self._runs: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        self._redis = None
+        self._pubsub_task: Optional[asyncio.Task] = None
+        self._initialized = False
+    
+    async def initialize(self) -> None:
+        """Initialize Redis pubsub if available for multi-worker support."""
+        if self._initialized:
+            return
+        
+        self._initialized = True
+        
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client
+            
+            self._redis = await get_redis_client()
+            if self._redis:
+                # Start listening for cancellation events from other workers
+                self._pubsub_task = asyncio.create_task(self._listen_for_cancellations())
+                logger.info("OrchestrationService: Redis pubsub initialized for multi-worker cancellation")
+        except Exception as e:
+            logger.warning(f"OrchestrationService: Could not initialize Redis pubsub: {e}")
+    
+    async def shutdown(self) -> None:
+        """Shutdown Redis pubsub listener."""
+        if self._pubsub_task and not self._pubsub_task.done():
+            self._pubsub_task.cancel()
+            try:
+                await self._pubsub_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("OrchestrationService: Shutdown complete")
+    
+    async def _listen_for_cancellations(self) -> None:
+        """Listen for cancellation events from other workers via Redis pubsub."""
+        if not self._redis:
+            return
+        
+        try:
+            pubsub = self._redis.pubsub()
+            await pubsub.subscribe("orchestration:cancel")
+            logger.info("OrchestrationService: Subscribed to orchestration:cancel channel")
+            
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        run_id = data.get("run_id")
+                        reason = data.get("reason")
+                        
+                        if run_id:
+                            # Cancel locally if we have this run (don't re-publish)
+                            await self._cancel_run_local(run_id, reason=reason)
+                    except Exception as e:
+                        logger.warning(f"Error processing cancellation message: {e}")
+        except asyncio.CancelledError:
+            logger.info("OrchestrationService: Pubsub listener cancelled")
+            raise
+        except Exception as e:
+            logger.error(f"OrchestrationService: Pubsub listener error: {e}")
+    
+    async def _cancel_run_local(self, run_id: str, reason: Optional[str] = None) -> bool:
+        """Cancel a run locally without publishing to Redis (internal use)."""
+        async with self._lock:
+            entry = self._runs.get(run_id)
+            if not entry:
+                return False
+            if entry.get("cancelled"):
+                return True
+            entry["cancelled"] = True
+            entry["cancelled_at"] = time.time()
+            entry["cancel_reason"] = reason
+            cancel_cb = entry.get("cancel_callback")
+
+        logger.info("Tool execution cancelled (from Redis): run_id=%s, reason=%s, tool=%s",
+                   run_id, reason or "not specified", entry.get("name", "unknown"))
+
+        if cancel_cb:
+            try:
+                await cancel_cb(reason)
+                logger.info("Cancel callback executed for %s", run_id)
+            except Exception as e:
+                logger.exception("Error in cancel callback for %s: %s", run_id, e)
+
+        return True
 
     async def register_run(self, run_id: str, name: Optional[str] = None, cancel_callback: Optional[CancelCallback] = None) -> None:
         """Register a run for future cancellation.
@@ -83,6 +172,8 @@ class OrchestrationService:
             entry = self._runs.get(run_id)
             if not entry:
                 logger.info("Cancellation requested for unknown run %s (queued for remote peers)", run_id)
+                # Still publish to Redis for other workers
+                await self._publish_cancellation(run_id, reason)
                 return False
             if entry.get("cancelled"):
                 logger.debug("Run %s already cancelled", run_id)
@@ -102,7 +193,22 @@ class OrchestrationService:
             except Exception as e:
                 logger.exception("Error in cancel callback for %s: %s", run_id, e)
 
+        # Publish to Redis for other workers
+        await self._publish_cancellation(run_id, reason)
+
         return True
+    
+    async def _publish_cancellation(self, run_id: str, reason: Optional[str] = None) -> None:
+        """Publish cancellation event to Redis for other workers."""
+        if not self._redis:
+            return
+        
+        try:
+            message = json.dumps({"run_id": run_id, "reason": reason})
+            await self._redis.publish("orchestration:cancel", message)
+            logger.debug("Published cancellation to Redis: run_id=%s", run_id)
+        except Exception as e:
+            logger.warning(f"Failed to publish cancellation to Redis: {e}")
 
     async def get_status(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Return the status dict for a run if known, else None.

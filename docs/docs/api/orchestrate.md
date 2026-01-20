@@ -58,20 +58,45 @@ Notes:
 
 Permissions: `admin.system_config` by default (RBAC). Adjust as appropriate for your deployment.
 
-## Current Limitations
+## Implementation Details
 
-### Tool Registration Scope
+### Tool Registration
 
-Currently, only tool executions initiated through the LLMChat service (`/llmchat/chat` endpoint with LangChain agents) are automatically registered for cancellation tracking. Direct JSON-RPC `tools/call` requests are not registered.
+Tool executions are automatically registered for cancellation tracking in the following scenarios:
 
-### Broadcast Scope (Single-Process)
+1. **JSON-RPC `tools/call` requests**: All tool invocations via the JSON-RPC protocol are registered with their request ID for cancellation support
+2. **LLMChat service**: Tool executions initiated through the `/llmchat/chat` endpoint with LangChain agents are also registered
 
-The `notifications/cancelled` broadcast currently enumerates sessions from the local in-memory session registry. In multi-worker deployments with Redis or database session backends, this broadcast will not reach sessions on other workers. For true gateway-authoritative cancellation across a cluster, additional coordination via Redis pubsub is recommended.
+### Multi-Worker Support (Redis Pubsub)
+
+The orchestration service supports multi-worker deployments through Redis pubsub:
+
+- Cancellation requests are published to the `orchestration:cancel` Redis channel
+- All workers subscribe to this channel and process cancellation events
+- This ensures cancellations propagate across the entire cluster, not just the local worker
+- The service automatically initializes Redis pubsub on startup if Redis is configured
+
+### Actual Task Interruption
+
+The implementation provides **real task cancellation** beyond just marking runs as cancelled:
+
+- Tool executions are wrapped in `asyncio.Task` objects
+- The cancel callback invokes `task.cancel()` to immediately interrupt the running task
+- Cancelled tasks raise `asyncio.CancelledError`, which is caught and converted to a JSON-RPC error response
+- This provides immediate interruption of long-running tool executions
 
 ### Cancellation Semantics
 
-Cancellation is **best-effort** per the MCP specification:
+Cancellation follows the MCP specification with enhanced implementation:
 
-- The gateway marks the run as cancelled and invokes any registered callback
-- The registered callback is currently a no-op placeholder; actual interruption of in-progress tool execution is not yet implemented
-- For tools forwarded to external MCP servers, the `notifications/cancelled` broadcast allows those servers to handle cancellation
+- The gateway marks the run as cancelled and invokes the registered callback
+- The callback performs actual task cancellation via `asyncio.Task.cancel()`
+- A `notifications/cancelled` broadcast is sent to all connected sessions
+- For tools forwarded to external MCP servers, the broadcast allows those servers to handle cancellation
+- Cancellation is **best-effort** but provides immediate interruption for local tool executions
+
+### Error Handling
+
+- Broadcast errors to individual sessions are logged but don't prevent cancellation
+- Failed Redis pubsub operations are logged as warnings but don't block local cancellation
+- Cancelled tasks return a JSON-RPC error with code `-32800` and details about the cancellation
