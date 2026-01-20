@@ -4987,7 +4987,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             body = orjson.loads(await request.body())
         except orjson.JSONDecodeError:
             return ORJSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=400,
                 content={
                     "jsonrpc": "2.0",
                     "error": {"code": -32700, "message": "Parse error"},
@@ -5205,7 +5205,11 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             tool_task: Optional[asyncio.Task] = None
 
             async def cancel_tool_task(reason: Optional[str] = None):
-                """Cancel callback that actually cancels the asyncio task."""
+                """Cancel callback that actually cancels the asyncio task.
+
+                Args:
+                    reason: Optional reason for cancellation.
+                """
                 if tool_task and not tool_task.done():
                     logger.info(f"Cancelling tool task for run_id={run_id}, reason={reason}")
                     tool_task.cancel()
