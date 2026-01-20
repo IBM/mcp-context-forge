@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/integration/test_orchestrate_cancel_integration.py
+"""Location: ./tests/integration/test_tool_cancel_integration.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Integration tests for orchestrate router endpoints.
+Integration tests for cancellation router endpoints.
 Tests HTTP endpoints with authentication and authorization.
 """
 
@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from mcpgateway.main import app
-from mcpgateway.services.orchestration_service import orchestration_service
+from mcpgateway.services.cancellation_service import cancellation_service
 
 client = TestClient(app)
 
@@ -36,15 +36,15 @@ def mock_session_broadcast(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cancel_endpoint_success(auth_headers, mock_session_broadcast):
-    """Test successful cancellation via POST /orchestrate/cancel."""
+    """Test successful cancellation via POST /cancellation/cancel."""
     cancel_event = asyncio.Event()
 
     async def cb(reason):
         cancel_event.set()
 
-    await orchestration_service.register_run("run-cancel-1", name="test_tool", cancel_callback=cb)
+    await cancellation_service.register_run("run-cancel-1", name="test_tool", cancel_callback=cb)
 
-    resp = client.post("/orchestrate/cancel", json={"requestId": "run-cancel-1", "reason": "user requested"}, headers=auth_headers)
+    resp = client.post("/cancellation/cancel", json={"requestId": "run-cancel-1", "reason": "user requested"}, headers=auth_headers)
 
     # May return 200 (success), 401 (auth required), or 403 (permission denied)
     assert resp.status_code in (200, 401, 403)
@@ -59,7 +59,7 @@ async def test_cancel_endpoint_success(auth_headers, mock_session_broadcast):
         await asyncio.wait_for(cancel_event.wait(), timeout=1.0)
         
         # Verify cancellation in service
-        status = await orchestration_service.get_status("run-cancel-1")
+        status = await cancellation_service.get_status("run-cancel-1")
         assert status is not None
         assert status["cancelled"] is True
         assert status["cancel_reason"] == "user requested"
@@ -68,7 +68,7 @@ async def test_cancel_endpoint_success(auth_headers, mock_session_broadcast):
 @pytest.mark.asyncio
 async def test_cancel_endpoint_unknown_run(auth_headers, mock_session_broadcast):
     """Test cancellation of unknown run returns 'queued' status."""
-    resp = client.post("/orchestrate/cancel", json={"requestId": "unknown-run-id", "reason": "test"}, headers=auth_headers)
+    resp = client.post("/cancellation/cancel", json={"requestId": "unknown-run-id", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
     
@@ -81,9 +81,9 @@ async def test_cancel_endpoint_unknown_run(auth_headers, mock_session_broadcast)
 @pytest.mark.asyncio
 async def test_cancel_endpoint_without_reason(auth_headers, mock_session_broadcast):
     """Test cancellation without reason parameter."""
-    await orchestration_service.register_run("run-no-reason", name="tool")
+    await cancellation_service.register_run("run-no-reason", name="tool")
 
-    resp = client.post("/orchestrate/cancel", json={"requestId": "run-no-reason"}, headers=auth_headers)
+    resp = client.post("/cancellation/cancel", json={"requestId": "run-no-reason"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
     
@@ -102,9 +102,9 @@ async def test_cancel_endpoint_broadcasts_to_sessions(auth_headers, monkeypatch)
     monkeypatch.setattr("mcpgateway.main.session_registry.get_all_session_ids", get_sessions_mock)
     monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast_mock)
 
-    await orchestration_service.register_run("run-broadcast", name="tool")
+    await cancellation_service.register_run("run-broadcast", name="tool")
 
-    resp = client.post("/orchestrate/cancel", json={"requestId": "run-broadcast", "reason": "test"}, headers=auth_headers)
+    resp = client.post("/cancellation/cancel", json={"requestId": "run-broadcast", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
     
@@ -124,10 +124,10 @@ async def test_cancel_endpoint_broadcasts_to_sessions(auth_headers, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_status_endpoint_success(auth_headers):
-    """Test successful status retrieval via GET /orchestrate/status/{request_id}."""
-    await orchestration_service.register_run("run-status-1", name="test_tool")
+    """Test successful status retrieval via GET /cancellation/status/{request_id}."""
+    await cancellation_service.register_run("run-status-1", name="test_tool")
 
-    resp = client.get("/orchestrate/status/run-status-1", headers=auth_headers)
+    resp = client.get("/cancellation/status/run-status-1", headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
     
@@ -142,7 +142,7 @@ async def test_status_endpoint_success(auth_headers):
 @pytest.mark.asyncio
 async def test_status_endpoint_not_found(auth_headers):
     """Test status endpoint returns 404 for unknown run."""
-    resp = client.get("/orchestrate/status/nonexistent-run", headers=auth_headers)
+    resp = client.get("/cancellation/status/nonexistent-run", headers=auth_headers)
 
     assert resp.status_code in (404, 401, 403)
     
@@ -154,10 +154,10 @@ async def test_status_endpoint_not_found(auth_headers):
 @pytest.mark.asyncio
 async def test_status_endpoint_cancelled_run(auth_headers):
     """Test status endpoint shows cancellation details."""
-    await orchestration_service.register_run("run-cancelled", name="tool")
-    await orchestration_service.cancel_run("run-cancelled", reason="test cancellation")
+    await cancellation_service.register_run("run-cancelled", name="tool")
+    await cancellation_service.cancel_run("run-cancelled", reason="test cancellation")
 
-    resp = client.get("/orchestrate/status/run-cancelled", headers=auth_headers)
+    resp = client.get("/cancellation/status/run-cancelled", headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
     
@@ -171,7 +171,7 @@ async def test_status_endpoint_cancelled_run(auth_headers):
 @pytest.mark.asyncio
 async def test_cancel_endpoint_requires_auth():
     """Test that cancel endpoint requires authentication."""
-    resp = client.post("/orchestrate/cancel", json={"requestId": "test-run"})
+    resp = client.post("/cancellation/cancel", json={"requestId": "test-run"})
     
     # Should return 401 (unauthorized) or 403 (forbidden) without auth
     assert resp.status_code in (401, 403)
@@ -180,7 +180,7 @@ async def test_cancel_endpoint_requires_auth():
 @pytest.mark.asyncio
 async def test_status_endpoint_requires_auth():
     """Test that status endpoint requires authentication."""
-    resp = client.get("/orchestrate/status/test-run")
+    resp = client.get("/cancellation/status/test-run")
     
     # Should return 401 (unauthorized) or 403 (forbidden) without auth
     assert resp.status_code in (401, 403)
@@ -193,9 +193,9 @@ async def test_cancel_endpoint_handles_broadcast_errors(auth_headers, monkeypatc
     monkeypatch.setattr("mcpgateway.main.session_registry.get_all_session_ids", AsyncMock(return_value=["s1"]))
     monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", AsyncMock(side_effect=Exception("Broadcast failed")))
 
-    await orchestration_service.register_run("run-broadcast-error", name="tool")
+    await cancellation_service.register_run("run-broadcast-error", name="tool")
 
-    resp = client.post("/orchestrate/cancel", json={"requestId": "run-broadcast-error", "reason": "test"}, headers=auth_headers)
+    resp = client.post("/cancellation/cancel", json={"requestId": "run-broadcast-error", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
     
@@ -205,7 +205,7 @@ async def test_cancel_endpoint_handles_broadcast_errors(auth_headers, monkeypatc
         assert data["status"] == "cancelled"
         
         # Verify local cancellation worked
-        status = await orchestration_service.get_status("run-broadcast-error")
+        status = await cancellation_service.get_status("run-broadcast-error")
         assert status["cancelled"] is True
 
 
@@ -219,7 +219,7 @@ async def test_cancel_endpoint_disabled(monkeypatch):
     
     # Attempt to cancel
     resp = client.post(
-        "/orchestrate/cancel",
+        "/cancellation/cancel",
         json={"requestId": "test-run", "reason": "test"},
         headers={"Authorization": "Bearer test-token"}
     )
@@ -236,7 +236,7 @@ async def test_status_endpoint_disabled(monkeypatch):
     
     # Attempt to get status
     resp = client.get(
-        "/orchestrate/status/test-run",
+        "/cancellation/status/test-run",
         headers={"Authorization": "Bearer test-token"}
     )
     
@@ -256,3 +256,5 @@ async def test_tool_execution_without_registration_when_disabled(monkeypatch):
     # the configuration is properly set
     from mcpgateway.config import settings
     assert settings.mcpgateway_tool_cancellation_enabled is False
+
+# Made with Bob

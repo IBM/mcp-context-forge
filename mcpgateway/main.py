@@ -127,7 +127,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
-from mcpgateway.services.orchestration_service import orchestration_service
+from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
@@ -688,8 +688,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await session_registry.initialize()
 
         # Initialize OrchestrationService for tool cancellation if enabled
-        if settings.tool_cancellation_enabled:
-            await orchestration_service.initialize()
+        if settings.mcpgateway_tool_cancellation_enabled:
+            await cancellation_service.initialize()
             logger.info("Tool cancellation feature enabled")
         else:
             logger.info("Tool cancellation feature disabled")
@@ -857,9 +857,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             session_registry,
         ]
 
-        # Add orchestration service if enabled
-        if settings.tool_cancellation_enabled:
-            services_to_shutdown.insert(0, orchestration_service)  # Shutdown early to stop accepting new cancellations
+        # Add cancellation service if enabled
+        if settings.mcpgateway_tool_cancellation_enabled:
+            services_to_shutdown.insert(0, cancellation_service)  # Shutdown early to stop accepting new cancellations
 
         if a2a_service:
             services_to_shutdown.insert(4, a2a_service)  # Insert after export_service
@@ -2058,7 +2058,7 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         logger.info(f"Request cancelled: {request_id}, reason: {reason}")
         # Attempt local cancellation per MCP spec
         if request_id:
-            await orchestration_service.cancel_run(request_id, reason=reason)
+            await cancellation_service.cancel_run(request_id, reason=reason)
         await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
     elif body.get("method") == "notifications/message":
         params = body.get("params", {})
@@ -5225,13 +5225,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     logger.info(f"Cancelling tool task for run_id={run_id}, reason={reason}")
                     tool_task.cancel()
 
-            if settings.tool_cancellation_enabled and run_id:
-                await orchestration_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
+            if settings.mcpgateway_tool_cancellation_enabled and run_id:
+                await cancellation_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
 
             try:
                 # Check if cancelled before execution (only if feature enabled)
-                if settings.tool_cancellation_enabled and run_id:
-                    run_status = await orchestration_service.get_status(run_id)
+                if settings.mcpgateway_tool_cancellation_enabled and run_id:
+                    run_status = await cancellation_service.get_status(run_id)
                     if run_status and run_status.get("cancelled"):
                         raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id})
 
@@ -5267,8 +5267,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False})
             finally:
                 # Unregister the run when done (only if feature enabled)
-                if settings.tool_cancellation_enabled and run_id:
-                    await orchestration_service.unregister_run(run_id)
+                if settings.mcpgateway_tool_cancellation_enabled and run_id:
+                    await cancellation_service.unregister_run(run_id)
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             # MCP spec-compliant resource templates list endpoint
@@ -5306,7 +5306,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             logger.info(f"Request cancelled: {request_id}, reason: {reason}")
             # Attempt local cancellation per MCP spec
             if request_id:
-                await orchestration_service.cancel_run(request_id, reason=reason)
+                await cancellation_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}
         elif method == "notifications/message":
@@ -6463,18 +6463,18 @@ if settings.toolops_enabled:
     except ImportError:
         logger.debug("Toolops router not available")
 
-# Orchestrate router (cancellation / orchestration helpers)
-if settings.tool_cancellation_enabled:
+# Cancellation router (tool cancellation endpoints)
+if settings.mcpgateway_tool_cancellation_enabled:
     try:
         # First-Party
-        from mcpgateway.routers.orchestrate_router import router as orchestrate_router
+        from mcpgateway.routers.cancellation_router import router as cancellation_router
 
-        app.include_router(orchestrate_router)
-        logger.info("Orchestrate router included (tool cancellation enabled)")
+        app.include_router(cancellation_router)
+        logger.info("Cancellation router included (tool cancellation enabled)")
     except ImportError:
         logger.debug("Orchestrate router not available")
 else:
-    logger.info("Tool cancellation feature disabled - orchestration endpoints not available")
+    logger.info("Tool cancellation feature disabled - cancellation endpoints not available")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled

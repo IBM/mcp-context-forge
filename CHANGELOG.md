@@ -12,13 +12,13 @@
 * **Configurable feature** - Control via `MCPGATEWAY_TOOL_CANCELLATION_ENABLED` (default: `true`)
   - Set to `false` to disable cancellation tracking and endpoints
   - Zero overhead when disabled - no registration, no callbacks, no endpoints
-* **New `OrchestrationService`** - Tracks active tool executions with in-memory registry and Redis pubsub for multi-worker coordination
+* **New `CancellationService`** - Tracks active tool executions with in-memory registry and Redis pubsub for multi-worker coordination
   - `register_run()`, `unregister_run()`, `cancel_run()`, `get_status()`, `is_registered()` methods
   - Automatic lifecycle management with `initialize()` and `shutdown()` hooks
-  - Redis pubsub on `orchestration:cancel` channel for cluster-wide cancellation propagation
+  - Redis pubsub on `cancellation:cancel` channel for cluster-wide cancellation propagation
 * **New REST API endpoints** - Gateway-authoritative cancellation control
-  - `POST /orchestrate/cancel` - Request cancellation with reason, broadcasts to all sessions
-  - `GET /orchestrate/status/{request_id}` - Query run status including cancellation state
+  - `POST /cancellation/cancel` - Request cancellation with reason, broadcasts to all sessions
+  - `GET /cancellation/status/{request_id}` - Query run status including cancellation state
   - RBAC protected with `admin.system_config` permission
 * **Real task interruption** - Actual asyncio task cancellation, not just status marking
   - Tool executions wrapped in `asyncio.Task` with cancel callbacks
@@ -38,7 +38,7 @@
   - Unit tests for service methods and error handling
   - Integration tests for HTTP endpoints with auth
   - Session broadcast verification
-* **Complete documentation** - API specs and implementation details in `docs/docs/api/orchestrate.md`
+* **Complete documentation** - API specs and implementation details in `docs/docs/api/cancellation.md`
 * **Backwards compatible** - Existing inbound `notifications/cancelled` handling unchanged
 
 #### **🎛️ Execution Metrics Recording Switch** ([#1804](https://github.com/IBM/mcp-context-forge/issues/1804))
