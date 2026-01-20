@@ -14,6 +14,9 @@ from unittest.mock import MagicMock, patch
 # Third-Party
 import pytest
 
+# Local
+from tests.utils.rbac_mocks import create_mock_user_context
+
 # First-Party
 from mcpgateway.admin import (
     _get_latency_heatmap_postgresql,
@@ -327,7 +330,8 @@ class TestToolUsageStatistics:
 
         # Mock request and dependencies
         mock_request = MagicMock(spec=Request)
-        mock_user = MagicMock()
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
 
         # This should not raise GroupingError
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
@@ -369,7 +373,8 @@ class TestToolErrorStatistics:
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
-        mock_user = MagicMock()
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -414,7 +419,8 @@ class TestToolChains:
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
-        mock_user = MagicMock()
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -454,7 +460,8 @@ class TestPromptStatistics:
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
-        mock_user = MagicMock()
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -489,7 +496,8 @@ class TestPromptStatistics:
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
-        mock_user = MagicMock()
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -528,7 +536,8 @@ class TestResourceStatistics:
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
-        mock_user = MagicMock()
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -563,7 +572,8 @@ class TestResourceStatistics:
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
-        mock_user = MagicMock()
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
