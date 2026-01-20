@@ -30,7 +30,6 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
-      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       containers:
         - name: pgbouncer
           image: "{{ .Values.pgbouncer.image.repository }}:{{ .Values.pgbouncer.image.tag }}"
@@ -46,59 +45,16 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.userKey | default "user" }}{{ else }}POSTGRES_USER{{ end }}
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
-
-            # Additional connection params for constructing DATABASE_URL
-            - name: POSTGRES_HOST
-              {{- if .Values.postgres.external.enabled }}
-              {{- if .Values.postgres.external.existingSecret }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . }}
-                  key: {{ .Values.postgres.external.hostKey | default "host" }}
-              {{- else }}
-              value: {{ .Values.postgres.external.host | quote }}
-              {{- end }}
-              {{- else }}
-              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
-              {{- end }}
-
-            - name: POSTGRES_PORT
-              {{- if .Values.postgres.external.enabled }}
-              {{- if .Values.postgres.external.existingSecret }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . }}
-                  key: {{ .Values.postgres.external.portKey | default "port" }}
-              {{- else }}
-              value: "{{ .Values.postgres.external.port }}"
-              {{- end }}
-              {{- else }}
-              value: "{{ .Values.postgres.service.port }}"
-              {{- end }}
-
-            - name: POSTGRES_DB
-              {{- if .Values.postgres.external.enabled }}
-              {{- if .Values.postgres.external.existingSecret }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . }}
-                  key: {{ .Values.postgres.external.databaseKey | default "dbname" }}
-              {{- else }}
-              value: {{ .Values.postgres.external.database | quote }}
-              {{- end }}
-              {{- else }}
-              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
-              {{- end }}
+                  key: POSTGRES_PASSWORD
 
             # Connection to upstream PostgreSQL (uses variables defined above)
             - name: DATABASE_URL
-              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@{{ include "mcp-stack.fullname" . }}-postgres:{{ .Values.postgres.service.port }}/{{ .Values.mcpContextForge.env.postgres.db }}"
 
             # PgBouncer listen port
             - name: LISTEN_PORT

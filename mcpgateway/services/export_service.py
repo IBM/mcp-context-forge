@@ -851,13 +851,9 @@ class ExportService:
             }
 
             # Include auth data directly from DB (already have raw values)
-            if db_gateway.auth_type:
+            if db_gateway.auth_type and db_gateway.auth_value:
                 gateway_data["auth_type"] = db_gateway.auth_type
-                if db_gateway.auth_value:
-                    gateway_data["auth_value"] = db_gateway.auth_value
-                # Include query param auth if present
-                if db_gateway.auth_type == "query_param" and getattr(db_gateway, "auth_query_params", None):
-                    gateway_data["auth_query_params"] = db_gateway.auth_query_params
+                gateway_data["auth_value"] = db_gateway.auth_value
 
             exported_gateways.append(gateway_data)
 

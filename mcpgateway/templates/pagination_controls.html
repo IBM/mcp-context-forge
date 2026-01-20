@@ -7,7 +7,6 @@
     - base_url: string like '/admin/tools'
     - hx_target: string like '#tools-list'
     - hx_indicator: string like '#tools-loading'
-    - table_name: string like 'tools' (for namespaced URL params)
     - query_params: optional dict of additional query parameters
 -->
 
@@ -18,20 +17,8 @@
   totalPages: {{ pagination.total_pages }},
   hasNext: {{ 'true' if pagination.has_next else 'false' }},
   hasPrev: {{ 'true' if pagination.has_prev else 'false' }},
-  targetSelector: '{{ hx_target|default('#tools-table') }}',
-  swapStyle: '{{ hx_swap|default('innerHTML') }}',
-  tableName: '{{ table_name|default('') }}',
-
-  // Initialize from URL parameters (namespaced per table)
-  init() {
-    if (!this.tableName) return;
-    const urlParams = new URLSearchParams(window.location.search);
-    const prefix = this.tableName + '_';
-    const urlPageSize = parseInt(urlParams.get(prefix + 'size'), 10);
-    if (urlPageSize && [10, 25, 50, 100, 200, 500].includes(urlPageSize)) {
-      this.perPage = urlPageSize;
-    }
-  },
+  targetSelector: '{{ hx_target|default("#tools-table") }}',
+  swapStyle: '{{ hx_swap|default("innerHTML") }}',
 
   // Navigate to specific page
   goToPage(page) {
@@ -57,22 +44,9 @@
 
   // Change page size
   changePageSize(size) {
-    this.perPage = parseInt(size, 10);
+    this.perPage = size;
     this.currentPage = 1;
     this.loadPage(1);
-  },
-
-  // Update browser URL with current pagination state (namespaced per table)
-  updateBrowserUrl(page, includeInactive) {
-    if (!this.tableName) return;
-    const browserUrl = new URL(window.location.href);
-    const prefix = this.tableName + '_';
-    browserUrl.searchParams.set(prefix + 'page', page);
-    browserUrl.searchParams.set(prefix + 'size', this.perPage);
-    if (includeInactive !== undefined) {
-      browserUrl.searchParams.set(prefix + 'inactive', includeInactive);
-    }
-    window.history.replaceState({}, '', browserUrl.toString());
   },
 
   // Load page via HTMX
@@ -81,38 +55,12 @@
     url.searchParams.set('page', page);
     url.searchParams.set('per_page', this.perPage);
 
-    // Dynamically get include_inactive from the checkbox if it exists
-    // Map target selector to checkbox ID (handle special cases)
-    // Examples: #servers-table -> show-inactive-servers
-    //           #servers-table-body -> show-inactive-servers
-    //           #resources-list-container -> show-inactive-resources
-    //           #agents-table -> show-inactive-a2a-agents
-    let checkboxId = this.targetSelector
-      .replace('#', 'show-inactive-')
-      .replace(/-table-body$/, '')
-      .replace(/-table$/, '')
-      .replace(/-list-container$/, '');
-    if (checkboxId === 'show-inactive-agents') {
-      checkboxId = 'show-inactive-a2a-agents';
-    }
-    const checkbox = document.getElementById(checkboxId);
-    let includeInactive = undefined;
-    if (checkbox) {
-      includeInactive = checkbox.checked;
-      url.searchParams.set('include_inactive', includeInactive.toString());
-    }
-
     // Preserve other query parameters
     {% if query_params %}
     {% for key, value in query_params.items() %}
-    {% if key != 'include_inactive' %}
     url.searchParams.set('{{ key }}', '{{ value }}');
-    {% endif %}
     {% endfor %}
     {% endif %}
-
-    // Update browser URL for bookmarking/sharing (with namespaced params)
-    this.updateBrowserUrl(page, includeInactive);
 
     // Scroll to the top of the table before loading new content
     const targetElement = document.querySelector(this.targetSelector);
@@ -131,7 +79,7 @@
     htmx.ajax('GET', url.toString(), {
       target: this.targetSelector,
       swap: this.swapStyle,
-      indicator: '{{ hx_indicator|default('#loading') }}'
+      indicator: '{{ hx_indicator|default("#loading") }}'
     });
   }
 }" class="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700">
@@ -146,7 +94,7 @@
     >
       <option value="10">10</option>
       <option value="25">25</option>
-      <option value="50">50</option>
+      <option value="50" selected>50</option>
       <option value="100">100</option>
       <option value="200">200</option>
       <option value="500">500</option>

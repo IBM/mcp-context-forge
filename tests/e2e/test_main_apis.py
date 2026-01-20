@@ -594,27 +594,27 @@ class TestServerAPIs:
         assert result["description"] == update_data["description"]
         assert result["icon"] == update_data["icon"]
 
-    async def test_set_server_state(self, client: AsyncClient, mock_auth):
-        """Test POST /servers/{server_id}/state."""
+    async def test_toggle_server_status(self, client: AsyncClient, mock_auth):
+        """Test POST /servers/{server_id}/toggle."""
         # Create a server
-        server_data = {"server": {"name": "state_test_server"}, "team_id": None, "visibility": "private"}
+        server_data = {"server": {"name": "toggle_test_server"}, "team_id": None, "visibility": "private"}
 
         create_response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
         server_id = create_response.json()["id"]
 
         # Deactivate the server
-        response = await client.post(f"/servers/{server_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/servers/{server_id}/toggle?activate=false", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
-        # The state endpoint returns the full server object
+        # The toggle endpoint returns the full server object
         assert "id" in result
         assert "name" in result
         # Check if server was deactivated
         assert result.get("enabled") is False or result.get("enabled") is False
 
         # Reactivate the server
-        response = await client.post(f"/servers/{server_id}/state?activate=true", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/servers/{server_id}/toggle?activate=true", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -830,16 +830,16 @@ class TestToolAPIs:
         assert result["description"] == update_data["description"]
         assert result["headers"] == update_data["headers"]
 
-    async def test_set_tool_state(self, client: AsyncClient, mock_auth):
-        """Test POST /tools/{tool_id}/state."""
+    async def test_toggle_tool_status(self, client: AsyncClient, mock_auth):
+        """Test POST /tools/{tool_id}/toggle."""
         # Create a tool
-        tool_data = {"tool": {"name": "test_state_tool"}, "team_id": None, "visibility": "private"}
+        tool_data = {"tool": {"name": "test_toggle_tool"}, "team_id": None, "visibility": "private"}
 
         create_response = await client.post("/tools", json=tool_data, headers=TEST_AUTH_HEADER)
         tool_id = create_response.json()["id"]
 
         # Deactivate the tool
-        response = await client.post(f"/tools/{tool_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/tools/{tool_id}/toggle?activate=false", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1055,16 +1055,16 @@ class TestResourceAPIs:
         result = response.json()
         assert result["description"] == update_data["description"]
 
-    async def test_set_resource_state(self, client: AsyncClient, mock_auth):
-        """Test POST /resources/{resource_id}/state."""
+    async def test_toggle_resource_status(self, client: AsyncClient, mock_auth):
+        """Test POST /resources/{resource_id}/toggle."""
         # Create a resource
-        resource_data = {"resource": {"uri": "test/state", "name": "state_test", "content": "Test"}, "team_id": None, "visibility": "private"}
+        resource_data = {"resource": {"uri": "test/toggle", "name": "toggle_test", "content": "Test"}, "team_id": None, "visibility": "private"}
 
         create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource_id = create_response.json()["id"]
 
-        # Set resource state
-        response = await client.post(f"/resources/{resource_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        # Toggle resource status
+        response = await client.post(f"/resources/{resource_id}/toggle?activate=false", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1271,16 +1271,16 @@ class TestPromptAPIs:
         result = response.json()
         assert "messages" in result
 
-    async def test_set_prompt_state(self, client: AsyncClient, mock_auth):
-        """Test POST /prompts/{prompt_id}/state."""
+    async def test_toggle_prompt_status(self, client: AsyncClient, mock_auth):
+        """Test POST /prompts/{prompt_id}/toggle."""
         # Create a prompt
-        prompt_data = {"prompt": {"name": "state_prompt", "template": "Test prompt", "arguments": []}, "team_id": None, "visibility": "private"}
+        prompt_data = {"prompt": {"name": "toggle_prompt", "template": "Test prompt", "arguments": []}, "team_id": None, "visibility": "private"}
 
         create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
         prompt_id = create_response.json()["id"]
 
-        # Set prompt state
-        response = await client.post(f"/prompts/{prompt_id}/state?activate=false", headers=TEST_AUTH_HEADER)
+        # Toggle prompt status
+        response = await client.post(f"/prompts/{prompt_id}/toggle?activate=false", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1424,8 +1424,8 @@ class TestGatewayAPIs:
     async def test_register_gateway(self, client: AsyncClient, mock_auth):
         """Test POST /gateways - would require mocking external connections."""
 
-    async def test_set_gateway_state(self, client: AsyncClient, mock_auth):
-        """Test POST /gateways/{gateway_id}/state."""
+    async def test_toggle_gateway_status(self, client: AsyncClient, mock_auth):
+        """Test POST /gateways/{gateway_id}/toggle."""
         # Mock a gateway for testing
         # In real tests, you'd need to register a gateway first
         # This is skipped as it requires external connectivity

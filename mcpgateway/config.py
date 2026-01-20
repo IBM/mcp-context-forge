@@ -25,9 +25,6 @@ Environment variables:
 - TOOL_TIMEOUT: Tool invocation timeout (default: 60)
 - PROMPT_CACHE_SIZE: Max cached prompts (default: 100)
 - HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 300)
-- REQUIRE_TOKEN_EXPIRATION: Require JWT tokens to have expiration (default: False)
-- REQUIRE_JTI: Require JTI claim in tokens for revocation (default: False)
-- REQUIRE_USER_IN_DB: Require all users to exist in database (default: False)
 
 Examples:
     >>> from mcpgateway.config import Settings
@@ -87,7 +84,6 @@ def _normalize_env_list_vars() -> None:
         "SSO_AUTO_ADMIN_DOMAINS",
         "SSO_GITHUB_ADMIN_ORGS",
         "SSO_GOOGLE_ADMIN_DOMAINS",
-        "SSO_ENTRA_ADMIN_GROUPS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -189,18 +185,10 @@ class Settings(BaseSettings):
     jwt_audience: str = "mcpgateway-api"
     jwt_issuer: str = "mcpgateway"
     jwt_audience_verification: bool = True
-    jwt_issuer_verification: bool = True
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
 
     require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
-    require_jti: bool = Field(default=False, description="Require JTI (JWT ID) claim in all tokens for revocation support")  # Default to flexible mode for backward compatibility
-    require_user_in_db: bool = Field(
-        default=False,
-        description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
-    )
-    embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
-    validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
 
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
@@ -255,11 +243,6 @@ class Settings(BaseSettings):
     sso_entra_client_id: Optional[str] = Field(default=None, description="Microsoft Entra ID client ID")
     sso_entra_client_secret: Optional[SecretStr] = Field(default=None, description="Microsoft Entra ID client secret")
     sso_entra_tenant_id: Optional[str] = Field(default=None, description="Microsoft Entra ID tenant ID")
-    sso_entra_groups_claim: str = Field(default="groups", description="JWT claim for EntraID groups (groups/roles)")
-    sso_entra_admin_groups: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="EntraID groups granting platform_admin role (CSV/JSON)")
-    sso_entra_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map EntraID groups to Context Forge roles (JSON: {group_id: role_name})")
-    sso_entra_default_role: Optional[str] = Field(default=None, description="Default role for EntraID users without group mapping (None = no role assigned)")
-    sso_entra_sync_roles_on_login: bool = Field(default=True, description="Synchronize role assignments on each login")
 
     sso_generic_enabled: bool = Field(default=False, description="Enable generic OIDC provider (Keycloak, Auth0, etc.)")
     sso_generic_provider_id: Optional[str] = Field(default=None, description="Provider ID (e.g., 'keycloak', 'auth0', 'authentik')")
@@ -285,10 +268,6 @@ class Settings(BaseSettings):
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
-    mcp_require_auth: bool = Field(
-        default=False,
-        description="Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. " "If true, all /mcp requests must include a valid Bearer token.",
-    )
     trust_proxy_auth: bool = Field(
         default=False,
         description="Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
@@ -297,16 +276,6 @@ class Settings(BaseSettings):
 
     #  Encryption key phrase for auth storage
     auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"))
-
-    # Query Parameter Authentication (INSECURE - disabled by default)
-    insecure_allow_queryparam_auth: bool = Field(
-        default=False,
-        description=("Enable query parameter authentication for gateway peers. " "WARNING: API keys may appear in proxy logs. See CWE-598."),
-    )
-    insecure_queryparam_auth_allowed_hosts: List[str] = Field(
-        default_factory=list,
-        description=("Allowlist of hosts permitted to use query parameter auth. " "Empty list allows any host when feature is enabled. " "Format: ['mcp.tavily.com', 'api.example.com']"),
-    )
 
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
@@ -365,14 +334,6 @@ class Settings(BaseSettings):
     password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
     password_require_special: bool = Field(default=True, description="Require special characters in passwords")
 
-    # Password change enforcement and policy toggles
-    password_change_enforcement_enabled: bool = Field(default=True, description="Master switch for password change enforcement checks")
-    admin_require_password_change_on_bootstrap: bool = Field(default=True, description="Force admin to change password after bootstrap")
-    detect_default_password_on_login: bool = Field(default=True, description="Detect default password during login and mark user for change")
-    require_password_change_for_default_password: bool = Field(default=True, description="Require password change when user is created with the default password")
-    password_policy_enabled: bool = Field(default=True, description="Enable password complexity validation for new/changed passwords")
-    password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
-    password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
     account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")
@@ -950,26 +911,8 @@ class Settings(BaseSettings):
     # Sample rate (0.0 to 1.0) - 1.0 means trace everything
     observability_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0, description="Trace sampling rate (0.0-1.0)")
 
-    # Include paths for tracing (regex patterns)
-    observability_include_paths: List[str] = Field(
-        default_factory=lambda: [
-            r"^/rpc/?$",
-            r"^/sse$",
-            r"^/message$",
-            r"^/mcp(?:/|$)",
-            r"^/servers/[^/]+/mcp/?$",
-            r"^/servers/[^/]+/sse$",
-            r"^/servers/[^/]+/message$",
-            r"^/a2a(?:/|$)",
-        ],
-        description="Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
-    )
-
     # Exclude paths from tracing (regex patterns)
-    observability_exclude_paths: List[str] = Field(
-        default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"],
-        description="Regex patterns to exclude from tracing (applies after include patterns)",
-    )
+    observability_exclude_paths: List[str] = Field(default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"], description="Paths to exclude from tracing (regex)")
 
     # Enable performance metrics
     observability_metrics_enabled: bool = Field(default=True, description="Enable metrics collection")
@@ -1037,15 +980,6 @@ class Settings(BaseSettings):
     metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
     metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
     metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
-    yield_batch_size: int = Field(
-        default=1000,
-        ge=100,
-        le=100000,
-        description="Number of rows fetched per batch when streaming hourly metric data from the database. "
-        "Used to limit memory usage during aggregation and percentile calculations. "
-        "Smaller values reduce memory footprint but increase DB round-trips; larger values improve throughput "
-        "at the cost of higher memory usage.",
-    )
 
     # Execution Metrics Recording
     # Controls whether tool/resource/prompt/server/A2A execution metrics are written to the database.
@@ -1532,7 +1466,6 @@ Disallow: /
         "sso_auto_admin_domains",
         "sso_github_admin_orgs",
         "sso_google_admin_domains",
-        "insecure_queryparam_auth_allowed_hosts",
         mode="before",
     )
     @classmethod

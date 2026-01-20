@@ -307,7 +307,7 @@ Content-Type: application/json
 ### Toggle Service
 
 ```bash
-POST /grpc/{service_id}/state
+POST /grpc/{service_id}/toggle
 ```
 
 ### Delete Service

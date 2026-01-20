@@ -61,7 +61,6 @@ from mcpgateway.plugins.framework.models import (
     PluginResult,
     PluginViolation,
 )
-from mcpgateway.plugins.framework.utils import get_attr
 
 # Plugin manager singleton (lazy initialization)
 _plugin_manager: Optional[PluginManager] = None
@@ -102,7 +101,6 @@ __all__ = [
     "AgentPreInvokeResult",
     "ConfigLoader",
     "ExternalPluginServer",
-    "get_attr",
     "get_hook_registry",
     "get_plugin_manager",
     "GlobalContext",

@@ -116,7 +116,6 @@ services:
             JWT_PUBLIC_KEY_PATH: /opt/public.pem
             JWT_PRIVATE_KEY_PATH: /opt/private.pem
             JWT_AUDIENCE_VERIFICATION: false
-            JWT_ISSUER_VERIFICATION: false
             JWT_ISSUER: http://localhost:5556
             DATABASE_URL: sqlite:////data/context-forge.db
             HOST: 0.0.0.0

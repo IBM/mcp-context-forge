@@ -987,18 +987,8 @@ class OAuthManager:
         if scopes:
             params["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
 
-        # Add resource parameter for JWT access token (RFC 8707)
-        # The resource is the MCP server URL, set by oauth_router.py
-        resource = credentials.get("resource")
-        if resource:
-            # RFC 8707 allows multiple resource parameters
-            if isinstance(resource, list):
-                params["resource"] = resource  # urlencode with doseq=True handles lists
-            else:
-                params["resource"] = resource
-
-        # Build full URL (doseq=True handles list values like multiple resource params)
-        query_string = urlencode(params, doseq=True)
+        # Build full URL
+        query_string = urlencode(params)
         return f"{authorization_url}?{query_string}"
 
     async def _exchange_code_for_tokens(self, credentials: Dict[str, Any], code: str, code_verifier: str = None) -> Dict[str, Any]:
@@ -1049,20 +1039,6 @@ class OAuthManager:
         # Add PKCE code_verifier if present (RFC 7636)
         if code_verifier:
             token_data["code_verifier"] = code_verifier
-
-        # Add resource parameter to request JWT access token (RFC 8707)
-        # The resource identifies the MCP server (resource server), not the OAuth server
-        resource = credentials.get("resource")
-        if resource:
-            if isinstance(resource, list):
-                # RFC 8707 allows multiple resource parameters - use list of tuples
-                form_data: list[tuple[str, str]] = list(token_data.items())
-                for r in resource:
-                    if r:
-                        form_data.append(("resource", r))
-                token_data = form_data  # type: ignore[assignment]
-            else:
-                token_data["resource"] = resource
 
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
@@ -1142,20 +1118,6 @@ class OAuthManager:
         # Add client_secret if available (some providers require it)
         if client_secret:
             token_data["client_secret"] = client_secret
-
-        # Add resource parameter for JWT access token (RFC 8707)
-        # Must be included in refresh requests to maintain JWT token type
-        resource = credentials.get("resource")
-        if resource:
-            if isinstance(resource, list):
-                # RFC 8707 allows multiple resource parameters - use list of tuples
-                form_data: list[tuple[str, str]] = list(token_data.items())
-                for r in resource:
-                    if r:
-                        form_data.append(("resource", r))
-                token_data = form_data  # type: ignore[assignment]
-            else:
-                token_data["resource"] = resource
 
         # Attempt token refresh with retries
         for attempt in range(self.max_retries):

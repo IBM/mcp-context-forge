@@ -39,8 +39,8 @@ Introduce a two-tier tool lookup cache keyed by tool name, with:
    - Negative cache entries short-circuit missing/inactive/offline tool calls
 
 3. **Cache invalidation**
-   - Tool create/update/delete/state invalidates tool lookup cache
-   - Gateway update/state/delete invalidates all tools for that gateway
+   - Tool create/update/delete/toggle invalidates tool lookup cache
+   - Gateway update/toggle/delete invalidates all tools for that gateway
 
 4. **Configuration**
 

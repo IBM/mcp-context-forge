@@ -251,8 +251,8 @@ class TestAdminServerAPIs:
         response = await client.post(f"/admin/servers/{server_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
 
-        # Set server state
-        response = await client.post(f"/admin/servers/{server_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        # Toggle server status
+        response = await client.post(f"/admin/servers/{server_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
         # Delete server
@@ -325,8 +325,8 @@ class TestAdminToolAPIs:
     #     response = await client.post(f"/admin/tools/{tool_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
     #     assert response.status_code == 303
 
-    #     # Set tool state
-    #     response = await client.post(f"/admin/tools/{tool_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     # Toggle tool status
+    #     response = await client.post(f"/admin/tools/{tool_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
     #     assert response.status_code == 303
 
     #     # Delete tool
@@ -356,7 +356,7 @@ class TestAdminToolAPIs:
                 pass
         assert db is not None, "Test database session not found. Ensure your test fixture exposes db."
         team_service = TeamManagementService(db)
-        new_team = await team_service.create_team(name=f"Test Team - {uuid.uuid4().hex[:8]}", description="A team for testing", created_by="admin@example.com", visibility="private")
+        new_team = await team_service.create_team(name="Test Team", description="A team for testing", created_by="admin@example.com", visibility="private")
         # Private scope (owner-level)
         form_data_private = {
             "name": unique_name,
@@ -422,73 +422,6 @@ class TestAdminToolAPIs:
 
 
 # -------------------------
-# Test Tool Ops Admin APIs
-# -------------------------
-class TestAdminToolOpsAPIs:
-    """Test admin tool-ops management endpoints."""
-
-    async def test_admin_tool_ops_partial_with_team_id(self, client, app_with_temp_db):
-        """Test that /admin/tool-ops/partial respects team_id parameter."""
-        # First-Party
-        from mcpgateway.db import get_db
-        from mcpgateway.services.team_management_service import TeamManagementService
-
-        # Get db session from app's dependency overrides or directly from get_db
-        # (which uses the patched SessionLocal in tests)
-        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
-
-        # Create two teams (creator is automatically added as owner)
-        team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Team 1 - {uuid.uuid4().hex[:8]}", description="First team", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Team 2 - {uuid.uuid4().hex[:8]}", description="Second team", created_by="admin@example.com", visibility="private")
-
-        # Create tools in different teams
-        # Note: tool names get normalized to use hyphens instead of underscores
-        tool1_name = f"team1-tool-{uuid.uuid4().hex[:8]}"
-        tool2_name = f"team2-tool-{uuid.uuid4().hex[:8]}"
-        tool1_data = {
-            "name": tool1_name,
-            "url": "http://example.com/tool1",
-            "description": "Tool in team 1",
-            "visibility": "team",
-            "team_id": team1.id,
-        }
-        tool2_data = {
-            "name": tool2_name,
-            "url": "http://example.com/tool2",
-            "description": "Tool in team 2",
-            "visibility": "team",
-            "team_id": team2.id,
-        }
-
-        # Create the tools
-        await client.post("/admin/tools/", data=tool1_data, headers=TEST_AUTH_HEADER)
-        await client.post("/admin/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
-
-        # Test filtering by team1 - should only return tool1
-        response = await client.get(f"/admin/tool-ops/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
-        assert response.status_code == 200
-        html = response.text
-        assert tool1_name in html
-        assert tool2_name not in html
-
-        # Test filtering by team2 - should only return tool2
-        response = await client.get(f"/admin/tool-ops/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
-        assert response.status_code == 200
-        html = response.text
-        assert tool2_name in html
-        assert tool1_name not in html
-
-        # Test without team_id filter - should return both
-        response = await client.get("/admin/tool-ops/partial", headers=TEST_AUTH_HEADER)
-        assert response.status_code == 200
-        html = response.text
-        assert tool1_name in html
-        assert tool2_name in html
-
-
-# -------------------------
 # Test Resource Admin APIs
 # -------------------------
 class TestAdminResourceAPIs:
@@ -498,7 +431,7 @@ class TestAdminResourceAPIs:
         """Test adding a resource via the admin UI with new logic."""
         # Define valid form data
         valid_form_data = {
-            "uri": f"test://resource1-{uuid.uuid4().hex[:8]}",
+            "uri": "test://resource1",
             "name": "Test Resource",
             "description": "A test resource",
             "mimeType": "text/plain",
@@ -556,7 +489,7 @@ class TestAdminPromptAPIs:
         """Test complete prompt lifecycle through admin UI."""
         # Create a prompt via form submission
         form_data = {
-            "name": f"test_admin_prompt_{uuid.uuid4().hex[:8]}",
+            "name": "test_admin_prompt",
             "description": "Test prompt via admin",
             "template": "Hello {{name}}, this is a test prompt",
             "arguments": '[{"name": "name", "description": "User name", "required": true}]',
@@ -572,19 +505,21 @@ class TestAdminPromptAPIs:
         resp_json = response.json()
         # Handle paginated response
         prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
-        assert len(prompts) >= 1
-        prompt = next((p for p in prompts if p["originalName"] == form_data["name"]), None)
-        assert prompt is not None
+        assert len(prompts) == 1
+        prompt = prompts[0]
+        assert prompt["name"] == "test-admin-prompt"
+        assert prompt["originalName"] == "test_admin_prompt"
         prompt_id = prompt["id"]
 
         # Get individual prompt
         response = await client.get(f"/admin/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        assert response.json()["originalName"] == form_data["name"]
+        assert response.json()["name"] == "test-admin-prompt"
+        assert response.json()["originalName"] == "test_admin_prompt"
 
         # Edit prompt
         edit_data = {
-            "name": f"updated_admin_prompt_{uuid.uuid4().hex[:8]}",
+            "name": "updated_admin_prompt",
             "description": "Updated description",
             "template": "Updated {{greeting}}",
             "arguments": '[{"name": "greeting", "description": "Greeting", "required": false}]',
@@ -593,8 +528,8 @@ class TestAdminPromptAPIs:
         response = await client.post(f"/admin/prompts/{prompt_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
 
-        # Set prompt state
-        response = await client.post(f"/admin/prompts/{prompt_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        # Toggle prompt status
+        response = await client.post(f"/admin/prompts/{prompt_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
         # Delete prompt (use updated name)
@@ -776,7 +711,7 @@ class TestAdminIncludeInactive:
     #         "is_inactive_checked": "true",
     #     }
 
-    #     response = await client.post(f"/admin/servers/{server_id}/state", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     response = await client.post(f"/admin/servers/{server_id}/toggle", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
 
     #     assert response.status_code == 303
     #     assert "include_inactive=true" in response.headers["location"]
@@ -799,8 +734,8 @@ class TestTeamFiltering:
 
         # Create two teams (creator is automatically added as owner)
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Team 1 - {uuid.uuid4().hex[:8]}", description="First team", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Team 2 - {uuid.uuid4().hex[:8]}", description="Second team", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name="Team 1", description="First team", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Team 2", description="Second team", created_by="admin@example.com", visibility="private")
 
         # Create tools in different teams
         # Note: tool names get normalized to use hyphens instead of underscores
@@ -859,8 +794,8 @@ class TestTeamFiltering:
 
         # Create TWO teams
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Team 1 IDs - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Team 2 IDs - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name="Team 1 IDs", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Team 2 IDs", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create tools in different teams
         team1_tool_id = uuid.uuid4().hex
@@ -919,8 +854,8 @@ class TestTeamFiltering:
 
         # Create TWO teams (creator is automatically added as owner)
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Search Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Search Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name="Search Team 1", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Search Team 2", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create searchable tools in different teams
         search_term = f"searchable_{uuid.uuid4().hex[:8]}"
@@ -971,7 +906,7 @@ class TestTeamFiltering:
 
         # Create a team but DON'T add the user to it
         team_service = TeamManagementService(db)
-        other_team = await team_service.create_team(name=f"Other Team - {uuid.uuid4().hex[:8]}", description="Test", created_by="other@example.com", visibility="private")
+        other_team = await team_service.create_team(name="Other Team", description="Test", created_by="other@example.com", visibility="private")
 
         # Create a tool in that team
         tool_data = {
@@ -1025,13 +960,13 @@ class TestTeamFiltering:
 
         # Create TWO teams (creator is automatically added as owner)
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Resource Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Resource Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name="Resource Team 1", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Resource Team 2", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create resources in different teams
         team1_resource = {
             "name": f"team1_resource_{uuid.uuid4().hex[:8]}",
-            "uri": f"file:///team1-{uuid.uuid4().hex[:8]}",
+            "uri": "file:///team1",
             "description": "Team 1 resource",
             "visibility": "team",
             "team_id": team1.id,
@@ -1039,7 +974,7 @@ class TestTeamFiltering:
         }
         team2_resource = {
             "name": f"team2_resource_{uuid.uuid4().hex[:8]}",
-            "uri": f"file:///team2-{uuid.uuid4().hex[:8]}",
+            "uri": "file:///team2",
             "description": "Team 2 resource",
             "visibility": "team",
             "team_id": team2.id,
@@ -1071,8 +1006,8 @@ class TestTeamFiltering:
 
         # Create TWO teams (creator is automatically added as owner)
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Prompt Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Prompt Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name="Prompt Team 1", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Prompt Team 2", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create prompts in different teams
         team1_prompt = {
@@ -1113,8 +1048,8 @@ class TestTeamFiltering:
 
         # Create two teams
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Server Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Server Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name="Server Team 1", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Server Team 2", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create servers in different teams
         team1_server = {
@@ -1153,8 +1088,8 @@ class TestTeamFiltering:
 
         # Create two teams
         team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Gateway Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Gateway Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team1 = await team_service.create_team(name="Gateway Team 1", description="Test", created_by="admin@example.com", visibility="private")
+        team2 = await team_service.create_team(name="Gateway Team 2", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create gateways directly in DB (gateway creation via form is complex)
         team1_gw_name = f"team1_gw_{uuid.uuid4().hex[:8]}"
@@ -1210,7 +1145,7 @@ class TestTeamFiltering:
 
         # Create a team
         team_service = TeamManagementService(db)
-        team = await team_service.create_team(name=f"Visibility Test Team - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        team = await team_service.create_team(name="Visibility Test Team", description="Test", created_by="admin@example.com", visibility="private")
 
         # Create a PRIVATE tool owned by another user in the same team
         private_tool_name = f"private_tool_{uuid.uuid4().hex[:8]}"
@@ -1234,450 +1169,6 @@ class TestTeamFiltering:
         html = response.text
         # The private tool should NOT be visible because it's owned by another user
         assert private_tool_name not in html, f"Private tool should NOT be visible to non-owner! Found in: {html[:500]}"
-
-
-# -------------------------
-# Test Graceful Error Handling
-# -------------------------
-class TestAdminListingGracefulErrorHandling:
-    """Test that admin listing endpoints handle entity conversion errors gracefully.
-
-    These tests verify that when one entity (tool/resource/prompt) fails to convert
-    to its Pydantic model (e.g., due to corrupted data), the listing operation
-    continues with remaining entities instead of failing completely.
-    """
-
-    async def test_admin_tools_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/tools returns valid tools even when one fails conversion.
-
-        This test verifies the graceful error handling by mocking convert_tool_to_read
-        to fail for one tool while succeeding for others.
-        """
-        # First-Party
-        from mcpgateway.db import get_db, Tool as DbTool
-        from mcpgateway.services.tool_service import ToolService
-        from unittest.mock import patch
-
-        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
-
-        # Create valid tools
-        valid_tool_1 = DbTool(
-            id=uuid.uuid4().hex,
-            original_name=f"valid_tool_1_{uuid.uuid4().hex[:8]}",
-            url="http://example.com/valid1",
-            description="A valid tool",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-            input_schema={"type": "object"},
-        )
-        corrupted_tool = DbTool(
-            id=uuid.uuid4().hex,
-            original_name=f"corrupted_tool_{uuid.uuid4().hex[:8]}",
-            url="http://example.com/corrupted",
-            description="Tool that will fail conversion",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-            input_schema={"type": "object"},
-        )
-        valid_tool_2 = DbTool(
-            id=uuid.uuid4().hex,
-            original_name=f"valid_tool_2_{uuid.uuid4().hex[:8]}",
-            url="http://example.com/valid2",
-            description="Another valid tool",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-            input_schema={"type": "object"},
-        )
-
-        db.add(valid_tool_1)
-        db.add(corrupted_tool)
-        db.add(valid_tool_2)
-        db.commit()
-
-        corrupted_tool_id = corrupted_tool.id
-
-        # Store original convert_tool_to_read method
-        original_convert = ToolService.convert_tool_to_read
-
-        def mock_convert(self, tool, include_metrics=False, include_auth=True):
-            """Mock that raises ValueError for the corrupted tool."""
-            if tool.id == corrupted_tool_id:
-                raise ValueError("Simulated corrupted data: invalid auth_value")
-            return original_convert(self, tool, include_metrics=include_metrics, include_auth=include_auth)
-
-        # Patch the convert method to simulate corruption for one tool
-        with patch.object(ToolService, "convert_tool_to_read", mock_convert):
-            # Request tools listing
-            response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
-
-        # Should succeed even with one corrupted tool
-        assert response.status_code == 200
-        resp_json = response.json()
-
-        # Should have the valid tools in the response but NOT the corrupted one
-        tools = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
-        tool_names = [t.get("originalName", t.get("original_name", "")) for t in tools]
-
-        assert valid_tool_1.original_name in tool_names
-        assert valid_tool_2.original_name in tool_names
-        # The corrupted tool should NOT be in the response (it was skipped)
-        assert corrupted_tool.original_name not in tool_names
-
-    async def test_admin_tools_partial_returns_200(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/tools/partial (HTMX endpoint) returns 200 and handles the request gracefully."""
-        # Request partial tools listing (used by HTMX for pagination)
-        response = await client.get("/admin/tools/partial", headers=TEST_AUTH_HEADER)
-
-        # Should succeed
-        assert response.status_code == 200
-        # Should return HTML content
-        assert "text/html" in response.headers.get("content-type", "")
-
-    async def test_admin_resources_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/resources returns valid resources even when one fails conversion."""
-        from mcpgateway.db import get_db, Resource as DbResource
-        from mcpgateway.services.resource_service import ResourceService
-        from unittest.mock import patch
-
-        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
-
-        # Create resources
-        valid_resource_1 = DbResource(
-            id=uuid.uuid4().hex,
-            name=f"valid_resource_1_{uuid.uuid4().hex[:8]}",
-            uri=f"file:///valid1_{uuid.uuid4().hex[:8]}",
-            description="A valid resource",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-        corrupted_resource = DbResource(
-            id=uuid.uuid4().hex,
-            name=f"corrupted_resource_{uuid.uuid4().hex[:8]}",
-            uri=f"file:///corrupted_{uuid.uuid4().hex[:8]}",
-            description="Resource that will fail conversion",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-        valid_resource_2 = DbResource(
-            id=uuid.uuid4().hex,
-            name=f"valid_resource_2_{uuid.uuid4().hex[:8]}",
-            uri=f"file:///valid2_{uuid.uuid4().hex[:8]}",
-            description="Another valid resource",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-
-        db.add(valid_resource_1)
-        db.add(corrupted_resource)
-        db.add(valid_resource_2)
-        db.commit()
-
-        corrupted_resource_id = corrupted_resource.id
-        original_convert = ResourceService.convert_resource_to_read
-
-        def mock_convert(self, resource, include_metrics=False):
-            if resource.id == corrupted_resource_id:
-                raise ValueError("Simulated corrupted data")
-            return original_convert(self, resource, include_metrics=include_metrics)
-
-        with patch.object(ResourceService, "convert_resource_to_read", mock_convert):
-            response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
-
-        assert response.status_code == 200
-        resp_json = response.json()
-        resources = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
-        resource_names = [r.get("name", "") for r in resources]
-
-        assert valid_resource_1.name in resource_names
-        assert valid_resource_2.name in resource_names
-        assert corrupted_resource.name not in resource_names
-
-    async def test_admin_prompts_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/prompts returns valid prompts even when one fails conversion."""
-        from mcpgateway.db import get_db, Prompt as DbPrompt
-        from mcpgateway.services.prompt_service import PromptService
-        from unittest.mock import patch
-
-        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
-
-        # Create prompts with required fields
-        uid1 = uuid.uuid4().hex[:8]
-        valid_prompt_1 = DbPrompt(
-            id=uuid.uuid4().hex,
-            original_name=f"valid_prompt_1_{uid1}",
-            custom_name=f"valid_prompt_1_{uid1}",
-            custom_name_slug=f"valid-prompt-1-{uid1}",
-            name=f"valid_prompt_1_{uid1}",
-            description="A valid prompt",
-            template="Hello {{ name }}",
-            argument_schema={"type": "object"},
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-        uid2 = uuid.uuid4().hex[:8]
-        corrupted_prompt = DbPrompt(
-            id=uuid.uuid4().hex,
-            original_name=f"corrupted_prompt_{uid2}",
-            custom_name=f"corrupted_prompt_{uid2}",
-            custom_name_slug=f"corrupted-prompt-{uid2}",
-            name=f"corrupted_prompt_{uid2}",
-            description="Prompt that will fail conversion",
-            template="Hello {{ name }}",
-            argument_schema={"type": "object"},
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-        uid3 = uuid.uuid4().hex[:8]
-        valid_prompt_2 = DbPrompt(
-            id=uuid.uuid4().hex,
-            original_name=f"valid_prompt_2_{uid3}",
-            custom_name=f"valid_prompt_2_{uid3}",
-            custom_name_slug=f"valid-prompt-2-{uid3}",
-            name=f"valid_prompt_2_{uid3}",
-            description="Another valid prompt",
-            template="Hello {{ name }}",
-            argument_schema={"type": "object"},
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-
-        db.add(valid_prompt_1)
-        db.add(corrupted_prompt)
-        db.add(valid_prompt_2)
-        db.commit()
-
-        corrupted_prompt_id = corrupted_prompt.id
-        original_convert = PromptService.convert_prompt_to_read
-
-        def mock_convert(self, prompt, include_metrics=False):
-            if prompt.id == corrupted_prompt_id:
-                raise ValueError("Simulated corrupted data")
-            return original_convert(self, prompt, include_metrics=include_metrics)
-
-        with patch.object(PromptService, "convert_prompt_to_read", mock_convert):
-            response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
-
-        assert response.status_code == 200
-        resp_json = response.json()
-        prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
-        prompt_names = [p.get("name", "") for p in prompts]
-
-        assert valid_prompt_1.name in prompt_names
-        assert valid_prompt_2.name in prompt_names
-        assert corrupted_prompt.name not in prompt_names
-
-    async def test_admin_servers_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/servers returns valid servers even when one fails conversion."""
-        from mcpgateway.db import get_db, Server as DbServer
-        from mcpgateway.services.server_service import ServerService
-        from unittest.mock import patch
-
-        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
-
-        # Create servers (Server model uses name, not slug)
-        valid_server_1 = DbServer(
-            id=uuid.uuid4().hex,
-            name=f"valid_server_1_{uuid.uuid4().hex[:8]}",
-            description="A valid server",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-        corrupted_server = DbServer(
-            id=uuid.uuid4().hex,
-            name=f"corrupted_server_{uuid.uuid4().hex[:8]}",
-            description="Server that will fail conversion",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-        valid_server_2 = DbServer(
-            id=uuid.uuid4().hex,
-            name=f"valid_server_2_{uuid.uuid4().hex[:8]}",
-            description="Another valid server",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-
-        db.add(valid_server_1)
-        db.add(corrupted_server)
-        db.add(valid_server_2)
-        db.commit()
-
-        corrupted_server_id = corrupted_server.id
-        original_convert = ServerService.convert_server_to_read
-
-        def mock_convert(self, server, include_metrics=False):
-            if server.id == corrupted_server_id:
-                raise ValueError("Simulated corrupted data")
-            return original_convert(self, server, include_metrics=include_metrics)
-
-        with patch.object(ServerService, "convert_server_to_read", mock_convert):
-            response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
-
-        assert response.status_code == 200
-        resp_json = response.json()
-        servers = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
-        server_names = [s.get("name", "") for s in servers]
-
-        assert valid_server_1.name in server_names
-        assert valid_server_2.name in server_names
-        assert corrupted_server.name not in server_names
-
-    async def test_admin_gateways_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/gateways returns valid gateways even when one fails conversion."""
-        from mcpgateway.db import get_db, Gateway as DbGateway
-        from mcpgateway.services.gateway_service import GatewayService
-        from unittest.mock import patch
-
-        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
-
-        # Create gateways
-        valid_gateway_1 = DbGateway(
-            id=uuid.uuid4().hex,
-            name=f"valid_gateway_1_{uuid.uuid4().hex[:8]}",
-            slug=f"valid-gateway-1-{uuid.uuid4().hex[:8]}",
-            url=f"http://valid1.example.com/{uuid.uuid4().hex[:8]}",
-            description="A valid gateway",
-            transport="SSE",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-            capabilities={},
-        )
-        corrupted_gateway = DbGateway(
-            id=uuid.uuid4().hex,
-            name=f"corrupted_gateway_{uuid.uuid4().hex[:8]}",
-            slug=f"corrupted-gateway-{uuid.uuid4().hex[:8]}",
-            url=f"http://corrupted.example.com/{uuid.uuid4().hex[:8]}",
-            description="Gateway that will fail conversion",
-            transport="SSE",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-            capabilities={},
-        )
-        valid_gateway_2 = DbGateway(
-            id=uuid.uuid4().hex,
-            name=f"valid_gateway_2_{uuid.uuid4().hex[:8]}",
-            slug=f"valid-gateway-2-{uuid.uuid4().hex[:8]}",
-            url=f"http://valid2.example.com/{uuid.uuid4().hex[:8]}",
-            description="Another valid gateway",
-            transport="SSE",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-            capabilities={},
-        )
-
-        db.add(valid_gateway_1)
-        db.add(corrupted_gateway)
-        db.add(valid_gateway_2)
-        db.commit()
-
-        corrupted_gateway_id = corrupted_gateway.id
-        original_convert = GatewayService.convert_gateway_to_read
-
-        def mock_convert(self, gateway):
-            if gateway.id == corrupted_gateway_id:
-                raise ValueError("Simulated corrupted data")
-            return original_convert(self, gateway)
-
-        with patch.object(GatewayService, "convert_gateway_to_read", mock_convert):
-            response = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
-
-        assert response.status_code == 200
-        resp_json = response.json()
-        gateways = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
-        gateway_names = [g.get("name", "") for g in gateways]
-
-        assert valid_gateway_1.name in gateway_names
-        assert valid_gateway_2.name in gateway_names
-        assert corrupted_gateway.name not in gateway_names
-
-    async def test_admin_a2a_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/a2a returns valid A2A agents even when one fails conversion."""
-        from mcpgateway.db import get_db, A2AAgent as DbA2AAgent
-        from mcpgateway.services.a2a_service import A2AAgentService
-        from unittest.mock import patch
-
-        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
-
-        # Create A2A agents
-        uid1 = uuid.uuid4().hex[:8]
-        valid_agent_1 = DbA2AAgent(
-            id=uuid.uuid4().hex,
-            name=f"valid_agent_1_{uid1}",
-            slug=f"valid-agent-1-{uid1}",
-            endpoint_url=f"http://valid1.example.com/{uid1}",
-            description="A valid A2A agent",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-        uid2 = uuid.uuid4().hex[:8]
-        corrupted_agent = DbA2AAgent(
-            id=uuid.uuid4().hex,
-            name=f"corrupted_agent_{uid2}",
-            slug=f"corrupted-agent-{uid2}",
-            endpoint_url=f"http://corrupted.example.com/{uid2}",
-            description="A2A agent that will fail conversion",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-        uid3 = uuid.uuid4().hex[:8]
-        valid_agent_2 = DbA2AAgent(
-            id=uuid.uuid4().hex,
-            name=f"valid_agent_2_{uid3}",
-            slug=f"valid-agent-2-{uid3}",
-            endpoint_url=f"http://valid2.example.com/{uid3}",
-            description="Another valid A2A agent",
-            visibility="public",
-            owner_email="admin@example.com",
-            enabled=True,
-        )
-
-        db.add(valid_agent_1)
-        db.add(corrupted_agent)
-        db.add(valid_agent_2)
-        db.commit()
-
-        corrupted_agent_id = corrupted_agent.id
-        original_convert = A2AAgentService.convert_agent_to_read
-
-        def mock_convert(self, agent, include_metrics=False, db=None, team_map=None):
-            if agent.id == corrupted_agent_id:
-                raise ValueError("Simulated corrupted data")
-            return original_convert(self, agent, include_metrics=include_metrics, db=db, team_map=team_map)
-
-        with patch.object(A2AAgentService, "convert_agent_to_read", mock_convert):
-            response = await client.get("/admin/a2a", headers=TEST_AUTH_HEADER)
-
-        assert response.status_code == 200
-        resp_json = response.json()
-        agents = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
-        agent_names = [a.get("name", "") for a in agents]
-
-        assert valid_agent_1.name in agent_names
-        assert valid_agent_2.name in agent_names
-        assert corrupted_agent.name not in agent_names
 
 
 # Run tests with pytest

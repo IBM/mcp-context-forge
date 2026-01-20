@@ -7,20 +7,14 @@ Authors: Mihai Criveti
 JWT Configuration Helper Utilities with caching.
 This module provides JWT configuration validation and key retrieval functions.
 Configuration is validated once and cached for performance.
-Key files are cached with mtime tracking to avoid repeated disk I/O.
 """
 
 # Standard
 from functools import lru_cache
 from pathlib import Path
-from typing import Tuple
 
 # First-Party
 from mcpgateway.config import settings
-
-# Cache for key file contents with mtime
-# Key: (path, mtime), Value: key content
-_key_file_cache: dict[Tuple[str, float], str] = {}
 
 
 class JWTConfigurationError(Exception):
@@ -34,41 +28,6 @@ class JWTConfigurationError(Exception):
         >>> isinstance(error, Exception)
         True
     """
-
-
-def _read_key_file_cached(path: Path) -> str:
-    """Read key file with mtime-based caching.
-
-    Args:
-        path: Path to key file
-
-    Returns:
-        str: Key file contents
-
-    Raises:
-        FileNotFoundError: If file doesn't exist
-        IOError: If file cannot be read
-    """
-    try:
-        path_str = str(path)
-        mtime = path.stat().st_mtime
-
-        # Check cache
-        cache_key = (path_str, mtime)
-        if cache_key in _key_file_cache:
-            return _key_file_cache[cache_key]
-
-        # Read file
-        with open(path, "r") as f:
-            content = f.read()
-
-        # Clear old entries for this path and cache new content
-        _key_file_cache.clear()
-        _key_file_cache[cache_key] = content
-
-        return content
-    except Exception as e:
-        raise IOError(f"Failed to read key file {path}: {e}") from e
 
 
 @lru_cache(maxsize=1)
@@ -140,7 +99,6 @@ def get_jwt_private_key_or_secret() -> str:
     """Get signing key based on configured algorithm (cached).
 
     Returns secret key for HMAC algorithms or private key content for asymmetric algorithms.
-    For file-based keys, content is cached with mtime tracking to avoid repeated disk I/O.
 
     Returns:
         str: The signing key as string
@@ -160,7 +118,8 @@ def get_jwt_private_key_or_secret() -> str:
     path = Path(settings.jwt_private_key_path)
     if not path.is_absolute():
         path = Path.cwd() / path
-    return _read_key_file_cached(path)
+    with open(path, "r") as f:
+        return f.read()
 
 
 @lru_cache(maxsize=1)
@@ -168,7 +127,6 @@ def get_jwt_public_key_or_secret() -> str:
     """Get verification key based on configured algorithm (cached).
 
     Returns secret key for HMAC algorithms or public key content for asymmetric algorithms.
-    For file-based keys, content is cached with mtime tracking to avoid repeated disk I/O.
 
     Returns:
         str: The verification key as string
@@ -188,7 +146,8 @@ def get_jwt_public_key_or_secret() -> str:
     path = Path(settings.jwt_public_key_path)
     if not path.is_absolute():
         path = Path.cwd() / path
-    return _read_key_file_cached(path)
+    with open(path, "r") as f:
+        return f.read()
 
 
 def clear_jwt_caches() -> None:
@@ -204,4 +163,3 @@ def clear_jwt_caches() -> None:
     _get_validated_config.cache_clear()
     get_jwt_public_key_or_secret.cache_clear()
     get_jwt_private_key_or_secret.cache_clear()
-    _key_file_cache.clear()

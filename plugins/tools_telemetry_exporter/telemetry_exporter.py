@@ -14,7 +14,8 @@ from typing import Dict
 import orjson
 
 # First-Party
-from mcpgateway.plugins.framework import get_attr, Plugin, PluginConfig, PluginContext
+from mcpgateway.common.models import Gateway, Tool
+from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokePayload, ToolPreInvokeResult
 from mcpgateway.services.logging_service import LoggingService
@@ -81,20 +82,20 @@ class ToolsTelemetryExporterPlugin(Plugin):
             Dictionary with base attributes plus tool and target MCP server details.
         """
         global_context = context.global_context
-        tool_metadata = global_context.metadata.get(TOOL_METADATA)
-        target_mcp_server_metadata = global_context.metadata.get(GATEWAY_METADATA)
+        tool_metadata: Tool = global_context.metadata.get(TOOL_METADATA)
+        target_mcp_server_metadata: Gateway = global_context.metadata.get(GATEWAY_METADATA)
 
         return {
             **self._get_base_context_attributes(context),
             "tool": {
-                "name": get_attr(tool_metadata, "name"),
-                "target_tool_name": get_attr(tool_metadata, "original_name"),
-                "description": get_attr(tool_metadata, "description"),
+                "name": tool_metadata.name or "",
+                "target_tool_name": tool_metadata.original_name or "",
+                "description": tool_metadata.description or "",
             },
             "target_mcp_server": {
-                "id": get_attr(target_mcp_server_metadata, "id"),
-                "name": get_attr(target_mcp_server_metadata, "name"),
-                "url": str(get_attr(target_mcp_server_metadata, "url")),
+                "id": target_mcp_server_metadata.id or "",
+                "name": target_mcp_server_metadata.name or "",
+                "url": str(target_mcp_server_metadata.url or ""),
             },
         }
 

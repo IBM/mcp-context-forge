@@ -16,6 +16,7 @@ This suite provides complete test coverage for:
 """
 
 # Standard
+import asyncio
 import time
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -40,10 +41,6 @@ from mcpgateway.services.resource_service import (
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    # Clear SSL context cache before each test for isolation
-    from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
-    clear_ssl_context_cache()
-
     with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, \
          patch("mcpgateway.services.resource_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
@@ -96,8 +93,6 @@ def mock_resource():
     resource.tags = []  # Ensure tags is a list, not a MagicMock
     resource.team_id = "1234"  # Ensure team_id is a valid string or None
     resource.team = "test-team"  # Ensure team is a valid string or None
-    resource.visibility = "public"  # Ensure visibility is set for access checks
-    resource.owner_email = None
 
     # .content property stub
     content_mock = MagicMock()
@@ -135,8 +130,6 @@ def mock_resource_template():
     resource.tags = []  # Ensure tags is a list, not a MagicMock
     resource.team_id = "1234"  # Ensure team_id is a valid string or None
     resource.team = "test-team"  # Ensure team is a valid string or None
-    resource.visibility = "public"  # Ensure visibility is set for access checks
-    resource.owner_email = None
 
     # .content property stub
     content_mock = MagicMock()
@@ -173,8 +166,6 @@ def mock_inactive_resource():
     resource.metrics = []
     resource.tags = []  # Ensure tags is a list, not a MagicMock
     resource.team = "test-team"  # Ensure team is a valid string or None
-    resource.visibility = "public"  # Ensure visibility is set for access checks
-    resource.owner_email = None
 
     # .content property stub
     content_mock = MagicMock()
@@ -450,21 +441,18 @@ class TestResourceListing:
 
         assert len(result) == 1
 
-
 # --------------------------------------------------------------------------- #
 # Resource reading tests                                                      #
 # --------------------------------------------------------------------------- #
 from unittest.mock import patch
-
-
 class TestResourceReading:
     """Test resource reading functionality."""
 
     @pytest.mark.asyncio
-    @patch("mcpgateway.services.resource_service.get_cached_ssl_context")
-    async def test_read_resource_success(self, mock_ssl_cache, mock_db, mock_resource):
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_success(self, mock_ssl, mock_db, mock_resource):
         mock_ctx = MagicMock()
-        mock_ssl_cache.return_value = mock_ctx
+        mock_ssl.return_value = mock_ctx
 
         mock_scalar = MagicMock()
         mock_resource.gateway.ca_certificate = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----"
@@ -472,7 +460,6 @@ class TestResourceReading:
         mock_db.execute.return_value = mock_scalar
 
         from mcpgateway.services.resource_service import ResourceService
-
         service = ResourceService()
 
         result = await service.read_resource(mock_db, resource_id=mock_resource.id)
@@ -497,7 +484,7 @@ class TestResourceReading:
         mock_db.execute.return_value = mock_scalar
 
         with pytest.raises(ResourceNotFoundError):
-            await resource_service.read_resource(mock_db, resource_uri="test://missing")
+            await resource_service.read_resource(mock_db, resource_uri = "test://missing")
 
     @pytest.mark.asyncio
     async def test_read_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):
@@ -553,6 +540,8 @@ class TestResourceReading:
         assert result.id == "template-id"
 
 
+
+
 # --------------------------------------------------------------------------- #
 # Resource management tests                                                   #
 # --------------------------------------------------------------------------- #
@@ -562,7 +551,7 @@ class TestResourceManagement:
     """Test resource management operations."""
 
     @pytest.mark.asyncio
-    async def test_set_resource_state_activate(self, resource_service, mock_db, mock_inactive_resource):
+    async def test_toggle_resource_status_activate(self, resource_service, mock_db, mock_inactive_resource):
         """Test activating an inactive resource."""
         mock_db.get.return_value = mock_inactive_resource
 
@@ -590,14 +579,14 @@ class TestResourceManagement:
                 },
             )
 
-            result = await resource_service.set_resource_state(mock_db, 2, activate=True)
+            result = await resource_service.toggle_resource_status(mock_db, 2, activate=True)
 
             assert mock_inactive_resource.enabled is True
             # commit called twice: once for status change, once in _get_team_name to release transaction
             assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_set_resource_state_deactivate(self, resource_service, mock_db, mock_resource):
+    async def test_toggle_resource_status_deactivate(self, resource_service, mock_db, mock_resource):
         """Test deactivating an active resource."""
         mock_db.get.return_value = mock_resource
 
@@ -625,26 +614,26 @@ class TestResourceManagement:
                 },
             )
 
-            result = await resource_service.set_resource_state(mock_db, 1, activate=False)
+            result = await resource_service.toggle_resource_status(mock_db, 1, activate=False)
 
             assert mock_resource.enabled is False
             # commit called twice: once for status change, once in _get_team_name to release transaction
             assert mock_db.commit.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_set_resource_state_not_found(self, resource_service, mock_db):
-        """Test setting state of non-existent resource."""
+    async def test_toggle_resource_status_not_found(self, resource_service, mock_db):
+        """Test toggling status of non-existent resource."""
         mock_db.get.return_value = None
 
         with pytest.raises(ResourceError) as exc_info:  # ResourceError, not ResourceNotFoundError
-            await resource_service.set_resource_state(mock_db, 999, activate=True)
+            await resource_service.toggle_resource_status(mock_db, 999, activate=True)
 
         # The actual error message will vary, just check it mentions the resource
         assert "999" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_set_resource_state_no_change(self, resource_service, mock_db, mock_resource):
-        """Test setting state when no change needed."""
+    async def test_toggle_resource_status_no_change(self, resource_service, mock_db, mock_resource):
+        """Test toggling status when no change needed."""
         mock_db.get.return_value = mock_resource
         mock_resource.enabled = True
 
@@ -673,7 +662,7 @@ class TestResourceManagement:
             )
 
             # Try to activate already active resource
-            result = await resource_service.set_resource_state(mock_db, 1, activate=True)
+            result = await resource_service.toggle_resource_status(mock_db, 1, activate=True)
 
             # No status change commit, but _get_team_name commits to release transaction
             assert mock_db.commit.call_count == 1
@@ -682,6 +671,7 @@ class TestResourceManagement:
     async def test_update_resource_success(self, resource_service, mock_db, mock_resource):
         """Test successful resource update."""
         update_data = ResourceUpdate(name="Updated Name", description="Updated description", content="Updated content")
+
 
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
@@ -723,6 +713,7 @@ class TestResourceManagement:
         """Test updating non-existent resource."""
         update_data = ResourceUpdate(name="New Name")
 
+
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_scalar
@@ -735,6 +726,7 @@ class TestResourceManagement:
     async def test_update_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):
         """Test updating inactive resource."""
         update_data = ResourceUpdate(name="New Name")
+
 
         # First query (for active) returns None, second (for inactive) returns resource
         mock_scalar1 = MagicMock()
@@ -782,6 +774,7 @@ class TestResourceManagement:
                     "last_execution_time": None,
                 },
             )
+
 
             mock_db.get.return_value = mock_resource
             result = await resource_service.update_resource(mock_db, mock_resource.id, update_data)
@@ -942,10 +935,12 @@ class TestResourceSubscriptions:
         """Subscribing to a resource that exists but is inactive."""
         subscription = ResourceSubscription(uri="test://inactive", subscriber_id="subscriber1")
 
-        # Mock single query that returns the inactive resource
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource
-        mock_db.execute.return_value = mock_scalar
+        # Active lookup → None, inactive lookup → object
+        mock_scalar1 = MagicMock()
+        mock_scalar1.scalar_one_or_none.return_value = None
+        mock_scalar2 = MagicMock()
+        mock_scalar2.scalar_one_or_none.return_value = mock_inactive_resource
+        mock_db.execute.side_effect = [mock_scalar1, mock_scalar2]
 
         with pytest.raises(ResourceError) as exc_info:
             await resource_service.subscribe_resource(mock_db, subscription)
@@ -982,13 +977,14 @@ class TestResourceSubscriptions:
     @pytest.mark.asyncio
     async def test_subscribe_events(self, resource_service):
         """Test event subscription via EventService."""
-
         # Create a mock async generator for EventService
         async def mock_generator():
             yield {"type": "test", "data": "test_data"}
 
         # Mock the EventService's subscribe_events method
-        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+        resource_service._event_service.subscribe_events = MagicMock(
+            return_value=mock_generator()
+        )
 
         # Subscribe and get one event
         event_gen = resource_service.subscribe_events()
@@ -1004,13 +1000,14 @@ class TestResourceSubscriptions:
     @pytest.mark.asyncio
     async def test_subscribe_events_global(self, resource_service):
         """Test global event subscription via EventService."""
-
         # Create a mock async generator
         async def mock_generator():
             yield {"type": "resource_created", "data": {"uri": "any://resource"}}
 
         # Mock the EventService method
-        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+        resource_service._event_service.subscribe_events = MagicMock(
+            return_value=mock_generator()
+        )
 
         # Subscribe globally (no uri parameter)
         event_gen = resource_service.subscribe_events()
@@ -1061,7 +1058,6 @@ class TestResourceTemplates:
 
     def test_uri_matches_template(self):
         from mcpgateway.services import ResourceService
-
         resource_service_instance = ResourceService()
 
         """Test URI template matching."""
@@ -1117,25 +1113,26 @@ class TestResourceTemplates:
         from sqlalchemy.orm import Session
         from mcpgateway.services.resource_service import ResourceService
         from mcpgateway.services.resource_service import ResourceNotFoundError
-        from mcpgateway.common.models import ResourceTemplate
-
+        from mcpgateway.common.models import ResourceContent, ResourceTemplate
         # Arrange
         db = MagicMock(spec=Session)
         service = ResourceService()
 
         # Correct template object (NOT ResourceContent)
         template_obj = ResourceTemplate(
-            id="1",
-            uriTemplate="file://search/{query}",  # alias is used in constructor
-            name="search_template",
-            description="Template for performing a file search",
-            mime_type="text/plain",
-            annotations={"color": "blue"},
-            _meta={"version": "1.0"},
-        )
+                        id="1",
+                        uriTemplate="file://search/{query}",  # alias is used in constructor
+                        name="search_template",
+                        description="Template for performing a file search",
+                        mime_type="text/plain",
+                        annotations={"color": "blue"},
+                        _meta={"version": "1.0"}
+                    )
 
         # Cache contains ONE template
-        service._template_cache = {"1": template_obj}
+        service._template_cache = {
+            "1": template_obj
+        }
 
         # URI that DOES NOT match the template
         uri = "file://searching/hello"
@@ -1162,23 +1159,33 @@ class TestResourceTemplates:
 
         # Create a valid ResourceTemplate object
         template_obj = ResourceTemplate(
-            id="1", uriTemplate="test://template/{id}", name="template", description="Test template", mime_type="text/plain", annotations=None, _meta=None  # alias for uri_template
+            id="1",
+            uriTemplate="test://template/{id}",   # alias for uri_template
+            name="template",
+            description="Test template",
+            mime_type="text/plain",
+            annotations=None,
+            _meta=None
         )
 
         # Pre-load template cache
-        service._template_cache = {"template": template_obj}
+        service._template_cache = {
+            "template": template_obj
+        }
 
         # URI that should match
         uri = "test://template/123"
 
         # Patch match + extraction to force an error
-        with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", side_effect=Exception("Template error")):
+        with patch.object(service, "_uri_matches_template", return_value=True), \
+            patch.object(service, "_extract_template_params", side_effect=Exception("Template error")):
 
             # Assert failure path
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
 
             assert "Failed to process template" in str(exc_info.value)
+
 
     @pytest.mark.asyncio
     async def test_read_template_resource_binary_not_supported(self):
@@ -1204,7 +1211,8 @@ class TestResourceTemplates:
 
         service._template_cache = {"binary": template}
 
-        with patch.object(service, "_uri_matches_template", return_value=True), patch.object(service, "_extract_template_params", return_value={"id": "123"}):
+        with patch.object(service, "_uri_matches_template", return_value=True), \
+            patch.object(service, "_extract_template_params", return_value={"id": "123"}):
 
             with pytest.raises(ResourceError) as exc_info:
                 await service._read_template_resource(db, uri)
@@ -1351,7 +1359,6 @@ class TestUtilityMethods:
 # Notification tests                                                          #
 # --------------------------------------------------------------------------- #
 
-
 class TestNotifications:
     """Test notification functionality."""
 
@@ -1443,7 +1450,6 @@ class TestNotifications:
         # Verify EventService.publish_event was called with the event
         resource_service._event_service.publish_event.assert_called_once_with(event)
 
-
 # --------------------------------------------------------------------------- #
 # Error handling tests                                                        #
 # --------------------------------------------------------------------------- #
@@ -1472,13 +1478,13 @@ class TestErrorHandling:
             mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_set_resource_state_error(self, resource_service, mock_db, mock_resource):
-        """Test set state with error."""
+    async def test_toggle_resource_status_error(self, resource_service, mock_db, mock_resource):
+        """Test toggle status with error."""
         mock_db.get.return_value = mock_resource
         mock_db.commit.side_effect = Exception("Database error")
 
         with pytest.raises(ResourceError):
-            await resource_service.set_resource_state(mock_db, "39334ce0ed2644d79ede8913a66930c9", activate=False)
+            await resource_service.toggle_resource_status(mock_db, "39334ce0ed2644d79ede8913a66930c9", activate=False)
 
         mock_db.rollback.assert_called_once()
 
@@ -1584,7 +1590,9 @@ class TestResourceServiceMetricsExtended:
         async def mock_generator():
             yield test_event
 
-        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+        resource_service._event_service.subscribe_events = MagicMock(
+            return_value=mock_generator()
+        )
 
         # Subscribe (no uri parameter in new implementation)
         subscriber = resource_service.subscribe_events()
@@ -1602,7 +1610,9 @@ class TestResourceServiceMetricsExtended:
         async def mock_generator():
             yield test_event
 
-        resource_service._event_service.subscribe_events = MagicMock(return_value=mock_generator())
+        resource_service._event_service.subscribe_events = MagicMock(
+            return_value=mock_generator()
+        )
 
         # Subscribe globally (same as specific - no uri param)
         subscriber = resource_service.subscribe_events()
@@ -1632,7 +1642,9 @@ class TestResourceServiceMetricsExtended:
             _meta={"version": "1.0"},
         )
 
-        service._template_cache = {"1": template_obj}
+        service._template_cache = {
+            "1": template_obj
+        }
 
         # URI that does NOT match any template
         uri = "file://searching/hello"
@@ -1803,82 +1815,6 @@ class TestResourceTemplateCaching:
         # Cache should have evicted oldest entries
         cache_info = service._build_regex.cache_info()
         assert cache_info.currsize <= 256, "Cache should respect maxsize limit"
-
-
-class TestResourceAccessAuthorization:
-    """Tests for _check_resource_access authorization logic."""
-
-    @pytest.fixture
-    def resource_service(self):
-        """Create a resource service instance."""
-        return ResourceService()
-
-    @pytest.fixture
-    def mock_db(self):
-        """Create a mock database session."""
-        db = MagicMock()
-        db.commit = MagicMock()
-        return db
-
-    def _create_mock_resource(self, visibility="public", owner_email=None, team_id=None):
-        """Helper to create mock resource."""
-        resource = MagicMock()
-        resource.visibility = visibility
-        resource.owner_email = owner_email
-        resource.team_id = team_id
-        return resource
-
-    @pytest.mark.asyncio
-    async def test_check_resource_access_public_always_allowed(self, resource_service, mock_db):
-        """Public resources should be accessible to anyone."""
-        public_resource = self._create_mock_resource(visibility="public")
-
-        # Unauthenticated
-        assert await resource_service._check_resource_access(mock_db, public_resource, user_email=None, token_teams=[]) is True
-        # Authenticated
-        assert await resource_service._check_resource_access(mock_db, public_resource, user_email="user@test.com", token_teams=["team-1"]) is True
-        # Admin
-        assert await resource_service._check_resource_access(mock_db, public_resource, user_email=None, token_teams=None) is True
-
-    @pytest.mark.asyncio
-    async def test_check_resource_access_admin_bypass(self, resource_service, mock_db):
-        """Admin (user_email=None, token_teams=None) should have full access."""
-        private_resource = self._create_mock_resource(visibility="private", owner_email="secret@test.com", team_id="secret-team")
-
-        # Admin bypass: both None = unrestricted access
-        assert await resource_service._check_resource_access(mock_db, private_resource, user_email=None, token_teams=None) is True
-
-    @pytest.mark.asyncio
-    async def test_check_resource_access_private_denied_to_unauthenticated(self, resource_service, mock_db):
-        """Private resources should be denied to unauthenticated users."""
-        private_resource = self._create_mock_resource(visibility="private", owner_email="owner@test.com")
-
-        # Unauthenticated (public-only token)
-        assert await resource_service._check_resource_access(mock_db, private_resource, user_email=None, token_teams=[]) is False
-
-    @pytest.mark.asyncio
-    async def test_check_resource_access_private_allowed_to_owner(self, resource_service, mock_db):
-        """Private resources should be accessible to the owner."""
-        private_resource = self._create_mock_resource(visibility="private", owner_email="owner@test.com")
-
-        # Owner with non-empty token_teams
-        assert await resource_service._check_resource_access(mock_db, private_resource, user_email="owner@test.com", token_teams=["some-team"]) is True
-
-    @pytest.mark.asyncio
-    async def test_check_resource_access_team_resource_allowed_to_member(self, resource_service, mock_db):
-        """Team resources should be accessible to team members."""
-        team_resource = self._create_mock_resource(visibility="team", owner_email="owner@test.com", team_id="team-abc")
-
-        # Team member via token_teams
-        assert await resource_service._check_resource_access(mock_db, team_resource, user_email="member@test.com", token_teams=["team-abc"]) is True
-
-    @pytest.mark.asyncio
-    async def test_check_resource_access_team_resource_denied_to_non_member(self, resource_service, mock_db):
-        """Team resources should be denied to non-members."""
-        team_resource = self._create_mock_resource(visibility="team", owner_email="owner@test.com", team_id="team-abc")
-
-        # Non-member
-        assert await resource_service._check_resource_access(mock_db, team_resource, user_email="outsider@test.com", token_teams=["other-team"]) is False
 
 
 if __name__ == "__main__":

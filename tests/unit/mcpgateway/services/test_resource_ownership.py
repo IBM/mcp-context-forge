@@ -29,17 +29,15 @@ from mcpgateway.services.a2a_service import A2AAgentService
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
-    with (
-        patch("mcpgateway.services.gateway_service.audit_trail") as mock_gw_audit,
-        patch("mcpgateway.services.gateway_service.structured_logger") as mock_gw_logger,
-        patch("mcpgateway.services.tool_service.audit_trail") as mock_tool_audit,
-        patch("mcpgateway.services.tool_service.structured_logger") as mock_tool_logger,
-        patch("mcpgateway.services.resource_service.audit_trail") as mock_res_audit,
-        patch("mcpgateway.services.resource_service.structured_logger") as mock_res_logger,
-        patch("mcpgateway.services.prompt_service.audit_trail") as mock_prompt_audit,
-        patch("mcpgateway.services.prompt_service.structured_logger") as mock_prompt_logger,
-        patch("mcpgateway.services.a2a_service.structured_logger") as mock_a2a_logger,
-    ):
+    with patch("mcpgateway.services.gateway_service.audit_trail") as mock_gw_audit, \
+         patch("mcpgateway.services.gateway_service.structured_logger") as mock_gw_logger, \
+         patch("mcpgateway.services.tool_service.audit_trail") as mock_tool_audit, \
+         patch("mcpgateway.services.tool_service.structured_logger") as mock_tool_logger, \
+         patch("mcpgateway.services.resource_service.audit_trail") as mock_res_audit, \
+         patch("mcpgateway.services.resource_service.structured_logger") as mock_res_logger, \
+         patch("mcpgateway.services.prompt_service.audit_trail") as mock_prompt_audit, \
+         patch("mcpgateway.services.prompt_service.structured_logger") as mock_prompt_logger, \
+         patch("mcpgateway.services.a2a_service.structured_logger") as mock_a2a_logger:
         for mock in [mock_gw_audit, mock_tool_audit, mock_res_audit, mock_prompt_audit]:
             mock.log_action = MagicMock(return_value=None)
         for mock in [mock_gw_logger, mock_tool_logger, mock_res_logger, mock_prompt_logger, mock_a2a_logger]:
@@ -162,17 +160,10 @@ class TestGatewayServiceOwnership:
         mock_gateway.resources = []
         mock_gateway.prompts = []
 
-        # Mock the fetchone result for DELETE ... RETURNING
-        mock_fetch_result = MagicMock()
-        mock_fetch_result.fetchone.return_value = ("gateway-1",)
-
         # Gateway service uses db.execute(select().options().where()) for eager loading
         mock_execute_result = MagicMock()
         mock_execute_result.scalar_one_or_none.return_value = mock_gateway
-
-        # Mock execute to return different results for select and delete
-        mock_db_session.execute.side_effect = [mock_execute_result, mock_fetch_result]
-        mock_db_session.expire = MagicMock()
+        mock_db_session.execute.return_value = mock_execute_result
 
         with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
@@ -180,8 +171,7 @@ class TestGatewayServiceOwnership:
 
             await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="owner@example.com")
 
-            # Verify execute was called (for select and delete)
-            assert mock_db_session.execute.call_count >= 2
+            mock_db_session.delete.assert_called_once_with(mock_gateway)
             mock_db_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -270,14 +260,8 @@ class TestToolServiceOwnership:
         mock_tool.id = "tool-1"
         mock_tool.owner_email = "owner@example.com"
         mock_tool.name = "Test Tool"
-        mock_tool.gateway_id = None
 
         mock_db_session.get.return_value = mock_tool
-
-        # Mock the fetchone result for DELETE ... RETURNING
-        mock_fetch_result = MagicMock()
-        mock_fetch_result.fetchone.return_value = ("tool-1",)
-        mock_db_session.execute.return_value = mock_fetch_result
 
         with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
@@ -285,8 +269,7 @@ class TestToolServiceOwnership:
 
             await tool_service.delete_tool(mock_db_session, "tool-1", user_email="owner@example.com")
 
-            # Verify execute was called for DELETE ... RETURNING
-            mock_db_session.execute.assert_called_once()
+            mock_db_session.delete.assert_called_once_with(mock_tool)
             mock_db_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -436,17 +419,10 @@ class TestTeamAdminSpecialCase:
         mock_gateway.resources = []
         mock_gateway.prompts = []
 
-        # Mock the fetchone result for DELETE ... RETURNING
-        mock_fetch_result = MagicMock()
-        mock_fetch_result.fetchone.return_value = ("gateway-1",)
-
         # Gateway service uses db.execute(select().options().where()) for eager loading
         mock_execute_result = MagicMock()
         mock_execute_result.scalar_one_or_none.return_value = mock_gateway
-
-        # Mock execute to return different results for select and delete
-        mock_db_session.execute.side_effect = [mock_execute_result, mock_fetch_result]
-        mock_db_session.expire = MagicMock()
+        mock_db_session.execute.return_value = mock_execute_result
 
         with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
@@ -455,6 +431,5 @@ class TestTeamAdminSpecialCase:
 
             await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="admin@example.com")
 
-            # Verify execute was called (for select and delete)
-            assert mock_db_session.execute.call_count >= 2
+            mock_db_session.delete.assert_called_once_with(mock_gateway)
             mock_db_session.commit.assert_called_once()

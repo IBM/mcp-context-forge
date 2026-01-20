@@ -13,7 +13,6 @@ This is the fallback implementation when Dagger is not available.
 """
 
 # Standard
-import asyncio
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404
@@ -94,7 +93,7 @@ class MCPStackPython(CICDModule):
                 with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=self.console) as progress:
                     task = progress.add_task("Building gateway...", total=None)
                     try:
-                        await asyncio.to_thread(self._build_component, gateway, config, "gateway", no_cache=no_cache)
+                        self._build_component(gateway, config, "gateway", no_cache=no_cache)
                         progress.update(task, completed=1, description="[green]✓ Built gateway[/green]")
                     except Exception as e:
                         progress.update(task, completed=1, description="[red]✗ Failed gateway[/red]")
@@ -134,7 +133,7 @@ class MCPStackPython(CICDModule):
                 task = progress.add_task(f"Building {plugin_name}...", total=None)
 
                 try:
-                    await asyncio.to_thread(self._build_component, plugin, config, plugin_name, no_cache=no_cache, copy_env_templates=copy_env_templates)
+                    self._build_component(plugin, config, plugin_name, no_cache=no_cache, copy_env_templates=copy_env_templates)
                     progress.update(task, completed=1, description=f"[green]✓ Built {plugin_name}[/green]")
                 except Exception as e:
                     progress.update(task, completed=1, description=f"[red]✗ Failed {plugin_name}[/red]")
@@ -184,16 +183,16 @@ class MCPStackPython(CICDModule):
             raise RuntimeError("'make' command not found. Cannot generate certificates.")
 
         # Generate CA
-        await asyncio.to_thread(self._run_command, ["make", "certs-mcp-ca", f"MCP_CERT_DAYS={validity_days}"])
+        self._run_command(["make", "certs-mcp-ca", f"MCP_CERT_DAYS={validity_days}"])
 
         # Generate gateway cert
-        await asyncio.to_thread(self._run_command, ["make", "certs-mcp-gateway", f"MCP_CERT_DAYS={validity_days}"])
+        self._run_command(["make", "certs-mcp-gateway", f"MCP_CERT_DAYS={validity_days}"])
 
         # Generate plugin certificates
         plugins = config.plugins
         for plugin in plugins:
             plugin_name = plugin.name
-            await asyncio.to_thread(self._run_command, ["make", "certs-mcp-plugin", f"PLUGIN_NAME={plugin_name}", f"MCP_CERT_DAYS={validity_days}"])
+            self._run_command(["make", "certs-mcp-plugin", f"PLUGIN_NAME={plugin_name}", f"MCP_CERT_DAYS={validity_days}"])
 
         if self.verbose:
             self.console.print("[green]✓ Certificates generated locally[/green]")

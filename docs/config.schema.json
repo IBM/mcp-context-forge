@@ -104,11 +104,6 @@
       "title": "Jwt Audience Verification",
       "type": "boolean"
     },
-    "jwt_issuer_verification": {
-      "default": true,
-      "title": "Jwt Issuer Verification",
-      "type": "boolean"
-    },
     "auth_required": {
       "default": true,
       "title": "Auth Required",
@@ -123,18 +118,6 @@
       "default": false,
       "description": "Require all JWT tokens to have expiration claims",
       "title": "Require Token Expiration",
-      "type": "boolean"
-    },
-    "embed_environment_in_tokens": {
-      "default": false,
-      "description": "Embed environment claim in gateway-issued JWTs for environment isolation",
-      "title": "Embed Environment In Tokens",
-      "type": "boolean"
-    },
-    "validate_token_environment": {
-      "default": false,
-      "description": "Reject tokens with mismatched environment claim (tokens without env claim are allowed)",
-      "title": "Validate Token Environment",
       "type": "boolean"
     },
     "sso_enabled": {
@@ -1557,16 +1540,8 @@
       "title": "Observability Sample Rate",
       "type": "number"
     },
-    "observability_include_paths": {
-      "description": "Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
-      "items": {
-        "type": "string"
-      },
-      "title": "Observability Include Paths",
-      "type": "array"
-    },
     "observability_exclude_paths": {
-      "description": "Regex patterns to exclude from tracing (applies after include patterns)",
+      "description": "Paths to exclude from tracing (regex)",
       "items": {
         "type": "string"
       },

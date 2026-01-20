@@ -742,55 +742,32 @@ def upgrade() -> None:
     # Fix email_team_member_history.team_member_id FK to add CASCADE delete
     # This fixes PostgreSQL constraint violations when deleting users
     conn = op.get_bind()
-    inspector = inspect(conn)
     dialect_name = conn.dialect.name
-
-    def _fk_constraint_exists(table_name: str, constraint_name: str) -> bool:
-        """Check if a foreign key constraint exists on a table.
-
-        Args:
-            table_name: Name of the table to check.
-            constraint_name: Name of the foreign key constraint.
-
-        Returns:
-            True if the constraint exists, False otherwise.
-        """
-        try:
-            fks = inspector.get_foreign_keys(table_name)
-            return any(fk.get("name") == constraint_name for fk in fks)
-        except Exception:
-            return False
 
     if dialect_name == "postgresql":
         print("\n--- PostgreSQL: Adding CASCADE to team_member_history FK ---")
-        constraint_name = "fk_email_team_member_history_team_member_id"
-        if _fk_constraint_exists("email_team_member_history", constraint_name):
-            try:
-                # Drop the existing foreign key constraint
-                op.drop_constraint(constraint_name, "email_team_member_history", type_="foreignkey")
-                print(f"✓ Dropped existing FK constraint: {constraint_name}")
+        try:
+            # Drop the existing foreign key constraint (correct name from schema)
+            op.drop_constraint("fk_email_team_member_history_team_member_id", "email_team_member_history", type_="foreignkey")
+            print("✓ Dropped existing FK constraint: fk_email_team_member_history_team_member_id")
 
-                # Recreate with CASCADE
-                op.create_foreign_key(constraint_name, "email_team_member_history", "email_team_members", ["team_member_id"], ["id"], ondelete="CASCADE")
-                print(f"✓ Created FK constraint with CASCADE: {constraint_name}")
-            except Exception as e:
-                print(f"⚠️  Could not update FK constraint: {e}")
-        else:
-            print(f"⚠️  Skipping FK update: constraint '{constraint_name}' does not exist (may not exist in older schemas)")
+            # Recreate with CASCADE
+            op.create_foreign_key("fk_email_team_member_history_team_member_id", "email_team_member_history", "email_team_members", ["team_member_id"], ["id"], ondelete="CASCADE")
+            print("✓ Created FK constraint with CASCADE: fk_email_team_member_history_team_member_id")
+        except Exception as e:
+            print(f"⚠️  Could not update FK constraint: {e}")
+            print("   This is expected if the constraint already has CASCADE")
     elif dialect_name == "mysql":
         print("\n--- MySQL: Adding CASCADE to team_member_history FK ---")
-        constraint_name = "email_team_member_history_ibfk_1"
-        if _fk_constraint_exists("email_team_member_history", constraint_name):
-            try:
-                op.drop_constraint(constraint_name, "email_team_member_history", type_="foreignkey")
-                print(f"✓ Dropped existing FK constraint: {constraint_name}")
+        try:
+            # MySQL may use a different constraint name
+            op.drop_constraint("email_team_member_history_ibfk_1", "email_team_member_history", type_="foreignkey")
+            print("✓ Dropped existing FK constraint: email_team_member_history_ibfk_1")
 
-                op.create_foreign_key(constraint_name, "email_team_member_history", "email_team_members", ["team_member_id"], ["id"], ondelete="CASCADE")
-                print(f"✓ Created FK constraint with CASCADE: {constraint_name}")
-            except Exception as e:
-                print(f"⚠️  Could not update FK constraint: {e}")
-        else:
-            print(f"⚠️  Skipping FK update: constraint '{constraint_name}' does not exist (may not exist in older schemas)")
+            op.create_foreign_key("email_team_member_history_ibfk_1", "email_team_member_history", "email_team_members", ["team_member_id"], ["id"], ondelete="CASCADE")
+            print("✓ Created FK constraint with CASCADE: email_team_member_history_ibfk_1")
+        except Exception as e:
+            print(f"⚠️  Could not update FK constraint: {e}")
     else:
         print(f"\n--- {dialect_name}: Skipping FK CASCADE update (not required) ---")
 
@@ -806,55 +783,30 @@ def downgrade() -> None:
     print("=" * 80)
 
     conn = op.get_bind()
-    inspector = inspect(conn)
     dialect_name = conn.dialect.name
-
-    def _fk_constraint_exists(table_name: str, constraint_name: str) -> bool:
-        """Check if a foreign key constraint exists on a table.
-
-        Args:
-            table_name: Name of the table to check.
-            constraint_name: Name of the foreign key constraint.
-
-        Returns:
-            True if the constraint exists, False otherwise.
-        """
-        try:
-            fks = inspector.get_foreign_keys(table_name)
-            return any(fk.get("name") == constraint_name for fk in fks)
-        except Exception:
-            return False
 
     if dialect_name == "postgresql":
         print("\n--- PostgreSQL: Removing CASCADE from team_member_history FK ---")
-        constraint_name = "fk_email_team_member_history_team_member_id"
-        if _fk_constraint_exists("email_team_member_history", constraint_name):
-            try:
-                # Drop the CASCADE constraint
-                op.drop_constraint(constraint_name, "email_team_member_history", type_="foreignkey")
-                print("✓ Dropped FK constraint with CASCADE")
+        try:
+            # Drop the CASCADE constraint
+            op.drop_constraint("fk_email_team_member_history_team_member_id", "email_team_member_history", type_="foreignkey")
+            print("✓ Dropped FK constraint with CASCADE")
 
-                # Recreate without CASCADE
-                op.create_foreign_key(constraint_name, "email_team_member_history", "email_team_members", ["team_member_id"], ["id"])
-                print("✓ Recreated FK constraint without CASCADE")
-            except Exception as e:
-                print(f"⚠️  Could not revert FK constraint: {e}")
-        else:
-            print(f"⚠️  Skipping FK revert: constraint '{constraint_name}' does not exist")
+            # Recreate without CASCADE
+            op.create_foreign_key("fk_email_team_member_history_team_member_id", "email_team_member_history", "email_team_members", ["team_member_id"], ["id"])
+            print("✓ Recreated FK constraint without CASCADE")
+        except Exception as e:
+            print(f"⚠️  Could not revert FK constraint: {e}")
     elif dialect_name == "mysql":
         print("\n--- MySQL: Removing CASCADE from team_member_history FK ---")
-        constraint_name = "email_team_member_history_ibfk_1"
-        if _fk_constraint_exists("email_team_member_history", constraint_name):
-            try:
-                op.drop_constraint(constraint_name, "email_team_member_history", type_="foreignkey")
-                print("✓ Dropped FK constraint with CASCADE")
+        try:
+            op.drop_constraint("email_team_member_history_ibfk_1", "email_team_member_history", type_="foreignkey")
+            print("✓ Dropped FK constraint with CASCADE")
 
-                op.create_foreign_key(constraint_name, "email_team_member_history", "email_team_members", ["team_member_id"], ["id"])
-                print("✓ Recreated FK constraint without CASCADE")
-            except Exception as e:
-                print(f"⚠️  Could not revert FK constraint: {e}")
-        else:
-            print(f"⚠️  Skipping FK revert: constraint '{constraint_name}' does not exist")
+            op.create_foreign_key("email_team_member_history_ibfk_1", "email_team_member_history", "email_team_members", ["team_member_id"], ["id"])
+            print("✓ Recreated FK constraint without CASCADE")
+        except Exception as e:
+            print(f"⚠️  Could not revert FK constraint: {e}")
     else:
         print(f"\n--- {dialect_name}: Skipping FK CASCADE revert (not required) ---")
 

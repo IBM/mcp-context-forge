@@ -22,7 +22,6 @@ from pydantic import BaseModel
 # First-Party
 from mcpgateway.db import get_db
 from mcpgateway.plugins.framework import (
-    get_attr,
     HttpHeaderPayload,
     Plugin,
     PluginConfig,
@@ -123,15 +122,14 @@ class Vault(Plugin):
         logger.debug(f"Processing tool pre-invoke for tool {payload}  with context {context}")
         logger.debug(f"Gateway metadata {context.global_context.metadata['gateway']}")
 
-        gateway_metadata = context.global_context.metadata.get("gateway")
+        gateway_metadata = context.global_context.metadata["gateway"]
 
         system_key: str | None = None
         auth_header: str | None = None
         if self._sconfig.system_handling == SystemHandling.TAG:
             # Extract tags from dict format {"id": "...", "label": "..."}
             normalized_tags: list[str] = []
-            gateway_tags = get_attr(gateway_metadata, "tags", [])
-            for tag in gateway_tags if gateway_tags else []:
+            for tag in gateway_metadata.tags:
                 if isinstance(tag, dict):
                     # Use 'label' field (the actual tag value)
                     tag_value = str(tag.get("label", ""))

@@ -394,13 +394,6 @@ class WebhookNotificationPlugin(Plugin):
         await self._notify_webhooks(EventType.RESOURCE_SUCCESS, context, metadata={"resource_uri": payload.uri})
         return ResourcePostFetchResult()
 
-    async def shutdown(self) -> None:
-        """Shutdown and cleanup HTTP client when plugin shuts down."""
-        client = getattr(self, "_client", None)
-        if client:
-            await client.aclose()
-            self._client = None
-
     async def __aenter__(self):
         """Async context manager entry.
 
@@ -411,4 +404,5 @@ class WebhookNotificationPlugin(Plugin):
 
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Async context manager exit - cleanup HTTP client."""
-        await self.shutdown()
+        if hasattr(self, "_client"):
+            await self._client.aclose()

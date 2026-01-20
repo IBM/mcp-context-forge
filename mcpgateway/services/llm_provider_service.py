@@ -337,26 +337,21 @@ class LLMProviderService:
         logger.info(f"Deleted LLM provider: {provider_name} (ID: {provider_id})")
         return True
 
-    def set_provider_state(self, db: Session, provider_id: str, activate: Optional[bool] = None) -> LLMProvider:
-        """Set provider enabled state.
+    def toggle_provider(self, db: Session, provider_id: str) -> LLMProvider:
+        """Toggle provider enabled status.
 
         Args:
             db: Database session.
-            provider_id: Provider ID to update.
-            activate: If provided, sets enabled to this value. If None, inverts current state (legacy behavior).
+            provider_id: Provider ID to toggle.
 
         Returns:
             Updated LLMProvider instance.
         """
         provider = self.get_provider(db, provider_id)
-        if activate is None:
-            # Legacy toggle behavior for backward compatibility
-            provider.enabled = not provider.enabled
-        else:
-            provider.enabled = activate
+        provider.enabled = not provider.enabled
         db.commit()
         db.refresh(provider)
-        logger.info(f"Set LLM provider state: {provider.name} enabled={provider.enabled}")
+        logger.info(f"Toggled LLM provider: {provider.name} enabled={provider.enabled}")
         return provider
 
     # ---------------------------------------------------------------------------
@@ -552,26 +547,21 @@ class LLMProviderService:
         logger.info(f"Deleted LLM model: {model_name} (ID: {model_id})")
         return True
 
-    def set_model_state(self, db: Session, model_id: str, activate: Optional[bool] = None) -> LLMModel:
-        """Set model enabled state.
+    def toggle_model(self, db: Session, model_id: str) -> LLMModel:
+        """Toggle model enabled status.
 
         Args:
             db: Database session.
-            model_id: Model ID to update.
-            activate: If provided, sets enabled to this value. If None, inverts current state (legacy behavior).
+            model_id: Model ID to toggle.
 
         Returns:
             Updated LLMModel instance.
         """
         model = self.get_model(db, model_id)
-        if activate is None:
-            # Legacy toggle behavior for backward compatibility
-            model.enabled = not model.enabled
-        else:
-            model.enabled = activate
+        model.enabled = not model.enabled
         db.commit()
         db.refresh(model)
-        logger.info(f"Set LLM model state: {model.model_id} enabled={model.enabled}")
+        logger.info(f"Toggled LLM model: {model.model_id} enabled={model.enabled}")
         return model
 
     # ---------------------------------------------------------------------------

@@ -1246,75 +1246,75 @@ class WriteAPIUser(BaseUser):
                 response.success()  # Conflict or validation error is acceptable for load test
 
     @task(2)
-    @tag("api", "write", "state")
-    def set_server_state(self):
-        """Set a server's enabled state."""
+    @tag("api", "write", "toggle")
+    def toggle_server_status(self):
+        """Toggle a server's enabled status."""
         if SERVER_IDS:
             server_id = random.choice(SERVER_IDS)
             with self.client.post(
-                f"/servers/{server_id}/state",
+                f"/servers/{server_id}/toggle",
                 headers=self.auth_headers,
-                name="/servers/[id]/state",
+                name="/servers/[id]/toggle",
                 catch_response=True,
             ) as response:
                 # 403/404 are acceptable - entity may not exist or may be read-only
                 self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
-    @tag("api", "write", "state")
-    def set_tool_state(self):
-        """Set a tool's enabled state."""
+    @tag("api", "write", "toggle")
+    def toggle_tool_status(self):
+        """Toggle a tool's enabled status."""
         if TOOL_IDS:
             tool_id = random.choice(TOOL_IDS)
             with self.client.post(
-                f"/tools/{tool_id}/state",
+                f"/tools/{tool_id}/toggle",
                 headers=self.auth_headers,
-                name="/tools/[id]/state",
+                name="/tools/[id]/toggle",
                 catch_response=True,
             ) as response:
                 # 403/404 are acceptable - entity may not exist or may be read-only
                 self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
-    @tag("api", "write", "state")
-    def set_resource_state(self):
-        """Set a resource's enabled state."""
+    @tag("api", "write", "toggle")
+    def toggle_resource_status(self):
+        """Toggle a resource's enabled status."""
         if RESOURCE_IDS:
             resource_id = random.choice(RESOURCE_IDS)
             with self.client.post(
-                f"/resources/{resource_id}/state",
+                f"/resources/{resource_id}/toggle",
                 headers=self.auth_headers,
-                name="/resources/[id]/state",
+                name="/resources/[id]/toggle",
                 catch_response=True,
             ) as response:
                 # 403/404 are acceptable - entity may not exist or may be read-only
                 self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
-    @tag("api", "write", "state")
-    def set_prompt_state(self):
-        """Set a prompt's enabled state."""
+    @tag("api", "write", "toggle")
+    def toggle_prompt_status(self):
+        """Toggle a prompt's enabled status."""
         if PROMPT_IDS:
             prompt_id = random.choice(PROMPT_IDS)
             with self.client.post(
-                f"/prompts/{prompt_id}/state",
+                f"/prompts/{prompt_id}/toggle",
                 headers=self.auth_headers,
-                name="/prompts/[id]/state",
+                name="/prompts/[id]/toggle",
                 catch_response=True,
             ) as response:
                 # 403/404 are acceptable - entity may not exist or may be read-only
                 self._validate_json_response(response, allowed_codes=[200, 403, 404])
 
     @task(2)
-    @tag("api", "write", "state")
-    def set_gateway_state(self):
-        """Set a gateway's enabled state."""
+    @tag("api", "write", "toggle")
+    def toggle_gateway_status(self):
+        """Toggle a gateway's enabled status."""
         if GATEWAY_IDS:
             gateway_id = random.choice(GATEWAY_IDS)
             with self.client.post(
-                f"/gateways/{gateway_id}/state",
+                f"/gateways/{gateway_id}/toggle",
                 headers=self.auth_headers,
-                name="/gateways/[id]/state",
+                name="/gateways/[id]/toggle",
                 catch_response=True,
             ) as response:
                 # 403/404/502 are acceptable - gateway may not exist or may be unreachable

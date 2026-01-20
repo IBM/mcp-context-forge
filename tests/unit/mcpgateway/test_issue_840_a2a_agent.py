@@ -87,12 +87,8 @@ class TestIssue840UserInputForA2AAgentTest:
             config={},
             auth_type="none",
             auth_value=None,
-            auth_query_params=None,
             enabled=True,
             reachable=True,
-            visibility="public",
-            team_id=None,
-            owner_email=None,
             tags=[{"id": "a2a", "label": "a2a"}, {"id": "agent", "label": "agent"}],
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
@@ -103,10 +99,8 @@ class TestIssue840UserInputForA2AAgentTest:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    @patch("mcpgateway.services.a2a_service.get_for_update")
     async def test_invoke_agent_with_custom_user_query(
         self,
-        mock_get_for_update,
         mock_get_client,
         mock_fresh_db,
         mock_metrics_buffer_fn,
@@ -130,11 +124,8 @@ class TestIssue840UserInputForA2AAgentTest:
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Mock database operations - agent lookup by name returns ID
-        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_a2a_agent.id
-
-        # Mock get_for_update to return our sample agent
-        mock_get_for_update.return_value = sample_a2a_agent
+        # Mock get_agent_by_name to return our sample agent
+        a2a_service.get_agent_by_name = AsyncMock(return_value=sample_a2a_agent)
 
         # Mock fresh_db_session
         mock_ts_db = MagicMock()
@@ -219,10 +210,8 @@ class TestIssue840UserInputForA2AAgentTest:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    @patch("mcpgateway.services.a2a_service.get_for_update")
     async def test_custom_agent_receives_query_in_parameters(
         self,
-        mock_get_for_update,
         mock_get_client,
         mock_fresh_db,
         mock_metrics_buffer_fn,
@@ -248,11 +237,8 @@ class TestIssue840UserInputForA2AAgentTest:
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Mock database operations - agent lookup by name returns ID
-        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_a2a_agent.id
-
-        # Mock get_for_update to return our sample agent
-        mock_get_for_update.return_value = sample_a2a_agent
+        # Mock get_agent_by_name
+        a2a_service.get_agent_by_name = AsyncMock(return_value=sample_a2a_agent)
 
         # Mock fresh_db_session
         mock_ts_db = MagicMock()
@@ -283,21 +269,13 @@ class TestIssue840UserInputForA2AAgentTest:
         request_body = call_args.kwargs.get("json") or call_args[1].get("json")
         assert request_body is not None, "Request body should not be None"
 
-        # Per A2A protocol for custom agents, verify the structure.
-        # Accept either the A2A `parameters` object OR JSON-RPC `params` wrapper
-        # (some deployments may use JSON-RPC). Ensure the user's `query` is present.
-        if "parameters" in request_body:
-            params = request_body["parameters"]
-            # Ensure interaction_type present for custom A2A format
-            assert "interaction_type" in request_body, "Request should contain 'interaction_type' for custom agents"
-            assert request_body["interaction_type"] == "admin_test"
-        elif "params" in request_body and "jsonrpc" in request_body:
-            params = request_body["params"]
-            assert isinstance(params, dict), "JSON-RPC 'params' should be an object"
-        else:
-            assert False, "Request should contain 'parameters' object or JSON-RPC 'params' with query"
+        # Per A2A protocol for custom agents, verify the structure:
+        # {"interaction_type": "...", "parameters": {"query": "..."}, "protocol_version": "..."}
+        assert "parameters" in request_body, "Request should contain 'parameters' object"
+        assert "interaction_type" in request_body, "Request should contain 'interaction_type'"
 
-        # Verify the query is present in the resolved params
+        # Verify the query is in parameters
+        params = request_body.get("parameters", {})
         assert "query" in params or "message" in params, "parameters should contain query or message"
 
         # Verify the actual query value
@@ -472,16 +450,7 @@ class TestIssue840A2AToolsNotListedInGlobalTools:
         mock_tool_read.integration_type = "A2A"
         mock_tool_read.tags = ["a2a", "agent"]
 
-        # Mock registry cache to ensure cache miss (prevents stale cached data from interfering)
-        mock_cache = MagicMock()
-        mock_cache.get = AsyncMock(return_value=None)
-        mock_cache.set = AsyncMock()
-        mock_cache.hash_filters = MagicMock(return_value="test_hash")
-
-        with (
-            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=mock_cache),
-            patch.object(tool_service, "convert_tool_to_read", return_value=mock_tool_read),
-        ):
+        with patch.object(tool_service, "convert_tool_to_read", return_value=mock_tool_read):
             # List tools - this should include A2A tools
             result = await tool_service.list_tools(
                 db=mock_db,
@@ -532,16 +501,7 @@ class TestIssue840A2AToolsNotListedInGlobalTools:
         mock_tool_read.integration_type = "A2A"
         mock_tool_read.tags = ["a2a", "agent", "test"]
 
-        # Mock registry cache to ensure cache miss (prevents stale cached data from interfering)
-        mock_cache = MagicMock()
-        mock_cache.get = AsyncMock(return_value=None)
-        mock_cache.set = AsyncMock()
-        mock_cache.hash_filters = MagicMock(return_value="test_hash")
-
-        with (
-            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=mock_cache),
-            patch.object(tool_service, "convert_tool_to_read", return_value=mock_tool_read),
-        ):
+        with patch.object(tool_service, "convert_tool_to_read", return_value=mock_tool_read):
             # Filter by "a2a" tag - should find the A2A tool
             result = await tool_service.list_tools(
                 db=mock_db,

@@ -15,14 +15,6 @@
   - Does NOT affect log aggregation (`METRICS_AGGREGATION_ENABLED`) or Prometheus (`ENABLE_METRICS`)
   - Default: `true` (existing behavior unchanged)
 
-#### **🔐 RFC 8707 OAuth Resource Indicators for JWT Tokens**
-* **OAuth JWT token support** - Enables OAuth providers to return JWT tokens instead of opaque tokens
-  - Adds RFC 8707 `resource` parameter to OAuth authorization, token exchange, and refresh requests
-  - Automatically derives `resource` from the MCP server URL (`gateway.url`), normalized per RFC 8707
-  - Fixes "Invalid Compact JWS" errors when OAuth providers (e.g., BetterAuth) default to opaque tokens
-  - No configuration changes required for most OAuth providers
-  - Note: Providers requiring pre-registered resource identifiers may need explicit `resource` configuration
-
 ### Deprecated
 
 #### **🔌 Federation Auto-Discovery & Forwarding Services** ([#1912](https://github.com/IBM/mcp-context-forge/issues/1912))
@@ -755,7 +747,7 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
   - `GET /grpc` - List all gRPC services with team filtering
   - `GET /grpc/{id}` - Get service details
   - `PUT /grpc/{id}` - Update service configuration
-  - `POST /grpc/{id}/state` - Enable/disable service
+  - `POST /grpc/{id}/toggle` - Enable/disable service
   - `POST /grpc/{id}/delete` - Delete service
   - `POST /grpc/{id}/reflect` - Re-trigger service discovery
   - `GET /grpc/{id}/methods` - List discovered methods

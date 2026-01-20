@@ -15,7 +15,7 @@
 {{- $postgresImage = printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag -}}
 {{- end -}}
 
-{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
+{{- if .Values.postgres.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -46,7 +46,6 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
-      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       initContainers:
       {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") .Values.postgres.upgrade.backupCompleted }}
         # Init container to upgrade PostgreSQL data from version 17 to 18

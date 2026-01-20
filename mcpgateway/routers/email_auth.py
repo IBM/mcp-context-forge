@@ -19,7 +19,7 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import List, Optional, Union
+from typing import Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser, SessionLocal, utc_now
+from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     AuthenticationResponse,
@@ -136,31 +136,8 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Get user's teams for namespace information (ensure safe access)
-    try:
-        teams = user.get_teams() if callable(getattr(user, "get_teams", None)) else []
-    except Exception:
-        teams = []
-
-    # Normalize teams into JSON-serializable primitives
-    safe_teams = []
-    for team in teams or []:
-        try:
-            safe_teams.append(
-                {
-                    "id": int(getattr(team, "id", None)) if getattr(team, "id", None) is not None else None,
-                    "name": str(getattr(team, "name", "")),
-                    "slug": str(getattr(team, "slug", "")),
-                    "is_personal": bool(getattr(team, "is_personal", False)),
-                    "role": str(next((m.role for m in getattr(user, "team_memberships", []) if getattr(m, "team_id", None) == getattr(team, "id", None)), "member")),
-                }
-            )
-        except Exception:
-            # Fallback to a string representation if anything goes wrong
-            try:
-                safe_teams.append({"id": None, "name": str(team), "slug": str(team), "is_personal": False, "role": "member"})
-            except Exception:
-                safe_teams.append({"id": None, "name": "", "slug": "", "is_personal": False, "role": "member"})
+    # Get user's teams for namespace information
+    teams = user.get_teams()
 
     # Create enhanced JWT payload with team and namespace information
     payload = {
@@ -173,21 +150,24 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         "jti": jti or str(__import__("uuid").uuid4()),
         # User profile information
         "user": {
-            "email": str(getattr(user, "email", "")),
-            "full_name": str(getattr(user, "full_name", "")),
-            "is_admin": bool(getattr(user, "is_admin", False)),
-            "auth_provider": str(getattr(user, "auth_provider", "local")),
+            "email": user.email,
+            "full_name": user.full_name,
+            "is_admin": user.is_admin,
+            "auth_provider": user.auth_provider,
         },
         # Namespace access (backwards compatible)
-        "namespaces": [f"user:{getattr(user, 'email', '')}", *[f"team:{t.get('slug', '')}" for t in safe_teams], "public"],
+        "namespaces": [f"user:{user.email}", *[f"team:{team.slug}" for team in teams], "public"],
         # Token scoping (if provided)
-        "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
+        "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},  # Full access for regular user tokens
     }
 
     # For admin users: omit "teams" key entirely to enable unrestricted access bypass
     # For regular users: include teams for proper team-based scoping
-    if not bool(getattr(user, "is_admin", False)):
-        payload["teams"] = safe_teams
+    if not user.is_admin:
+        payload["teams"] = [
+            {"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": next((m.role for m in user.team_memberships if m.team_id == team.id), "member")}
+            for team in teams
+        ]
 
     # Generate token using centralized token creation
     token = await create_jwt_token(payload)
@@ -208,13 +188,13 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Create simple JWT payload (original format) with primitives only
+    # Create simple JWT payload (original format)
     payload = {
-        "sub": str(getattr(user, "email", "")),
-        "email": str(getattr(user, "email", "")),
-        "full_name": str(getattr(user, "full_name", "")),
-        "is_admin": bool(getattr(user, "is_admin", False)),
-        "auth_provider": str(getattr(user, "auth_provider", "local")),
+        "sub": user.email,
+        "email": user.email,
+        "full_name": user.full_name,
+        "is_admin": user.is_admin,
+        "auth_provider": user.auth_provider,
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
         "iss": settings.jwt_issuer,
@@ -265,48 +245,26 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-        # Password change enforcement respects master switch and individual toggles
-        needs_password_change = False
+        # Check if password change is required OR if user is using default password
+        needs_password_change = user.password_change_required
 
-        if settings.password_change_enforcement_enabled:
-            # If flag is set on the user, always honor it (flag is cleared when password is changed)
-            if getattr(user, "password_change_required", False):
+        # Also check if user is using the default password
+        if not needs_password_change:
+            # First-Party
+            from mcpgateway.services.argon2_service import Argon2PasswordService
+
+            password_service = Argon2PasswordService()
+            is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+            if is_using_default_password:
                 needs_password_change = True
-                logger.debug("User %s has password_change_required flag set", login_request.email)
-
-            # Enforce expiry-based password change if configured and not already required
-            if not needs_password_change:
-                try:
-                    pwd_changed = getattr(user, "password_changed_at", None)
-                    if isinstance(pwd_changed, datetime):
-                        age_days = (utc_now() - pwd_changed).days
-                        max_age = getattr(settings, "password_max_age_days", 90)
-                        if age_days >= max_age:
-                            needs_password_change = True
-                            logger.debug("User %s password expired (%s days >= %s)", login_request.email, age_days, max_age)
-                except Exception as exc:
-                    logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
-
-            # Detect default password on login if enabled
-            if getattr(settings, "detect_default_password_on_login", True):
-                # First-Party
-                from mcpgateway.services.argon2_service import Argon2PasswordService
-
-                password_service = Argon2PasswordService()
-                is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
-                if is_using_default_password:
-                    # Mark user for password change depending on configuration
-                    if getattr(settings, "require_password_change_for_default_password", True):
-                        user.password_change_required = True
-                        needs_password_change = True
-                        try:
-                            db.commit()
-                        except Exception as exc:  # log commit failures
-                            logger.warning("Failed to commit password_change_required flag for %s: %s", login_request.email, exc)
-                    else:
-                        logger.info("User %s is using default password but enforcement is disabled", login_request.email)
+                # Set the flag in database for future reference
+                user.password_change_required = True
+                db.commit()
 
         if needs_password_change:
+            # For API login, return a specific error indicating password change is required.
+            # Return a response directly to avoid any exception handling layers converting
+            # the HTTPException into a 500 in some middleware paths.
             logger.info(f"Login blocked for {login_request.email}: password change required")
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -486,7 +444,7 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 
 
 # Admin-only endpoints
-@email_auth_router.get("/admin/users", response_model=Union[CursorPaginatedUsersResponse, List[EmailUserResponse]])
+@email_auth_router.get("/admin/users", response_model=CursorPaginatedUsersResponse)
 @require_permission("admin.user_management")
 async def list_users(
     cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
@@ -496,28 +454,26 @@ async def list_users(
         le=settings.pagination_max_page_size,
         description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size.",
     ),
-    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
+    offset: int = Query(0, ge=0, description="Number of users to skip (deprecated; use cursor pagination)."),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
-) -> Union[CursorPaginatedUsersResponse, List[EmailUserResponse]]:
+):
     """List all users (admin only) with cursor-based pagination support.
 
     Args:
         cursor: Pagination cursor for fetching the next set of results
         limit: Maximum number of users to return. Use 0 for all users (no limit).
             If not specified, uses pagination_default_page_size (default: 50).
-        include_pagination: Whether to include cursor pagination metadata in the response (default: false)
+        offset: Number of users to skip (deprecated; use cursor pagination)
         current_user_ctx: Currently authenticated user context with permissions
 
     Returns:
-        CursorPaginatedUsersResponse with users and nextCursor if include_pagination=true, or
-        List of users if include_pagination=false
+        CursorPaginatedUsersResponse: List of users with pagination metadata
 
     Raises:
         HTTPException: If user is not admin
 
     Examples:
-        >>> # Cursor-based with pagination: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ&include_pagination=true
-        >>> # Simple list: GET /auth/email/admin/users
+        >>> # Cursor-based: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ
         >>> # Headers: Authorization: Bearer <admin_token>
     """
 
@@ -525,13 +481,11 @@ async def list_users(
     auth_service = EmailAuthService(db)
 
     try:
-        result = await auth_service.list_users(cursor=cursor, limit=limit)
-        user_responses = [EmailUserResponse.from_email_user(user) for user in result.data]
-
-        if include_pagination:
-            return CursorPaginatedUsersResponse(users=user_responses, next_cursor=result.next_cursor)
-
-        return user_responses
+        result = await auth_service.list_users(cursor=cursor, limit=limit, offset=offset)
+        return CursorPaginatedUsersResponse(
+            users=[EmailUserResponse.from_email_user(user) for user in result.data],
+            next_cursor=result.next_cursor,
+        )
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")
@@ -610,12 +564,8 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
             auth_provider="local",
         )
 
-        # If the user was created with the default password, optionally force password change
-        if (
-            settings.password_change_enforcement_enabled
-            and getattr(settings, "require_password_change_for_default_password", True)
-            and user_request.password == settings.default_user_password.get_secret_value()
-        ):  # nosec B105
+        # If the user was created with the default password, force password change
+        if user_request.password == settings.default_user_password.get_secret_value():  # nosec B105
             user.password_change_required = True
             db.commit()
 
@@ -710,7 +660,6 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
             # Update password hash directly
             user.password_hash = password_service.hash_password(user_request.password)
             user.password_change_required = False  # Clear password change requirement
-            user.password_changed_at = utc_now()  # Update password change timestamp
 
         db.commit()
         db.refresh(user)

@@ -35,7 +35,6 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
-      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       containers:
         - name: mcp-context-forge
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
@@ -55,56 +54,27 @@ spec:
             - name: POSTGRES_HOST
               {{- if .Values.pgbouncer.enabled }}
               value: {{ printf "%s-pgbouncer" (include "mcp-stack.fullname" .) }}
-              {{- else if .Values.postgres.external.enabled }}
-              {{- if .Values.postgres.external.existingSecret }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . }}
-                  key: {{ .Values.postgres.external.hostKey | default "host" }}
-              {{- else }}
-              value: {{ .Values.postgres.external.host | quote }}
-              {{- end }}
               {{- else }}
               value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
               {{- end }}
             - name: POSTGRES_PORT
               {{- if .Values.pgbouncer.enabled }}
               value: "{{ .Values.pgbouncer.service.port }}"
-              {{- else if .Values.postgres.external.enabled }}
-              {{- if .Values.postgres.external.existingSecret }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . }}
-                  key: {{ .Values.postgres.external.portKey | default "port" }}
-              {{- else }}
-              value: "{{ .Values.postgres.external.port }}"
-              {{- end }}
               {{- else }}
               value: "{{ .Values.mcpContextForge.env.postgres.port }}"
               {{- end }}
             - name: POSTGRES_DB
-              {{- if .Values.postgres.external.enabled }}
-              {{- if .Values.postgres.external.existingSecret }}
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: {{ .Values.postgres.external.databaseKey | default "dbname" }}
-              {{- else }}
-              value: {{ .Values.postgres.external.database | quote }}
-              {{- end }}
-              {{- else }}
               value: "{{ .Values.mcpContextForge.env.postgres.db }}"
-              {{- end }}
             - name: POSTGRES_USER
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.userKey | default "user" }}{{ else }}POSTGRES_USER{{ end }}
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
+                  key: POSTGRES_PASSWORD
 
             # ---------- REDIS ----------
             - name: REDIS_HOST
@@ -138,12 +108,6 @@ spec:
             - name: REDIS_URL
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
 
-            # ---------- EXTRA ENV (user-defined) ----------
-            # Placed last so users can override any variable including derived URLs
-            {{- if .Values.mcpContextForge.extraEnv }}
-            {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}
-            {{- end }}
-
           ################################################################
           # BULK ENV-VARS - pulled from ConfigMap + Secret
           ################################################################
@@ -152,9 +116,6 @@ spec:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-secret
             - configMapRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-config
-            {{- if .Values.mcpContextForge.extraEnvFrom }}
-            {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
-            {{- end }}
 
           ################################################################
           # HEALTH & READINESS PROBES

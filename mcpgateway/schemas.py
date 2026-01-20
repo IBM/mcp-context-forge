@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import orjson
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, SecretStr, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import Annotations, ImageContent
@@ -2492,7 +2492,7 @@ class GatewayCreate(BaseModel):
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -2503,17 +2503,6 @@ class GatewayCreate(BaseModel):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
-
-    # Query Parameter Authentication (INSECURE)
-    auth_query_param_key: Optional[str] = Field(
-        None,
-        description="Query parameter name for authentication (e.g., 'api_key', 'tavilyApiKey')",
-        pattern=r"^[a-zA-Z_][a-zA-Z0-9_\-]*$",
-    )
-    auth_query_param_value: Optional[SecretStr] = Field(
-        None,
-        description="Query parameter value (API key). Stored encrypted.",
-    )
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
@@ -2740,7 +2729,7 @@ class GatewayCreate(BaseModel):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -2760,48 +2749,7 @@ class GatewayCreate(BaseModel):
         if auth_type == "one_time_auth":
             return None  # No auth_value needed for one-time auth
 
-        if auth_type == "query_param":
-            # Query param auth doesn't use auth_value field
-            # Validation is handled by model_validator
-            return None
-
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
-
-    @model_validator(mode="after")
-    def validate_query_param_auth(self) -> "GatewayCreate":
-        """Validate query parameter authentication configuration.
-
-        Returns:
-            GatewayCreate: The validated instance.
-
-        Raises:
-            ValueError: If query param auth is disabled or host is not in allowlist.
-        """
-        if self.auth_type != "query_param":
-            return self
-
-        # Check feature flag
-        if not settings.insecure_allow_queryparam_auth:
-            raise ValueError("Query parameter authentication is disabled. " + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable. " + "WARNING: API keys in URLs may appear in proxy logs.")
-
-        # Check required fields
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when auth_type is 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when auth_type is 'query_param'")
-
-        # Check host allowlist (if configured)
-        if settings.insecure_queryparam_auth_allowed_hosts:
-            parsed = urlparse(str(self.url))
-            # Extract hostname properly (handles IPv6, ports, userinfo)
-            hostname = parsed.hostname or ""
-            hostname = hostname.lower()
-
-            if hostname not in settings.insecure_queryparam_auth_allowed_hosts:
-                allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
-
-        return self
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
 class GatewayUpdate(BaseModelWithConfigDict):
@@ -2831,17 +2779,6 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
-
-    # Query Parameter Authentication (INSECURE)
-    auth_query_param_key: Optional[str] = Field(
-        None,
-        description="Query parameter name for authentication",
-        pattern=r"^[a-zA-Z_][a-zA-Z0-9_\-]*$",
-    )
-    auth_query_param_value: Optional[SecretStr] = Field(
-        None,
-        description="Query parameter value (API key)",
-    )
 
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
@@ -3034,7 +2971,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -3054,36 +2991,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
         if auth_type == "one_time_auth":
             return None  # No auth_value needed for one-time auth
 
-        if auth_type == "query_param":
-            # Query param auth doesn't use auth_value field
-            # Validation is handled by model_validator
-            return None
-
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
-
-    @model_validator(mode="after")
-    def validate_query_param_auth(self) -> "GatewayUpdate":
-        """Validate query parameter authentication configuration.
-
-        NOTE: This only runs when auth_type is explicitly set to "query_param".
-        Service-layer enforcement in update_gateway() handles the case where
-        auth_type is omitted but the existing gateway uses query_param auth.
-
-        Returns:
-            GatewayUpdate: The validated instance.
-
-        Raises:
-            ValueError: If required fields are missing when setting query_param auth.
-        """
-        if self.auth_type != "query_param":
-            return self
-        # Validate fields are provided when explicitly setting query_param auth
-        # Feature flag/allowlist check happens in service layer (has access to existing gateway)
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
-        return self
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
 class GatewayRead(BaseModelWithConfigDict):
@@ -3123,23 +3031,13 @@ class GatewayRead(BaseModelWithConfigDict):
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
     auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
     auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
-
-    # Query Parameter Authentication (masked for security)
-    auth_query_param_key: Optional[str] = Field(
-        None,
-        description="Query parameter name for authentication",
-    )
-    auth_query_param_value_masked: Optional[str] = Field(
-        None,
-        description="Masked indicator if query param auth is configured",
-    )
 
     # auth_value will populate the following fields
     auth_username: Optional[str] = Field(None, description="username for basic authentication")
@@ -3179,47 +3077,6 @@ class GatewayRead(BaseModelWithConfigDict):
     # Per-gateway refresh configuration
     refresh_interval_seconds: Optional[int] = Field(None, description="Per-gateway refresh interval in seconds")
     last_refresh_at: Optional[datetime] = Field(None, description="Timestamp of last successful refresh")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _mask_query_param_auth(cls, data: Any) -> Any:
-        """Mask query param auth value when constructing from DB model.
-
-        This extracts auth_query_params from the raw data (DB model or dict)
-        and populates the masked fields for display.
-
-        Args:
-            data: The raw data (dict or ORM model) to process.
-
-        Returns:
-            Any: The processed data with masked query param values.
-        """
-        # Handle dict input
-        if isinstance(data, dict):
-            auth_query_params = data.get("auth_query_params")
-            if auth_query_params and isinstance(auth_query_params, dict):
-                # Extract the param key name and set masked value
-                first_key = next(iter(auth_query_params.keys()), None)
-                if first_key:
-                    data["auth_query_param_key"] = first_key
-                    data["auth_query_param_value_masked"] = settings.masked_auth_value
-        # Handle ORM model input (has auth_query_params attribute)
-        elif hasattr(data, "auth_query_params"):
-            auth_query_params = getattr(data, "auth_query_params", None)
-            if auth_query_params and isinstance(auth_query_params, dict):
-                # Convert ORM to dict for modification, preserving all attributes
-                # Start with table columns
-                data_dict = {c.name: getattr(data, c.name) for c in data.__table__.columns}
-                # Preserve dynamically added attributes like 'team' (from relationships)
-                for attr in ["team"]:
-                    if hasattr(data, attr):
-                        data_dict[attr] = getattr(data, attr)
-                first_key = next(iter(auth_query_params.keys()), None)
-                if first_key:
-                    data_dict["auth_query_param_key"] = first_key
-                    data_dict["auth_query_param_value_masked"] = settings.masked_auth_value
-                return data_dict
-        return data
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
@@ -3298,11 +3155,6 @@ class GatewayRead(BaseModelWithConfigDict):
 
         if auth_type == "one_time_auth":
             # One-time auth gateways don't store auth_value
-            return self
-
-        if auth_type == "query_param":
-            # Query param auth is handled by the before validator
-            # (auth_query_params from DB model is processed there)
             return self
 
         # If no encoded value is present, nothing to populate
@@ -3713,10 +3565,6 @@ class ServerCreate(BaseModel):
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
 
-    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
-    oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
-
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -3846,10 +3694,6 @@ class ServerUpdate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
     visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
-
-    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
-    oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
     @field_validator("tags")
     @classmethod
@@ -4023,10 +3867,6 @@ class ServerRead(BaseModelWithConfigDict):
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
-    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
-    oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
-    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
-
     @model_validator(mode="before")
     @classmethod
     def populate_associated_ids(cls, values):
@@ -4184,7 +4024,7 @@ class A2AAgentCreate(BaseModel):
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, query_param, or none")
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, or none")
     # Fields for various types of authentication
     auth_username: Optional[str] = Field(None, description="Username for basic authentication")
     auth_password: Optional[str] = Field(None, description="Password for basic authentication")
@@ -4195,16 +4035,6 @@ class A2AAgentCreate(BaseModel):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
-
-    # Query Parameter Authentication (CWE-598 security concern - use only when required by upstream)
-    auth_query_param_key: Optional[str] = Field(
-        None,
-        description="Query parameter name for authentication (e.g., 'tavilyApiKey')",
-    )
-    auth_query_param_value: Optional[SecretStr] = Field(
-        None,
-        description="Query parameter value (API key) - will be encrypted at rest",
-    )
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
@@ -4440,7 +4270,7 @@ class A2AAgentCreate(BaseModel):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -4461,48 +4291,7 @@ class A2AAgentCreate(BaseModel):
             # One-time auth does not require encoding here
             return None
 
-        if auth_type == "query_param":
-            # Query param auth doesn't use auth_value field
-            # Validation is handled by model_validator
-            return None
-
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
-
-    @model_validator(mode="after")
-    def validate_query_param_auth(self) -> "A2AAgentCreate":
-        """Validate query parameter authentication configuration.
-
-        Returns:
-            A2AAgentCreate: The validated instance.
-
-        Raises:
-            ValueError: If query param auth is disabled or host is not in allowlist.
-        """
-        if self.auth_type != "query_param":
-            return self
-
-        # Check feature flag
-        if not settings.insecure_allow_queryparam_auth:
-            raise ValueError("Query parameter authentication is disabled. " + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable. " + "WARNING: API keys in URLs may appear in proxy logs.")
-
-        # Check required fields
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when auth_type is 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when auth_type is 'query_param'")
-
-        # Check host allowlist (if configured)
-        if settings.insecure_queryparam_auth_allowed_hosts:
-            parsed = urlparse(str(self.endpoint_url))
-            # Extract hostname properly (handles IPv6, ports, userinfo)
-            hostname = parsed.hostname or parsed.netloc.split("@")[-1].split(":")[0]
-            hostname_lower = hostname.lower()
-
-            if hostname_lower not in settings.insecure_queryparam_auth_allowed_hosts:
-                allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query parameter auth. " f"Allowed hosts: {allowed}")
-
-        return self
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
 class A2AAgentUpdate(BaseModelWithConfigDict):
@@ -4532,16 +4321,6 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
-
-    # Query Parameter Authentication (CWE-598 security concern - use only when required by upstream)
-    auth_query_param_key: Optional[str] = Field(
-        None,
-        description="Query parameter name for authentication (e.g., 'tavilyApiKey')",
-    )
-    auth_query_param_value: Optional[SecretStr] = Field(
-        None,
-        description="Query parameter value (API key) - will be encrypted at rest",
-    )
 
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the agent")
 
@@ -4779,7 +4558,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
                 # Warn about duplicate keys (optional - could log this instead)
                 if duplicate_keys:
-                    logger.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
 
                 # Check for excessive headers (prevent abuse)
                 if len(header_dict) > 100:
@@ -4800,36 +4579,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             # One-time auth does not require encoding here
             return None
 
-        if auth_type == "query_param":
-            # Query param auth doesn't use auth_value field
-            # Validation is handled by model_validator
-            return None
-
-        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, headers, or query_param.")
-
-    @model_validator(mode="after")
-    def validate_query_param_auth(self) -> "A2AAgentUpdate":
-        """Validate query parameter authentication configuration.
-
-        NOTE: This only runs when auth_type is explicitly set to "query_param".
-        Service-layer enforcement handles the case where auth_type is omitted
-        but the existing agent uses query_param auth.
-
-        Returns:
-            A2AAgentUpdate: The validated instance.
-
-        Raises:
-            ValueError: If required fields are missing when setting query_param auth.
-        """
-        if self.auth_type != "query_param":
-            return self
-        # Validate fields are provided when explicitly setting query_param auth
-        # Feature flag/allowlist check happens in service layer (has access to existing agent)
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
-        return self
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
 class A2AAgentRead(BaseModelWithConfigDict):
@@ -4841,10 +4591,9 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
-    - Authentication type: basic, bearer, headers, oauth, query_param
+    - Authentication type: basic, bearer, headers, oauth
     - Authentication value: username/password or token or custom headers
     - OAuth configuration for OAuth 2.0 authentication
-    - Query parameter authentication (key name and masked value)
 
     Auto Populated fields:
     - Authentication username: for basic auth
@@ -4852,8 +4601,6 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Authentication token: for bearer auth
     - Authentication header key: for headers auth
     - Authentication header value: for headers auth
-    - Query param key: for query_param auth
-    - Query param value (masked): for query_param auth
     """
 
     id: Optional[str] = Field(None, description="Unique ID of the a2a agent")
@@ -4874,7 +4621,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     metrics: Optional[A2AAgentMetrics] = Field(None, description="Agent metrics (may be None in list operations)")
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
-    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, query_param, or None")
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
 
     # OAuth 2.0 configuration
@@ -4886,16 +4633,6 @@ class A2AAgentRead(BaseModelWithConfigDict):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
-
-    # Query Parameter Authentication (masked for security)
-    auth_query_param_key: Optional[str] = Field(
-        None,
-        description="Query parameter name for authentication",
-    )
-    auth_query_param_value_masked: Optional[str] = Field(
-        None,
-        description="Masked query parameter value (actual value is encrypted at rest)",
-    )
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -4917,47 +4654,6 @@ class A2AAgentRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _mask_query_param_auth(cls, data: Any) -> Any:
-        """Mask query param auth value when constructing from DB model.
-
-        This extracts auth_query_params from the raw data (DB model or dict)
-        and populates the masked fields for display.
-
-        Args:
-            data: The raw data (dict or ORM model) to process.
-
-        Returns:
-            Any: The processed data with masked query param values.
-        """
-        # Handle dict input
-        if isinstance(data, dict):
-            auth_query_params = data.get("auth_query_params")
-            if auth_query_params and isinstance(auth_query_params, dict):
-                # Extract the param key name and set masked value
-                first_key = next(iter(auth_query_params.keys()), None)
-                if first_key:
-                    data["auth_query_param_key"] = first_key
-                    data["auth_query_param_value_masked"] = settings.masked_auth_value
-        # Handle ORM model input (has auth_query_params attribute)
-        elif hasattr(data, "auth_query_params"):
-            auth_query_params = getattr(data, "auth_query_params", None)
-            if auth_query_params and isinstance(auth_query_params, dict):
-                # Convert ORM to dict for modification, preserving all attributes
-                # Start with table columns
-                data_dict = {c.name: getattr(data, c.name) for c in data.__table__.columns}
-                # Preserve dynamically added attributes like 'team' (from relationships)
-                for attr in ["team"]:
-                    if hasattr(data, attr):
-                        data_dict[attr] = getattr(data, attr)
-                first_key = next(iter(auth_query_params.keys()), None)
-                if first_key:
-                    data_dict["auth_query_param_key"] = first_key
-                    data_dict["auth_query_param_value_masked"] = settings.masked_auth_value
-                return data_dict
-        return data
 
     # This will be the main method to automatically populate fields
     @model_validator(mode="after")
@@ -5034,11 +4730,6 @@ class A2AAgentRead(BaseModelWithConfigDict):
             return self
 
         if auth_type == "one_time_auth":
-            return self
-
-        if auth_type == "query_param":
-            # Query param auth is handled by the before validator
-            # (auth_query_params from DB model is processed there)
             return self
 
         # If no encoded value is present, nothing to populate
@@ -5621,40 +5312,11 @@ class TeamCreateRequest(BaseModel):
             str: Validated and stripped team name
 
         Raises:
-            ValueError: If team name is empty or contains invalid characters
+            ValueError: If team name is empty
         """
         if not v.strip():
             raise ValueError("Team name cannot be empty")
-        v = v.strip()
-        # Strict validation: only alphanumeric, underscore, period, dash, and spaces
-        if not re.match(settings.validation_name_pattern, v):
-            raise ValueError("Team name can only contain letters, numbers, spaces, underscores, periods, and dashes")
-        SecurityValidator.validate_no_xss(v, "Team name")
-        if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, v, re.IGNORECASE):
-            raise ValueError("Team name contains script patterns that may cause security issues")
-        return v
-
-    @field_validator("description")
-    @classmethod
-    def validate_description(cls, v: Optional[str]) -> Optional[str]:
-        """Validate team description for XSS.
-
-        Args:
-            v: Team description to validate
-
-        Returns:
-            Optional[str]: Validated description or None
-
-        Raises:
-            ValueError: If description contains dangerous patterns
-        """
-        if v is not None:
-            v = v.strip()
-            if v:
-                SecurityValidator.validate_no_xss(v, "Team description")
-                if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, v, re.IGNORECASE):
-                    raise ValueError("Team description contains script patterns that may cause security issues")
-        return v if v else None
+        return v.strip()
 
     @field_validator("slug")
     @classmethod
@@ -5716,42 +5378,13 @@ class TeamUpdateRequest(BaseModel):
             Optional[str]: Validated and stripped team name or None
 
         Raises:
-            ValueError: If team name is empty or contains invalid characters
+            ValueError: If team name is empty
         """
         if v is not None:
             if not v.strip():
                 raise ValueError("Team name cannot be empty")
-            v = v.strip()
-            # Strict validation: only alphanumeric, underscore, period, dash, and spaces
-            if not re.match(settings.validation_name_pattern, v):
-                raise ValueError("Team name can only contain letters, numbers, spaces, underscores, periods, and dashes")
-            SecurityValidator.validate_no_xss(v, "Team name")
-            if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, v, re.IGNORECASE):
-                raise ValueError("Team name contains script patterns that may cause security issues")
-            return v
+            return v.strip()
         return v
-
-    @field_validator("description")
-    @classmethod
-    def validate_description(cls, v: Optional[str]) -> Optional[str]:
-        """Validate team description for XSS.
-
-        Args:
-            v: Team description to validate
-
-        Returns:
-            Optional[str]: Validated description or None
-
-        Raises:
-            ValueError: If description contains dangerous patterns
-        """
-        if v is not None:
-            v = v.strip()
-            if v:
-                SecurityValidator.validate_no_xss(v, "Team description")
-                if re.search(SecurityValidator.DANGEROUS_JS_PATTERN, v, re.IGNORECASE):
-                    raise ValueError("Team description contains script patterns that may cause security issues")
-        return v if v else None
 
 
 class TeamResponse(BaseModel):
@@ -5834,42 +5467,6 @@ class TeamMemberResponse(BaseModel):
     joined_at: datetime = Field(..., description="When the member joined")
     invited_by: Optional[str] = Field(None, description="Email of user who invited this member")
     is_active: bool = Field(..., description="Whether the membership is active")
-
-
-class PaginatedTeamMembersResponse(BaseModel):
-    """Schema for paginated team member list response.
-
-    Attributes:
-        members: List of team members
-        next_cursor: Optional cursor for next page of results
-
-    Examples:
-        >>> member1 = TeamMemberResponse(
-        ...     id="member-1",
-        ...     team_id="team-123",
-        ...     user_email="user1@example.com",
-        ...     role="member",
-        ...     joined_at=datetime.now(timezone.utc),
-        ...     is_active=True
-        ... )
-        >>> member2 = TeamMemberResponse(
-        ...     id="member-2",
-        ...     team_id="team-123",
-        ...     user_email="user2@example.com",
-        ...     role="member",
-        ...     joined_at=datetime.now(timezone.utc),
-        ...     is_active=True
-        ... )
-        >>> response = PaginatedTeamMembersResponse(
-        ...     members=[member1, member2],
-        ...     nextCursor="cursor-token-123"
-        ... )
-        >>> len(response.members)
-        2
-    """
-
-    members: List[TeamMemberResponse] = Field(..., description="List of team members")
-    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for next page of results")
 
 
 class TeamInviteRequest(BaseModel):
@@ -6951,7 +6548,6 @@ class CatalogServer(BaseModel):
     documentation_url: Optional[str] = Field(None, description="URL to server documentation")
     is_registered: bool = Field(default=False, description="Whether server is already registered")
     is_available: bool = Field(default=True, description="Whether server is currently available")
-    requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
 
 
 class CatalogServerRegisterRequest(BaseModel):
@@ -6970,7 +6566,6 @@ class CatalogServerRegisterResponse(BaseModel):
     server_id: str = Field(..., description="ID of the registered server in the system")
     message: str = Field(..., description="Status message")
     error: Optional[str] = Field(None, description="Error message if registration failed")
-    oauth_required: bool = Field(False, description="Whether OAuth configuration is required before activation")
 
 
 class CatalogServerStatusRequest(BaseModel):
@@ -7202,13 +6797,6 @@ class CursorPaginatedA2AAgentsResponse(BaseModel):
     """Cursor-paginated response for A2A agents list endpoint."""
 
     agents: List["A2AAgentRead"] = Field(..., description="List of A2A agents for this page")
-    next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
-
-
-class CursorPaginatedTeamsResponse(BaseModel):
-    """Cursor-paginated response for teams list endpoint."""
-
-    teams: List["TeamResponse"] = Field(..., description="List of teams for this page")
     next_cursor: Optional[str] = Field(None, alias="nextCursor", description="Cursor for the next page, null if no more pages")
 
 

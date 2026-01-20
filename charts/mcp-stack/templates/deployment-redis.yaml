@@ -31,7 +31,6 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
-      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       containers:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"

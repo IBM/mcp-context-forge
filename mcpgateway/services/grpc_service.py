@@ -12,9 +12,7 @@ retrieval, updates, activation toggling, and deletion.
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
@@ -280,13 +278,13 @@ class GrpcService:
 
         return GrpcServiceRead.model_validate(service)
 
-    async def set_service_state(
+    async def toggle_service(
         self,
         db: Session,
         service_id: str,
         activate: bool,
     ) -> GrpcServiceRead:
-        """Set a gRPC service's enabled status.
+        """Toggle a gRPC service's enabled status.
 
         Args:
             db: Database session
@@ -434,8 +432,10 @@ class GrpcService:
             if service.tls_cert_path and service.tls_key_path:
                 # Load TLS certificates
                 try:
-                    cert = await asyncio.to_thread(Path(service.tls_cert_path).read_bytes)
-                    key = await asyncio.to_thread(Path(service.tls_key_path).read_bytes)
+                    with open(service.tls_cert_path, "rb") as f:
+                        cert = f.read()
+                    with open(service.tls_key_path, "rb") as f:
+                        key = f.read()
                     credentials = grpc.ssl_channel_credentials(root_certificates=cert, private_key=key)
                 except FileNotFoundError as e:
                     raise GrpcServiceError(f"TLS certificate or key file not found: {e}")

@@ -123,97 +123,23 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    // Initialize search functionality for all entity types (immediate, no debounce)
-    initializeSearchInputsMemoized();
+    // Initialize search functionality for all entity types
+    initializeSearchInputs();
     initializePasswordValidation();
     initializeAddMembersForms();
 
-    // Event delegation for team member search - server-side search for unified view
-    // This handler is initialized here for early binding, but the actual search logic
-    // is in performUserSearch() which is attached when the form is initialized
-    const teamSearchTimeouts = {};
-    const teamMemberDataCache = {};
-
-    document.body.addEventListener("input", async function (event) {
-        const target = event.target;
-        if (target.id && target.id.startsWith("user-search-")) {
-            const teamId = target.id.replace("user-search-", "");
-            const listContainer = document.getElementById(
-                `team-members-list-${teamId}`,
-            );
-
-            if (!listContainer) return;
-
-            const query = target.value.trim();
-
-            // Clear previous timeout for this team
-            if (teamSearchTimeouts[teamId]) {
-                clearTimeout(teamSearchTimeouts[teamId]);
-            }
-
-            // Get team member data from cache or script tag
-            if (!teamMemberDataCache[teamId]) {
-                const teamMemberDataScript = document.getElementById(
-                    `team-member-data-${teamId}`,
-                );
-                if (teamMemberDataScript) {
-                    try {
-                        teamMemberDataCache[teamId] = JSON.parse(
-                            teamMemberDataScript.textContent || "{}",
-                        );
-                        console.log(
-                            `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberDataCache[teamId]).length} members`,
-                        );
-                    } catch (e) {
-                        console.error(
-                            `[Team ${teamId}] Failed to parse team member data:`,
-                            e,
-                        );
-                        teamMemberDataCache[teamId] = {};
-                    }
-                } else {
-                    teamMemberDataCache[teamId] = {};
-                }
-            }
-
-            // Debounce server call
-            teamSearchTimeouts[teamId] = setTimeout(async () => {
-                await performUserSearch(
-                    teamId,
-                    query,
-                    listContainer,
-                    teamMemberDataCache[teamId],
-                );
-            }, 300);
-        }
+    // Re-initialize search inputs when HTMX content loads
+    document.body.addEventListener("htmx:afterSwap", function (event) {
+        setTimeout(() => {
+            initializeSearchInputs();
+        }, 200);
     });
 
-    // Re-initialize search inputs when HTMX content loads
-    // Only re-initialize if the swap affects search-related content
-    document.body.addEventListener("htmx:afterSwap", function (event) {
-        const target = event.detail.target;
-        const relevantPanels = [
-            "catalog-panel",
-            "gateways-panel",
-            "tools-panel",
-            "resources-panel",
-            "prompts-panel",
-            "a2a-agents-panel",
-        ];
-
-        if (
-            target &&
-            relevantPanels.some(
-                (panelId) =>
-                    target.id === panelId || target.closest(`#${panelId}`),
-            )
-        ) {
-            console.log(
-                `📝 HTMX swap detected in ${target.id}, resetting search state`,
-            );
-            resetSearchInputsState();
-            initializeSearchInputsDebounced();
-        }
+    // Also listen for htmx:load event
+    document.body.addEventListener("htmx:load", function (event) {
+        setTimeout(() => {
+            initializeSearchInputs();
+        }, 200);
     });
 
     // Initialize search when switching tabs
@@ -222,9 +148,9 @@ document.addEventListener("DOMContentLoaded", function () {
             event.target.matches('[onclick*="showTab"]') ||
             event.target.closest('[onclick*="showTab"]')
         ) {
-            console.log("🔄 Tab switch detected, resetting search state");
-            resetSearchInputsState();
-            initializeSearchInputsDebounced();
+            setTimeout(() => {
+                initializeSearchInputs();
+            }, 300);
         }
     });
 });
@@ -498,125 +424,6 @@ function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
 
 // ===================================================================
 // UTILITY FUNCTIONS - Define these FIRST before anything else
-
-// ===================================================================
-// MEMOIZATION UTILITY - Generic pattern for initialization functions
-// ===================================================================
-
-/**
- * Creates a memoized version of an initialization function with debouncing.
- * Returns an object with the memoized function and a reset function.
- *
- * @param {Function} fn - The initialization function to memoize
- * @param {number} debounceMs - Debounce delay in milliseconds (default: 300)
- * @param {string} name - Name for logging purposes
- * @returns {Object} Object with { init, debouncedInit, reset } functions
- *
- * @example
- * const { init: initSearch, reset: resetSearch } = createMemoizedInit(
- *     initializeSearchInputs,
- *     300,
- *     'SearchInputs'
- * );
- *
- * // Use the memoized version
- * initSearch();
- *
- * // Reset when needed (e.g., tab switch)
- * resetSearch();
- * initSearch();
- */
-function createMemoizedInit(fn, debounceMs = 300, name = "Init") {
-    // Closure variables (private state)
-    let initialized = false;
-    let initializing = false;
-    let debounceTimeout = null;
-
-    /**
-     * Memoized initialization function with guards and debouncing
-     */
-    const memoizedInit = function (...args) {
-        // Guard: Prevent re-initialization if already initialized
-        if (initialized) {
-            console.log(`✓ ${name} already initialized, skipping...`);
-            return Promise.resolve();
-        }
-
-        // Guard: Prevent concurrent initialization
-        if (initializing) {
-            console.log(
-                `⏳ ${name} initialization already in progress, skipping...`,
-            );
-            return Promise.resolve();
-        }
-
-        // Clear any pending debounced call
-        if (debounceTimeout) {
-            clearTimeout(debounceTimeout);
-            debounceTimeout = null;
-        }
-
-        // Mark as initializing
-        initializing = true;
-        console.log(`🔍 Initializing ${name}...`);
-
-        try {
-            // Call the actual initialization function
-            const result = fn.apply(this, args);
-
-            // Mark as initialized
-            initialized = true;
-            console.log(`✅ ${name} initialization complete`);
-
-            return Promise.resolve(result);
-        } catch (error) {
-            console.error(`❌ Error initializing ${name}:`, error);
-            // Don't mark as initialized on error, allow retry
-            return Promise.reject(error);
-        } finally {
-            initializing = false;
-        }
-    };
-
-    /**
-     * Debounced version of the memoized init function
-     */
-    const debouncedInit = function (...args) {
-        // Clear any existing timeout
-        if (debounceTimeout) {
-            clearTimeout(debounceTimeout);
-        }
-
-        // Set new timeout
-        debounceTimeout = setTimeout(() => {
-            memoizedInit.apply(this, args);
-            debounceTimeout = null;
-        }, debounceMs);
-    };
-
-    /**
-     * Reset the initialization state
-     * Call this when you need to re-initialize (e.g., after destroying elements)
-     */
-    const reset = function () {
-        // Clear any pending debounced call
-        if (debounceTimeout) {
-            clearTimeout(debounceTimeout);
-            debounceTimeout = null;
-        }
-
-        initialized = false;
-        initializing = false;
-        console.log(`🔄 ${name} state reset`);
-    };
-
-    return {
-        init: memoizedInit,
-        debouncedInit,
-        reset,
-    };
-}
-
 // ===================================================================
 
 // Check for inative items
@@ -3636,9 +3443,6 @@ async function editA2AAgent(agentId) {
             "auth-headers-fields-a2a-edit",
         );
         const authOAuthSection = safeGetElement("auth-oauth-fields-a2a-edit");
-        const authQueryParamSection = safeGetElement(
-            "auth-query_param-fields-a2a-edit",
-        );
 
         // Individual fields
         const authUsernameField = safeGetElement(
@@ -3677,14 +3481,6 @@ async function editA2AAgent(agentId) {
             "oauth-auth-code-fields-a2a-edit",
         );
 
-        // Query param fields
-        const authQueryParamKeyField = safeGetElement(
-            "auth-query-param-key-a2a-edit",
-        );
-        const authQueryParamValueField = safeGetElement(
-            "auth-query-param-value-a2a-edit",
-        );
-
         // Hide all auth sections first
         if (authBasicSection) {
             authBasicSection.style.display = "none";
@@ -3697,9 +3493,6 @@ async function editA2AAgent(agentId) {
         }
         if (authOAuthSection) {
             authOAuthSection.style.display = "none";
-        }
-        if (authQueryParamSection) {
-            authQueryParamSection.style.display = "none";
         }
 
         switch (agent.authType) {
@@ -3774,18 +3567,6 @@ async function editA2AAgent(agentId) {
                     }
                 }
                 break;
-            case "query_param":
-                if (authQueryParamSection) {
-                    authQueryParamSection.style.display = "block";
-                    if (authQueryParamKeyField) {
-                        authQueryParamKeyField.value =
-                            agent.authQueryParamKey || "";
-                    }
-                    if (authQueryParamValueField) {
-                        authQueryParamValueField.value = "*****"; // mask value
-                    }
-                }
-                break;
             case "":
             default:
                 // No auth – keep everything hidden
@@ -3845,7 +3626,6 @@ function toggleA2AAuthFields(authType) {
         "auth-bearer-fields-a2a-edit",
         "auth-headers-fields-a2a-edit",
         "auth-oauth-fields-a2a-edit",
-        "auth-query_param-fields-a2a-edit",
     ];
     sections.forEach((id) => {
         const el = document.getElementById(id);
@@ -5422,9 +5202,6 @@ async function editGateway(gatewayId) {
             "auth-headers-fields-gw-edit",
         );
         const authOAuthSection = safeGetElement("auth-oauth-fields-gw-edit");
-        const authQueryParamSection = safeGetElement(
-            "auth-query_param-fields-gw-edit",
-        );
 
         // Individual fields
         const authUsernameField = safeGetElement(
@@ -5475,9 +5252,6 @@ async function editGateway(gatewayId) {
         }
         if (authOAuthSection) {
             authOAuthSection.style.display = "none";
-        }
-        if (authQueryParamSection) {
-            authQueryParamSection.style.display = "none";
         }
 
         switch (gateway.authType) {
@@ -5591,35 +5365,6 @@ async function editGateway(gatewayId) {
                         Array.isArray(config.scopes)
                     ) {
                         oauthScopesField.value = config.scopes.join(" ");
-                    }
-                }
-                break;
-            case "query_param":
-                if (authQueryParamSection) {
-                    authQueryParamSection.style.display = "block";
-                    // Get the input fields within the section
-                    const queryParamKeyField =
-                        authQueryParamSection.querySelector(
-                            "input[name='auth_query_param_key']",
-                        );
-                    const queryParamValueField =
-                        authQueryParamSection.querySelector(
-                            "input[name='auth_query_param_value']",
-                        );
-                    if (queryParamKeyField && gateway.authQueryParamKey) {
-                        queryParamKeyField.value = gateway.authQueryParamKey;
-                    }
-                    if (queryParamValueField) {
-                        // Always show masked value for security
-                        queryParamValueField.value = MASKED_AUTH_VALUE;
-                        if (gateway.authQueryParamValueUnmasked) {
-                            queryParamValueField.dataset.isMasked = "true";
-                            queryParamValueField.dataset.realValue =
-                                gateway.authQueryParamValueUnmasked;
-                        } else {
-                            delete queryParamValueField.dataset.isMasked;
-                            delete queryParamValueField.dataset.realValue;
-                        }
                     }
                 }
                 break;
@@ -6265,73 +6010,6 @@ async function editServer(serverId) {
         const iconField = safeGetElement("edit-server-icon");
         if (iconField) {
             iconField.value = server.icon || "";
-        }
-
-        // Set OAuth 2.0 configuration fields (RFC 9728)
-        const oauthEnabledCheckbox = safeGetElement(
-            "edit-server-oauth-enabled",
-        );
-        const oauthConfigSection = safeGetElement(
-            "edit-server-oauth-config-section",
-        );
-        const oauthAuthServerField = safeGetElement(
-            "edit-server-oauth-authorization-server",
-        );
-        const oauthScopesField = safeGetElement("edit-server-oauth-scopes");
-        const oauthTokenEndpointField = safeGetElement(
-            "edit-server-oauth-token-endpoint",
-        );
-
-        if (oauthEnabledCheckbox) {
-            oauthEnabledCheckbox.checked = server.oauth_enabled || false;
-        }
-
-        // Show/hide OAuth config section based on oauth_enabled state
-        if (oauthConfigSection) {
-            if (server.oauth_enabled) {
-                oauthConfigSection.classList.remove("hidden");
-            } else {
-                oauthConfigSection.classList.add("hidden");
-            }
-        }
-
-        // Populate OAuth config fields if oauth_config exists
-        if (server.oauth_config) {
-            // Extract authorization server (may be in authorization_servers array or authorization_server string)
-            let authServer = "";
-            if (
-                server.oauth_config.authorization_servers &&
-                server.oauth_config.authorization_servers.length > 0
-            ) {
-                authServer = server.oauth_config.authorization_servers[0];
-            } else if (server.oauth_config.authorization_server) {
-                authServer = server.oauth_config.authorization_server;
-            }
-            if (oauthAuthServerField) {
-                oauthAuthServerField.value = authServer;
-            }
-
-            // Extract scopes (may be scopes_supported array or scopes array)
-            const scopes =
-                server.oauth_config.scopes_supported ||
-                server.oauth_config.scopes ||
-                [];
-            if (oauthScopesField) {
-                oauthScopesField.value = Array.isArray(scopes)
-                    ? scopes.join(" ")
-                    : scopes;
-            }
-
-            // Extract token endpoint
-            if (oauthTokenEndpointField) {
-                oauthTokenEndpointField.value =
-                    server.oauth_config.token_endpoint || "";
-            }
-        } else {
-            // Clear OAuth config fields when no config exists
-            if (oauthAuthServerField) oauthAuthServerField.value = "";
-            if (oauthScopesField) oauthScopesField.value = "";
-            if (oauthTokenEndpointField) oauthTokenEndpointField.value = "";
         }
 
         // Store server data for modal population
@@ -7591,7 +7269,6 @@ function handleAuthTypeSelection(
     bearerFields,
     headersFields,
     oauthFields,
-    queryParamFields,
 ) {
     if (!basicFields || !bearerFields || !headersFields) {
         console.warn("Auth field elements not found");
@@ -7608,11 +7285,6 @@ function handleAuthTypeSelection(
     // Hide OAuth fields if they exist
     if (oauthFields) {
         oauthFields.style.display = "none";
-    }
-
-    // Hide query param fields if they exist
-    if (queryParamFields) {
-        queryParamFields.style.display = "none";
     }
 
     // Show relevant field based on selection
@@ -7645,11 +7317,6 @@ function handleAuthTypeSelection(
         case "oauth":
             if (oauthFields) {
                 oauthFields.style.display = "block";
-            }
-            break;
-        case "query_param":
-            if (queryParamFields) {
-                queryParamFields.style.display = "block";
             }
             break;
         default:
@@ -10412,6 +10079,135 @@ document.addEventListener("DOMContentLoaded", function () {
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
+function toggleInactiveItems(type) {
+    const checkbox = safeGetElement(`show-inactive-${type}`);
+    if (!checkbox) {
+        return;
+    }
+
+    // Update URL in address bar (no navigation) so state is reflected
+    try {
+        const urlObj = new URL(window.location);
+        if (checkbox.checked) {
+            urlObj.searchParams.set("include_inactive", "true");
+        } else {
+            urlObj.searchParams.delete("include_inactive");
+        }
+        // Use replaceState to avoid adding history entries for every toggle
+        window.history.replaceState({}, document.title, urlObj.toString());
+    } catch (e) {
+        // ignore (shouldn't happen)
+    }
+
+    // For servers (catalog), use loadServers function if available, otherwise reload page
+    if (type === "servers") {
+        if (typeof window.loadServers === "function") {
+            window.loadServers();
+            return;
+        }
+        // Fallback to page reload
+        const fallbackUrl = new URL(window.location);
+        if (checkbox.checked) {
+            fallbackUrl.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl.searchParams.delete("include_inactive");
+        }
+        window.location = fallbackUrl;
+        return;
+    }
+
+    // Try to find the HTMX container that loads this entity's partial
+    // Prefer an element with hx-get containing the admin partial endpoint
+    const selector = `[hx-get*="/admin/${type}/partial"]`;
+    let container = document.querySelector(selector);
+
+    // Fallback to conventional id naming used in templates
+    if (!container) {
+        const fallbackId =
+            type === "tools" ? "tools-table" : `${type}-list-container`;
+        container = document.getElementById(fallbackId);
+    }
+
+    if (!container) {
+        // If we couldn't find a container, fallback to full-page reload
+        const fallbackUrl = new URL(window.location);
+        if (checkbox.checked) {
+            fallbackUrl.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl.searchParams.delete("include_inactive");
+        }
+        window.location = fallbackUrl;
+        return;
+    }
+
+    // Build request URL based on the hx-get attribute or container id
+    const base =
+        container.getAttribute("hx-get") ||
+        container.getAttribute("data-hx-get") ||
+        "";
+    let reqUrl;
+    try {
+        if (base) {
+            // base may already include query params; construct URL and set include_inactive/page
+            reqUrl = new URL(base, window.location.origin);
+            // reset to page 1 when toggling
+            reqUrl.searchParams.set("page", "1");
+            if (checkbox.checked) {
+                reqUrl.searchParams.set("include_inactive", "true");
+            } else {
+                reqUrl.searchParams.delete("include_inactive");
+            }
+        } else {
+            // construct from known pattern
+            const root = window.ROOT_PATH || "";
+            reqUrl = new URL(
+                `${root}/admin/${type}/partial?page=1&per_page=50`,
+                window.location.origin,
+            );
+            if (checkbox.checked) {
+                reqUrl.searchParams.set("include_inactive", "true");
+            }
+        }
+    } catch (e) {
+        // fallback to full reload
+        const fallbackUrl2 = new URL(window.location);
+        if (checkbox.checked) {
+            fallbackUrl2.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl2.searchParams.delete("include_inactive");
+        }
+        window.location = fallbackUrl2;
+        return;
+    }
+
+    // Determine indicator selector
+    const indicator =
+        container.getAttribute("hx-indicator") || `#${type}-loading`;
+
+    // Use HTMX to reload only the container (outerHTML swap)
+    if (window.htmx && typeof window.htmx.ajax === "function") {
+        try {
+            window.htmx.ajax("GET", reqUrl.toString(), {
+                target: container,
+                swap: "outerHTML",
+                indicator,
+            });
+            return;
+        } catch (e) {
+            // fall through to full reload
+        }
+    }
+
+    // Last resort: reload page with param
+    const finalUrl = new URL(window.location);
+    if (checkbox.checked) {
+        finalUrl.searchParams.set("include_inactive", "true");
+    } else {
+        finalUrl.searchParams.delete("include_inactive");
+    }
+    window.location = finalUrl;
+}
+
 function handleToggleSubmit(event, type) {
     event.preventDefault();
 
@@ -11135,11 +10931,7 @@ async function enrichTool(toolId) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-    // Use #tool-ops-main-content-wrapper as the event delegation target because
-    // #toolBody gets replaced by HTMX swaps. The wrapper survives swaps.
-    const toolOpsWrapper = document.getElementById(
-        "tool-ops-main-content-wrapper",
-    );
+    const toolBody = document.getElementById("toolBody");
     const selectedList = document.getElementById("selectedList");
     const selectedCount = document.getElementById("selectedCount");
     const searchBox = document.getElementById("searchBox");
@@ -11147,9 +10939,9 @@ document.addEventListener("DOMContentLoaded", () => {
     let selectedTools = [];
     let selectedToolIds = [];
 
-    if (toolOpsWrapper !== null) {
-        // ✅ Use event delegation on wrapper (survives HTMX swaps)
-        toolOpsWrapper.addEventListener("change", (event) => {
+    if (toolBody !== null) {
+        // ✅ Use event delegation for dynamically added checkboxes
+        toolBody.addEventListener("change", (event) => {
             const cb = event.target;
             if (cb.classList.contains("tool-checkbox")) {
                 const toolName = cb.getAttribute("data-tool");
@@ -11206,14 +10998,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (searchBox !== null) {
         searchBox.addEventListener("input", () => {
             const query = searchBox.value.trim().toLowerCase();
-            // Search within #toolBody (which is inside #tool-ops-main-content-wrapper)
-            document
-                .querySelectorAll("#tool-ops-main-content-wrapper #toolBody tr")
-                .forEach((row) => {
-                    const name = row.dataset.name;
-                    row.style.display =
-                        name && name.includes(query) ? "" : "none";
-                });
+            document.querySelectorAll("#toolBody tr").forEach((row) => {
+                const name = row.dataset.name;
+                row.style.display = name.includes(query) ? "" : "none";
+            });
         });
     }
     // Generic API call for Enrich/Validate
@@ -15899,7 +15687,6 @@ function setupAuthenticationToggles() {
             basicId: "auth-basic-fields-gw",
             bearerId: "auth-bearer-fields-gw",
             headersId: "auth-headers-fields-gw",
-            queryParamId: "auth-query_param-fields-gw",
         },
 
         // A2A Add Form auth fields
@@ -15909,7 +15696,6 @@ function setupAuthenticationToggles() {
             basicId: "auth-basic-fields-a2a",
             bearerId: "auth-bearer-fields-a2a",
             headersId: "auth-headers-fields-a2a",
-            queryParamId: "auth-query_param-fields-a2a",
         },
 
         // Gateway Edit Form auth fields
@@ -15920,7 +15706,6 @@ function setupAuthenticationToggles() {
             bearerId: "auth-bearer-fields-gw-edit",
             headersId: "auth-headers-fields-gw-edit",
             oauthId: "auth-oauth-fields-gw-edit",
-            queryParamId: "auth-query_param-fields-gw-edit",
         },
 
         // A2A Edit Form auth fields
@@ -15931,7 +15716,6 @@ function setupAuthenticationToggles() {
             bearerId: "auth-bearer-fields-a2a-edit",
             headersId: "auth-headers-fields-a2a-edit",
             oauthId: "auth-oauth-fields-a2a-edit",
-            queryParamId: "auth-query_param-fields-a2a-edit",
         },
 
         {
@@ -15949,19 +15733,11 @@ function setupAuthenticationToggles() {
                 const basicFields = safeGetElement(handler.basicId);
                 const bearerFields = safeGetElement(handler.bearerId);
                 const headersFields = safeGetElement(handler.headersId);
-                const oauthFields = handler.oauthId
-                    ? safeGetElement(handler.oauthId)
-                    : null;
-                const queryParamFields = handler.queryParamId
-                    ? safeGetElement(handler.queryParamId)
-                    : null;
                 handleAuthTypeSelection(
                     this.value,
                     basicFields,
                     bearerFields,
                     headersFields,
-                    oauthFields,
-                    queryParamFields,
                 );
             });
         }
@@ -16348,12 +16124,12 @@ function filterServerTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from all searchable cells (exclude Actions, Icon, and S.No. columns)
-            // Table columns: Actions(0), Icon(1), S.No.(2), UUID(3), Name(4), Description(5), Tools(6), Resources(7), Prompts(8), Tags(9), Owner(10), Team(11), Visibility(12)
+            // Get text from all searchable cells (exclude only Actions column)
+            // Table columns: Icon(0), S.No.(1), UUID(2), Name(3), Description(4), Tools(5), Resources(6), Prompts(7), Tags(8), Owner(9), Team(10), Visibility(11), Actions(12)
             const cells = row.querySelectorAll("td");
-            // Search all columns except Actions(0), Icon(1), and S.No.(2) columns
+            // Search all columns except Icon and Actions columns
             const searchableColumnIndices = [];
-            for (let i = 3; i < cells.length; i++) {
+            for (let i = 1; i < cells.length - 1; i++) {
                 searchableColumnIndices.push(i);
             }
 
@@ -16367,7 +16143,9 @@ function filterServerTable(searchText) {
                 }
             });
 
-            if (search === "" || textContent.toLowerCase().includes(search)) {
+            const isMatch =
+                search === "" || textContent.toLowerCase().includes(search);
+            if (isMatch) {
                 row.style.display = "";
             } else {
                 row.style.display = "none";
@@ -16398,10 +16176,10 @@ function filterToolsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and S.No. columns)
-            // Tools columns: Actions(0), S.No.(1), Source(2), Name(3), RequestType(4), Description(5), Annotations(6), Tags(7), Owner(8), Team(9), Status(10)
+            // Get text from searchable cells (exclude S.No. and Actions columns)
+            // Tools columns: S.No.(0), Gateway Name(1), Name(2), URL(3), Type(4), Request Type(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Visibility(11), Status(12), Actions(13)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude Actions(0) and S.No.(1)
+            const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude S.No. and Actions
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -16444,9 +16222,9 @@ function filterResourcesTable(searchText) {
             let textContent = "";
 
             // Get text from searchable cells (exclude Actions column)
-            // Resources columns: Actions(0), Source(1), Name(2), Description(3), Tags(4), Owner(5), Team(6), Status(7)
+            // Resources columns: ID(0), URI(1), Name(2), Description(3), MIME Type(4), Tags(5), Owner(6), Team(7), Visibility(8), Status(9), Actions(10)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [1, 2, 3, 4, 5, 6, 7]; // All except Actions(0)
+            const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; // All except Actions
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -16482,10 +16260,10 @@ function filterPromptsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and S.No. columns)
-            // Prompts columns: Actions(0), S.No.(1), GatewayName(2), Name(3), Description(4), Tags(5), Owner(6), Team(7), Status(8)
+            // Get text from searchable cells (exclude Actions column)
+            // Prompts columns: S.No.(0), Name(1), Description(2), Tags(3), Owner(4), Team(5), Visibility(6), Status(7), Actions(8)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8]; // All except Actions(0) and S.No.(1)
+            const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7]; // All except Actions
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -16528,10 +16306,10 @@ function filterA2AAgentsTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from searchable cells (exclude Actions and ID columns)
-            // A2A Agents columns: Actions(0), ID(1), Name(2), Description(3), Endpoint(4), Tags(5), Type(6), Status(7), Reachability(8), Owner(9), Team(10), Visibility(11)
+            // Get text from searchable cells (exclude ID and Actions columns)
+            // A2A Agents columns: ID(0), Name(1), Description(2), Endpoint(3), Tags(4), Type(5), Status(6), Reachability(7), Owner(8), Team(9), Visibility(10), Actions(11)
             const cells = row.querySelectorAll("td");
-            const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Actions(0) and ID(1)
+            const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude ID and Actions
 
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
@@ -16630,10 +16408,9 @@ function filterGatewaysTable(searchText) {
                 return;
             }
 
-            // Combine text from all cells except Actions(0) and S.No.(1) columns
-            // Gateways columns: Actions(0), S.No.(1), Name(2), URL(3), Tags(4), Status(5), LastSeen(6), Owner(7), Team(8), Visibility(9)
+            // Combine text from all cells except the last one (Actions column)
             let searchContent = "";
-            for (let i = 2; i < cells.length; i++) {
+            for (let i = 0; i < cells.length - 1; i++) {
                 if (cells[i]) {
                     const cellText = cells[i].textContent.trim();
                     searchContent += " " + cellText;
@@ -16641,28 +16418,19 @@ function filterGatewaysTable(searchText) {
             }
 
             const fullText = searchContent.trim().toLowerCase();
-            const matchesSearch = search === "" || fullText.includes(search);
-
-            // Check if row should be visible based on inactive filter
-            const checkbox = document.getElementById("show-inactive-gateways");
-            const showInactive = checkbox ? checkbox.checked : true;
-            const isEnabled = row.getAttribute("data-enabled") === "true";
-            const matchesFilter = showInactive || isEnabled;
-
-            // Only show row if it matches BOTH search AND filter
-            const shouldShow = matchesSearch && matchesFilter;
+            const shouldShow = search === "" || fullText.includes(search);
 
             // Debug first few rows
             if (index < 3) {
                 console.log(
-                    `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Search: ${matchesSearch}, Filter: ${matchesFilter}, Show: ${shouldShow}`,
+                    `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Match: ${shouldShow}`,
                 );
             }
 
             // Show/hide the row
             if (shouldShow) {
-                row.style.removeProperty("display");
-                row.style.removeProperty("visibility");
+                row.style.display = "";
+                row.style.visibility = "visible";
                 visibleCount++;
             } else {
                 row.style.display = "none";
@@ -16738,8 +16506,8 @@ window.simpleGatewaySearch = function (searchTerm) {
                     const cells = row.querySelectorAll("td");
                     let rowText = "";
 
-                    // Get text from all cells except Actions(0) and S.No.(1)
-                    for (let i = 2; i < cells.length; i++) {
+                    // Get text from all cells except last (Actions)
+                    for (let i = 0; i < cells.length - 1; i++) {
                         rowText += " " + cells[i].textContent.trim();
                     }
 
@@ -16840,9 +16608,8 @@ window.clearSearch = clearSearch;
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
 
-    // Clone inputs to remove existing event listeners before re-adding.
-    // This prevents duplicate listeners when re-initializing after reset.
-    const searchInputIds = [
+    // Remove existing event listeners to prevent duplicates
+    const searchInputs = [
         "catalog-search-input",
         "gateways-search-input",
         "tools-search-input",
@@ -16851,13 +16618,16 @@ function initializeSearchInputs() {
         "a2a-agents-search-input",
     ];
 
-    searchInputIds.forEach((inputId) => {
+    searchInputs.forEach((inputId) => {
         const input = document.getElementById(inputId);
         if (input) {
+            // Clone the input to remove all event listeners, then replace it
             const newInput = input.cloneNode(true);
             input.parentNode.replaceChild(newInput, input);
         }
     });
+
+    // Get fresh references to all search inputs after cloning
 
     // Virtual Servers search
     const catalogSearchInput = document.getElementById("catalog-search-input");
@@ -16866,11 +16636,6 @@ function initializeSearchInputs() {
             filterServerTable(this.value);
         });
         console.log("✅ Virtual Servers search initialized");
-        // Reapply current search term if any (preserves search after HTMX swap)
-        const currentSearch = catalogSearchInput.value || "";
-        if (currentSearch) {
-            filterServerTable(currentSearch);
-        }
     }
 
     // MCP Servers (Gateways) search
@@ -16901,11 +16666,8 @@ function initializeSearchInputs() {
 
         console.log("✅ MCP Servers search events attached");
 
-        // Reapply current search term if any (preserves search after HTMX swap)
-        const currentSearch = gatewaysSearchInput.value || "";
-        if (currentSearch) {
-            filterGatewaysTable(currentSearch);
-        }
+        // Test the function works
+        filterGatewaysTable("");
     } else {
         console.error("❌ MCP Servers search input not found!");
 
@@ -16962,16 +16724,6 @@ function initializeSearchInputs() {
     }
 }
 
-/**
- * Create memoized version of search inputs initialization
- * This prevents repeated initialization and provides explicit reset capability
- */
-const {
-    init: initializeSearchInputsMemoized,
-    debouncedInit: initializeSearchInputsDebounced,
-    reset: resetSearchInputsState,
-} = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
-
 function handleAuthTypeChange() {
     const authType = this.value;
 
@@ -16985,22 +16737,15 @@ function handleAuthTypeChange() {
     const bearerFields = safeGetElement(`auth-bearer-fields-${prefix}`);
     const headersFields = safeGetElement(`auth-headers-fields-${prefix}`);
     const oauthFields = safeGetElement(`auth-oauth-fields-${prefix}`);
-    const queryParamFields = safeGetElement(
-        `auth-query_param-fields-${prefix}`,
-    );
 
     // Hide all auth sections first
-    [
-        basicFields,
-        bearerFields,
-        headersFields,
-        oauthFields,
-        queryParamFields,
-    ].forEach((section) => {
-        if (section) {
-            section.style.display = "none";
-        }
-    });
+    [basicFields, bearerFields, headersFields, oauthFields].forEach(
+        (section) => {
+            if (section) {
+                section.style.display = "none";
+            }
+        },
+    );
 
     // Show the appropriate section
     switch (authType) {
@@ -17022,11 +16767,6 @@ function handleAuthTypeChange() {
         case "oauth":
             if (oauthFields) {
                 oauthFields.style.display = "block";
-            }
-            break;
-        case "query_param":
-            if (queryParamFields) {
-                queryParamFields.style.display = "block";
             }
             break;
         default:
@@ -17298,55 +17038,22 @@ function initializeTabState() {
         }, 100);
     }
 
-    // Set checkbox states based on URL parameters (namespaced per table, with legacy fallback)
+    // Set checkbox states based on URL parameter
     const urlParams = new URLSearchParams(window.location.search);
-    const legacyIncludeInactive = urlParams.get("include_inactive") === "true";
+    const includeInactive = urlParams.get("include_inactive") === "true";
 
-    // Map checkbox IDs to their table names for namespaced URL params
-    const checkboxTableMap = {
-        "show-inactive-tools": "tools",
-        "show-inactive-resources": "resources",
-        "show-inactive-prompts": "prompts",
-        "show-inactive-gateways": "gateways",
-        "show-inactive-servers": "servers",
-        "show-inactive-a2a-agents": "agents",
-        "show-inactive-tools-toolops": "toolops",
-    };
-    Object.entries(checkboxTableMap).forEach(([id, tableName]) => {
+    const checkboxes = [
+        "show-inactive-tools",
+        "show-inactive-resources",
+        "show-inactive-prompts",
+        "show-inactive-gateways",
+        "show-inactive-servers",
+    ];
+    checkboxes.forEach((id) => {
         const checkbox = safeGetElement(id);
         if (checkbox) {
-            // Prefer namespaced param, fall back to legacy for backwards compatibility
-            const namespacedValue = urlParams.get(tableName + "_inactive");
-            if (namespacedValue !== null) {
-                checkbox.checked = namespacedValue === "true";
-            } else {
-                checkbox.checked = legacyIncludeInactive;
-            }
+            checkbox.checked = includeInactive;
         }
-    });
-
-    // Note: URL state persistence for show-inactive toggles is now handled by
-    // updateInactiveUrlState() in admin.html via @change handlers on checkboxes.
-    // The handlers write namespaced params (e.g., servers_inactive, tools_inactive).
-
-    // Disable toggle until its target exists (prevents race with initial HTMX load)
-    document.querySelectorAll(".show-inactive-toggle").forEach((checkbox) => {
-        const targetSelector = checkbox.getAttribute("hx-target");
-        if (targetSelector && !document.querySelector(targetSelector)) {
-            checkbox.disabled = true;
-        }
-    });
-
-    // Enable toggles after HTMX swaps complete
-    document.body.addEventListener("htmx:afterSettle", (event) => {
-        document
-            .querySelectorAll(".show-inactive-toggle[disabled]")
-            .forEach((checkbox) => {
-                const targetSelector = checkbox.getAttribute("hx-target");
-                if (targetSelector && document.querySelector(targetSelector)) {
-                    checkbox.disabled = false;
-                }
-            });
     });
 }
 
@@ -17374,6 +17081,7 @@ async function loadServers() {
     window.location.href = url.toString();
 }
 
+window.toggleInactiveItems = toggleInactiveItems;
 window.loadServers = loadServers;
 window.handleToggleSubmit = handleToggleSubmit;
 window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
@@ -20922,10 +20630,6 @@ function resetTeamCreateForm() {
     if (form) {
         form.reset();
     }
-    const errorEl = document.getElementById("create-team-error");
-    if (errorEl) {
-        errorEl.innerHTML = "";
-    }
 }
 
 // Normalize team ID from element IDs like "add-members-form-<id>"
@@ -20970,236 +20674,17 @@ function dedupeSelectorItems(container) {
     });
 }
 
-// Perform server-side user search and build HTML from JSON (like tools search)
-async function performUserSearch(teamId, query, container, teamMemberData) {
-    console.log(`[Team ${teamId}] Performing user search: "${query}"`);
-
-    // Step 1: Capture current selections before replacing HTML
-    const selections = {};
-    const roleSelections = {};
-    try {
-        const userItems = container.querySelectorAll(".user-item");
-        userItems.forEach((item) => {
-            const email = item.dataset.userEmail || "";
-            const checkbox = item.querySelector(
-                'input[name="associatedUsers"]',
-            );
-            const roleSelect = item.querySelector(".role-select");
-            if (checkbox && email) {
-                selections[email] = checkbox.checked;
-            }
-            if (roleSelect && email) {
-                roleSelections[email] = roleSelect.value;
-            }
-        });
-        console.log(
-            `[Team ${teamId}] Captured ${Object.keys(selections).length} selections and ${Object.keys(roleSelections).length} role selections`,
-        );
-    } catch (e) {
-        console.error(`[Team ${teamId}] Error capturing selections:`, e);
-    }
-
-    // Step 2: Show loading state
-    container.innerHTML = `
-        <div class="text-center py-4">
-            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="mt-2 text-sm text-gray-500">Searching users...</p>
-        </div>
-    `;
-
-    // Step 3: If query is empty, reload default list from /admin/users/partial
-    if (query === "") {
-        try {
-            const usersUrl = `${window.ROOT_PATH}/admin/users/partial?page=1&per_page=50&render=selector&team_id=${encodeURIComponent(teamId)}`;
-            console.log(
-                `[Team ${teamId}] Loading default users with URL: ${usersUrl}`,
-            );
-
-            const response = await fetchWithAuth(usersUrl);
-            if (response.ok) {
-                const html = await response.text();
-                container.innerHTML = html;
-
-                // Restore selections
-                restoreUserSelections(container, selections, roleSelections);
-            } else {
-                console.error(
-                    `[Team ${teamId}] Failed to load users: ${response.status}`,
-                );
-                container.innerHTML =
-                    '<div class="text-center py-4 text-red-600">Failed to load users</div>';
-            }
-        } catch (error) {
-            console.error(`[Team ${teamId}] Error loading users:`, error);
-            container.innerHTML =
-                '<div class="text-center py-4 text-red-600">Error loading users</div>';
-        }
-        return;
-    }
-
-    // Step 4: Call /admin/users/search API
-    try {
-        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(query)}&limit=50`;
-        console.log(`[Team ${teamId}] Searching users with URL: ${searchUrl}`);
-
-        const response = await fetchWithAuth(searchUrl);
-        if (!response.ok) {
-            console.error(
-                `[Team ${teamId}] Search failed: ${response.status} ${response.statusText}`,
-            );
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.users && data.users.length > 0) {
-            // Step 5: Build HTML manually from JSON
-            let searchResultsHtml = "";
-            data.users.forEach((user) => {
-                const memberData = teamMemberData[user.email] || {};
-                const isMember = Object.keys(memberData).length > 0;
-                const memberRole = memberData.role || "member";
-                const joinedAt = memberData.joined_at;
-                const isCurrentUser = memberData.is_current_user || false;
-                const isLastOwner = memberData.is_last_owner || false;
-                const isChecked =
-                    selections[user.email] !== undefined
-                        ? selections[user.email]
-                        : isMember;
-                const selectedRole = roleSelections[user.email] || memberRole;
-
-                const borderClass = isMember
-                    ? "border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20"
-                    : "border-transparent";
-
-                searchResultsHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border ${borderClass}" data-user-email="${escapeHtml(user.email)}">
-                        <!-- Avatar Circle -->
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(user.email[0].toUpperCase())}</span>
-                            </div>
-                        </div>
-
-                        <!-- Checkbox -->
-                        <input
-                            type="checkbox"
-                            name="associatedUsers"
-                            value="${escapeHtml(user.email)}"
-                            data-user-name="${escapeHtml(user.full_name || user.email)}"
-                            class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0"
-                            data-auto-check="true"
-                            ${isChecked ? "checked" : ""}
-                        />
-
-                        <!-- User Info with Badges -->
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${escapeHtml(user.full_name || user.email)}</span>
-                                ${isCurrentUser ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' : ""}
-                                ${isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>' : ""}
-                                ${isMember && memberRole === "owner" && !isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${escapeHtml(user.email)}</div>
-                            ${isMember && joinedAt ? `<div class="text-xs text-gray-400 dark:text-gray-500">Joined: ${formatDate(joinedAt)}</div>` : ""}
-                        </div>
-
-                        <!-- Role Selector -->
-                        <select
-                            name="role_${encodeURIComponent(user.email)}"
-                            class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
-                        >
-                            <option value="member" ${selectedRole === "member" ? "selected" : ""}>Member</option>
-                            <option value="owner" ${selectedRole === "owner" ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            // Step 6: Replace container innerHTML
-            container.innerHTML = searchResultsHtml;
-
-            // Step 7: No need to restore selections - they're already built into the HTML
-            console.log(
-                `[Team ${teamId}] Rendered ${data.users.length} users from search`,
-            );
-        } else {
-            container.innerHTML =
-                '<div class="text-center py-4 text-gray-500">No users found</div>';
-        }
-    } catch (error) {
-        console.error(`[Team ${teamId}] Error searching users:`, error);
-        container.innerHTML =
-            '<div class="text-center py-4 text-red-600">Error searching users</div>';
-    }
-}
-
-// Restore user selections after loading default list
-function restoreUserSelections(container, selections, roleSelections) {
-    try {
-        const checkboxes = container.querySelectorAll(
-            'input[name="associatedUsers"]',
-        );
-        checkboxes.forEach((cb) => {
-            if (selections[cb.value] !== undefined) {
-                cb.checked = selections[cb.value];
-            }
-        });
-
-        const roleSelects = container.querySelectorAll(".role-select");
-        roleSelects.forEach((select) => {
-            const email = select.name.replace("role_", "");
-            const decodedEmail = decodeURIComponent(email);
-            if (roleSelections[decodedEmail]) {
-                select.value = roleSelections[decodedEmail];
-            }
-        });
-
-        console.log(`Restored ${Object.keys(selections).length} selections`);
-    } catch (e) {
-        console.error("Error restoring selections:", e);
-    }
-}
-
-// Helper to format date (similar to Python strftime "%b %d, %Y")
-function formatDate(dateString) {
-    try {
-        const date = new Date(dateString);
-        return date.toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "short",
-            day: "numeric",
-        });
-    } catch (e) {
-        return dateString;
-    }
-}
-
 function initializeAddMembersForm(form) {
     if (!form || form.dataset.initialized === "true") {
         return;
     }
     form.dataset.initialized = "true";
 
-    // Support both old add-members-form pattern and new team-members-form pattern
     const teamId =
         form.dataset.teamId ||
         extractTeamId("add-members-form-", form.id) ||
-        extractTeamId("team-members-form-", form.id) ||
         "";
-
-    console.log(
-        `[initializeAddMembersForm] Form ID: ${form.id}, Team ID: ${teamId}`,
-    );
-
     if (!teamId) {
-        console.warn(
-            `[initializeAddMembersForm] No team ID found for form:`,
-            form,
-        );
         return;
     }
 
@@ -21209,15 +20694,6 @@ function initializeAddMembersForm(form) {
     );
     const searchLoading = document.getElementById(
         `user-search-loading-${teamId}`,
-    );
-
-    // For unified view, find the list container for client-side filtering
-    const userListContainer = document.getElementById(
-        `team-members-list-${teamId}`,
-    );
-
-    console.log(
-        `[Team ${teamId}] Form initialization - searchInput: ${!!searchInput}, userListContainer: ${!!userListContainer}, searchResults: ${!!searchResults}`,
     );
 
     const memberEmails = [];
@@ -21236,56 +20712,17 @@ function initializeAddMembersForm(form) {
     form.addEventListener("change", function (event) {
         if (event.target?.name === "associatedUsers") {
             updateAddMembersCount(teamId);
-            // Role dropdown state is not managed client-side - all logic is server-side
+            const userItem = event.target.closest(".user-item");
+            if (userItem) {
+                const roleSelect = userItem.querySelector(".role-select");
+                if (roleSelect) {
+                    roleSelect.disabled = !event.target.checked;
+                }
+            }
         }
     });
 
     updateAddMembersCount(teamId);
-
-    // If we have searchInput and userListContainer, use server-side search like tools (unified view)
-    if (searchInput && userListContainer) {
-        console.log(
-            `[Team ${teamId}] Initializing server-side search for unified view`,
-        );
-
-        // Get team member data from the initial page load (embedded in the form)
-        const teamMemberDataScript = document.getElementById(
-            `team-member-data-${teamId}`,
-        );
-        let teamMemberData = {};
-        if (teamMemberDataScript) {
-            try {
-                teamMemberData = JSON.parse(
-                    teamMemberDataScript.textContent || "{}",
-                );
-                console.log(
-                    `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberData).length} members`,
-                );
-            } catch (e) {
-                console.error(
-                    `[Team ${teamId}] Failed to parse team member data:`,
-                    e,
-                );
-            }
-        }
-
-        let searchTimeout;
-        searchInput.addEventListener("input", function () {
-            clearTimeout(searchTimeout);
-            const query = this.value.trim();
-
-            searchTimeout = setTimeout(async () => {
-                await performUserSearch(
-                    teamId,
-                    query,
-                    userListContainer,
-                    teamMemberData,
-                );
-            }, 300);
-        });
-
-        return;
-    }
 
     if (!searchInput || !searchResults) {
         return;
@@ -21462,13 +20899,8 @@ function initializeAddMembersForm(form) {
 }
 
 function initializeAddMembersForms(root = document) {
-    // Support both old add-members-form pattern and new unified team-members-form pattern
-    const addMembersForms =
-        root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
-    const teamMembersForms =
-        root?.querySelectorAll?.('[id^="team-members-form-"]') || [];
-    const allForms = [...addMembersForms, ...teamMembersForms];
-    allForms.forEach((form) => initializeAddMembersForm(form));
+    const forms = root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
+    forms.forEach((form) => initializeAddMembersForm(form));
 }
 
 function handleAdminTeamAction(event) {
@@ -21503,30 +20935,14 @@ function handleAdminTeamAction(event) {
         if (detail.refreshUnifiedTeamsList && window.htmx) {
             const unifiedList = document.getElementById("unified-teams-list");
             if (unifiedList) {
-                // Preserve current pagination/filter state on refresh
-                const params = new URLSearchParams();
-                params.set("page", "1"); // Reset to first page on action
-                if (typeof getTeamsPerPage === "function") {
-                    params.set("per_page", getTeamsPerPage().toString());
-                }
-                // Preserve search query from input field
-                const searchInput = document.getElementById("team-search");
-                if (searchInput && searchInput.value.trim()) {
-                    params.set("q", searchInput.value.trim());
-                }
-                // Preserve relationship filter
-                if (
-                    typeof currentTeamRelationshipFilter !== "undefined" &&
-                    currentTeamRelationshipFilter &&
-                    currentTeamRelationshipFilter !== "all"
-                ) {
-                    params.set("relationship", currentTeamRelationshipFilter);
-                }
-                const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
-                window.htmx.ajax("GET", url, {
-                    target: "#unified-teams-list",
-                    swap: "innerHTML",
-                });
+                window.htmx.ajax(
+                    "GET",
+                    `${window.ROOT_PATH || ""}/admin/teams?unified=true`,
+                    {
+                        target: "#unified-teams-list",
+                        swap: "innerHTML",
+                    },
+                );
             }
         }
         if (detail.refreshTeamMembers && detail.teamId) {
@@ -28587,7 +28003,7 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
  */
 function updateEntityActionButtons(cell, type, id, isEnabled) {
     // We look for the form that toggles activation inside the cell
-    const form = cell.querySelector('form[action*="/state"]');
+    const form = cell.querySelector('form[action*="/toggle"]');
     if (!form) {
         return;
     }
@@ -30071,7 +29487,7 @@ async function deleteLLMProvider(providerId, providerName) {
 async function toggleLLMProvider(providerId) {
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/llm/providers/${providerId}/state`,
+            `${window.ROOT_PATH}/llm/providers/${providerId}/toggle`,
             {
                 method: "POST",
                 headers: {
@@ -30454,7 +29870,7 @@ async function deleteLLMModel(modelId, modelName) {
 async function toggleLLMModel(modelId) {
     try {
         const response = await fetch(
-            `${window.ROOT_PATH}/llm/models/${modelId}/state`,
+            `${window.ROOT_PATH}/llm/models/${modelId}/toggle`,
             {
                 method: "POST",
                 headers: {
@@ -30684,557 +30100,3 @@ window.toggleLLMModel = toggleLLMModel;
 window.refreshLLMModels = refreshLLMModels;
 window.filterModelsByProvider = filterModelsByProvider;
 window.llmApiInfoApp = llmApiInfoApp;
-
-// Debounce helper for search
-const searchDebounceTimers = {};
-function debouncedServerSideUserSearch(teamId, searchTerm, delay = 300) {
-    if (searchDebounceTimers[teamId]) {
-        clearTimeout(searchDebounceTimers[teamId]);
-    }
-    searchDebounceTimers[teamId] = setTimeout(() => {
-        serverSideUserSearch(teamId, searchTerm);
-    }, delay);
-}
-window.debouncedServerSideUserSearch = debouncedServerSideUserSearch;
-
-// Team user search function - searches all users and splits into members/non-members
-async function serverSideUserSearch(teamId, searchTerm) {
-    const membersContainer = document.getElementById(
-        `team-members-container-${teamId}`,
-    );
-    const nonMembersContainer = document.getElementById(
-        `team-non-members-container-${teamId}`,
-    );
-
-    if (!membersContainer || !nonMembersContainer) {
-        console.error("Team containers not found");
-        return;
-    }
-
-    // Read per_page from data attributes (set server-side), fallback to 20
-    const membersPerPage =
-        membersContainer.dataset.perPage ||
-        membersContainer.getAttribute("data-per-page") ||
-        20;
-    const nonMembersPerPage =
-        nonMembersContainer.dataset.perPage ||
-        nonMembersContainer.getAttribute("data-per-page") ||
-        20;
-
-    // If search is empty, reload both sections with full data
-    if (!searchTerm || searchTerm.trim() === "") {
-        try {
-            // Reload members - use fetchWithAuth for bearer token support
-            const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
-            );
-            if (membersResponse.ok) {
-                membersContainer.innerHTML = await membersResponse.text();
-                // Re-initialize HTMX on new content for infinite scroll triggers
-                if (typeof htmx !== "undefined") {
-                    htmx.process(membersContainer);
-                }
-            }
-
-            // Reload non-members
-            const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
-            );
-            if (nonMembersResponse.ok) {
-                nonMembersContainer.innerHTML = await nonMembersResponse.text();
-                // Re-initialize HTMX on new content for infinite scroll triggers
-                if (typeof htmx !== "undefined") {
-                    htmx.process(nonMembersContainer);
-                }
-            }
-        } catch (error) {
-            console.error("Error reloading user lists:", error);
-        }
-        return;
-    }
-
-    try {
-        // First, collect member data AND checkbox states from DOM (before search replaces content)
-        const memberDataFromDom = {};
-        const checkboxStates = {}; // Track checkbox states for all visible users
-        const existingMemberItems = document.querySelectorAll(
-            `#team-members-container-${teamId} .user-item`,
-        );
-        existingMemberItems.forEach((item) => {
-            const email = item.dataset.userEmail;
-            if (email) {
-                const roleSelect = item.querySelector(".role-select");
-                const checkbox = item.querySelector(".user-checkbox");
-                memberDataFromDom[email] = {
-                    role: roleSelect ? roleSelect.value : "member",
-                };
-                if (checkbox) {
-                    checkboxStates[email] = checkbox.checked;
-                }
-            }
-        });
-
-        // Also collect checkbox states from non-members section
-        const existingNonMemberItems = document.querySelectorAll(
-            `#team-non-members-container-${teamId} .user-item`,
-        );
-        existingNonMemberItems.forEach((item) => {
-            const email = item.dataset.userEmail;
-            if (email) {
-                const checkbox = item.querySelector(".user-checkbox");
-                const roleSelect = item.querySelector(".role-select");
-                if (checkbox) {
-                    checkboxStates[email] = checkbox.checked;
-                    // Also preserve role selection for users being added
-                    if (checkbox.checked && roleSelect) {
-                        memberDataFromDom[email] = {
-                            role: roleSelect.value,
-                            pendingAdd: true, // Flag that this is a pending addition
-                        };
-                    }
-                }
-            }
-        });
-
-        // If no members found in DOM yet, fetch from server to get membership data with roles
-        if (Object.keys(memberDataFromDom).length === 0) {
-            try {
-                const membersResp = await fetchWithAuth(
-                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
-                );
-                if (membersResp.ok) {
-                    const tempDiv = document.createElement("div");
-                    tempDiv.innerHTML = await membersResp.text();
-                    tempDiv.querySelectorAll(".user-item").forEach((item) => {
-                        const email = item.dataset.userEmail;
-                        if (email) {
-                            const roleSelect =
-                                item.querySelector(".role-select");
-                            memberDataFromDom[email] = {
-                                role: roleSelect ? roleSelect.value : "member",
-                            };
-                        }
-                    });
-                }
-            } catch (e) {
-                console.error("Error fetching member data:", e);
-            }
-        }
-
-        // Search all users - use fetchWithAuth for bearer token support
-        const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
-        const response = await fetchWithAuth(searchUrl);
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-
-        if (data.users && data.users.length > 0) {
-            // Split users into members and non-members based on collected data
-            const members = [];
-            const nonMembers = [];
-
-            data.users.forEach((user) => {
-                if (memberDataFromDom[user.email]) {
-                    members.push({
-                        ...user,
-                        role: memberDataFromDom[user.email].role,
-                    });
-                } else {
-                    nonMembers.push(user);
-                }
-            });
-
-            // Helper to escape HTML
-            function escapeHtml(text) {
-                const div = document.createElement("div");
-                div.textContent = text;
-                return div.innerHTML;
-            }
-
-            // Render members with preserved roles, checkbox states, and loadedMembers hidden input
-            let membersHtml = "";
-            members.forEach((user) => {
-                const fullName = escapeHtml(user.full_name || user.email);
-                const email = escapeHtml(user.email);
-                const role = user.role || "member";
-                const isOwner = role === "owner";
-                // Preserve checkbox state if available, otherwise default to checked for existing members
-                const isChecked =
-                    checkboxStates[user.email] !== undefined
-                        ? checkboxStates[user.email]
-                        : true;
-                membersHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20" data-user-email="${email}">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                            </div>
-                        </div>
-                        <input type="hidden" name="loadedMembers" value="${email}" />
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} data-auto-check="true" />
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                                ${isOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-                        </div>
-                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            // Render non-members with preserved checkbox states and roles
-            let nonMembersHtml = "";
-            nonMembers.forEach((user) => {
-                const fullName = escapeHtml(user.full_name || user.email);
-                const email = escapeHtml(user.email);
-                // Preserve checkbox state if available, otherwise default to unchecked for non-members
-                const isChecked =
-                    checkboxStates[user.email] !== undefined
-                        ? checkboxStates[user.email]
-                        : false;
-                // Preserve role selection for users being added
-                const pendingData = memberDataFromDom[user.email];
-                const role =
-                    pendingData && pendingData.pendingAdd
-                        ? pendingData.role
-                        : "member";
-                const isOwner = role === "owner";
-                nonMembersHtml += `
-                    <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-transparent" data-user-email="${email}" data-is-member="false">
-                        <div class="flex-shrink-0">
-                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                            </div>
-                        </div>
-                        <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} />
-                        <div class="flex-grow min-w-0">
-                            <div class="flex items-center gap-2 flex-wrap">
-                                <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                            </div>
-                            <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-                        </div>
-                        <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                            <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                            <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-                        </select>
-                    </div>
-                `;
-            });
-
-            membersContainer.innerHTML =
-                membersHtml ||
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML =
-                nonMembersHtml ||
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
-        } else {
-            // No results
-            membersContainer.innerHTML =
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-            nonMembersContainer.innerHTML =
-                '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
-        }
-    } catch (error) {
-        console.error("Error searching users:", error);
-        membersContainer.innerHTML =
-            '<div class="text-center py-4 text-red-600">Error searching users</div>';
-        nonMembersContainer.innerHTML =
-            '<div class="text-center py-4 text-red-600">Error searching users</div>';
-    }
-}
-
-window.serverSideUserSearch = serverSideUserSearch;
-
-// ============================================================================ //
-//                         TEAM SEARCH AND FILTER FUNCTIONS                      //
-// ============================================================================ //
-
-/**
- * Debounce timer for team search
- */
-let teamSearchDebounceTimer = null;
-
-/**
- * Current relationship filter state
- */
-let currentTeamRelationshipFilter = "all";
-
-/**
- * Perform server-side search for teams and update the teams list
- * @param {string} searchTerm - The search query
- */
-function serverSideTeamSearch(searchTerm) {
-    // Debounce the search to avoid excessive API calls
-    if (teamSearchDebounceTimer) {
-        clearTimeout(teamSearchDebounceTimer);
-    }
-
-    teamSearchDebounceTimer = setTimeout(() => {
-        performTeamSearch(searchTerm);
-    }, 300);
-}
-
-/**
- * Default per_page for teams list
- */
-const DEFAULT_TEAMS_PER_PAGE = 10;
-
-/**
- * Get current per_page value from pagination controls or use default
- */
-function getTeamsPerPage() {
-    // Try to get from pagination controls select element
-    const paginationControls = document.getElementById(
-        "teams-pagination-controls",
-    );
-    if (paginationControls) {
-        const select = paginationControls.querySelector("select");
-        if (select && select.value) {
-            return parseInt(select.value, 10) || DEFAULT_TEAMS_PER_PAGE;
-        }
-    }
-    return DEFAULT_TEAMS_PER_PAGE;
-}
-
-/**
- * Actually perform the team search after debounce
- * @param {string} searchTerm - The search query
- */
-async function performTeamSearch(searchTerm) {
-    const container = document.getElementById("unified-teams-list");
-    const loadingIndicator = document.getElementById("teams-loading");
-
-    if (!container) {
-        console.error("unified-teams-list container not found");
-        return;
-    }
-
-    // Show loading state
-    if (loadingIndicator) {
-        loadingIndicator.style.display = "block";
-    }
-
-    // Build URL with search query and current relationship filter
-    const params = new URLSearchParams();
-    params.set("page", "1");
-    params.set("per_page", getTeamsPerPage().toString());
-
-    if (searchTerm && searchTerm.trim() !== "") {
-        params.set("q", searchTerm.trim());
-    }
-
-    if (
-        currentTeamRelationshipFilter &&
-        currentTeamRelationshipFilter !== "all"
-    ) {
-        params.set("relationship", currentTeamRelationshipFilter);
-    }
-
-    const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
-
-    console.log(`[Team Search] Searching teams with URL: ${url}`);
-
-    try {
-        // Use HTMX to load the results
-        if (window.htmx) {
-            // HTMX handles the indicator automatically via the indicator option
-            // Don't manually hide it - HTMX will hide it when request completes
-            window.htmx.ajax("GET", url, {
-                target: "#unified-teams-list",
-                swap: "innerHTML",
-                indicator: "#teams-loading",
-            });
-        } else {
-            // Fallback to fetch if HTMX is not available
-            const response = await fetch(url);
-            if (response.ok) {
-                const html = await response.text();
-                container.innerHTML = html;
-            } else {
-                container.innerHTML =
-                    '<div class="text-center py-4 text-red-600">Failed to load teams</div>';
-            }
-            // Only hide indicator in fetch fallback path (HTMX handles its own)
-            if (loadingIndicator) {
-                loadingIndicator.style.display = "none";
-            }
-        }
-    } catch (error) {
-        console.error("Error searching teams:", error);
-        container.innerHTML =
-            '<div class="text-center py-4 text-red-600">Error searching teams</div>';
-        // Hide indicator on error in fallback path
-        if (loadingIndicator) {
-            loadingIndicator.style.display = "none";
-        }
-    }
-}
-
-/**
- * Filter teams by relationship (owner, member, public, all)
- * @param {string} filter - The relationship filter value
- */
-function filterByRelationship(filter) {
-    // Update button states
-    const filterButtons = document.querySelectorAll(".filter-btn");
-    filterButtons.forEach((btn) => {
-        if (btn.getAttribute("data-filter") === filter) {
-            btn.classList.add(
-                "active",
-                "bg-indigo-100",
-                "dark:bg-indigo-900",
-                "text-indigo-700",
-                "dark:text-indigo-300",
-                "border-indigo-300",
-                "dark:border-indigo-600",
-            );
-            btn.classList.remove(
-                "bg-white",
-                "dark:bg-gray-700",
-                "text-gray-700",
-                "dark:text-gray-300",
-            );
-        } else {
-            btn.classList.remove(
-                "active",
-                "bg-indigo-100",
-                "dark:bg-indigo-900",
-                "text-indigo-700",
-                "dark:text-indigo-300",
-                "border-indigo-300",
-                "dark:border-indigo-600",
-            );
-            btn.classList.add(
-                "bg-white",
-                "dark:bg-gray-700",
-                "text-gray-700",
-                "dark:text-gray-300",
-            );
-        }
-    });
-
-    // Update current filter state
-    currentTeamRelationshipFilter = filter;
-
-    // Get current search query
-    const searchInput = document.getElementById("team-search");
-    const searchQuery = searchInput ? searchInput.value.trim() : "";
-
-    // Perform search with new filter
-    performTeamSearch(searchQuery);
-}
-
-/**
- * Legacy filterTeams function - redirects to serverSideTeamSearch
- * @param {string} searchValue - The search query
- */
-function filterTeams(searchValue) {
-    serverSideTeamSearch(searchValue);
-}
-
-// ============================================================================ //
-//                    TEAM SELECTOR DROPDOWN FUNCTIONS                           //
-// ============================================================================ //
-
-/**
- * Debounce timer for team selector search
- */
-let teamSelectorSearchDebounceTimer = null;
-
-/**
- * Search teams in the team selector dropdown
- * @param {string} searchTerm - The search query
- */
-function searchTeamSelector(searchTerm) {
-    // Debounce the search
-    if (teamSelectorSearchDebounceTimer) {
-        clearTimeout(teamSelectorSearchDebounceTimer);
-    }
-
-    teamSelectorSearchDebounceTimer = setTimeout(() => {
-        performTeamSelectorSearch(searchTerm);
-    }, 300);
-}
-
-/**
- * Perform the team selector search
- * @param {string} searchTerm - The search query
- */
-function performTeamSelectorSearch(searchTerm) {
-    const container = document.getElementById("team-selector-items");
-    if (!container) {
-        console.error("team-selector-items container not found");
-        return;
-    }
-
-    // Build URL
-    const params = new URLSearchParams();
-    params.set("page", "1");
-    params.set("per_page", "20");
-    params.set("render", "selector");
-
-    if (searchTerm && searchTerm.trim() !== "") {
-        params.set("q", searchTerm.trim());
-    }
-
-    const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
-
-    // Use HTMX to load results
-    if (window.htmx) {
-        window.htmx.ajax("GET", url, {
-            target: "#team-selector-items",
-            swap: "innerHTML",
-        });
-    }
-}
-
-/**
- * Select a team from the team selector dropdown
- * @param {HTMLElement} button - The button element that was clicked
- */
-function selectTeamFromSelector(button) {
-    const teamId = button.dataset.teamId;
-    const teamName = button.dataset.teamName;
-    const isPersonal = button.dataset.teamIsPersonal === "true";
-
-    // Update the Alpine.js component state
-    const selectorContainer = button.closest("[x-data]");
-    if (selectorContainer && selectorContainer.__x) {
-        const alpineData = selectorContainer.__x.$data;
-        alpineData.selectedTeam = teamId;
-        alpineData.selectedTeamName = (isPersonal ? "👤 " : "🏢 ") + teamName;
-        alpineData.open = false;
-    }
-
-    // Clear the search input
-    const searchInput = document.getElementById("team-selector-search");
-    if (searchInput) {
-        searchInput.value = "";
-    }
-
-    // Reset the loaded flag so next open reloads the list
-    const itemsContainer = document.getElementById("team-selector-items");
-    if (itemsContainer) {
-        delete itemsContainer.dataset.loaded;
-    }
-
-    // Call the existing updateTeamContext function (defined in admin.html)
-    if (typeof window.updateTeamContext === "function") {
-        window.updateTeamContext(teamId);
-    }
-}
-
-// Make team functions globally available
-window.serverSideTeamSearch = serverSideTeamSearch;
-window.filterByRelationship = filterByRelationship;
-window.filterTeams = filterTeams;
-window.searchTeamSelector = searchTeamSelector;
-window.selectTeamFromSelector = selectTeamFromSelector;

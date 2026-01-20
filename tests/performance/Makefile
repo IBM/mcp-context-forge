@@ -26,17 +26,11 @@ help:
 	@echo "  make test-all-scenarios    - Run all test scenarios"
 	@echo "  make test-percentile       - PostgreSQL percentile performance benchmark"
 	@echo ""
-	@echo "Plugin Tests:"
-	@echo "  make test-plugins          - Plugin tests with summary table output"
-	@echo "  make test-plugins-details  - Plugin tests with detailed output"
-	@echo ""
 	@echo "Baseline Management:"
 	@echo "  make baseline              - Save current as baseline"
 	@echo "  make save-baseline         - Save existing results as baseline"
 	@echo "  make compare               - Compare with baseline"
 	@echo "  make list-baselines        - List saved baselines"
-	@echo "  make baseline-plugins      - Save current plugin profiles directory as baseline
-	@echo "  make compare-plugins       - Compare current plugin profiles with baseline"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make list-profiles         - List all available profiles"
@@ -140,15 +134,6 @@ test-pg16:
 test-pg17:
 	@./run-advanced.sh -p medium --postgres-version 17-alpine
 
-# Plugin tests
-test-plugins:
-	@echo "Running plugin performance tests..."
-	@LOG_LEVEL=ERROR python test_plugins_performance.py 2>/dev/null
-
-test-plugins-details:
-	@echo "Running plugin performance tests with detailed output..."
-	@LOG_LEVEL=ERROR python test_plugins_performance.py --details 2>/dev/null
-
 # Baseline Management
 baseline:
 	@echo "Saving current results as baseline..."
@@ -190,16 +175,6 @@ endif
 	@python3 utils/baseline_manager.py save $(RESULTS) --output baselines/$(BASELINE).json $(if $(PROFILE),--profile $(PROFILE)) $(if $(SERVER_PROFILE),--server-profile $(SERVER_PROFILE)) $(if $(INFRASTRUCTURE),--infrastructure $(INFRASTRUCTURE))
 	@echo "✅ Baseline saved to baselines/$(BASELINE).json"
 
-baseline-plugins:
-	@echo "Saving current results as baseline..."
-	@$(MAKE) test-plugins
-	@cp -r plugins/prof plugins/prof_baseline
-
-compare-plugins:
-	@echo "Comparing current results against baseline..."
-	@$(MAKE) test-plugins
-	@python ./utils/analyze_profiles.py plugins/prof_baseline plugins/prof --compare-all
-
 # Profile Management
 list-profiles:
 	@echo ""
@@ -229,12 +204,11 @@ clean:
 clean-results:
 	@echo "Removing all test result directories..."
 	@find results/ -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
-	@rm -rf plugins/prof 2>/dev/null || true
 	@echo "✅ All results cleaned"
 
 clean-all: clean-results
 	@echo "Cleaning baselines and reports..."
-	@rm -rf baselines/*.json reports/*.html plugins/prof plugins/prof_baseline 2>/dev/null || true
+	@rm -rf baselines/*.json reports/*.html 2>/dev/null || true
 	@echo "✅ Deep clean complete"
 
 # PostgreSQL Percentile Performance Benchmark

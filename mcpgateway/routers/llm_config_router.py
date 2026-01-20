@@ -241,22 +241,20 @@ async def delete_provider(
 
 
 @llm_config_router.post(
-    "/providers/{provider_id}/state",
+    "/providers/{provider_id}/toggle",
     response_model=LLMProviderResponse,
-    summary="Set LLM Provider State",
-    description="Set the enabled status of an LLM provider.",
+    summary="Toggle LLM Provider",
+    description="Toggle the enabled status of an LLM provider.",
 )
 @require_permission("admin.system_config")
-async def set_provider_state(
+async def toggle_provider(
     provider_id: str,
-    activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMProviderResponse:
-    """Set provider enabled state.
+    """Toggle provider enabled status.
 
     Args:
         provider_id: Provider ID.
-        activate: If provided, sets enabled to this value. If None, inverts current state.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -267,7 +265,7 @@ async def set_provider_state(
     """
     try:
         db = current_user_ctx["db"]
-        provider = llm_provider_service.set_provider_state(db, provider_id, activate)
+        provider = llm_provider_service.toggle_provider(db, provider_id)
         model_count = len(provider.models)
         return llm_provider_service.to_provider_response(provider, model_count)
     except LLMProviderNotFoundError as e:
@@ -495,22 +493,20 @@ async def delete_model(
 
 
 @llm_config_router.post(
-    "/models/{model_id}/state",
+    "/models/{model_id}/toggle",
     response_model=LLMModelResponse,
-    summary="Set LLM Model State",
-    description="Set the enabled status of an LLM model.",
+    summary="Toggle LLM Model",
+    description="Toggle the enabled status of an LLM model.",
 )
 @require_permission("admin.system_config")
-async def set_model_state(
+async def toggle_model(
     model_id: str,
-    activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMModelResponse:
-    """Set model enabled state.
+    """Toggle model enabled status.
 
     Args:
         model_id: Model ID.
-        activate: If provided, sets enabled to this value. If None, inverts current state.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -521,7 +517,7 @@ async def set_model_state(
     """
     try:
         db = current_user_ctx["db"]
-        model = llm_provider_service.set_model_state(db, model_id, activate)
+        model = llm_provider_service.toggle_model(db, model_id)
         try:
             provider = llm_provider_service.get_provider(db, model.provider_id)
         except LLMProviderNotFoundError:

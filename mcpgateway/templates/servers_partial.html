@@ -2,7 +2,6 @@
 <table id="servers-table" class="min-w-full divide-y divide-gray-200">
   <thead class="bg-gray-50 dark:bg-gray-700">
     <tr>
-      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Icon</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">S. No.</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">UUID</th>
@@ -15,30 +14,13 @@
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Team</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Visibility</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
     </tr>
   </thead>
   <tbody id="servers-table-body" data-testid="server-list" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
-  {% for server in data %}
-  {% set server_label = server.name or server.id %}
-  <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}">
-    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-      <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
-        <!-- Row 1: View | Edit -->
-        <button onclick="viewServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
-        <button onclick="editServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
-
-        <!-- Row 3 & 4: Activate/Deactivate | Delete -->
-        <div class="col-span-2 flex flex-col space-y-1">
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'servers')">
-            <input type="hidden" name="activate" value="{{ 'false' if server.enabled else 'true' }}" />
-            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if server.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if server.enabled %}Deactivate{% else %}Activate{% endif %}</button>
-          </form>
-          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'server', '{{ server_label }}', 'servers')">
-            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
-          </form>
-        </div>
-      </div>
-    </td>
+{% for server in data %}
+{% set server_label = server.name or server.id %}
+<tr data-testid="server-item">
     <td class="px-6 py-4 whitespace-nowrap">
       {% if server.icon %}
       <img src="{{ server.icon }}" alt="{{ server.name }} Icon" class="h-8 w-8" />
@@ -91,7 +73,7 @@
     </td>
     <td class="px-2 py-4 whitespace-nowrap">
       {% if server.team %}
-      <span class="text-sm text-gray-900 dark:text-gray-100">{{ server.team|e|replace(' ', '<br />')|safe }}</span>
+      <span class="text-sm text-gray-900 dark:text-gray-100">{{ server.team.replace(' ', '<br />')|safe }}</span>
       {% else %}
       <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
       {% endif %}
@@ -107,6 +89,24 @@
       <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
       {% endif %}
     </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+      <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
+        <!-- Row 1: View | Edit -->
+        <button onclick="viewServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+        <button onclick="editServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+
+        <!-- Row 3 & 4: Activate/Deactivate | Delete -->
+        <div class="col-span-2 flex flex-col space-y-1">
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/toggle" class="contents" onsubmit="return handleToggleSubmit(event, 'servers')">
+            <input type="hidden" name="activate" value="{{ 'false' if server.enabled else 'true' }}" />
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if server.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if server.enabled %}Deactivate{% else %}Activate{% endif %}</button>
+          </form>
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'server', '{{ server_label }}', 'servers')">
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
+          </form>
+        </div>
+      </div>
+    </td>
   </tr>
 {% endfor %}
   </tbody>
@@ -117,9 +117,6 @@
   {% set base_url = root_path + '/admin/servers/partial' %}
   {% set hx_target = '#servers-table' %}
   {% set hx_indicator = '#servers-loading' %}
-  {% set table_name = 'servers' %}
   {% set query_params = {'include_inactive': include_inactive} %}
-  {% autoescape false %}
   {% include 'pagination_controls.html' %}
-  {% endautoescape %}
 </div>

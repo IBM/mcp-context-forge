@@ -12,12 +12,10 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
-import binascii
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
-from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -25,7 +23,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session, get_for_update
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, EmailTeam, fresh_db_session
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
@@ -148,7 +146,7 @@ class A2AAgentNameConflictError(A2AAgentError):
 class A2AAgentService:
     """Service for managing A2A agents in the gateway.
 
-    Provides methods to create, list, retrieve, update, set state, and delete agent records.
+    Provides methods to create, list, retrieve, update, toggle status, and delete agent records.
     Also supports interactions with A2A-compatible agents.
     """
 
@@ -207,99 +205,6 @@ class A2AAgentService:
 
         return {team.id: team.name for team in teams}
 
-    def _check_agent_access(
-        self,
-        agent: DbA2AAgent,
-        user_email: Optional[str],
-        token_teams: Optional[List[str]],
-    ) -> bool:
-        """Check if user has access to agent based on visibility rules.
-
-        Access rules (matching tools/resources/prompts):
-        - token_teams is None: Admin bypass (unrestricted access)
-        - public visibility: Always allowed
-        - team visibility: Allowed if agent.team_id in token_teams
-        - private visibility: Allowed if owner, BUT NOT for public-only tokens
-
-        Args:
-            agent: The agent to check access for
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. None = admin, [] = public-only (no owner access)
-
-        Returns:
-            True if access allowed, False otherwise.
-        """
-        # Admin bypass - token_teams is None means unrestricted access
-        if token_teams is None:
-            return True
-
-        if agent.visibility == "public":
-            return True
-
-        if agent.visibility == "team" and token_teams:
-            return agent.team_id in token_teams
-
-        # Private visibility: owner can access, BUT NOT for public-only tokens
-        # Public-only tokens (empty teams array) should NOT get owner access
-        is_public_only_token = len(token_teams) == 0
-        if agent.visibility == "private" and user_email and not is_public_only_token:
-            return agent.owner_email == user_email
-
-        return False
-
-    def _apply_visibility_filter(
-        self,
-        query,
-        user_email: Optional[str],
-        token_teams: List[str],
-        team_id: Optional[str] = None,
-    ) -> Any:
-        """Apply visibility-based access control to query.
-
-        Access rules (matching tools/resources/prompts):
-        - public: visible to all
-        - team: visible to team members (token_teams contains team_id)
-        - private: visible only to owner, BUT NOT for public-only tokens
-
-        Args:
-            query: SQLAlchemy query to filter
-            user_email: User's email for owner matching
-            token_teams: Teams from JWT. [] = public-only (no owner access)
-            team_id: Optional specific team filter
-
-        Returns:
-            Filtered query
-        """
-        # Check if this is a public-only token (empty teams array)
-        # Public-only tokens can ONLY see public resources - no owner access
-        is_public_only_token = len(token_teams) == 0
-
-        if team_id:
-            # User requesting specific team - verify access
-            if team_id not in token_teams:
-                # Return query that matches nothing (will return empty result)
-                return query.where(False)
-
-            access_conditions = [
-                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
-            ]
-            # Only include owner access for non-public-only tokens with user_email
-            if not is_public_only_token and user_email:
-                access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
-            return query.where(or_(*access_conditions))
-
-        # General access: public + team (+ owner if not public-only token)
-        access_conditions = [DbA2AAgent.visibility == "public"]
-
-        # Only include owner access for non-public-only tokens with user_email
-        if not is_public_only_token and user_email:
-            access_conditions.append(DbA2AAgent.owner_email == user_email)
-
-        if token_teams:
-            access_conditions.append(and_(DbA2AAgent.team_id.in_(token_teams), DbA2AAgent.visibility.in_(["team", "public"])))
-
-        return query.where(or_(*access_conditions))
-
     async def register_agent(
         self,
         db: Session,
@@ -349,12 +254,12 @@ class A2AAgentService:
                 logger.info(f"agent_data.name: {agent_data.name}")
                 logger.info(f"agent_data.slug: {agent_data.slug}")
                 # Check for existing public a2a agent with the same slug
-                existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public"))
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team a2a agent with the same slug
-                existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id))
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
@@ -381,43 +286,6 @@ class A2AAgentService:
 
             oauth_config = getattr(agent_data, "oauth_config", None)
 
-            # Handle query_param auth - encrypt and prepare for storage
-            auth_query_params_encrypted: Optional[Dict[str, str]] = None
-            if auth_type == "query_param":
-                # Standard
-                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
-                # Service-layer enforcement: Check feature flag
-                if not settings.insecure_allow_queryparam_auth:
-                    raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
-
-                # Service-layer enforcement: Check host allowlist
-                if settings.insecure_queryparam_auth_allowed_hosts:
-                    parsed = urlparse(str(agent_data.endpoint_url))
-                    hostname = (parsed.hostname or "").lower()
-                    allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
-                    if hostname not in allowed_hosts:
-                        allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                        raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. " f"Allowed: {allowed}")
-
-                # Extract and encrypt query param auth
-                param_key = getattr(agent_data, "auth_query_param_key", None)
-                param_value = getattr(agent_data, "auth_query_param_value", None)
-                if param_key and param_value:
-                    # Handle SecretStr
-                    if hasattr(param_value, "get_secret_value"):
-                        raw_value = param_value.get_secret_value()
-                    else:
-                        raw_value = str(param_value)
-                    # Encrypt for storage
-                    encrypted_value = encode_auth({param_key: raw_value})
-                    auth_query_params_encrypted = {param_key: encrypted_value}
-                    # Query param auth doesn't use auth_value
-                    auth_value = None
-
             # Create new agent
             new_agent = DbA2AAgent(
                 name=agent_data.name,
@@ -429,15 +297,13 @@ class A2AAgentService:
                 config=agent_data.config,
                 auth_type=auth_type,
                 auth_value=auth_value,  # This should be encrypted in practice
-                auth_query_params=auth_query_params_encrypted,  # Encrypted query param auth
                 oauth_config=oauth_config,
                 tags=agent_data.tags,
                 passthrough_headers=getattr(agent_data, "passthrough_headers", None),
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
                 team_id=getattr(agent_data, "team_id", None) or team_id,
                 owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
-                # Endpoint visibility parameter takes precedence over schema default
-                visibility=visibility if visibility is not None else getattr(agent_data, "visibility", "public"),
+                visibility=getattr(agent_data, "visibility", None) or visibility,
                 created_by=created_by,
                 created_from_ip=created_from_ip,
                 created_via=created_via,
@@ -551,7 +417,6 @@ class A2AAgentService:
         page: Optional[int] = None,
         per_page: Optional[int] = None,
         user_email: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
     ) -> Union[tuple[List[A2AAgentRead], Optional[str]], Dict[str, Any]]:
@@ -565,11 +430,9 @@ class A2AAgentService:
             limit: Maximum number of agents to return. None for default, 0 for unlimited.
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
-            user_email: Email of user for owner matching in visibility checks.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
-            team_id: Optional team ID to filter by specific team.
-            visibility: Optional visibility filter (private, team, public).
+            user_email: Email of user for team-based access control. None for no access control.
+            team_id: Optional team ID to filter by specific team (requires user_email).
+            visibility: Optional visibility filter (private, team, public) (requires user_email).
 
         Returns:
             If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
@@ -610,13 +473,9 @@ class A2AAgentService:
             True
 
         """
-        # ══════════════════════════════════════════════════════════════════════
-        # CACHE READ: Skip cache when ANY access filtering is applied
-        # This prevents leaking admin-level results to filtered requests
-        # Cache only when: user_email is None AND token_teams is None AND page is None
-        # ══════════════════════════════════════════════════════════════════════
+        # Check cache for first page only - skip when user_email provided or page based pagination
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and token_teams is None and page is None:
+        if cursor is None and user_email is None and page is None:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
@@ -630,27 +489,33 @@ class A2AAgentService:
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbA2AAgent.enabled)
+        # Apply team-based access control if user_email is provided
+        if user_email:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
 
-        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
-        # This ensures unauthenticated requests with token_teams=[] only see public agents
-        if user_email or token_teams is not None:
-            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
-            if token_teams is not None:
-                effective_teams = token_teams
-            elif user_email:
-                # Look up user's teams from DB (for admin UI / first-party access)
-                team_service = TeamManagementService(db)
-                user_teams = await team_service.get_user_teams(user_email)
-                effective_teams = [team.id for team in user_teams]
+            if team_id:
+                # User requesting specific team - verify access
+                if team_id not in team_ids:
+                    return ([], None)
+                access_conditions = [
+                    and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
+                    and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email),
+                ]
+                query = query.where(or_(*access_conditions))
             else:
-                effective_teams = []
+                # General access: user's agents + public agents + team agents
+                access_conditions = [
+                    DbA2AAgent.owner_email == user_email,
+                    DbA2AAgent.visibility == "public",
+                ]
+                if team_ids:
+                    access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+                query = query.where(or_(*access_conditions))
 
-            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
-
-        # IMPORTANT: Apply visibility filter AFTER access control
-        # This allows users to further filter by visibility within their allowed access
-        if visibility:
-            query = query.where(DbA2AAgent.visibility == visibility)
+            if visibility:
+                query = query.where(DbA2AAgent.visibility == visibility)
 
         # Add tag filtering if tags are provided
         if tags:
@@ -689,12 +554,8 @@ class A2AAgentService:
         # Convert to A2AAgentRead (common for both pagination types)
         result = []
         for s in a2a_agents_db:
-            try:
-                s.team = team_map.get(s.team_id) if s.team_id else None
-                result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
-            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert A2A agent {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
-                # Continue with remaining agents instead of failing completely
+            s.team = team_map.get(s.team_id) if s.team_id else None
+            result.append(self.convert_agent_to_read(s, include_metrics=False, db=db, team_map=team_map))
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -707,11 +568,8 @@ class A2AAgentService:
 
         # Cursor-based format
 
-        # ══════════════════════════════════════════════════════════════════════
-        # CACHE WRITE: Only cache admin-level results (matches read guard)
-        # MUST check token_teams is None to prevent caching scoped responses
-        # ══════════════════════════════════════════════════════════════════════
-        if cursor is None and user_email is None and token_teams is None:
+        # Cache first page results - only for non-user-specific queries
+        if cursor is None and user_email is None:
             try:
                 cache_data = {"agents": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("agents", cache_data, filters_hash)
@@ -804,39 +662,21 @@ class A2AAgentService:
         db.commit()  # Release transaction to avoid idle-in-transaction
 
         # Skip metrics to avoid N+1 queries in list operations
-        result = []
-        for agent in agents:
-            try:
-                result.append(self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map))
-            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
-                logger.exception(f"Failed to convert A2A agent {getattr(agent, 'id', 'unknown')} ({getattr(agent, 'name', 'unknown')}): {e}")
-                # Continue with remaining agents instead of failing completely
+        return [self.convert_agent_to_read(agent, include_metrics=False, db=db, team_map=team_map) for agent in agents]
 
-        return result
-
-    async def get_agent(
-        self,
-        db: Session,
-        agent_id: str,
-        include_inactive: bool = True,
-        user_email: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
-    ) -> A2AAgentRead:
+    async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
-            include_inactive: Whether to include inactive a2a agents.
-            user_email: User's email for owner matching in visibility checks.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
+            include_inactive: Whether to include inactive a2a agents
 
         Returns:
             Agent data.
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found or user lacks access.
+            A2AAgentNotFoundError: If the agent is not found.
 
         Examples:
             >>> from unittest.mock import MagicMock
@@ -910,15 +750,16 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
+        # if agent.enabled or include_inactive:
+        #    agent.team = self._get_team_name(db, getattr(agent, "team_id", None))
+        #    return A2AAgentRead.model_validate(self._prepare_a2a_agent_for_read(agent)).masked()
+
+        # raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
         if not agent.enabled and not include_inactive:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        # SECURITY: Check visibility/team access
-        # Return 404 (not 403) to avoid leaking existence of private agents
-        if not self._check_agent_access(agent, user_email, token_teams):
-            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
-
-        # Delegate conversion and masking to convert_agent_to_read()
+        # ✅ Delegate conversion and masking to convert_agent_to_read()
         return self.convert_agent_to_read(agent, db=db)
 
     async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
@@ -974,11 +815,10 @@ class A2AAgentService:
             A2AAgentNameConflictError: If name conflicts with another agent.
             A2AAgentError: For other errors during update.
             IntegrityError: If a database integrity error occurs.
-            ValueError: If query_param auth is disabled or host not in allowlist.
         """
         try:
-            # Acquire row lock for update to avoid lost-update on `version` and other fields
-            agent = get_for_update(db, DbA2AAgent, agent_id)
+            query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
+            agent = db.execute(query).scalar_one_or_none()
 
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
@@ -999,22 +839,18 @@ class A2AAgentService:
                 # Check for existing server with the same slug within the same team or public scope
                 if visibility.lower() == "public":
                     # Check for existing public a2a agent with the same slug
-                    existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "public"))
+                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
                     if existing_agent:
                         raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team a2a agent with the same slug
-                    existing_agent = get_for_update(db, DbA2AAgent, where=and_(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id))
+                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
                     if existing_agent:
                         raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
                 # Update the slug when name changes
                 agent.slug = new_slug
             # Update fields
             update_data = agent_data.model_dump(exclude_unset=True)
-
-            # Track original auth_type and endpoint_url before updates
-            original_auth_type = agent.auth_type
-            original_endpoint_url = agent.endpoint_url
 
             for field, value in update_data.items():
                 if field == "passthrough_headers":
@@ -1034,93 +870,8 @@ class A2AAgentService:
                         agent.passthrough_headers = None
                     continue
 
-                # Skip query_param fields - handled separately below
-                if field in ("auth_query_param_key", "auth_query_param_value"):
-                    continue
-
                 if hasattr(agent, field):
                     setattr(agent, field, value)
-
-            # Handle query_param auth updates
-            # Clear auth_query_params when switching away from query_param auth
-            if original_auth_type == "query_param" and agent_data.auth_type is not None and agent_data.auth_type != "query_param":
-                agent.auth_query_params = None
-                logger.debug(f"Cleared auth_query_params for agent {agent.id} (switched from query_param to {agent_data.auth_type})")
-
-            # Handle switching to query_param auth or updating existing query_param credentials
-            is_switching_to_queryparam = agent_data.auth_type == "query_param" and original_auth_type != "query_param"
-            is_updating_queryparam_creds = original_auth_type == "query_param" and (agent_data.auth_query_param_key is not None or agent_data.auth_query_param_value is not None)
-            is_url_changing = agent_data.endpoint_url is not None and str(agent_data.endpoint_url) != original_endpoint_url
-
-            if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and original_auth_type == "query_param"):
-                # Standard
-                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
-                # Service-layer enforcement: Check feature flag
-                if not settings.insecure_allow_queryparam_auth:
-                    # Grandfather clause: Allow updates to existing query_param agents
-                    # unless they're trying to change credentials
-                    if is_switching_to_queryparam or is_updating_queryparam_creds:
-                        raise ValueError("Query parameter authentication is disabled. Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable.")
-
-                # Service-layer enforcement: Check host allowlist
-                if settings.insecure_queryparam_auth_allowed_hosts:
-                    check_url = str(agent_data.endpoint_url) if agent_data.endpoint_url else agent.endpoint_url
-                    parsed = urlparse(check_url)
-                    hostname = (parsed.hostname or "").lower()
-                    allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
-                    if hostname not in allowed_hosts:
-                        allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                        raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. " f"Allowed: {allowed}")
-
-            if is_switching_to_queryparam or is_updating_queryparam_creds:
-                # Get query param key and value
-                param_key = getattr(agent_data, "auth_query_param_key", None)
-                param_value = getattr(agent_data, "auth_query_param_value", None)
-
-                # If no key provided but value is, reuse existing key (value-only rotation)
-                existing_key = next(iter(agent.auth_query_params.keys()), None) if agent.auth_query_params else None
-                if not param_key and param_value and existing_key:
-                    param_key = existing_key
-
-                if param_key:
-                    # Check if value is masked (user didn't change it) or new value provided
-                    is_masked_placeholder = False
-                    if param_value and hasattr(param_value, "get_secret_value"):
-                        raw_value = param_value.get_secret_value()
-                        # First-Party
-                        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
-                        is_masked_placeholder = raw_value == settings.masked_auth_value
-                    elif param_value:
-                        raw_value = str(param_value)
-                    else:
-                        raw_value = None
-
-                    if raw_value and not is_masked_placeholder:
-                        # New value provided - encrypt for storage
-                        encrypted_value = encode_auth({param_key: raw_value})
-                        agent.auth_query_params = {param_key: encrypted_value}
-                    elif agent.auth_query_params and is_masked_placeholder:
-                        # Use existing encrypted value (user didn't change the password)
-                        # But key may have changed, so preserve with new key if different
-                        if existing_key and existing_key != param_key:
-                            # Key changed but value is masked - decrypt and re-encrypt with new key
-                            existing_encrypted = agent.auth_query_params.get(existing_key, "")
-                            if existing_encrypted:
-                                decrypted = decode_auth(existing_encrypted)
-                                existing_value = decrypted.get(existing_key, "")
-                                if existing_value:
-                                    encrypted_value = encode_auth({param_key: existing_value})
-                                    agent.auth_query_params = {param_key: encrypted_value}
-
-                # Update auth_type if switching
-                if is_switching_to_queryparam:
-                    agent.auth_type = "query_param"
-                    agent.auth_value = None  # Query param auth doesn't use auth_value
 
             # Update metadata
             if modified_by:
@@ -1181,8 +932,8 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
 
-    async def set_agent_state(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
-        """Set the activation status of an A2A agent.
+    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
+        """Toggle the activation status of an A2A agent.
 
         Args:
             db: Database session.
@@ -1324,7 +1075,6 @@ class A2AAgentService:
         *,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Invoke an A2A agent.
 
@@ -1335,38 +1085,18 @@ class A2AAgentService:
             interaction_type: Type of interaction.
             user_id: Identifier of the user initiating the call.
             user_email: Email of the user initiating the call.
-            token_teams: Teams from JWT token. None = admin (no filtering),
-                         [] = public-only, [...] = team-scoped access.
 
         Returns:
             Agent response.
 
         Raises:
-            A2AAgentNotFoundError: If the agent is not found or user lacks access.
+            A2AAgentNotFoundError: If the agent is not found.
             A2AAgentError: If the agent is disabled or invocation fails.
         """
         # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 1: Acquire a short row lock to read `enabled` + `auth_value`,
-        # then release the lock before performing the external HTTP call.
-        # This avoids TOCTOU for the critical checks while not holding DB
-        # connections during the potentially slow HTTP request.
+        # PHASE 1: Fetch all required data before HTTP call
         # ═══════════════════════════════════════════════════════════════════════════
-
-        # Lookup the agent id, then lock the row by id using get_for_update
-        agent_row = db.execute(select(DbA2AAgent.id).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
-        if not agent_row:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
-
-        agent = get_for_update(db, DbA2AAgent, agent_row)
-        if not agent:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
-
-        # ═══════════════════════════════════════════════════════════════════════════
-        # SECURITY: Check visibility/team access WHILE ROW IS LOCKED
-        # Return 404 (not 403) to avoid leaking existence of private agents
-        # ═══════════════════════════════════════════════════════════════════════════
-        if not self._check_agent_access(agent, user_email, token_teams):
-            raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
+        agent = await self.get_agent_by_name(db, agent_name)
 
         if not agent.enabled:
             raise A2AAgentError(f"A2A Agent '{agent_name}' is disabled")
@@ -1378,24 +1108,6 @@ class A2AAgentService:
         agent_protocol_version = agent.protocol_version
         agent_auth_type = agent.auth_type
         agent_auth_value = agent.auth_value
-        agent_auth_query_params = agent.auth_query_params
-
-        # Handle query_param auth - decrypt and apply to URL
-        auth_query_params_decrypted: Optional[Dict[str, str]] = None
-        if agent_auth_type == "query_param" and agent_auth_query_params:
-            # First-Party
-            from mcpgateway.utils.url_auth import apply_query_param_auth  # pylint: disable=import-outside-toplevel
-
-            auth_query_params_decrypted = {}
-            for param_key, encrypted_value in agent_auth_query_params.items():
-                if encrypted_value:
-                    try:
-                        decrypted = decode_auth(encrypted_value)
-                        auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
-                    except Exception:
-                        logger.debug(f"Failed to decrypt query param '{param_key}' for A2A agent invocation")
-            if auth_query_params_decrypted:
-                agent_endpoint_url = apply_query_param_auth(agent_endpoint_url, auth_query_params_decrypted)
 
         # Decode auth_value for supported auth types (before closing session)
         auth_headers = {}
@@ -1424,13 +1136,6 @@ class A2AAgentService:
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2: Make HTTP call (no DB connection held)
         # ═══════════════════════════════════════════════════════════════════════════
-
-        # Create sanitized URL for logging (redacts auth query params)
-        # First-Party
-        from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
-
-        sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_query_params_decrypted)
-
         try:
             # Prepare the request to the A2A agent
             # Format request based on agent type and endpoint
@@ -1456,7 +1161,7 @@ class A2AAgentService:
             if correlation_id:
                 headers["X-Correlation-ID"] = correlation_id
 
-            # Log A2A external call start (with sanitized URL to prevent credential leakage)
+            # Log A2A external call start
             call_start_time = datetime.now(timezone.utc)
             structured_logger.log(
                 level="INFO",
@@ -1469,7 +1174,7 @@ class A2AAgentService:
                     "event": "a2a_call_started",
                     "agent_name": agent_name,
                     "agent_id": agent_id,
-                    "endpoint_url": sanitized_endpoint_url,
+                    "endpoint_url": agent_endpoint_url,
                     "interaction_type": interaction_type,
                     "protocol_version": agent_protocol_version,
                 },
@@ -1494,9 +1199,7 @@ class A2AAgentService:
                     metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "status_code": http_response.status_code, "success": True},
                 )
             else:
-                # Sanitize error message to prevent URL secrets from leaking in logs
-                raw_error = f"HTTP {http_response.status_code}: {http_response.text}"
-                error_message = sanitize_exception_message(raw_error, auth_query_params_decrypted)
+                error_message = f"HTTP {http_response.status_code}: {http_response.text}"
 
                 # Log failed A2A call
                 structured_logger.log(
@@ -1517,8 +1220,7 @@ class A2AAgentService:
             # Re-raise A2AAgentError without wrapping
             raise
         except Exception as e:
-            # Sanitize error message to prevent URL secrets from leaking in logs
-            error_message = sanitize_exception_message(str(e), auth_query_params_decrypted)
+            error_message = str(e)
             logger.error(f"Failed to invoke A2A agent '{agent_name}': {error_message}")
             raise A2AAgentError(f"Failed to invoke A2A agent: {error_message}")
 
@@ -1547,9 +1249,8 @@ class A2AAgentService:
             # Update last interaction timestamp (quick separate write)
             try:
                 with fresh_db_session() as ts_db:
-                    # Reacquire short lock and re-check enabled before writing
-                    db_agent = get_for_update(ts_db, DbA2AAgent, agent_id)
-                    if db_agent and getattr(db_agent, "enabled", False):
+                    db_agent = ts_db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+                    if db_agent:
                         db_agent.last_interaction = end_time
                         ts_db.commit()
             except Exception as ts_error:
@@ -1719,8 +1420,6 @@ class A2AAgentService:
         agent_data = {k: getattr(db_agent, k, None) for k in A2AAgentRead.model_fields.keys()}
         agent_data["metrics"] = metrics
         agent_data["team"] = getattr(db_agent, "team", None)
-        # Include auth_query_params for the _mask_query_param_auth validator
-        agent_data["auth_query_params"] = getattr(db_agent, "auth_query_params", None)
 
         # Validate using Pydantic model
         validated_agent = A2AAgentRead.model_validate(agent_data)
