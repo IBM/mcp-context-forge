@@ -147,8 +147,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     if close_after:
                         try:
                             db.close()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Failed to close ephemeral DB session after success log: %s", e)
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed
@@ -177,8 +177,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     if close_after:
                         try:
                             db.close()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Failed to close ephemeral DB session after failure log: %s", e)
 
         # Continue with request
         return await call_next(request)

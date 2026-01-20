@@ -5369,15 +5369,15 @@ def get_db() -> Generator[Session, Any, None]:
         except Exception:
             try:
                 db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
+            except Exception as e:
+                logger.debug("Failed to invalidate session during rollback cleanup: %s", e)
         raise
     finally:
         if _close_after:
             try:
                 db.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to close ephemeral DB session: %s", e)
 
 
 def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = False, options: Optional[List] = None):
