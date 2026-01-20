@@ -93,7 +93,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.orchestration_service import orchestration_service
+from mcpgateway.services.cancellation_service import cancellation_service
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -2764,7 +2764,7 @@ class MCPChatService:
 
                         tool_runs[run_id] = {"name": name, "start": now_iso, "input": input_data}
 
-                        # Register run for cancellation tracking with gateway-level orchestration service
+                        # Register run for cancellation tracking with gateway-level Cancellation service
                         async def _noop_cancel_cb(reason: Optional[str]) -> None:
                             """
                             No-op cancel callback used when a run is started.
@@ -2779,9 +2779,9 @@ class MCPChatService:
                             return None
 
                         try:
-                            await orchestration_service.register_run(run_id, name=name, cancel_callback=_noop_cancel_cb)
+                            await cancellation_service.register_run(run_id, name=name, cancel_callback=_noop_cancel_cb)
                         except Exception:
-                            logger.exception("Failed to register run %s with OrchestrationService", run_id)
+                            logger.exception("Failed to register run %s with CancellationService", run_id)
 
                         yield {"type": "tool_start", "id": run_id, "tool": name, "input": input_data, "start": now_iso}
 
@@ -2830,9 +2830,9 @@ class MCPChatService:
                                     dropped_overflow_count += 1
                                     logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track run_id {run_id} (overflow count: {dropped_overflow_count})")
 
-                        # Unregister run from orchestration service when finished
+                        # Unregister run from cancellation service when finished
                         try:
-                            await orchestration_service.unregister_run(run_id)
+                            await cancellation_service.unregister_run(run_id)
                         except Exception:
                             logger.exception("Failed to unregister run %s", run_id)
 
@@ -2852,7 +2852,7 @@ class MCPChatService:
 
                         # Unregister run on error
                         try:
-                            await orchestration_service.unregister_run(run_id)
+                            await cancellation_service.unregister_run(run_id)
                         except Exception:
                             logger.exception("Failed to unregister run %s after error", run_id)
 
