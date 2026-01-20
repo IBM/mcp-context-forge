@@ -177,20 +177,29 @@ class CancellationService:
             bool: True if the run was found and cancellation was attempted (or already marked),
             False if the run was not known locally.
         """
+        cancel_cb = None
+        entry = None
+
         async with self._lock:
             entry = self._runs.get(run_id)
             if not entry:
-                logger.info("Cancellation requested for unknown run %s (queued for remote peers)", run_id)
-                # Still publish to Redis for other workers
-                await self._publish_cancellation(run_id, reason)
-                return False
-            if entry.get("cancelled"):
+                # Entry not found - will publish to Redis outside the lock
+                pass
+            elif entry.get("cancelled"):
                 logger.debug("Run %s already cancelled", run_id)
                 return True
-            entry["cancelled"] = True
-            entry["cancelled_at"] = time.time()
-            entry["cancel_reason"] = reason
-            cancel_cb = entry.get("cancel_callback")
+            else:
+                entry["cancelled"] = True
+                entry["cancelled_at"] = time.time()
+                entry["cancel_reason"] = reason
+                cancel_cb = entry.get("cancel_callback")
+
+        # Handle unknown run case outside the lock
+        if not entry:
+            logger.info("Cancellation requested for unknown run %s (queued for remote peers)", run_id)
+            # Publish to Redis for other workers (outside lock to avoid blocking)
+            await self._publish_cancellation(run_id, reason)
+            return False
 
         # Log cancellation with reason and request_id for observability
         logger.info("Tool execution cancelled: run_id=%s, reason=%s, tool=%s", run_id, reason or "not specified", entry.get("name", "unknown"))
