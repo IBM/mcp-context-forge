@@ -11,14 +11,15 @@ Find commit related to PR
 
 Get get commit sha
 
-Create a diff file of the contents of the commit
-git diff 171481d1109544f8ad7c94060fd16660747b8460^ 171481d1109544f8ad7c94060fd16660747b8460 > CYFR-XXX_changes.diff
+Create a diff file of the contents of the commit. Example
 
-## Apply changes to public for and create PR
+    git diff 171481d1109544f8ad7c94060fd16660747b8460^ 171481d1109544f8ad7c94060fd16660747b8460 > CYFR-XXX_changes.diff
+
+## Apply changes to public github.com fork and create PR
 
 On public forked repo, create a branch and apply the changes
 
-git apply CYFR-XXX_changes.diff
+    git apply CYFR-XXX_changes.diff
 
 Create a PR from that branch into the public repo
 
