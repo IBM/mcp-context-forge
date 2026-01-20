@@ -26,10 +26,6 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-<<<<<<< HEAD
-from mcpgateway.db import SessionLocal
-from mcpgateway.services.permission_service import PermissionService
-=======
 from mcpgateway.db import get_db, get_request_session
 from mcpgateway.services.permission_service import PermissionService
 
@@ -39,6 +35,41 @@ SessionLocal = get_request_session
 >>>>>>> e368b7a0 (pylint fix)
 
 logger = logging.getLogger(__name__)
+
+
+def get_db():
+    """Local DB dependency for middleware module.
+
+    Uses the module-level `SessionLocal` alias so tests can patch it.
+    If `SessionLocal` is the request-scoped `get_request_session` this
+    will return the request session (and not close it). If tests patch
+    `SessionLocal` to a callable that returns a session, this generator
+    will close that session when finished.
+    """
+    session = SessionLocal()
+    # Determine whether SessionLocal is the request-scoped getter
+    close_after = SessionLocal is not get_request_session
+    try:
+        yield session
+        try:
+            session.commit()
+        except Exception:
+            pass
+    except Exception:
+        try:
+            session.rollback()
+        except Exception:
+            try:
+                session.invalidate()
+            except Exception:
+                pass
+        raise
+    finally:
+        if close_after:
+            try:
+                session.close()
+            except Exception:
+                pass
 
 # HTTP Bearer security scheme for token extraction
 security = HTTPBearer(auto_error=False)

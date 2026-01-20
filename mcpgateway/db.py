@@ -5446,9 +5446,17 @@ def get_db() -> Generator[Session, Any, None]:
         True
         >>> gen.close()
     """
-    # Use request-scoped session so middleware and route handlers reuse a
-    # single session during the request lifecycle.
-    db = get_request_session()
+    # If there is already a request-scoped session, reuse it and do NOT close
+    # it here (it will be closed by request middleware). Otherwise create a
+    # fresh session from `SessionLocal` and ensure we close it when done.
+    request_session = _request_session.get()
+    if request_session is not None:
+        db = request_session
+        _close_after = False
+    else:
+        db = SessionLocal()
+        _close_after = True
+
     try:
         yield db
         db.commit()
@@ -5462,9 +5470,11 @@ def get_db() -> Generator[Session, Any, None]:
                 pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
-        # Do not close here: the request-scoped session is closed by
-        # the SessionMiddleware at the end of the request.
-        pass
+        if _close_after:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 def get_for_update(

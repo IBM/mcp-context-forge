@@ -1085,6 +1085,7 @@ class TestTeamFiltering:
         )
         db.add(db_tool)
         db.commit()
+        db_tool_id = db_tool.id  # Store ID immediately after commit while object is attached
 
         # Try to filter by the other team - returns empty results (user is not a member)
         response = await client.get(f"/admin/tools/partial?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
@@ -1096,7 +1097,7 @@ class TestTeamFiltering:
         response = await client.get(f"/admin/tools/ids?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
-        assert db_tool.id not in data["tool_ids"], f"Tool from other team should not be accessible: {db_tool.id}"
+        assert db_tool_id not in data["tool_ids"], f"Tool from other team should not be accessible: {db_tool_id}"
 
     async def test_resources_partial_with_team_id(self, client, app_with_temp_db):
         """Test that /admin/resources/partial respects team_id parameter."""

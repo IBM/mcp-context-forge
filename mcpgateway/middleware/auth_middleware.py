@@ -128,7 +128,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Log successful authentication (only if logging level is "all")
             # DB session created only when needed
             if log_success:
-                db = get_request_session()
+                db = SessionLocal()
+                close_after = SessionLocal is not get_request_session
                 try:
                     security_logger.log_authentication_attempt(
                         user_id=user_id,
@@ -142,6 +143,12 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log successful auth: {log_error}")
+                finally:
+                    if close_after:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed
@@ -150,7 +157,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Log failed authentication attempt (based on logging level)
             # DB session created only when needed
             if log_failure:
-                db = get_request_session()
+                db = SessionLocal()
+                close_after = SessionLocal is not get_request_session
                 try:
                     security_logger.log_authentication_attempt(
                         user_id="unknown",
@@ -165,6 +173,12 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log auth failure: {log_error}")
+                finally:
+                    if close_after:
+                        try:
+                            db.close()
+                        except Exception:
+                            pass
 
         # Continue with request
         return await call_next(request)
