@@ -18,10 +18,11 @@ results at `tool_post_invoke` with a TTL.
 from __future__ import annotations
 
 # Standard
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 import math
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Third-Party
 from pydantic import BaseModel, Field
@@ -115,16 +116,18 @@ class _Entry:
         vec: Normalized vector representation of text.
         value: Cached result value.
         expires_at: Unix timestamp when entry expires.
+        tokens: Set of tokens for fast filtering (optimization).
     """
 
     text: str
     vec: Dict[str, float]
     value: Any
     expires_at: float
+    tokens: Set[str] = field(default_factory=set)  # Pre-computed token set for quick filtering
 
 
 class ResponseCacheByPromptPlugin(Plugin):
-    """Approximate response cache keyed by prompt similarity."""
+    """Approximate response cache keyed by prompt similarity with optimized lookup."""
 
     def __init__(self, config: PluginConfig) -> None:
         """Initialize the response cache plugin.
@@ -136,6 +139,8 @@ class ResponseCacheByPromptPlugin(Plugin):
         self._cfg = ResponseCacheConfig(**(config.config or {}))
         # Per-tool list of entries
         self._cache: Dict[str, list[_Entry]] = {}
+        # Inverted index: tool -> token -> set of entry indices for fast filtering
+        self._index: Dict[str, Dict[str, Set[int]]] = defaultdict(lambda: defaultdict(set))
 
     def _gather_text(self, args: dict[str, Any] | None) -> str:
         """Extract and concatenate text from configured argument fields.
@@ -156,7 +161,11 @@ class ResponseCacheByPromptPlugin(Plugin):
         return "\n".join(chunks)
 
     def _find_best(self, tool: str, text: str) -> Tuple[Optional[_Entry], float]:
-        """Find the best matching cache entry for the given text.
+        """Find the best matching cache entry for the given text (optimized).
+
+        Uses inverted index to quickly filter candidates before computing
+        expensive cosine similarity. Only entries sharing tokens with the
+        query are considered.
 
         Args:
             tool: Tool name to search cache for.
@@ -165,17 +174,42 @@ class ResponseCacheByPromptPlugin(Plugin):
         Returns:
             Tuple of (best matching entry, similarity score).
         """
+        bucket = self._cache.get(tool, [])
+        if not bucket:
+            return None, 0.0
+
         vec = _vectorize(text)
+        query_tokens = set(vec.keys())
+        
+        # Fast path: use inverted index to find candidate entries
+        # Only consider entries that share at least one token with query
+        tool_index = self._index.get(tool, {})
+        candidate_indices: Set[int] = set()
+        
+        for token in query_tokens:
+            if token in tool_index:
+                candidate_indices.update(tool_index[token])
+        
+        # If no candidates found via index, fall back to empty result
+        if not candidate_indices:
+            return None, 0.0
+        
+        # Compute similarity only for candidates
         best: Optional[_Entry] = None
         best_sim = 0.0
         now = time.time()
-        for e in list(self._cache.get(tool, [])):
+        
+        for idx in candidate_indices:
+            if idx >= len(bucket):
+                continue
+            e = bucket[idx]
             if e.expires_at <= now:
                 continue
             sim = _cos_sim(vec, e.vec)
             if sim > best_sim:
                 best = e
                 best_sim = sim
+        
         return best, best_sim
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
@@ -230,12 +264,37 @@ class ResponseCacheByPromptPlugin(Plugin):
             # As a fallback, do nothing
             return ToolPostInvokeResult(continue_processing=True)
 
-        entry = _Entry(text=text, vec=_vectorize(text), value=payload.result, expires_at=time.time() + max(1, int(self._cfg.ttl)))
+        vec = _vectorize(text)
+        tokens = set(vec.keys())
+        entry = _Entry(text=text, vec=vec, value=payload.result, expires_at=time.time() + max(1, int(self._cfg.ttl)), tokens=tokens)
+        
         bucket = self._cache.setdefault(tool, [])
+        entry_idx = len(bucket)
         bucket.append(entry)
-        # Evict expired and cap size
+        
+        # Update inverted index for new entry
+        tool_index = self._index[tool]
+        for token in tokens:
+            tool_index[token].add(entry_idx)
+        
+        # Evict expired entries and rebuild index
         now = time.time()
-        bucket[:] = [e for e in bucket if e.expires_at > now]
-        if len(bucket) > self._cfg.max_entries:
-            bucket[:] = bucket[-self._cfg.max_entries :]
+        # Filter out expired entries
+        valid_entries = [(i, e) for i, e in enumerate(bucket) if e.expires_at > now]
+        
+        # Cap size if needed
+        if len(valid_entries) > self._cfg.max_entries:
+            valid_entries = valid_entries[-self._cfg.max_entries :]
+        
+        # Rebuild bucket and index if we removed or modified entries
+        if len(valid_entries) != len(bucket):
+            bucket.clear()
+            bucket.extend([e for _, e in valid_entries])
+            
+            # Rebuild inverted index for this tool
+            self._index[tool].clear()
+            for new_idx, entry in enumerate(bucket):
+                for token in entry.tokens:
+                    self._index[tool][token].add(new_idx)
+        
         return ToolPostInvokeResult(metadata={"approx_cache_stored": True})
