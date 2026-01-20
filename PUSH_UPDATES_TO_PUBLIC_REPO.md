@@ -9,7 +9,7 @@ Find commit related to PR
 
 	git log --grep="CYFR-XXX"
 
-Get get commit sha
+Get get commit sha from the commit.
 
 Create a diff file of the contents of the commit. Example
 
