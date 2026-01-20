@@ -211,8 +211,21 @@ async def test_cancel_endpoint_handles_broadcast_errors(auth_headers, monkeypatc
 
 
 # Tests for feature disabled state
-# NOTE: Router registration happens at import time, so we cannot test the disabled router
-# behavior via runtime monkeypatching. These tests verify configuration behavior instead.
+#
+# TEST GAP ACKNOWLEDGMENT:
+# Router registration happens at import time (module-level code in main.py), so we cannot
+# test the actual 404 behavior when MCPGATEWAY_TOOL_CANCELLATION_ENABLED=false via runtime
+# monkeypatching. Testing this properly would require:
+#   - Subprocess testing with environment variable set before import
+#   - Or a test harness that reimports the app module
+#
+# The tests below verify:
+#   1. Configuration flag exists and has correct default
+#   2. Configuration flag can be disabled
+#   3. Conditional router registration code exists in main.py (code path verification)
+#
+# The documented behavior (endpoints return 404 when disabled) relies on code review
+# verification of the conditional registration at main.py:6469-6479.
 
 
 def test_cancellation_feature_flag_exists():
@@ -233,3 +246,21 @@ def test_cancellation_feature_flag_can_be_disabled():
     # Create settings with feature disabled
     settings = Settings(mcpgateway_tool_cancellation_enabled=False)
     assert settings.mcpgateway_tool_cancellation_enabled is False
+
+
+def test_conditional_router_registration_code_exists():
+    """Verify the conditional router registration code exists in main.py.
+
+    This test verifies that the code path for conditional router registration exists,
+    even though we can't test the runtime behavior due to import-time registration.
+    """
+    import inspect
+    import mcpgateway.main as main_module
+
+    # Get the source code of the main module
+    source = inspect.getsource(main_module)
+
+    # Verify the conditional registration pattern exists
+    assert "if settings.mcpgateway_tool_cancellation_enabled:" in source
+    assert "app.include_router(cancellation_router)" in source
+    assert "Cancellation router included" in source
