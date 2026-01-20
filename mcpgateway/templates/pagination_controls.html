@@ -63,16 +63,22 @@
   },
 
   // Update browser URL with current pagination state (namespaced per table)
+  // Preserves params from other tables to avoid mixing/overwriting
   updateBrowserUrl(page, includeInactive) {
     if (!this.tableName) return;
-    const browserUrl = new URL(window.location.href);
+    const currentUrl = new URL(window.location.href);
+    const newParams = new URLSearchParams(currentUrl.searchParams);
     const prefix = this.tableName + '_';
-    browserUrl.searchParams.set(prefix + 'page', page);
-    browserUrl.searchParams.set(prefix + 'size', this.perPage);
+
+    // Update current table's params only
+    newParams.set(prefix + 'page', page);
+    newParams.set(prefix + 'size', this.perPage);
     if (includeInactive !== undefined) {
-      browserUrl.searchParams.set(prefix + 'inactive', includeInactive);
+      newParams.set(prefix + 'inactive', includeInactive);
     }
-    window.history.replaceState({}, '', browserUrl.toString());
+
+    const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
+    window.history.replaceState({}, '', newUrl);
   },
 
   // Load page via HTMX
