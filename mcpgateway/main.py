@@ -5188,7 +5188,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "ping":
             # Per the MCP spec, a ping returns an empty result.
             result = {}
-        elif method == "tools/call":
+        elif method == "tools/call":  # pylint: disable=too-many-nested-blocks
             # Get request headers
             headers = {k.lower(): v for k, v in request.headers.items()}
             name = params.get("name")
