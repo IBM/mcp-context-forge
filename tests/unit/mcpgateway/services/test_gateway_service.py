@@ -1105,7 +1105,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Return one tool so set_tool_state gets called
+        # Return one tool, one prompt, one resource so state changes get called
         query_proxy = MagicMock()
         filter_proxy = MagicMock()
         filter_proxy.all.return_value = [MagicMock(id=101)]
@@ -1121,6 +1121,14 @@ class TestGatewayService:
         tool_service_stub.set_tool_state = AsyncMock()
         gateway_service.tool_service = tool_service_stub
 
+        prompt_service_stub = MagicMock()
+        prompt_service_stub.set_prompt_state = AsyncMock()
+        gateway_service.prompt_service = prompt_service_stub
+
+        resource_service_stub = MagicMock()
+        resource_service_stub.set_resource_state = AsyncMock()
+        gateway_service.resource_service = resource_service_stub
+
         # Patch model_validate to return a mock with .masked()
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
@@ -1131,12 +1139,59 @@ class TestGatewayService:
         assert mock_gateway.enabled is False
         gateway_service._notify_gateway_deactivated.assert_called_once()
         assert tool_service_stub.set_tool_state.called
+        assert prompt_service_stub.set_prompt_state.called
+        assert resource_service_stub.set_resource_state.called
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
     async def test_set_gateway_state_activate(self, gateway_service, mock_gateway, test_db):
         """Test activating an inactive gateway."""
         mock_gateway.enabled = False
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+
+        # Return one tool, one prompt, one resource so state changes get called
+        query_proxy = MagicMock()
+        filter_proxy = MagicMock()
+        filter_proxy.all.return_value = [MagicMock(id=101)]
+        query_proxy.filter.return_value = filter_proxy
+        test_db.query = Mock(return_value=query_proxy)
+
+        # Setup gateway service mocks
+        gateway_service._notify_gateway_activated = AsyncMock()
+        gateway_service._notify_gateway_deactivated = AsyncMock()
+        gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
+
+        tool_service_stub = MagicMock()
+        tool_service_stub.set_tool_state = AsyncMock()
+        gateway_service.tool_service = tool_service_stub
+
+        prompt_service_stub = MagicMock()
+        prompt_service_stub.set_prompt_state = AsyncMock()
+        gateway_service.prompt_service = prompt_service_stub
+
+        resource_service_stub = MagicMock()
+        resource_service_stub.set_resource_state = AsyncMock()
+        gateway_service.resource_service = resource_service_stub
+
+        # Patch model_validate to return a mock with .masked()
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            result = await gateway_service.set_gateway_state(test_db, 1, activate=True)
+
+        assert mock_gateway.enabled is True
+        gateway_service._notify_gateway_activated.assert_called_once()
+        assert tool_service_stub.set_tool_state.called
+        assert prompt_service_stub.set_prompt_state.called
+        assert resource_service_stub.set_resource_state.called
+        assert result == mock_gateway_read
+
+    @pytest.mark.asyncio
+    async def test_set_gateway_state_only_update_reachable_skips_prompts_resources(self, gateway_service, mock_gateway, test_db):
+        """Test that only_update_reachable=True skips prompt/resource state updates."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -1149,24 +1204,33 @@ class TestGatewayService:
         test_db.query = Mock(return_value=query_proxy)
 
         # Setup gateway service mocks
-        gateway_service._notify_gateway_activated = AsyncMock()
-        gateway_service._notify_gateway_deactivated = AsyncMock()
+        gateway_service._notify_gateway_offline = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
         tool_service_stub = MagicMock()
         tool_service_stub.set_tool_state = AsyncMock()
         gateway_service.tool_service = tool_service_stub
 
+        prompt_service_stub = MagicMock()
+        prompt_service_stub.set_prompt_state = AsyncMock()
+        gateway_service.prompt_service = prompt_service_stub
+
+        resource_service_stub = MagicMock()
+        resource_service_stub.set_resource_state = AsyncMock()
+        gateway_service.resource_service = resource_service_stub
+
         # Patch model_validate to return a mock with .masked()
         mock_gateway_read = MagicMock()
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.set_gateway_state(test_db, 1, activate=True)
+            result = await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=False, only_update_reachable=True)
 
-        assert mock_gateway.enabled is True
-        gateway_service._notify_gateway_activated.assert_called_once()
+        # Tools should still be updated for reachability
         assert tool_service_stub.set_tool_state.called
+        # But prompts and resources should NOT be touched when only_update_reachable=True
+        assert not prompt_service_stub.set_prompt_state.called
+        assert not resource_service_stub.set_resource_state.called
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio

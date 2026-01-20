@@ -1940,7 +1940,7 @@ class PromptService:
             )
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
-    async def set_prompt_state(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
+    async def set_prompt_state(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> PromptRead:
         """
         Set the activation status of a prompt.
 
@@ -1949,6 +1949,7 @@ class PromptService:
             prompt_id: Prompt ID
             activate: True to activate, False to deactivate
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            skip_cache_invalidation: If True, skip cache invalidation (used for batch operations).
 
         Returns:
             The updated PromptRead object
@@ -1995,9 +1996,10 @@ class PromptService:
                 db.commit()
                 db.refresh(prompt)
 
-                # Invalidate cache after status change
-                cache = _get_registry_cache()
-                await cache.invalidate_prompts()
+                # Invalidate cache after status change (skip for batch operations)
+                if not skip_cache_invalidation:
+                    cache = _get_registry_cache()
+                    await cache.invalidate_prompts()
 
                 if activate:
                     await self._notify_prompt_activated(prompt)

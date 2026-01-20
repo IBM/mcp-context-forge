@@ -94,6 +94,8 @@ from mcpgateway.services.http_client_service import get_default_verify, get_http
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, register_gateway_capabilities_for_notifications, TransportType
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.prompt_service import PromptService
+from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
@@ -379,6 +381,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self._stream_response = None
         self._pending_responses = {}
         self.tool_service = ToolService()
+        self.prompt_service = PromptService()
+        self.resource_service = ResourceService()
         self._gateway_failure_counts: dict[str, int] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
         self._event_service = EventService(channel_name="mcpgateway:gateway_events")
@@ -2479,6 +2483,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     await tool_lookup_cache.invalidate_gateway(str(gateway.id))
+
+                # Update prompts state when gateway is deactivated/activated (skip for reachability-only updates)
+                if not only_update_reachable:
+                    prompts = db.query(DbPrompt).filter(DbPrompt.gateway_id == gateway_id).all()
+                    # Set prompts state with skip_cache_invalidation=True to avoid N invalidations
+                    for prompt in prompts:
+                        await self.prompt_service.set_prompt_state(db, prompt.id, activate, skip_cache_invalidation=True)
+                    # Invalidate prompts cache once after all prompt status changes
+                    if prompts:
+                        await cache.invalidate_prompts()
+
+                # Update resources state when gateway is deactivated/activated (skip for reachability-only updates)
+                if not only_update_reachable:
+                    resources = db.query(DbResource).filter(DbResource.gateway_id == gateway_id).all()
+                    # Set resources state with skip_cache_invalidation=True to avoid N invalidations
+                    for resource in resources:
+                        await self.resource_service.set_resource_state(db, resource.id, activate, skip_cache_invalidation=True)
+                    # Invalidate resources cache once after all resource status changes
+                    if resources:
+                        await cache.invalidate_resources()
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 

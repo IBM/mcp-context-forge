@@ -2285,7 +2285,7 @@ class ResourceService:
                     except Exception as e:
                         logger.warning(f"Failed to end observability span for resource reading: {e}")
 
-    async def set_resource_state(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
+    async def set_resource_state(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ResourceRead:
         """
         Set the activation status of a resource.
 
@@ -2294,6 +2294,7 @@ class ResourceService:
             resource_id: Resource ID
             activate: True to activate, False to deactivate
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            skip_cache_invalidation: If True, skip cache invalidation (used for batch operations).
 
         Returns:
             The updated ResourceRead object
@@ -2341,9 +2342,10 @@ class ResourceService:
                 db.commit()
                 db.refresh(resource)
 
-                # Invalidate cache after status change
-                cache = _get_registry_cache()
-                await cache.invalidate_resources()
+                # Invalidate cache after status change (skip for batch operations)
+                if not skip_cache_invalidation:
+                    cache = _get_registry_cache()
+                    await cache.invalidate_resources()
 
                 # Notify subscribers
                 if activate:

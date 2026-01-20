@@ -5859,11 +5859,11 @@ async function viewServer(serverId) {
 
             const statusSpan = document.createElement("span");
             statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                server.isActive
+                server.enabled
                     ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
                     : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
             }`;
-            statusSpan.textContent = server.isActive ? "Active" : "Inactive";
+            statusSpan.textContent = server.enabled ? "Active" : "Inactive";
             statusP.appendChild(statusSpan);
 
             tagsStatusDiv.appendChild(tagsP);
