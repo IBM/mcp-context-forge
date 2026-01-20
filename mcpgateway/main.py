@@ -5237,7 +5237,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
                 # Create task for tool execution to enable real cancellation
                 async def execute_tool():
-                    """Create task for tool execution to enable real cancellation.
+                    """Execute tool invocation with fallback to gateway forwarding.
+
+                    Returns:
+                        The tool invocation result or gateway forwarding result.
                     """
                     try:
                         return await tool_service.invoke_tool(
