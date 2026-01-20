@@ -39,7 +39,7 @@ class OrchestrationService:
     suitable for gateway-local run tracking. The gateway will also broadcast
     a `notifications/cancelled` message to connected sessions to inform remote
     peers of the cancellation request.
-    
+
     Multi-worker deployments: When Redis is available, cancellation events are
     published to the "orchestration:cancel" channel to propagate across workers.
     """
@@ -51,18 +51,18 @@ class OrchestrationService:
         self._redis = None
         self._pubsub_task: Optional[asyncio.Task] = None
         self._initialized = False
-    
+
     async def initialize(self) -> None:
         """Initialize Redis pubsub if available for multi-worker support."""
         if self._initialized:
             return
-        
+
         self._initialized = True
-        
+
         try:
             # First-Party
             from mcpgateway.utils.redis_client import get_redis_client
-            
+
             self._redis = await get_redis_client()
             if self._redis:
                 # Start listening for cancellation events from other workers
@@ -70,7 +70,7 @@ class OrchestrationService:
                 logger.info("OrchestrationService: Redis pubsub initialized for multi-worker cancellation")
         except Exception as e:
             logger.warning(f"OrchestrationService: Could not initialize Redis pubsub: {e}")
-    
+
     async def shutdown(self) -> None:
         """Shutdown Redis pubsub listener."""
         if self._pubsub_task and not self._pubsub_task.done():
@@ -80,24 +80,24 @@ class OrchestrationService:
             except asyncio.CancelledError:
                 pass
         logger.info("OrchestrationService: Shutdown complete")
-    
+
     async def _listen_for_cancellations(self) -> None:
         """Listen for cancellation events from other workers via Redis pubsub."""
         if not self._redis:
             return
-        
+
         try:
             pubsub = self._redis.pubsub()
             await pubsub.subscribe("orchestration:cancel")
             logger.info("OrchestrationService: Subscribed to orchestration:cancel channel")
-            
+
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     try:
                         data = json.loads(message["data"])
                         run_id = data.get("run_id")
                         reason = data.get("reason")
-                        
+
                         if run_id:
                             # Cancel locally if we have this run (don't re-publish)
                             await self._cancel_run_local(run_id, reason=reason)
@@ -108,7 +108,7 @@ class OrchestrationService:
             raise
         except Exception as e:
             logger.error(f"OrchestrationService: Pubsub listener error: {e}")
-    
+
     async def _cancel_run_local(self, run_id: str, reason: Optional[str] = None) -> bool:
         """Cancel a run locally without publishing to Redis (internal use)."""
         async with self._lock:
@@ -122,8 +122,7 @@ class OrchestrationService:
             entry["cancel_reason"] = reason
             cancel_cb = entry.get("cancel_callback")
 
-        logger.info("Tool execution cancelled (from Redis): run_id=%s, reason=%s, tool=%s",
-                   run_id, reason or "not specified", entry.get("name", "unknown"))
+        logger.info("Tool execution cancelled (from Redis): run_id=%s, reason=%s, tool=%s", run_id, reason or "not specified", entry.get("name", "unknown"))
 
         if cancel_cb:
             try:
@@ -197,12 +196,12 @@ class OrchestrationService:
         await self._publish_cancellation(run_id, reason)
 
         return True
-    
+
     async def _publish_cancellation(self, run_id: str, reason: Optional[str] = None) -> None:
         """Publish cancellation event to Redis for other workers."""
         if not self._redis:
             return
-        
+
         try:
             message = json.dumps({"run_id": run_id, "reason": reason})
             await self._redis.publish("orchestration:cancel", message)

@@ -5211,11 +5211,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     tool_task.cancel()
 
             if run_id:
-                await orchestration_service.register_run(
-                    run_id,
-                    name=f"tool:{name}",
-                    cancel_callback=cancel_tool_task
-                )
+                await orchestration_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
 
             try:
                 # Check if cancelled before execution
@@ -5243,9 +5239,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     except ValueError:
                         # Fallback to gateway forwarding
                         return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
-                
+
                 tool_task = asyncio.create_task(execute_tool())
-                
+
                 try:
                     result = await tool_task
                     if hasattr(result, "model_dump"):
