@@ -491,7 +491,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 # Fallback to raw request params if needed
                 meta_data = getattr(ctx.request.params, "meta", None)
 
-            meta_data = meta_data.model_dump()
+            if meta_data is not None:
+                meta_data = meta_data.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -711,7 +712,8 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                 # Fallback to raw request params if needed
                 meta_data = getattr(ctx.request.params, "meta", None)
 
-            meta_data = meta_data.model_dump()
+            if meta_data is not None:
+                meta_data = meta_data.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -726,6 +728,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     user=user_email,
                     server_id=server_id,
                     token_teams=token_teams,
+                    _meta_data=meta_data,
                 )
             except Exception as e:
                 logger.exception(f"Error getting prompt '{prompt_id}': {e}")
@@ -839,7 +842,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                 # Fallback to raw request params if needed
                 meta_data = getattr(ctx.request.params, "meta", None)
 
-            meta_data = meta_data.model_dump()
+            if meta_data is not None:
+                meta_data = meta_data.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -853,6 +857,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     user=user_email,
                     server_id=server_id,
                     token_teams=token_teams,
+                    meta_data=meta_data,
                 )
             except Exception as e:
                 logger.exception(f"Error reading resource '{resource_uri}': {e}")
