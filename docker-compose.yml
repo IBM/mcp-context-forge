@@ -52,7 +52,7 @@ services:
         condition: service_healthy
     volumes:
       - nginx_cache:/var/cache/nginx    # Persistent cache storage
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      # - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
     # TCP kernel tuning for 3000 concurrent connections
     # Note: net.core.* sysctls are host-level and cannot be set per-container
     # Only net.ipv4.* sysctls that are network-namespace aware work here
