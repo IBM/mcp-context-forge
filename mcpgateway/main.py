@@ -2053,11 +2053,13 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         logger.info("Client initialized")
         await logging_service.notify("Client initialized", LogLevel.INFO)
     elif body.get("method") == "notifications/cancelled":
-        request_id = body.get("params", {}).get("requestId")
+        # Note: requestId can be 0 (valid per JSON-RPC), so use 'is not None' and normalize to string
+        raw_request_id = body.get("params", {}).get("requestId")
+        request_id = str(raw_request_id) if raw_request_id is not None else None
         reason = body.get("params", {}).get("reason")
         logger.info(f"Request cancelled: {request_id}, reason: {reason}")
         # Attempt local cancellation per MCP spec
-        if request_id:
+        if request_id is not None:
             await cancellation_service.cancel_run(request_id, reason=reason)
         await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
     elif body.get("method") == "notifications/message":

@@ -97,10 +97,12 @@ class CancellationService:
                 if message["type"] == "message":
                     try:
                         data = json.loads(message["data"])
-                        run_id = data.get("run_id")
+                        # Normalize run_id to string (handle id=0 which is valid per JSON-RPC)
+                        raw_run_id = data.get("run_id")
+                        run_id = str(raw_run_id) if raw_run_id is not None else None
                         reason = data.get("reason")
 
-                        if run_id:
+                        if run_id is not None:
                             # Cancel locally if we have this run (don't re-publish)
                             await self._cancel_run_local(run_id, reason=reason)
                     except Exception as e:
