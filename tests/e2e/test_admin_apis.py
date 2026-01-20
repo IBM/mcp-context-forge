@@ -1337,29 +1337,347 @@ class TestAdminListingGracefulErrorHandling:
         # Should return HTML content
         assert "text/html" in response.headers.get("content-type", "")
 
-    async def test_admin_resources_listing_returns_200(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/resources endpoint returns 200 and handles the request gracefully."""
-        # Request resources listing - even with no resources, should return 200
-        response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
+    async def test_admin_resources_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/resources returns valid resources even when one fails conversion."""
+        from mcpgateway.db import get_db, Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceService
+        from unittest.mock import patch
 
-        # Should succeed
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create resources
+        valid_resource_1 = DbResource(
+            id=uuid.uuid4().hex,
+            name=f"valid_resource_1_{uuid.uuid4().hex[:8]}",
+            uri=f"file:///valid1_{uuid.uuid4().hex[:8]}",
+            description="A valid resource",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+        corrupted_resource = DbResource(
+            id=uuid.uuid4().hex,
+            name=f"corrupted_resource_{uuid.uuid4().hex[:8]}",
+            uri=f"file:///corrupted_{uuid.uuid4().hex[:8]}",
+            description="Resource that will fail conversion",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+        valid_resource_2 = DbResource(
+            id=uuid.uuid4().hex,
+            name=f"valid_resource_2_{uuid.uuid4().hex[:8]}",
+            uri=f"file:///valid2_{uuid.uuid4().hex[:8]}",
+            description="Another valid resource",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+
+        db.add(valid_resource_1)
+        db.add(corrupted_resource)
+        db.add(valid_resource_2)
+        db.commit()
+
+        corrupted_resource_id = corrupted_resource.id
+        original_convert = ResourceService.convert_resource_to_read
+
+        def mock_convert(self, resource, include_metrics=False):
+            if resource.id == corrupted_resource_id:
+                raise ValueError("Simulated corrupted data")
+            return original_convert(self, resource, include_metrics=include_metrics)
+
+        with patch.object(ResourceService, "convert_resource_to_read", mock_convert):
+            response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
+
         assert response.status_code == 200
         resp_json = response.json()
+        resources = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
+        resource_names = [r.get("name", "") for r in resources]
 
-        # Should return a valid response structure
-        assert isinstance(resp_json, dict) or isinstance(resp_json, list)
+        assert valid_resource_1.name in resource_names
+        assert valid_resource_2.name in resource_names
+        assert corrupted_resource.name not in resource_names
 
-    async def test_admin_prompts_listing_returns_200(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/prompts endpoint returns 200 and handles the request gracefully."""
-        # Request prompts listing - even with no prompts, should return 200
-        response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
+    async def test_admin_prompts_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/prompts returns valid prompts even when one fails conversion."""
+        from mcpgateway.db import get_db, Prompt as DbPrompt
+        from mcpgateway.services.prompt_service import PromptService
+        from unittest.mock import patch
 
-        # Should succeed
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create prompts with required fields
+        uid1 = uuid.uuid4().hex[:8]
+        valid_prompt_1 = DbPrompt(
+            id=uuid.uuid4().hex,
+            original_name=f"valid_prompt_1_{uid1}",
+            custom_name=f"valid_prompt_1_{uid1}",
+            custom_name_slug=f"valid-prompt-1-{uid1}",
+            name=f"valid_prompt_1_{uid1}",
+            description="A valid prompt",
+            template="Hello {{ name }}",
+            argument_schema={"type": "object"},
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+        uid2 = uuid.uuid4().hex[:8]
+        corrupted_prompt = DbPrompt(
+            id=uuid.uuid4().hex,
+            original_name=f"corrupted_prompt_{uid2}",
+            custom_name=f"corrupted_prompt_{uid2}",
+            custom_name_slug=f"corrupted-prompt-{uid2}",
+            name=f"corrupted_prompt_{uid2}",
+            description="Prompt that will fail conversion",
+            template="Hello {{ name }}",
+            argument_schema={"type": "object"},
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+        uid3 = uuid.uuid4().hex[:8]
+        valid_prompt_2 = DbPrompt(
+            id=uuid.uuid4().hex,
+            original_name=f"valid_prompt_2_{uid3}",
+            custom_name=f"valid_prompt_2_{uid3}",
+            custom_name_slug=f"valid-prompt-2-{uid3}",
+            name=f"valid_prompt_2_{uid3}",
+            description="Another valid prompt",
+            template="Hello {{ name }}",
+            argument_schema={"type": "object"},
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+
+        db.add(valid_prompt_1)
+        db.add(corrupted_prompt)
+        db.add(valid_prompt_2)
+        db.commit()
+
+        corrupted_prompt_id = corrupted_prompt.id
+        original_convert = PromptService.convert_prompt_to_read
+
+        def mock_convert(self, prompt, include_metrics=False):
+            if prompt.id == corrupted_prompt_id:
+                raise ValueError("Simulated corrupted data")
+            return original_convert(self, prompt, include_metrics=include_metrics)
+
+        with patch.object(PromptService, "convert_prompt_to_read", mock_convert):
+            response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
+
         assert response.status_code == 200
         resp_json = response.json()
+        prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
+        prompt_names = [p.get("name", "") for p in prompts]
 
-        # Should return a valid response structure
-        assert isinstance(resp_json, dict) or isinstance(resp_json, list)
+        assert valid_prompt_1.name in prompt_names
+        assert valid_prompt_2.name in prompt_names
+        assert corrupted_prompt.name not in prompt_names
+
+    async def test_admin_servers_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/servers returns valid servers even when one fails conversion."""
+        from mcpgateway.db import get_db, Server as DbServer
+        from mcpgateway.services.server_service import ServerService
+        from unittest.mock import patch
+
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create servers (Server model uses name, not slug)
+        valid_server_1 = DbServer(
+            id=uuid.uuid4().hex,
+            name=f"valid_server_1_{uuid.uuid4().hex[:8]}",
+            description="A valid server",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+        corrupted_server = DbServer(
+            id=uuid.uuid4().hex,
+            name=f"corrupted_server_{uuid.uuid4().hex[:8]}",
+            description="Server that will fail conversion",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+        valid_server_2 = DbServer(
+            id=uuid.uuid4().hex,
+            name=f"valid_server_2_{uuid.uuid4().hex[:8]}",
+            description="Another valid server",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+
+        db.add(valid_server_1)
+        db.add(corrupted_server)
+        db.add(valid_server_2)
+        db.commit()
+
+        corrupted_server_id = corrupted_server.id
+        original_convert = ServerService.convert_server_to_read
+
+        def mock_convert(self, server, include_metrics=False):
+            if server.id == corrupted_server_id:
+                raise ValueError("Simulated corrupted data")
+            return original_convert(self, server, include_metrics=include_metrics)
+
+        with patch.object(ServerService, "convert_server_to_read", mock_convert):
+            response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
+
+        assert response.status_code == 200
+        resp_json = response.json()
+        servers = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
+        server_names = [s.get("name", "") for s in servers]
+
+        assert valid_server_1.name in server_names
+        assert valid_server_2.name in server_names
+        assert corrupted_server.name not in server_names
+
+    async def test_admin_gateways_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/gateways returns valid gateways even when one fails conversion."""
+        from mcpgateway.db import get_db, Gateway as DbGateway
+        from mcpgateway.services.gateway_service import GatewayService
+        from unittest.mock import patch
+
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create gateways
+        valid_gateway_1 = DbGateway(
+            id=uuid.uuid4().hex,
+            name=f"valid_gateway_1_{uuid.uuid4().hex[:8]}",
+            slug=f"valid-gateway-1-{uuid.uuid4().hex[:8]}",
+            url=f"http://valid1.example.com/{uuid.uuid4().hex[:8]}",
+            description="A valid gateway",
+            transport="SSE",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+            capabilities={},
+        )
+        corrupted_gateway = DbGateway(
+            id=uuid.uuid4().hex,
+            name=f"corrupted_gateway_{uuid.uuid4().hex[:8]}",
+            slug=f"corrupted-gateway-{uuid.uuid4().hex[:8]}",
+            url=f"http://corrupted.example.com/{uuid.uuid4().hex[:8]}",
+            description="Gateway that will fail conversion",
+            transport="SSE",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+            capabilities={},
+        )
+        valid_gateway_2 = DbGateway(
+            id=uuid.uuid4().hex,
+            name=f"valid_gateway_2_{uuid.uuid4().hex[:8]}",
+            slug=f"valid-gateway-2-{uuid.uuid4().hex[:8]}",
+            url=f"http://valid2.example.com/{uuid.uuid4().hex[:8]}",
+            description="Another valid gateway",
+            transport="SSE",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+            capabilities={},
+        )
+
+        db.add(valid_gateway_1)
+        db.add(corrupted_gateway)
+        db.add(valid_gateway_2)
+        db.commit()
+
+        corrupted_gateway_id = corrupted_gateway.id
+        original_convert = GatewayService.convert_gateway_to_read
+
+        def mock_convert(self, gateway):
+            if gateway.id == corrupted_gateway_id:
+                raise ValueError("Simulated corrupted data")
+            return original_convert(self, gateway)
+
+        with patch.object(GatewayService, "convert_gateway_to_read", mock_convert):
+            response = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+
+        assert response.status_code == 200
+        resp_json = response.json()
+        gateways = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
+        gateway_names = [g.get("name", "") for g in gateways]
+
+        assert valid_gateway_1.name in gateway_names
+        assert valid_gateway_2.name in gateway_names
+        assert corrupted_gateway.name not in gateway_names
+
+    async def test_admin_a2a_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
+        """Test that /admin/a2a returns valid A2A agents even when one fails conversion."""
+        from mcpgateway.db import get_db, A2AAgent as DbA2AAgent
+        from mcpgateway.services.a2a_service import A2AAgentService
+        from unittest.mock import patch
+
+        test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+        db = next(test_db_dependency())
+
+        # Create A2A agents
+        uid1 = uuid.uuid4().hex[:8]
+        valid_agent_1 = DbA2AAgent(
+            id=uuid.uuid4().hex,
+            name=f"valid_agent_1_{uid1}",
+            slug=f"valid-agent-1-{uid1}",
+            endpoint_url=f"http://valid1.example.com/{uid1}",
+            description="A valid A2A agent",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+        uid2 = uuid.uuid4().hex[:8]
+        corrupted_agent = DbA2AAgent(
+            id=uuid.uuid4().hex,
+            name=f"corrupted_agent_{uid2}",
+            slug=f"corrupted-agent-{uid2}",
+            endpoint_url=f"http://corrupted.example.com/{uid2}",
+            description="A2A agent that will fail conversion",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+        uid3 = uuid.uuid4().hex[:8]
+        valid_agent_2 = DbA2AAgent(
+            id=uuid.uuid4().hex,
+            name=f"valid_agent_2_{uid3}",
+            slug=f"valid-agent-2-{uid3}",
+            endpoint_url=f"http://valid2.example.com/{uid3}",
+            description="Another valid A2A agent",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+        )
+
+        db.add(valid_agent_1)
+        db.add(corrupted_agent)
+        db.add(valid_agent_2)
+        db.commit()
+
+        corrupted_agent_id = corrupted_agent.id
+        original_convert = A2AAgentService.convert_agent_to_read
+
+        def mock_convert(self, agent, include_metrics=False, db=None, team_map=None):
+            if agent.id == corrupted_agent_id:
+                raise ValueError("Simulated corrupted data")
+            return original_convert(self, agent, include_metrics=include_metrics, db=db, team_map=team_map)
+
+        with patch.object(A2AAgentService, "convert_agent_to_read", mock_convert):
+            response = await client.get("/admin/a2a", headers=TEST_AUTH_HEADER)
+
+        assert response.status_code == 200
+        resp_json = response.json()
+        agents = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
+        agent_names = [a.get("name", "") for a in agents]
+
+        assert valid_agent_1.name in agent_names
+        assert valid_agent_2.name in agent_names
+        assert corrupted_agent.name not in agent_names
 
 
 # Run tests with pytest
