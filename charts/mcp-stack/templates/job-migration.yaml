@@ -23,7 +23,9 @@ spec:
         app.kubernetes.io/component: migration
     spec:
       restartPolicy: {{ .Values.migration.restartPolicy }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
 
       containers:
         - name: migration
