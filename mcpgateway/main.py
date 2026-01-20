@@ -118,6 +118,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
@@ -686,6 +687,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await streamable_http_session.initialize()
         await session_registry.initialize()
 
+        # Initialize OrchestrationService for tool cancellation if enabled
+        if settings.mcpgateway_tool_cancellation_enabled:
+            await cancellation_service.initialize()
+            logger.info("Tool cancellation feature enabled")
+        else:
+            logger.info("Tool cancellation feature disabled")
+
         # Initialize elicitation service
         if settings.mcpgateway_elicitation_enabled:
             # First-Party
@@ -848,6 +856,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             streamable_http_session,
             session_registry,
         ]
+
+        # Add cancellation service if enabled
+        if settings.mcpgateway_tool_cancellation_enabled:
+            services_to_shutdown.insert(0, cancellation_service)  # Shutdown early to stop accepting new cancellations
 
         if a2a_service:
             services_to_shutdown.insert(4, a2a_service)  # Insert after export_service
@@ -2041,8 +2053,14 @@ async def handle_notification(request: Request, user=Depends(get_current_user)) 
         logger.info("Client initialized")
         await logging_service.notify("Client initialized", LogLevel.INFO)
     elif body.get("method") == "notifications/cancelled":
-        request_id = body.get("params", {}).get("requestId")
-        logger.info(f"Request cancelled: {request_id}")
+        # Note: requestId can be 0 (valid per JSON-RPC), so use 'is not None' and normalize to string
+        raw_request_id = body.get("params", {}).get("requestId")
+        request_id = str(raw_request_id) if raw_request_id is not None else None
+        reason = body.get("params", {}).get("reason")
+        logger.info(f"Request cancelled: {request_id}, reason: {reason}")
+        # Attempt local cancellation per MCP spec
+        if request_id is not None:
+            await cancellation_service.cancel_run(request_id, reason=reason)
         await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
     elif body.get("method") == "notifications/message":
         params = body.get("params", {})
@@ -4982,7 +5000,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             body = orjson.loads(await request.body())
         except orjson.JSONDecodeError:
             return ORJSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=400,
                 content={
                     "jsonrpc": "2.0",
                     "error": {"code": -32700, "message": "Parse error"},
@@ -5172,7 +5190,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "ping":
             # Per the MCP spec, a ping returns an empty result.
             result = {}
-        elif method == "tools/call":
+        elif method == "tools/call":  # pylint: disable=too-many-nested-blocks
             # Get request headers
             headers = {k.lower(): v for k, v in request.headers.items()}
             name = params.get("name")
@@ -5194,26 +5212,78 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
+            # Register the tool execution for cancellation tracking with task reference (if enabled)
+            # Note: req_id can be 0 which is falsy but valid per JSON-RPC spec, so use 'is not None'
+            run_id = str(req_id) if req_id is not None else None
+            tool_task: Optional[asyncio.Task] = None
+
+            async def cancel_tool_task(reason: Optional[str] = None):
+                """Cancel callback that actually cancels the asyncio task.
+
+                Args:
+                    reason: Optional reason for cancellation.
+                """
+                if tool_task and not tool_task.done():
+                    logger.info(f"Cancelling tool task for run_id={run_id}, reason={reason}")
+                    tool_task.cancel()
+
+            if settings.mcpgateway_tool_cancellation_enabled and run_id:
+                await cancellation_service.register_run(run_id, name=f"tool:{name}", cancel_callback=cancel_tool_task)
+
             try:
-                result = await tool_service.invoke_tool(
-                    db=db,
-                    name=name,
-                    arguments=arguments,
-                    request_headers=headers,
-                    app_user_email=oauth_user_email,
-                    user_email=auth_user_email,
-                    token_teams=auth_token_teams,
-                    server_id=server_id,
-                    plugin_context_table=plugin_context_table,
-                    plugin_global_context=plugin_global_context,
-                    meta_data=meta_data,
-                )
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
-            except ValueError:
-                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
+                # Check if cancelled before execution (only if feature enabled)
+                if settings.mcpgateway_tool_cancellation_enabled and run_id:
+                    run_status = await cancellation_service.get_status(run_id)
+                    if run_status and run_status.get("cancelled"):
+                        raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id})
+
+                # Create task for tool execution to enable real cancellation
+                async def execute_tool():
+                    """Execute tool invocation with fallback to gateway forwarding.
+
+                    Returns:
+                        The tool invocation result or gateway forwarding result.
+                    """
+                    try:
+                        return await tool_service.invoke_tool(
+                            db=db,
+                            name=name,
+                            arguments=arguments,
+                            request_headers=headers,
+                            app_user_email=oauth_user_email,
+                            user_email=auth_user_email,
+                            token_teams=auth_token_teams,
+                            server_id=server_id,
+                            plugin_context_table=plugin_context_table,
+                            plugin_global_context=plugin_global_context,
+                            meta_data=meta_data,
+                        )
+                    except ValueError:
+                        # Fallback to gateway forwarding
+                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+
+                tool_task = asyncio.create_task(execute_tool())
+
+                # Re-check cancellation after task creation to handle race condition
+                # where cancel arrived between pre-check and task creation (callback saw tool_task=None)
+                if settings.mcpgateway_tool_cancellation_enabled and run_id:
+                    run_status = await cancellation_service.get_status(run_id)
+                    if run_status and run_status.get("cancelled"):
+                        tool_task.cancel()
+
+                try:
+                    result = await tool_task
+                    if hasattr(result, "model_dump"):
+                        result = result.model_dump(by_alias=True, exclude_none=True)
+                except asyncio.CancelledError:
+                    # Task was cancelled - return partial result or error
+                    logger.info(f"Tool execution cancelled for run_id={run_id}, tool={name}")
+                    raise JSONRPCError(-32800, f"Tool execution cancelled: {name}", {"requestId": run_id, "partial": False})
+            finally:
+                # Unregister the run when done (only if feature enabled)
+                if settings.mcpgateway_tool_cancellation_enabled and run_id:
+                    await cancellation_service.unregister_run(run_id)
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             # MCP spec-compliant resource templates list endpoint
@@ -5246,8 +5316,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "notifications/cancelled":
             # MCP spec-compliant notification: request cancelled
-            request_id = params.get("requestId")
-            logger.info(f"Request cancelled: {request_id}")
+            # Note: requestId can be 0 (valid per JSON-RPC), so use 'is not None' and normalize to string
+            raw_request_id = params.get("requestId")
+            request_id = str(raw_request_id) if raw_request_id is not None else None
+            reason = params.get("reason")
+            logger.info(f"Request cancelled: {request_id}, reason: {reason}")
+            # Attempt local cancellation per MCP spec
+            if request_id is not None:
+                await cancellation_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}
         elif method == "notifications/message":
@@ -6403,6 +6479,19 @@ if settings.toolops_enabled:
         logger.info("Toolops router included")
     except ImportError:
         logger.debug("Toolops router not available")
+
+# Cancellation router (tool cancellation endpoints)
+if settings.mcpgateway_tool_cancellation_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.cancellation_router import router as cancellation_router
+
+        app.include_router(cancellation_router)
+        logger.info("Cancellation router included (tool cancellation enabled)")
+    except ImportError:
+        logger.debug("Orchestrate router not available")
+else:
+    logger.info("Tool cancellation feature disabled - cancellation endpoints not available")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled
