@@ -23,112 +23,292 @@
     saveQueryName: '',
     saveQueryDescription: '',
     saveQueryIsShared: false,
+    metricsLoaded: false,
+    toolsLoaded: false,
+    promptsLoaded: false,
+    resourcesLoaded: false,
+    metricsLoading: false,
+    toolsLoading: false,
+    promptsLoading: false,
+    resourcesLoading: false,
     async loadMetricsView() {
-        const response = await fetch('{{ root_path }}/admin/observability/metrics/partial');
-        if (response.ok) {
-            const html = await response.text();
-            const container = document.getElementById('metrics-container');
-            container.innerHTML = html;
+        // Only load once, but allow retry if previous load was interrupted
+        if (this.metricsLoaded) {
+            console.log('Metrics view already loaded, skipping fetch');
+            return;
+        }
 
-            // Execute any script tags (innerHTML doesn't execute them)
-            const scripts = container.querySelectorAll('script');
-            scripts.forEach(script => {
-                const newScript = document.createElement('script');
-                if (script.src) {
-                    newScript.src = script.src;
-                } else {
-                    newScript.textContent = script.textContent;
+        // Prevent concurrent loads
+        if (this.metricsLoading) {
+            console.log('Metrics view already loading, skipping');
+            return;
+        }
+
+        this.metricsLoading = true;
+        console.log('Loading metrics view for the first time...');
+
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/metrics/partial');
+            if (response.ok) {
+                // Check if still on metrics view before rendering
+                if (this.viewMode !== 'metrics') {
+                    console.log('View changed during fetch, aborting metrics load');
+                    this.metricsLoading = false;
+                    return;
                 }
-                document.head.appendChild(newScript);
-            });
 
-            // Wait for scripts to execute, then re-initialize Alpine.js
-            setTimeout(() => {
+                const html = await response.text();
+                const container = document.getElementById('metrics-container');
+                if (!container) {
+                    console.warn('Metrics container not found');
+                    this.metricsLoading = false;
+                    return;
+                }
+
+                container.innerHTML = html;
+
+                // Execute any script tags (innerHTML doesn't execute them)
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.head.appendChild(newScript);
+                });
+
+                // Wait for scripts to execute and charts to render
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Re-initialize Alpine.js
                 if (window.Alpine) {
                     window.Alpine.initTree(container);
                 }
-            }, 10);
+
+                // Only mark as loaded if we're still on the metrics view
+                if (this.viewMode === 'metrics') {
+                    this.metricsLoaded = true;
+                    console.log('Metrics view loaded successfully');
+                } else {
+                    console.log('View changed after render, not marking as loaded');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load metrics view:', error);
+        } finally {
+            this.metricsLoading = false;
         }
     },
     async loadToolsView() {
-        const response = await fetch('{{ root_path }}/admin/observability/tools/partial');
-        if (response.ok) {
-            const html = await response.text();
-            const container = document.getElementById('tools-container');
-            container.innerHTML = html;
+        // Only load once, but allow retry if previous load was interrupted
+        if (this.toolsLoaded) {
+            console.log('Tools view already loaded, skipping fetch');
+            return;
+        }
 
-            // Execute any script tags (innerHTML doesn't execute them)
-            const scripts = container.querySelectorAll('script');
-            scripts.forEach(script => {
-                const newScript = document.createElement('script');
-                if (script.src) {
-                    newScript.src = script.src;
-                } else {
-                    newScript.textContent = script.textContent;
+        // Prevent concurrent loads
+        if (this.toolsLoading) {
+            console.log('Tools view already loading, skipping');
+            return;
+        }
+
+        this.toolsLoading = true;
+        console.log('Loading tools view for the first time...');
+
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/tools/partial');
+            if (response.ok) {
+                // Check if still on tools view before rendering
+                if (this.viewMode !== 'tools') {
+                    console.log('View changed during fetch, aborting tools load');
+                    this.toolsLoading = false;
+                    return;
                 }
-                document.head.appendChild(newScript);
-            });
 
-            // Wait for scripts to execute, then re-initialize Alpine.js
-            setTimeout(() => {
+                const html = await response.text();
+                const container = document.getElementById('tools-container');
+                if (!container) {
+                    console.warn('Tools container not found');
+                    this.toolsLoading = false;
+                    return;
+                }
+
+                container.innerHTML = html;
+
+                // Execute any script tags (innerHTML doesn't execute them)
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.head.appendChild(newScript);
+                });
+
+                // Wait for scripts to execute and charts to render
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Re-initialize Alpine.js
                 if (window.Alpine) {
                     window.Alpine.initTree(container);
                 }
-            }, 10);
+
+                // Only mark as loaded if we're still on the tools view
+                if (this.viewMode === 'tools') {
+                    this.toolsLoaded = true;
+                    console.log('Tools view loaded successfully');
+                } else {
+                    console.log('View changed after render, not marking as loaded');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load tools view:', error);
+        } finally {
+            this.toolsLoading = false;
         }
     },
     async loadPromptsView() {
-        const response = await fetch('{{ root_path }}/admin/observability/prompts/partial');
-        if (response.ok) {
-            const html = await response.text();
-            const container = document.getElementById('prompts-container');
-            container.innerHTML = html;
+        // Only load once, but allow retry if previous load was interrupted
+        if (this.promptsLoaded) {
+            console.log('Prompts view already loaded, skipping fetch');
+            return;
+        }
 
-            // Execute any script tags (innerHTML doesn't execute them)
-            const scripts = container.querySelectorAll('script');
-            scripts.forEach(script => {
-                const newScript = document.createElement('script');
-                if (script.src) {
-                    newScript.src = script.src;
-                } else {
-                    newScript.textContent = script.textContent;
+        // Prevent concurrent loads
+        if (this.promptsLoading) {
+            console.log('Prompts view already loading, skipping');
+            return;
+        }
+
+        this.promptsLoading = true;
+        console.log('Loading prompts view for the first time...');
+
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/prompts/partial');
+            if (response.ok) {
+                // Check if still on prompts view before rendering
+                if (this.viewMode !== 'prompts') {
+                    console.log('View changed during fetch, aborting prompts load');
+                    this.promptsLoading = false;
+                    return;
                 }
-                document.head.appendChild(newScript);
-            });
 
-            // Wait for scripts to execute, then re-initialize Alpine.js
-            setTimeout(() => {
+                const html = await response.text();
+                const container = document.getElementById('prompts-container');
+                if (!container) {
+                    console.warn('Prompts container not found');
+                    this.promptsLoading = false;
+                    return;
+                }
+
+                container.innerHTML = html;
+
+                // Execute any script tags (innerHTML doesn't execute them)
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.head.appendChild(newScript);
+                });
+
+                // Wait for scripts to execute and charts to render
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Re-initialize Alpine.js
                 if (window.Alpine) {
                     window.Alpine.initTree(container);
                 }
-            }, 10);
+
+                // Only mark as loaded if we're still on the prompts view
+                if (this.viewMode === 'prompts') {
+                    this.promptsLoaded = true;
+                    console.log('Prompts view loaded successfully');
+                } else {
+                    console.log('View changed after render, not marking as loaded');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load prompts view:', error);
+        } finally {
+            this.promptsLoading = false;
         }
     },
     async loadResourcesView() {
-        const response = await fetch('{{ root_path }}/admin/observability/resources/partial');
-        if (response.ok) {
-            const html = await response.text();
-            const container = document.getElementById('resources-container');
-            container.innerHTML = html;
+        // Only load once, but allow retry if previous load was interrupted
+        if (this.resourcesLoaded) {
+            console.log('Resources view already loaded, skipping fetch');
+            return;
+        }
 
-            // Execute any script tags (innerHTML doesn't execute them)
-            const scripts = container.querySelectorAll('script');
-            scripts.forEach(script => {
-                const newScript = document.createElement('script');
-                if (script.src) {
-                    newScript.src = script.src;
-                } else {
-                    newScript.textContent = script.textContent;
+        // Prevent concurrent loads
+        if (this.resourcesLoading) {
+            console.log('Resources view already loading, skipping');
+            return;
+        }
+
+        this.resourcesLoading = true;
+        console.log('Loading resources view for the first time...');
+
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/resources/partial');
+            if (response.ok) {
+                // Check if still on resources view before rendering
+                if (this.viewMode !== 'resources') {
+                    console.log('View changed during fetch, aborting resources load');
+                    this.resourcesLoading = false;
+                    return;
                 }
-                document.head.appendChild(newScript);
-            });
 
-            // Wait for scripts to execute, then re-initialize Alpine.js
-            setTimeout(() => {
+                const html = await response.text();
+                const container = document.getElementById('resources-container');
+                if (!container) {
+                    console.warn('Resources container not found');
+                    this.resourcesLoading = false;
+                    return;
+                }
+
+                container.innerHTML = html;
+
+                // Execute any script tags (innerHTML doesn't execute them)
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.head.appendChild(newScript);
+                });
+
+                // Wait for scripts to execute
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Re-initialize Alpine.js
                 if (window.Alpine) {
                     window.Alpine.initTree(container);
                 }
-            }, 10);
+
+                // Only mark as loaded if we're still on the resources view
+                if (this.viewMode === 'resources') {
+                    this.resourcesLoaded = true;
+                    console.log('Resources view loaded successfully');
+                } else {
+                    console.log('View changed after render, not marking as loaded');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load resources view:', error);
+        } finally {
+            this.resourcesLoading = false;
         }
     },
     refreshTraces() {
@@ -251,10 +431,20 @@
         } catch (e) {
             console.error('Failed to delete query:', e);
         }
+    },
+    resetLoadedFlags() {
+        // Reset loaded flags so partials will reload when returning to the tab
+        this.metricsLoaded = false;
+        this.toolsLoaded = false;
+        this.promptsLoaded = false;
+        this.resourcesLoaded = false;
+        console.log('Observability loaded flags reset');
     }
 }" x-init="
     startPolling();
     loadSavedQueries();
+    // Listen for tab leave event to reset state
+    document.addEventListener('observability:leave', () => resetLoadedFlags());
     $watch('timeRange', () => applyFilters());
     $watch('statusFilter', () => applyFilters());
     $watch('minDuration', () => { if(minDuration) applyFilters(); });

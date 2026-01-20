@@ -7,15 +7,50 @@ window.createPromptsController = function() {
     charts: {},
     loading: false,
     error: null,
+    autoRefreshInterval: null,
     summaryCards: {
       slowest: null,
       mostErrorProne: null,
       mostUsed: null,
       overallHealth: 'good'
     },
+
+    /**
+     * Destroy all Chart.js instances to prevent canvas reuse errors
+     */
+    destroyAllCharts() {
+      // Use global registry for centralized cleanup
+      window.chartRegistry.destroyByPrefix('prompts-');
+      this.charts = {};
+    },
+
+    /**
+     * Cleanup resources on component destroy
+     */
+    cleanup() {
+      this.destroyAllCharts();
+      this.stopAutoRefresh();
+      if (this.leaveHandler) {
+        document.removeEventListener('observability:leave', this.leaveHandler);
+      }
+    },
+
     async init() {
+      // Clean up any existing charts first
+      this.destroyAllCharts();
+
       await this.loadAllMetrics();
       this.startAutoRefresh();
+
+      // Listen for tab leave event to stop auto-refresh and cleanup
+      this.leaveHandler = () => {
+        console.log('Prompts: received observability:leave event, stopping auto-refresh');
+        this.cleanup();
+      };
+      document.addEventListener('observability:leave', this.leaveHandler);
+
+      // Cleanup on page unload as fallback
+      window.addEventListener('beforeunload', () => this.cleanup());
     },
     async loadAllMetrics() {
       this.loading = true;
@@ -108,20 +143,41 @@ window.createPromptsController = function() {
       }
     },
     renderPromptUsageChart(data) {
-      const ctx = document.getElementById('promptUsageChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('promptUsageChart');
+      if (!canvas) return;
 
-      if (this.charts.promptUsage) {
-        this.charts.promptUsage.destroy();
-      }
-
-      // Handle empty data
-      if (!data.prompts || data.prompts.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('promptUsageChart canvas is hidden, deferring render');
         return;
       }
 
-      this.charts.promptUsage = new Chart(ctx, {
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('prompts-usage');
+
+      // Handle empty data
+      if (!data.prompts || data.prompts.length === 0) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('promptUsageChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for promptUsageChart');
+            return;
+          }
+
+          const chart = new Chart(ctx, {
         type: 'bar',
         data: {
           labels: data.prompts.map(p => p.prompt_id),
@@ -170,6 +226,13 @@ window.createPromptsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('prompts-usage', chart);
+          this.charts.promptUsage = chart;
+        } catch (e) {
+          console.error('Failed to create prompt usage chart:', e);
+        }
+      });
     },
     renderPromptPerformanceTable(data) {
       const tbody = document.querySelector('#promptPerformanceTable tbody');
@@ -195,16 +258,22 @@ window.createPromptsController = function() {
         .join('');
     },
     renderPromptSlownessChart(data) {
-      const ctx = document.getElementById('promptSlownessChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('promptSlownessChart');
+      if (!canvas) return;
 
-      if (this.charts.promptSlowness) {
-        this.charts.promptSlowness.destroy();
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('promptSlownessChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('prompts-slowness');
 
       // Handle empty data
       if (!data.prompts || data.prompts.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
       }
 
@@ -213,7 +282,22 @@ window.createPromptsController = function() {
         .sort((a, b) => b.p95 - a.p95)
         .slice(0, 10);
 
-      this.charts.promptSlowness = new Chart(ctx, {
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('promptSlownessChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for promptSlownessChart');
+            return;
+          }
+
+          const chart = new Chart(ctx, {
         type: 'bar',
         data: {
           labels: sortedPrompts.map(p => p.prompt_id),
@@ -272,18 +356,31 @@ window.createPromptsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('prompts-slowness', chart);
+          this.charts.promptSlowness = chart;
+        } catch (e) {
+          console.error('Failed to create prompt slowness chart:', e);
+        }
+      });
     },
     renderPromptErrorProneChart(data) {
-      const ctx = document.getElementById('promptErrorProneChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('promptErrorProneChart');
+      if (!canvas) return;
 
-      if (this.charts.promptErrorProne) {
-        this.charts.promptErrorProne.destroy();
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('promptErrorProneChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('prompts-errorprone');
 
       // Handle empty data
       if (!data.prompts || data.prompts.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
       }
 
@@ -294,13 +391,29 @@ window.createPromptsController = function() {
         .slice(0, 10);
 
       if (sortedPrompts.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
-        const parent = ctx.parentElement;
-        parent.innerHTML = '<p style="text-align: center; color: #10b981; padding: 2rem;">✓ No errors found - all prompts rendering successfully!</p>';
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const parent = canvas.parentElement;
+        if (parent) parent.innerHTML = '<p style="text-align: center; color: #10b981; padding: 2rem;">✓ No errors found - all prompts rendering successfully!</p>';
         return;
       }
 
-      this.charts.promptErrorProne = new Chart(ctx, {
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('promptErrorProneChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for promptErrorProneChart');
+            return;
+          }
+
+          const chart = new Chart(ctx, {
         type: 'bar',
         data: {
           labels: sortedPrompts.map(p => p.prompt_id),
@@ -352,9 +465,33 @@ window.createPromptsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('prompts-errorprone', chart);
+          this.charts.promptErrorProne = chart;
+        } catch (e) {
+          console.error('Failed to create prompt error-prone chart:', e);
+        }
+      });
     },
+
     startAutoRefresh() {
-      setInterval(() => this.loadAllMetrics(), 60000);
+      // Clear any existing interval
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+      }
+      // Refresh every 60 seconds
+      this.autoRefreshInterval = setInterval(() => {
+        if (!this.loading) {
+          this.loadAllMetrics();
+        }
+      }, 60000);
+    },
+
+    stopAutoRefresh() {
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+        this.autoRefreshInterval = null;
+      }
     },
     async applyFilters() {
       await this.loadAllMetrics();

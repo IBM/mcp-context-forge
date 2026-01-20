@@ -1,6 +1,73 @@
 /* global marked, DOMPurify */
 const MASKED_AUTH_VALUE = "*****";
 
+// ===================================================================
+// GLOBAL CHART.JS INSTANCE REGISTRY
+// ===================================================================
+// Centralized chart management to prevent "Canvas is already in use" errors
+window.chartRegistry = {
+    charts: new Map(),
+
+    register(id, chart) {
+        // Destroy existing chart with same ID before registering new one
+        if (this.charts.has(id)) {
+            this.destroy(id);
+        }
+        this.charts.set(id, chart);
+        console.log(`Chart registered: ${id}`);
+    },
+
+    destroy(id) {
+        const chart = this.charts.get(id);
+        if (chart) {
+            try {
+                chart.destroy();
+                console.log(`Chart destroyed: ${id}`);
+            } catch (e) {
+                console.warn(`Failed to destroy chart ${id}:`, e);
+            }
+            this.charts.delete(id);
+        }
+    },
+
+    destroyAll() {
+        console.log(`Destroying all charts (${this.charts.size} total)`);
+        this.charts.forEach((chart, id) => {
+            this.destroy(id);
+        });
+    },
+
+    destroyByPrefix(prefix) {
+        const toDestroy = [];
+        this.charts.forEach((chart, id) => {
+            if (id.startsWith(prefix)) {
+                toDestroy.push(id);
+            }
+        });
+        console.log(
+            `Destroying ${toDestroy.length} charts with prefix: ${prefix}`,
+        );
+        toDestroy.forEach((id) => this.destroy(id));
+    },
+
+    has(id) {
+        return this.charts.has(id);
+    },
+
+    get(id) {
+        return this.charts.get(id);
+    },
+
+    size() {
+        return this.charts.size;
+    },
+};
+
+// Cleanup all charts on page unload
+window.addEventListener("beforeunload", () => {
+    window.chartRegistry.destroyAll();
+});
+
 // Add three fields to passthrough section on Advanced button click
 function handleAddPassthrough() {
     const passthroughContainer = safeGetElement("passthrough-container");
@@ -7121,6 +7188,23 @@ function showTab(tabName) {
             clearTimeout(tabSwitchTimeout);
         }
 
+        // Cleanup observability tab when leaving
+        const currentPanel = document.querySelector(".tab-panel:not(.hidden)");
+        if (
+            currentPanel &&
+            currentPanel.id === "observability-panel" &&
+            tabName !== "observability"
+        ) {
+            console.log("Leaving observability tab, triggering cleanup...");
+            // Destroy all observability charts
+            window.chartRegistry.destroyByPrefix("metrics-");
+            window.chartRegistry.destroyByPrefix("tools-");
+            window.chartRegistry.destroyByPrefix("prompts-");
+            window.chartRegistry.destroyByPrefix("resources-");
+            // Dispatch event so Alpine components can stop intervals and reset state
+            document.dispatchEvent(new CustomEvent("observability:leave"));
+        }
+
         // Navigation styling (immediate)
         document.querySelectorAll(".tab-panel").forEach((p) => {
             if (p) {
@@ -7390,6 +7474,10 @@ function showTab(tabName) {
                         }
                     }
                 }
+
+                // Note: Charts are already destroyed when leaving observability tab (see above),
+                // so we don't need to destroy them again on entry. The loaded partials will
+                // re-render charts on their next auto-refresh cycle or when the partial is reloaded.
 
                 if (tabName === "plugins") {
                     const pluginsPanel = safeGetElement("plugins-panel");
