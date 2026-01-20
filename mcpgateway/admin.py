@@ -17408,20 +17408,23 @@ async def get_tool_usage(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+        dialect_name = db.get_bind().dialect.name
 
         # Query tool invocations from spans
         # Note: Using $."tool.name" because the JSON key contains a dot
+        # Create expression once and reuse to avoid PostgreSQL GROUP BY errors
+        tool_name_expr = extract_json_field(ObservabilitySpan.attributes, '$."tool.name"', dialect_name=dialect_name)
         tool_usage = (
             db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
+                tool_name_expr.label("tool_name"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
+                tool_name_expr.isnot(None),
             )
-            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."tool.name"'))
+            .group_by(tool_name_expr)
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -17526,20 +17529,23 @@ async def get_tool_errors(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+        dialect_name = db.get_bind().dialect.name
 
         # Query tool error rates
+        # Create expression once and reuse to avoid PostgreSQL GROUP BY errors
+        tool_name_expr = extract_json_field(ObservabilitySpan.attributes, '$."tool.name"', dialect_name=dialect_name)
         tool_errors = (
             db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
+                tool_name_expr.label("tool_name"),
                 func.count(ObservabilitySpan.span_id).label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
+                tool_name_expr.isnot(None),
             )
-            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."tool.name"'))
+            .group_by(tool_name_expr)
             .order_by(func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -17593,18 +17599,21 @@ async def get_tool_chains(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+        dialect_name = db.get_bind().dialect.name
 
         # Get all tool invocations grouped by trace_id
+        # Create expression once and reuse to avoid PostgreSQL GROUP BY errors
+        tool_name_expr = extract_json_field(ObservabilitySpan.attributes, '$."tool.name"', dialect_name=dialect_name)
         tool_spans = (
             db.query(
                 ObservabilitySpan.trace_id,
-                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
+                tool_name_expr.label("tool_name"),
                 ObservabilitySpan.start_time,
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
+                tool_name_expr.isnot(None),
             )
             .order_by(ObservabilitySpan.trace_id, ObservabilitySpan.start_time)
             .all()
@@ -17698,20 +17707,23 @@ async def get_prompt_usage(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+        dialect_name = db.get_bind().dialect.name
 
         # Query prompt renders from spans (looking for prompts/get calls)
         # The prompt id should be in attributes as "prompt.id"
+        # Create expression once and reuse to avoid PostgreSQL GROUP BY errors
+        prompt_id_expr = extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"', dialect_name=dialect_name)
         prompt_usage = (
             db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
+                prompt_id_expr.label("prompt_id"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
+                prompt_id_expr.isnot(None),
             )
-            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"'))
+            .group_by(prompt_id_expr)
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -17811,20 +17823,23 @@ async def get_prompts_errors(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+        dialect_name = db.get_bind().dialect.name
 
         # Get all prompt spans with their status
+        # Create expression once and reuse to avoid PostgreSQL GROUP BY errors
+        prompt_id_expr = extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"', dialect_name=dialect_name)
         prompt_stats = (
             db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
+                prompt_id_expr.label("prompt_id"),
                 func.count().label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
             )
             .filter(
                 ObservabilitySpan.name == "prompt.render",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
+                prompt_id_expr.isnot(None),
             )
-            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"'))
+            .group_by(prompt_id_expr)
             .all()
         )
 
@@ -17905,20 +17920,23 @@ async def get_resource_usage(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+        dialect_name = db.get_bind().dialect.name
 
         # Query resource reads from spans (looking for resources/read calls)
         # The resource URI should be in attributes
+        # Create expression once and reuse to avoid PostgreSQL GROUP BY errors
+        resource_uri_expr = extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"', dialect_name=dialect_name)
         resource_usage = (
             db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
+                resource_uri_expr.label("resource_uri"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
+                resource_uri_expr.isnot(None),
             )
-            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"'))
+            .group_by(resource_uri_expr)
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -18018,20 +18036,23 @@ async def get_resources_errors(
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+        dialect_name = db.get_bind().dialect.name
 
         # Get all resource spans with their status
+        # Create expression once and reuse to avoid PostgreSQL GROUP BY errors
+        resource_uri_expr = extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"', dialect_name=dialect_name)
         resource_stats = (
             db.query(
-                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
+                resource_uri_expr.label("resource_uri"),
                 func.count().label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
+                resource_uri_expr.isnot(None),
             )
-            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"'))
+            .group_by(resource_uri_expr)
             .all()
         )
 

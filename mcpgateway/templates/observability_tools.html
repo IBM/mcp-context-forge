@@ -7,15 +7,50 @@ window.createToolsController = function() {
     charts: {},
     loading: false,
     error: null,
+    autoRefreshInterval: null,
     summaryCards: {
       slowest: null,
       mostErrorProne: null,
       mostUsed: null,
       overallHealth: 'good'
     },
+
+    /**
+     * Destroy all Chart.js instances to prevent canvas reuse errors
+     */
+    destroyAllCharts() {
+      // Use global registry for centralized cleanup
+      window.chartRegistry.destroyByPrefix('tools-');
+      this.charts = {};
+    },
+
+    /**
+     * Cleanup resources on component destroy
+     */
+    cleanup() {
+      this.destroyAllCharts();
+      this.stopAutoRefresh();
+      if (this.leaveHandler) {
+        document.removeEventListener('observability:leave', this.leaveHandler);
+      }
+    },
+
     async init() {
+      // Clean up any existing charts first
+      this.destroyAllCharts();
+
       await this.loadAllMetrics();
       this.startAutoRefresh();
+
+      // Listen for tab leave event to stop auto-refresh and cleanup
+      this.leaveHandler = () => {
+        console.log('Tools: received observability:leave event, stopping auto-refresh');
+        this.cleanup();
+      };
+      document.addEventListener('observability:leave', this.leaveHandler);
+
+      // Cleanup on page unload as fallback
+      window.addEventListener('beforeunload', () => this.cleanup());
     },
     async loadAllMetrics() {
       this.loading = true;
@@ -126,20 +161,41 @@ window.createToolsController = function() {
       this.renderToolErrorProneChart(data);
     },
     renderToolUsageChart(data) {
-      const ctx = document.getElementById('toolUsageChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('toolUsageChart');
+      if (!canvas) return;
 
-      if (this.charts.toolUsage) {
-        this.charts.toolUsage.destroy();
-      }
-
-      // Handle empty data
-      if (!data.tools || data.tools.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('toolUsageChart canvas is hidden, deferring render');
         return;
       }
 
-      this.charts.toolUsage = new Chart(ctx, {
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('tools-usage');
+
+      // Handle empty data
+      if (!data.tools || data.tools.length === 0) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('toolUsageChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for toolUsageChart');
+            return;
+          }
+
+          const chart = new Chart(ctx, {
         type: 'bar',
         data: {
           labels: data.tools.map(t => t.tool_name),
@@ -187,6 +243,13 @@ window.createToolsController = function() {
             },
           },
         },
+      });
+          // Register with global registry
+          window.chartRegistry.register('tools-usage', chart);
+          this.charts.toolUsage = chart;
+        } catch (e) {
+          console.error('Failed to create tool usage chart:', e);
+        }
       });
     },
     renderToolPerformanceTable(data) {
@@ -247,16 +310,22 @@ window.createToolsController = function() {
         .join('');
     },
     renderToolSlownessChart(data) {
-      const ctx = document.getElementById('toolSlownessChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('toolSlownessChart');
+      if (!canvas) return;
 
-      if (this.charts.toolSlowness) {
-        this.charts.toolSlowness.destroy();
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('toolSlownessChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('tools-slowness');
 
       // Handle empty data
       if (!data.tools || data.tools.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
       }
 
@@ -265,7 +334,22 @@ window.createToolsController = function() {
         .sort((a, b) => b.p95 - a.p95)
         .slice(0, 10);
 
-      this.charts.toolSlowness = new Chart(ctx, {
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('toolSlownessChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for toolSlownessChart');
+            return;
+          }
+
+          const chart = new Chart(ctx, {
         type: 'bar',
         data: {
           labels: sortedTools.map(t => t.tool_name),
@@ -324,18 +408,31 @@ window.createToolsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('tools-slowness', chart);
+          this.charts.toolSlowness = chart;
+        } catch (e) {
+          console.error('Failed to create tool slowness chart:', e);
+        }
+      });
     },
     renderToolErrorProneChart(data) {
-      const ctx = document.getElementById('toolErrorProneChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('toolErrorProneChart');
+      if (!canvas) return;
 
-      if (this.charts.toolErrorProne) {
-        this.charts.toolErrorProne.destroy();
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('toolErrorProneChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('tools-errorprone');
 
       // Handle empty data
       if (!data.tools || data.tools.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
       }
 
@@ -346,13 +443,29 @@ window.createToolsController = function() {
         .slice(0, 10);
 
       if (sortedTools.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
-        const parent = ctx.parentElement;
-        parent.innerHTML = '<p style="text-align: center; color: #10b981; padding: 2rem;">✓ No errors found - all tools operating normally!</p>';
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const parent = canvas.parentElement;
+        if (parent) parent.innerHTML = '<p style="text-align: center; color: #10b981; padding: 2rem;">✓ No errors found - all tools operating normally!</p>';
         return;
       }
 
-      this.charts.toolErrorProne = new Chart(ctx, {
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('toolErrorProneChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for toolErrorProneChart');
+            return;
+          }
+
+          const chart = new Chart(ctx, {
         type: 'bar',
         data: {
           labels: sortedTools.map(t => t.tool_name),
@@ -404,9 +517,33 @@ window.createToolsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('tools-errorprone', chart);
+          this.charts.toolErrorProne = chart;
+        } catch (e) {
+          console.error('Failed to create tool error-prone chart:', e);
+        }
+      });
     },
+
     startAutoRefresh() {
-      setInterval(() => this.loadAllMetrics(), 60000);
+      // Clear any existing interval
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+      }
+      // Refresh every 60 seconds
+      this.autoRefreshInterval = setInterval(() => {
+        if (!this.loading) {
+          this.loadAllMetrics();
+        }
+      }, 60000);
+    },
+
+    stopAutoRefresh() {
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+        this.autoRefreshInterval = null;
+      }
     },
     async applyFilters() {
       await this.loadAllMetrics();

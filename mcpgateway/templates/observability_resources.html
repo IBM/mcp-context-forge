@@ -7,15 +7,60 @@ window.createResourcesController = function() {
     charts: {},
     loading: false,
     error: null,
+    autoRefreshInterval: null,
     summaryCards: {
       slowest: null,
       mostErrorProne: null,
       mostUsed: null,
       overallHealth: 'good'
     },
+
+    /**
+     * Destroy all Chart.js instances to prevent canvas reuse errors
+     */
+    destroyAllCharts() {
+      // Use global registry for centralized cleanup
+      window.chartRegistry.destroyByPrefix('resources-');
+      this.charts = {};
+    },
+
+    /**
+     * Cleanup resources on component destroy
+     */
+    cleanup() {
+      this.destroyAllCharts();
+      this.stopAutoRefresh();
+      if (this.leaveHandler) {
+        document.removeEventListener('observability:leave', this.leaveHandler);
+      }
+    },
+
+    /**
+     * Stop auto-refresh interval
+     */
+    stopAutoRefresh() {
+      if (this.autoRefreshInterval) {
+        clearInterval(this.autoRefreshInterval);
+        this.autoRefreshInterval = null;
+      }
+    },
+
     async init() {
+      // Clean up any existing charts first
+      this.destroyAllCharts();
+
       await this.loadAllMetrics();
       this.startAutoRefresh();
+
+      // Listen for tab leave event to stop auto-refresh and cleanup
+      this.leaveHandler = () => {
+        console.log('Resources: received observability:leave event, stopping auto-refresh');
+        this.cleanup();
+      };
+      document.addEventListener('observability:leave', this.leaveHandler);
+
+      // Cleanup on page unload as fallback
+      window.addEventListener('beforeunload', () => this.cleanup());
     },
     async loadAllMetrics() {
       this.loading = true;
@@ -108,20 +153,20 @@ window.createResourcesController = function() {
       }
     },
     renderResourceUsageChart(data) {
-      const ctx = document.getElementById('resourceUsageChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('resourceUsageChart');
+      if (!canvas) return;
 
-      if (this.charts.resourceUsage) {
-        this.charts.resourceUsage.destroy();
-      }
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('resources-usage');
 
       // Handle empty data
       if (!data.resources || data.resources.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
       }
 
-      this.charts.resourceUsage = new Chart(ctx, {
+      const chart = new Chart(canvas, {
         type: 'bar',
         data: {
           labels: data.resources.map(r => r.resource_uri),
@@ -170,6 +215,9 @@ window.createResourcesController = function() {
           },
         },
       });
+      // Register with global registry
+      window.chartRegistry.register('resources-usage', chart);
+      this.charts.resourceUsage = chart;
     },
     renderResourcePerformanceTable(data) {
       const tbody = document.querySelector('#resourcePerformanceTable tbody');
@@ -195,16 +243,16 @@ window.createResourcesController = function() {
         .join('');
     },
     renderResourceSlownessChart(data) {
-      const ctx = document.getElementById('resourceSlownessChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('resourceSlownessChart');
+      if (!canvas) return;
 
-      if (this.charts.resourceSlowness) {
-        this.charts.resourceSlowness.destroy();
-      }
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('resources-slowness');
 
       // Handle empty data
       if (!data.resources || data.resources.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
       }
 
@@ -213,7 +261,7 @@ window.createResourcesController = function() {
         .sort((a, b) => b.p95 - a.p95)
         .slice(0, 10);
 
-      this.charts.resourceSlowness = new Chart(ctx, {
+      const chart = new Chart(canvas, {
         type: 'bar',
         data: {
           labels: sortedResources.map(r => r.resource_uri),
@@ -272,18 +320,21 @@ window.createResourcesController = function() {
           },
         },
       });
+      // Register with global registry
+      window.chartRegistry.register('resources-slowness', chart);
+      this.charts.resourceSlowness = chart;
     },
     renderResourceErrorProneChart(data) {
-      const ctx = document.getElementById('resourceErrorProneChart');
-      if (!ctx) return;
+      const canvas = document.getElementById('resourceErrorProneChart');
+      if (!canvas) return;
 
-      if (this.charts.resourceErrorProne) {
-        this.charts.resourceErrorProne.destroy();
-      }
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('resources-errorprone');
 
       // Handle empty data
       if (!data.resources || data.resources.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         return;
       }
 
@@ -294,13 +345,14 @@ window.createResourcesController = function() {
         .slice(0, 10);
 
       if (sortedResources.length === 0) {
-        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
-        const parent = ctx.parentElement;
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const parent = canvas.parentElement;
         parent.innerHTML = '<p style="text-align: center; color: #10b981; padding: 2rem;">✓ No errors found - all resources fetched successfully!</p>';
         return;
       }
 
-      this.charts.resourceErrorProne = new Chart(ctx, {
+      const chart = new Chart(canvas, {
         type: 'bar',
         data: {
           labels: sortedResources.map(r => r.resource_uri),
@@ -352,9 +404,13 @@ window.createResourcesController = function() {
           },
         },
       });
+      // Register with global registry
+      window.chartRegistry.register('resources-errorprone', chart);
+      this.charts.resourceErrorProne = chart;
     },
     startAutoRefresh() {
-      setInterval(() => this.loadAllMetrics(), 60000);
+      this.stopAutoRefresh();
+      this.autoRefreshInterval = setInterval(() => this.loadAllMetrics(), 60000);
     },
     async applyFilters() {
       await this.loadAllMetrics();
