@@ -154,7 +154,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
         # Phase 1: Check if endpoint should skip validation
         if self._should_skip_endpoint(request.url.path):
-            logger.debug("[VALIDATION] Skipping validation for endpoint: %s", request.url.path)
+            logger.info("[VALIDATION] Skipping validation for endpoint: %s", request.url.path)
             response = await call_next(request)
             return response
 
@@ -175,6 +175,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
         # Sanitize output
         if self.sanitize:
+            logger.info(f"self.sanitize :{self.sanitize}")
             response = await self._sanitize_response(response)
 
         return response
@@ -238,13 +239,12 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                         self.max_body_size
                     )
                     return
-
                 # Check cache for identical payloads
                 if self.cache:
                     cache_key = self._get_cache_key(body)
                     cached_result = self.cache.get(cache_key)
                     if cached_result is not None:
-                        logger.debug("[VALIDATION] Cache hit for request body")
+                        logger.info("[VALIDATION] Cache hit for request body")
                         if not cached_result:
                             raise HTTPException(status_code=422, detail="Validation failed (cached)")
                         return
@@ -358,15 +358,20 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Returns:
             Response: Sanitized response
         """
+        logger.info("response: %s", response)
+        logger.info("response type: %s", type(response))
         if not hasattr(response, "body"):
+            logger.info("I am here not body")
             return response
 
         try:
             body = response.body
+            logger.info("[VALIDATION] Sanitizing response: %d bytes", len(body))    
             if not body:
                 return response
 
             body_size = len(body)
+            logger.info("[VALIDATION] Sanitizing response: %d bytes", body_size)    
             
             # Check response size threshold
             if self.max_response_size > 0 and body_size > self.max_response_size:
@@ -379,7 +384,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
 
             # For large responses, sample instead of full sanitization
             if self.sample_large_responses and body_size > self.sample_size:
-                logger.debug(
+                logger.info(
                     "[VALIDATION] Sampling response for sanitization: %d bytes (sample: %d)",
                     body_size,
                     self.sample_size
@@ -403,7 +408,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 
                 # Check sample for control characters
                 if not re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", sample_body):
-                    logger.debug("[VALIDATION] Sample clean, skipping full sanitization")
+                    logger.info("[VALIDATION] Sample clean, skipping full sanitization")
                     return response
 
             # Full sanitization for small responses or when sample has issues
