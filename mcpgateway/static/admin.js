@@ -17645,7 +17645,7 @@ function generateConfig(server, configType) {
             return {
                 servers: {
                     [cleanServerName]: {
-                        type: "http",
+                        type: "streamable-http",
                         url: `${baseUrl}/servers/${server.id}/mcp`,
                         headers: {
                             Authorization: "Bearer your-token-here",
