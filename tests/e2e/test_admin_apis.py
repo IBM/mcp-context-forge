@@ -1248,9 +1248,15 @@ class TestAdminListingGracefulErrorHandling:
     """
 
     async def test_admin_tools_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
-        """Test that /admin/tools returns valid tools even when one has corrupted data."""
+        """Test that /admin/tools returns valid tools even when one fails conversion.
+
+        This test verifies the graceful error handling by mocking convert_tool_to_read
+        to fail for one tool while succeeding for others.
+        """
         # First-Party
         from mcpgateway.db import get_db, Tool as DbTool
+        from mcpgateway.services.tool_service import ToolService
+        from unittest.mock import patch
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1261,6 +1267,16 @@ class TestAdminListingGracefulErrorHandling:
             original_name=f"valid_tool_1_{uuid.uuid4().hex[:8]}",
             url="http://example.com/valid1",
             description="A valid tool",
+            visibility="public",
+            owner_email="admin@example.com",
+            enabled=True,
+            input_schema={"type": "object"},
+        )
+        corrupted_tool = DbTool(
+            id=uuid.uuid4().hex,
+            original_name=f"corrupted_tool_{uuid.uuid4().hex[:8]}",
+            url="http://example.com/corrupted",
+            description="Tool that will fail conversion",
             visibility="public",
             owner_email="admin@example.com",
             enabled=True,
@@ -1278,22 +1294,38 @@ class TestAdminListingGracefulErrorHandling:
         )
 
         db.add(valid_tool_1)
+        db.add(corrupted_tool)
         db.add(valid_tool_2)
         db.commit()
 
-        # Request tools listing
-        response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+        corrupted_tool_id = corrupted_tool.id
 
-        # Should succeed even if some tools have issues
+        # Store original convert_tool_to_read method
+        original_convert = ToolService.convert_tool_to_read
+
+        def mock_convert(self, tool, include_metrics=False, include_auth=True):
+            """Mock that raises ValueError for the corrupted tool."""
+            if tool.id == corrupted_tool_id:
+                raise ValueError("Simulated corrupted data: invalid auth_value")
+            return original_convert(self, tool, include_metrics=include_metrics, include_auth=include_auth)
+
+        # Patch the convert method to simulate corruption for one tool
+        with patch.object(ToolService, "convert_tool_to_read", mock_convert):
+            # Request tools listing
+            response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+
+        # Should succeed even with one corrupted tool
         assert response.status_code == 200
         resp_json = response.json()
 
-        # Should have the valid tools in the response
+        # Should have the valid tools in the response but NOT the corrupted one
         tools = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
         tool_names = [t.get("originalName", t.get("original_name", "")) for t in tools]
 
         assert valid_tool_1.original_name in tool_names
         assert valid_tool_2.original_name in tool_names
+        # The corrupted tool should NOT be in the response (it was skipped)
+        assert corrupted_tool.original_name not in tool_names
 
     async def test_admin_tools_partial_returns_200(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/tools/partial (HTMX endpoint) returns 200 and handles the request gracefully."""

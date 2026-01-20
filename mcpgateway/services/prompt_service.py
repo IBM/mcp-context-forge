@@ -15,6 +15,7 @@ It handles:
 """
 
 # Standard
+import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
 import os
@@ -25,6 +26,7 @@ import uuid
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape, Template
+from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, Session
@@ -1065,8 +1067,8 @@ class PromptService:
             try:
                 s.team = team_map.get(s.team_id) if s.team_id else None
                 result.append(self.convert_prompt_to_read(s, include_metrics=False))
-            except Exception as e:
-                logger.error(f"Failed to convert prompt {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert prompt {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
                 # Continue with remaining prompts instead of failing completely
         # Return appropriate format based on pagination type
         if page is not None:
@@ -1174,8 +1176,8 @@ class PromptService:
             try:
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
                 result.append(self.convert_prompt_to_read(t, include_metrics=False))
-            except Exception as e:
-                logger.error(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
                 # Continue with remaining prompts instead of failing completely
         return result
 
@@ -1279,8 +1281,8 @@ class PromptService:
             try:
                 t.team = team_map.get(str(t.team_id)) if t.team_id else None
                 result.append(self.convert_prompt_to_read(t, include_metrics=False))
-            except Exception as e:
-                logger.error(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert prompt {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
                 # Continue with remaining prompts instead of failing completely
         return result
 

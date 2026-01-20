@@ -13,11 +13,13 @@ It also publishes event notifications for server changes.
 
 # Standard
 import asyncio
+import binascii
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import httpx
+from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -834,8 +836,8 @@ class ServerService:
         for s in servers_db:
             try:
                 result.append(self.convert_server_to_read(s, include_metrics=False))
-            except Exception as e:
-                logger.error(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
                 # Continue with remaining servers instead of failing completely
 
         # Return appropriate format based on pagination type
@@ -945,8 +947,8 @@ class ServerService:
         for s in servers:
             try:
                 result.append(self.convert_server_to_read(s, include_metrics=False))
-            except Exception as e:
-                logger.error(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
                 # Continue with remaining servers instead of failing completely
         return result
 

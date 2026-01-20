@@ -19,6 +19,7 @@ underlying data.
 
 # Standard
 import asyncio
+import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
@@ -1647,8 +1648,8 @@ async def admin_servers_partial_html(
     for s in servers_db:
         try:
             servers_pydantic.append(server_service.convert_server_to_read(s, include_metrics=False))
-        except Exception as e:
-            LOGGER.error(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+        except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            LOGGER.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
     data = jsonable_encoder(servers_pydantic)
     base_url = f"{settings.app_root_path}/admin/servers/partial"
 
@@ -7280,8 +7281,8 @@ async def admin_tools_partial_html(
     for t in tools_db:
         try:
             tools_pydantic.append(tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False))
-        except Exception as e:
-            LOGGER.error(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+        except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -7783,8 +7784,8 @@ async def admin_prompts_partial_html(
     for p in prompts_db:
         try:
             prompts_pydantic.append(prompt_service.convert_prompt_to_read(p, include_metrics=False))
-        except Exception as e:
-            LOGGER.error(f"Failed to convert prompt {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
+        except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            LOGGER.exception(f"Failed to convert prompt {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
 
     data = jsonable_encoder(prompts_pydantic)
     base_url = f"{settings.app_root_path}/admin/prompts/partial"
@@ -7954,8 +7955,8 @@ async def admin_gateways_partial_html(
     for g in gateways_db:
         try:
             gateways_pydantic.append(gateway_service.convert_gateway_to_read(g))
-        except Exception as e:
-            LOGGER.error(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
+        except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
     data = jsonable_encoder(gateways_pydantic)
     base_url = f"{settings.app_root_path}/admin/gateways/partial"
 
@@ -8461,8 +8462,8 @@ async def admin_resources_partial_html(
     for r in resources_db:
         try:
             resources_pydantic.append(resource_service.convert_resource_to_read(r, include_metrics=False))
-        except Exception as e:
-            LOGGER.error(f"Failed to convert resource {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
+        except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            LOGGER.exception(f"Failed to convert resource {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
 
     data = jsonable_encoder(resources_pydantic)
 
@@ -9025,8 +9026,8 @@ async def admin_a2a_partial_html(
     for a in a2a_agents_db:
         try:
             a2a_agents_pydantic.append(a2a_service.convert_agent_to_read(a, include_metrics=False))
-        except Exception as e:
-            LOGGER.error(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
+        except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            LOGGER.exception(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
     data = jsonable_encoder(a2a_agents_pydantic)
     base_url = f"{settings.app_root_path}/admin/a2a/partial"
 
