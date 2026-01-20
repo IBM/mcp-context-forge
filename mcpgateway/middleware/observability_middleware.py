@@ -153,7 +153,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if db:
                 try:
                     db.rollback()  # Error path - rollback any partial transaction
-                except Exception as e:
+                except Exception as e:# pylint: disable=redefined-outer-name
                     logger.debug("Failed to rollback DB session during observability setup: %s", e)
             # Continue without tracing
             return await call_next(request)
