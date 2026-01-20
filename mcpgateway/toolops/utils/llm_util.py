@@ -14,10 +14,7 @@ import orjson
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_client_chat_service import (
-                GatewayConfig, 
-                GatewayProvider,
-                LLMConfig)
+from mcpgateway.services.mcp_client_chat_service import GatewayConfig, GatewayProvider, LLMConfig
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -46,66 +43,25 @@ def get_llm_instance(model_id, model_type=TOOLOPS_MODEL_TYPE):
         >>> # Setup: Define the global variable used in the function for the test context
         >>> global TOOLOPS_TEMPERATURE
         >>> TOOLOPS_TEMPERATURE = 0.7
+        >>> global TOOLOPS_MAX_TOKENS
+        >>> TOOLOPS_MAX_TOKENS = 1000
+        >>> global TOOLOPS_MODEL_TYPE
+        >>> TOOLOPS_MODEL_TYPE = "chat"
 
-        >>> # Case 1: OpenAI Provider Configuration
-        >>> # We patch os.environ to simulate specific provider settings
-        >>> env_vars = {
-        ...     "LLM_PROVIDER": "openai",
-        ...     "OPENAI_API_KEY": "sk-mock-key",
-        ...     "OPENAI_BASE_URL": "https://api.openai.com",
-        ...     "OPENAI_MODEL": "gpt-4"
-        ... }
-        >>> with patch.dict(os.environ, env_vars):
-        ...     # Assuming OpenAIProvider and OpenAIConfig are available in the module scope
-        ...     # We simulate the function call. Note: This tests the Config creation logic.
-        ...     llm_instance, llm_config = get_llm_instance("completion")
-        ...     llm_config.__class__.__name__
-        'OpenAIConfig'
+        >>> # Case 1: Gateway Provider Configuration
+        >>> # Configure Gateway Provider LLM model via Admin UI -> Settings -> LLM Settings.
+        >>> # Assuming Gateway Provider Configuration and are available in the module scope
+        >>> llm_model_instance, llm_config = get_llm_instance(model_id="global/ibm-granite-8b")
+        >>> llm_config.__class__.__name__
+        'LLMConfig'
 
-        >>> # Case 2: Azure OpenAI Provider Configuration
-        >>> env_vars = {
-        ...     "LLM_PROVIDER": "azure_openai",
-        ...     "AZURE_OPENAI_API_KEY": "az-mock-key",
-        ...     "AZURE_OPENAI_ENDPOINT": "https://mock.azure.com",
-        ...     "AZURE_OPENAI_MODEL": "gpt-35-turbo"
-        ... }
-        >>> with patch.dict(os.environ, env_vars):
-        ...     llm_instance, llm_config = get_llm_instance("chat")
-        ...     llm_config.__class__.__name__
-        'AzureOpenAIConfig'
-
-        >>> # Case 3: AWS Bedrock Provider Configuration
-        >>> env_vars = {
-        ...     "LLM_PROVIDER": "aws_bedrock",
-        ...     "AWS_BEDROCK_MODEL_ID": "anthropic.claude-v2",
-        ...     "AWS_BEDROCK_REGION": "us-east-1",
-        ...     "AWS_ACCESS_KEY_ID": "mock-access",
-        ...     "AWS_SECRET_ACCESS_KEY": "mock-secret"
-        ... }
-        >>> with patch.dict(os.environ, env_vars):
-        ...     llm_instance, llm_config = get_llm_instance("chat")
-        ...     llm_config.__class__.__name__
-        'AWSBedrockConfig'
-
-        >>> # Case 4: WatsonX Provider Configuration
-        >>> env_vars = {
-        ...     "LLM_PROVIDER": "watsonx",
-        ...     "WATSONX_APIKEY": "wx-mock-key",
-        ...     "WATSONX_URL": "https://us-south.ml.cloud.ibm.com",
-        ...     "WATSONX_PROJECT_ID": "mock-project-id",
-        ...     "WATSONX_MODEL_ID": "ibm/granite-13b"
-        ... }
-        >>> with patch.dict(os.environ, env_vars):
-        ...     llm_instance, llm_config = get_llm_instance("completion")
-        ...     llm_config.__class__.__name__
-        'WatsonxConfig'
     """
-    llm_model_instance,llm_config = None , None
+    llm_model_instance, llm_config = None, None
     try:
         logger.info("Configuring LLM instance for ToolOps , and LLM model - " + model_id)
-        config = GatewayConfig(model=model_id,temperature=TOOLOPS_TEMPERATURE,max_tokens=TOOLOPS_MAX_TOKENS)  # doctest: +SKIP
-        llm_config = LLMConfig(provider="gateway",config=config)
-        provider = GatewayProvider(config) 
+        config = GatewayConfig(model=model_id, temperature=TOOLOPS_TEMPERATURE, max_tokens=TOOLOPS_MAX_TOKENS)  # doctest: +SKIP
+        llm_config = LLMConfig(provider="gateway", config=config)
+        provider = GatewayProvider(config)
         llm_model_instance = provider.get_llm(model_type)
         logger.info("Successfully configured LLM instance for ToolOps , and LLM model - " + model_id)
     except Exception as e:
@@ -127,7 +83,7 @@ def execute_prompt(prompt, model_id, model_type):
     """
     try:
         logger.info("Inferencing OpenAI provider LLM with the given prompt")
-        completion_llm_instance,_ = get_llm_instance(model_id,model_type)
+        completion_llm_instance, _ = get_llm_instance(model_id, model_type)
         llm_response = completion_llm_instance.invoke(prompt, stop=["\n\n", "<|endoftext|>", "###STOP###"])
         response = llm_response.replace("<|eom_id|>", "").strip()
         # logger.info("Successful - Inferencing OpenAI provider LLM")

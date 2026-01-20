@@ -68,6 +68,7 @@ logger = logging_service.get_logger(__name__)
 
 TOOLOPS_MODEL_ID = None
 
+
 #  custom execute prompt to support MCP-CF LLM providers
 def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=None, max_new_tokens=600, stop_sequences=None):
     """
@@ -133,7 +134,7 @@ async def validation_generate_test_cases(model_id, tool_id, tool_service: ToolSe
         test_cases: list of tool test cases
     """
     test_cases = []
-    global TOOLOPS_MODEL_ID
+    global TOOLOPS_MODEL_ID  # pylint: disable=W0603
     TOOLOPS_MODEL_ID = model_id
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
@@ -195,14 +196,14 @@ async def execute_tool_nl_test_cases(model_id, tool_id, tool_nl_test_cases, tool
     mcp_cf_tool = tool_schema.to_dict(use_alias=True)
     tool_url = mcp_cf_tool.get("url")
     tool_auth = query_tool_auth(tool_id, db)
-    _,TOOLOPS_LLM_CONFIG = get_llm_instance(model_id=model_id)
+    _, toolops_llm_config = get_llm_instance(model_id=model_id)
     # handling transport based on protocol type
     if "/mcp" in tool_url:
-        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="streamable_http", headers=tool_auth), llm=TOOLOPS_LLM_CONFIG)
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="streamable_http", headers=tool_auth), llm=toolops_llm_config)
     elif "/sse" in tool_url:
-        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="sse", headers=tool_auth), llm=TOOLOPS_LLM_CONFIG)
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="sse", headers=tool_auth), llm=toolops_llm_config)
     else:
-        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="stdio", headers=tool_auth), llm=TOOLOPS_LLM_CONFIG)
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="stdio", headers=tool_auth), llm=toolops_llm_config)
 
     service = MCPChatService(config)
     await service.initialize()
@@ -221,7 +222,7 @@ async def execute_tool_nl_test_cases(model_id, tool_id, tool_nl_test_cases, tool
     return tool_test_case_outputs
 
 
-async def enrich_tool(model_id:str, tool_id: str, tool_service: ToolService, db: Session) -> tuple[str, ToolRead]:
+async def enrich_tool(model_id: str, tool_id: str, tool_service: ToolService, db: Session) -> tuple[str, ToolRead]:
     """
     Method for the service to enrich tool meta data such as tool description
 
@@ -235,7 +236,7 @@ async def enrich_tool(model_id:str, tool_id: str, tool_service: ToolService, db:
         enriched_description: Enriched tool description
         tool_schema: Updated tool schema in MCP-CF ToolRead format
     """
-    global TOOLOPS_MODEL_ID
+    global TOOLOPS_MODEL_ID  # pylint: disable=W0603
     TOOLOPS_MODEL_ID = model_id
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
@@ -262,28 +263,28 @@ async def enrich_tool(model_id:str, tool_id: str, tool_service: ToolService, db:
     return enriched_description, tool_schema
 
 
-if __name__ == "__main__":
-    # Standard
-    import asyncio
+# if __name__ == "__main__":
+#     # Standard
+#     import asyncio
 
-    # First-Party
-    from mcpgateway.db import SessionLocal
-    from mcpgateway.services.tool_service import ToolService
+#     # First-Party
+#     from mcpgateway.db import SessionLocal
+#     from mcpgateway.services.tool_service import ToolService
 
-    tool_id = "906ba4f23dd344e784e723c58f678d21"
-    model_id = "global/meta-llama/llama-3-3-70b-instruct"
-    tool_service = ToolService()
-    db = SessionLocal()
-    tool_test_cases = asyncio.run(validation_generate_test_cases(model_id, tool_id, tool_service, db, number_of_test_cases=2, number_of_nl_variations=2, mode="generate"))
-    print("#" * 30)
-    print("tool_test_cases")
-    print(tool_test_cases)
-    enrich_output = asyncio.run(enrich_tool(model_id, tool_id, tool_service, db))
-    print("#" * 30)
-    print("enrich_output")
-    print(enrich_output)
-    tool_nl_test_cases = ["add 3 and 10","please add 4 and 6"]
-    tool_outputs = asyncio.run(execute_tool_nl_test_cases(model_id, tool_id, tool_nl_test_cases, tool_service, db))
-    print("#" * 30)
-    print("len - tool_outputs", len(tool_outputs))
-    print(tool_outputs)
+#     tool_id = "906ba4f23dd344e784e723c58f678d21"
+#     model_id = "global/meta-llama/llama-3-3-70b-instruct"
+#     tool_service = ToolService()
+#     db = SessionLocal()
+#     tool_test_cases = asyncio.run(validation_generate_test_cases(model_id, tool_id, tool_service, db, number_of_test_cases=2, number_of_nl_variations=2, mode="generate"))
+#     print("#" * 30)
+#     print("tool_test_cases")
+#     print(tool_test_cases)
+#     enrich_output = asyncio.run(enrich_tool(model_id, tool_id, tool_service, db))
+#     print("#" * 30)
+#     print("enrich_output")
+#     print(enrich_output)
+#     tool_nl_test_cases = ["add 3 and 10","please add 4 and 6"]
+#     tool_outputs = asyncio.run(execute_tool_nl_test_cases(model_id, tool_id, tool_nl_test_cases, tool_service, db))
+#     print("#" * 30)
+#     print("len - tool_outputs", len(tool_outputs))
+#     print(tool_outputs)

@@ -58,7 +58,7 @@ class ToolNLTestInput(BaseModel):
 
     tool_id: str | None = Field(default=None, title="Tool ID", max_length=300)
     tool_nl_test_cases: list | None = Field(default=None, title="List of natural language test cases for testing MCP tool with the agent")
-    model_id: str| None = Field(default=None, title="LLM Model ID", max_length=300)
+    model_id: str | None = Field(default=None, title="LLM Model ID", max_length=300)
 
 
 # ---------- ROUTES ----------
@@ -150,7 +150,12 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
 
 @toolops_router.post("/enrichment/enrich_tool")
 @require_permission("admin.system_config")
-async def enrich_a_tool(model_id: str = Query(None, description="LLM Model ID for toolops"), tool_id: str = Query(None, description="Tool ID"), db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)) -> dict[str, Any]:
+async def enrich_a_tool(
+    model_id: str = Query(None, description="LLM Model ID for toolops"),
+    tool_id: str = Query(None, description="Tool ID"),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> dict[str, Any]:
     """
     Enriches an input tool
 
@@ -174,7 +179,6 @@ async def enrich_a_tool(model_id: str = Query(None, description="LLM Model ID fo
         result["original_desc"] = tool_schema.description
         result["enriched_desc"] = enriched_tool_description
         # logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
-        print(result)
         return result
 
     except Exception as e:
