@@ -126,6 +126,3 @@ async def get_status(request_id: str, _user=Depends(get_current_user_with_permis
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
     # Filter out non-serializable fields (cancel_callback is a function reference)
     return {k: v for k, v in status_obj.items() if k != "cancel_callback"}
-
-
-# Made with Bob

@@ -120,3 +120,9 @@ Cancellation follows the MCP specification with enhanced implementation:
 - Broadcast errors to individual sessions are logged but don't prevent cancellation
 - Failed Redis pubsub operations are logged as warnings but don't block local cancellation
 - Cancelled tasks return a JSON-RPC error with code `-32800` and details about the cancellation
+
+### Limitations
+
+- **Session broadcast scope**: The `notifications/cancelled` broadcast is sent to sessions connected to the local worker only. In multi-worker deployments, each worker broadcasts to its own sessions independently. Redis pubsub ensures cancellation callbacks are triggered on all workers, but session notifications are worker-local.
+- **Pre-registration cancellations**: If a cancellation request arrives before the tool execution is registered (race condition), the cancellation will be queued but won't affect the subsequently registered run. The run will proceed normally unless cancelled again after registration.
+- **Callback timing**: The cancel callback is invoked at registration time with a reference to the asyncio task. If cancellation occurs in the brief window between registration and task creation, the callback will safely no-op (task is None) and the run will be marked cancelled. A post-creation re-check ensures the task is cancelled if this race occurs.

@@ -233,5 +233,3 @@ def test_cancellation_feature_flag_can_be_disabled():
     # Create settings with feature disabled
     settings = Settings(mcpgateway_tool_cancellation_enabled=False)
     assert settings.mcpgateway_tool_cancellation_enabled is False
-
-# Made with Bob

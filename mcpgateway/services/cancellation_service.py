@@ -260,5 +260,3 @@ class CancellationService:
 
 # Module-level singleton for importers to use
 cancellation_service = CancellationService()
-
-# Made with Bob

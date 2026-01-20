@@ -5212,7 +5212,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
             # Register the tool execution for cancellation tracking with task reference (if enabled)
-            run_id = str(req_id) if req_id else None
+            # Note: req_id can be 0 which is falsy but valid per JSON-RPC spec, so use 'is not None'
+            run_id = str(req_id) if req_id is not None else None
             tool_task: Optional[asyncio.Task] = None
 
             async def cancel_tool_task(reason: Optional[str] = None):
@@ -5262,6 +5263,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
                 tool_task = asyncio.create_task(execute_tool())
 
+                # Re-check cancellation after task creation to handle race condition
+                # where cancel arrived between pre-check and task creation (callback saw tool_task=None)
+                if settings.mcpgateway_tool_cancellation_enabled and run_id:
+                    run_status = await cancellation_service.get_status(run_id)
+                    if run_status and run_status.get("cancelled"):
+                        tool_task.cancel()
+
                 try:
                     result = await tool_task
                     if hasattr(result, "model_dump"):
@@ -5306,11 +5314,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "notifications/cancelled":
             # MCP spec-compliant notification: request cancelled
-            request_id = params.get("requestId")
+            # Note: requestId can be 0 (valid per JSON-RPC), so use 'is not None' and normalize to string
+            raw_request_id = params.get("requestId")
+            request_id = str(raw_request_id) if raw_request_id is not None else None
             reason = params.get("reason")
             logger.info(f"Request cancelled: {request_id}, reason: {reason}")
             # Attempt local cancellation per MCP spec
-            if request_id:
+            if request_id is not None:
                 await cancellation_service.cancel_run(request_id, reason=reason)
             await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
             result = {}

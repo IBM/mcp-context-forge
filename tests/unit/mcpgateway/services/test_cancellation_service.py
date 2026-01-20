@@ -79,5 +79,3 @@ async def test_cancel_logs_reason_and_metadata():
     assert status["cancelled"] is True
     assert status["cancel_reason"] == "user requested"
     assert "cancelled_at" in status
-
-# Made with Bob

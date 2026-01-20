@@ -133,5 +133,3 @@ async def test_cancel_callback_exception_is_handled():
 
     status = await svc.get_status("fail-cb-test")
     assert status["cancelled"] is True
-
-# Made with Bob
