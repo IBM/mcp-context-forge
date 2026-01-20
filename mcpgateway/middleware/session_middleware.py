@@ -5,13 +5,16 @@ This middleware relies on `mcpgateway.db.get_request_session` creating the
 session lazily and `mcpgateway.db.close_request_session` to close it.
 """
 
-from typing import Callable
+# Standard
 import logging
+from typing import Callable
 
+# Third-Party
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+# First-Party
 from mcpgateway.db import close_request_session
 
 logger = logging.getLogger(__name__)

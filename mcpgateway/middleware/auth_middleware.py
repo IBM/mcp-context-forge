@@ -29,7 +29,6 @@ from starlette.responses import Response
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import get_request_session
-
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.security_logger import get_security_logger
 

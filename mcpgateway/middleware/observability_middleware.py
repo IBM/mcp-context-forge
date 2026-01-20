@@ -28,7 +28,6 @@ from starlette.responses import Response
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_request_session
-
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
@@ -153,7 +152,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if db:
                 try:
                     db.rollback()  # Error path - rollback any partial transaction
-                except Exception as e:# pylint: disable=redefined-outer-name
+                except Exception as e:  # pylint: disable=redefined-outer-name
                     logger.debug("Failed to rollback DB session during observability setup: %s", e)
             # Continue without tracing
             return await call_next(request)
