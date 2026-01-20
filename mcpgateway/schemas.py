@@ -4483,11 +4483,7 @@ class A2AAgentCreate(BaseModel):
 
         # Check feature flag
         if not settings.insecure_allow_queryparam_auth:
-            raise ValueError(
-                "Query parameter authentication is disabled. "
-                + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable. "
-                + "WARNING: API keys in URLs may appear in proxy logs."
-            )
+            raise ValueError("Query parameter authentication is disabled. " + "Set INSECURE_ALLOW_QUERYPARAM_AUTH=true to enable. " + "WARNING: API keys in URLs may appear in proxy logs.")
 
         # Check required fields
         if not self.auth_query_param_key:

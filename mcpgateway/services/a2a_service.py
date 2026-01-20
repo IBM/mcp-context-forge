@@ -382,9 +382,11 @@ class A2AAgentService:
             # Handle query_param auth - encrypt and prepare for storage
             auth_query_params_encrypted: Optional[Dict[str, str]] = None
             if auth_type == "query_param":
+                # Standard
+                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
                 # First-Party
                 from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
@@ -397,10 +399,7 @@ class A2AAgentService:
                     allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
                     if hostname not in allowed_hosts:
                         allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                        raise ValueError(
-                            f"Host '{hostname}' is not in the allowed hosts for query param auth. "
-                            f"Allowed: {allowed}"
-                        )
+                        raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. " f"Allowed: {allowed}")
 
                 # Extract and encrypt query param auth
                 param_key = getattr(agent_data, "auth_query_param_key", None)
@@ -1040,9 +1039,11 @@ class A2AAgentService:
             is_url_changing = agent_data.endpoint_url is not None and str(agent_data.endpoint_url) != original_endpoint_url
 
             if is_switching_to_queryparam or is_updating_queryparam_creds or (is_url_changing and original_auth_type == "query_param"):
+                # Standard
+                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
+
                 # First-Party
                 from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-                from urllib.parse import urlparse  # pylint: disable=import-outside-toplevel
 
                 # Service-layer enforcement: Check feature flag
                 if not settings.insecure_allow_queryparam_auth:
@@ -1059,10 +1060,7 @@ class A2AAgentService:
                     allowed_hosts = [h.lower() for h in settings.insecure_queryparam_auth_allowed_hosts]
                     if hostname not in allowed_hosts:
                         allowed = ", ".join(settings.insecure_queryparam_auth_allowed_hosts)
-                        raise ValueError(
-                            f"Host '{hostname}' is not in the allowed hosts for query param auth. "
-                            f"Allowed: {allowed}"
-                        )
+                        raise ValueError(f"Host '{hostname}' is not in the allowed hosts for query param auth. " f"Allowed: {allowed}")
 
             if is_switching_to_queryparam or is_updating_queryparam_creds:
                 # Get query param key and value
@@ -1415,7 +1413,7 @@ class A2AAgentService:
 
         # Create sanitized URL for logging (redacts auth query params)
         # First-Party
-        from mcpgateway.utils.url_auth import sanitize_url_for_logging, sanitize_exception_message  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.url_auth import sanitize_exception_message, sanitize_url_for_logging  # pylint: disable=import-outside-toplevel
 
         sanitized_endpoint_url = sanitize_url_for_logging(agent_endpoint_url, auth_query_params_decrypted)
 
