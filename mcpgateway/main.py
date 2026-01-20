@@ -118,6 +118,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
@@ -127,7 +128,6 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
-from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
@@ -5237,6 +5237,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
                 # Create task for tool execution to enable real cancellation
                 async def execute_tool():
+                    """Create task for tool execution to enable real cancellation.
+                    """
                     try:
                         return await tool_service.invoke_tool(
                             db=db,

@@ -48,16 +48,16 @@ async def test_cancel_endpoint_success(auth_headers, mock_session_broadcast):
 
     # May return 200 (success), 401 (auth required), or 403 (permission denied)
     assert resp.status_code in (200, 401, 403)
-    
+
     if resp.status_code == 200:
         data = resp.json()
         assert data["status"] == "cancelled"
         assert data["requestId"] == "run-cancel-1"
         assert data["reason"] == "user requested"
-        
+
         # Wait for callback to execute
         await asyncio.wait_for(cancel_event.wait(), timeout=1.0)
-        
+
         # Verify cancellation in service
         status = await cancellation_service.get_status("run-cancel-1")
         assert status is not None
@@ -71,7 +71,7 @@ async def test_cancel_endpoint_unknown_run(auth_headers, mock_session_broadcast)
     resp = client.post("/cancellation/cancel", json={"requestId": "unknown-run-id", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
-    
+
     if resp.status_code == 200:
         data = resp.json()
         assert data["status"] == "queued"  # Not found locally, queued for remote
@@ -86,7 +86,7 @@ async def test_cancel_endpoint_without_reason(auth_headers, mock_session_broadca
     resp = client.post("/cancellation/cancel", json={"requestId": "run-no-reason"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
-    
+
     if resp.status_code == 200:
         data = resp.json()
         assert data["status"] == "cancelled"
@@ -98,7 +98,7 @@ async def test_cancel_endpoint_broadcasts_to_sessions(auth_headers, monkeypatch)
     """Test that cancellation broadcasts notifications to all sessions."""
     broadcast_mock = AsyncMock()
     get_sessions_mock = AsyncMock(return_value=["session1", "session2", "session3"])
-    
+
     monkeypatch.setattr("mcpgateway.main.session_registry.get_all_session_ids", get_sessions_mock)
     monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast_mock)
 
@@ -107,11 +107,11 @@ async def test_cancel_endpoint_broadcasts_to_sessions(auth_headers, monkeypatch)
     resp = client.post("/cancellation/cancel", json={"requestId": "run-broadcast", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
-    
+
     if resp.status_code == 200:
         # Verify broadcast was called for each session
         assert broadcast_mock.call_count == 3
-        
+
         # Verify notification format
         for call in broadcast_mock.call_args_list:
             session_id, notification = call[0]
@@ -130,7 +130,7 @@ async def test_status_endpoint_success(auth_headers):
     resp = client.get("/cancellation/status/run-status-1", headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
-    
+
     if resp.status_code == 200:
         data = resp.json()
         assert data["name"] == "test_tool"
@@ -145,7 +145,7 @@ async def test_status_endpoint_not_found(auth_headers):
     resp = client.get("/cancellation/status/nonexistent-run", headers=auth_headers)
 
     assert resp.status_code in (404, 401, 403)
-    
+
     if resp.status_code == 404:
         data = resp.json()
         assert "not found" in data["detail"].lower()
@@ -160,7 +160,7 @@ async def test_status_endpoint_cancelled_run(auth_headers):
     resp = client.get("/cancellation/status/run-cancelled", headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
-    
+
     if resp.status_code == 200:
         data = resp.json()
         assert data["cancelled"] is True
@@ -172,7 +172,7 @@ async def test_status_endpoint_cancelled_run(auth_headers):
 async def test_cancel_endpoint_requires_auth():
     """Test that cancel endpoint requires authentication."""
     resp = client.post("/cancellation/cancel", json={"requestId": "test-run"})
-    
+
     # Should return 401 (unauthorized) or 403 (forbidden) without auth
     assert resp.status_code in (401, 403)
 
@@ -181,7 +181,7 @@ async def test_cancel_endpoint_requires_auth():
 async def test_status_endpoint_requires_auth():
     """Test that status endpoint requires authentication."""
     resp = client.get("/cancellation/status/test-run")
-    
+
     # Should return 401 (unauthorized) or 403 (forbidden) without auth
     assert resp.status_code in (401, 403)
 
@@ -198,12 +198,12 @@ async def test_cancel_endpoint_handles_broadcast_errors(auth_headers, monkeypatc
     resp = client.post("/cancellation/cancel", json={"requestId": "run-broadcast-error", "reason": "test"}, headers=auth_headers)
 
     assert resp.status_code in (200, 401, 403)
-    
+
     if resp.status_code == 200:
         # Cancellation should still succeed despite broadcast error
         data = resp.json()
         assert data["status"] == "cancelled"
-        
+
         # Verify local cancellation worked
         status = await cancellation_service.get_status("run-broadcast-error")
         assert status["cancelled"] is True
@@ -216,14 +216,14 @@ async def test_cancel_endpoint_disabled(monkeypatch):
     """Test that cancel endpoint returns 404 when feature is disabled."""
     # Disable the feature
     monkeypatch.setattr("mcpgateway.config.settings.mcpgateway_tool_cancellation_enabled", False)
-    
+
     # Attempt to cancel
     resp = client.post(
         "/cancellation/cancel",
         json={"requestId": "test-run", "reason": "test"},
         headers={"Authorization": "Bearer test-token"}
     )
-    
+
     # Should return 404 since router is not registered
     assert resp.status_code == 404
 
@@ -233,13 +233,13 @@ async def test_status_endpoint_disabled(monkeypatch):
     """Test that status endpoint returns 404 when feature is disabled."""
     # Disable the feature
     monkeypatch.setattr("mcpgateway.config.settings.mcpgateway_tool_cancellation_enabled", False)
-    
+
     # Attempt to get status
     resp = client.get(
         "/cancellation/status/test-run",
         headers={"Authorization": "Bearer test-token"}
     )
-    
+
     # Should return 404 since router is not registered
     assert resp.status_code == 404
 
@@ -249,7 +249,7 @@ async def test_tool_execution_without_registration_when_disabled(monkeypatch):
     """Test that tool executions work normally when cancellation is disabled."""
     # Disable the feature
     monkeypatch.setattr("mcpgateway.config.settings.mcpgateway_tool_cancellation_enabled", False)
-    
+
     # Tool executions should still work, just without cancellation tracking
     # This test verifies no errors occur when the feature is disabled
     # The actual tool execution would need a full test setup, so we just verify

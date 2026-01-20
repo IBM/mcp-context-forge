@@ -139,7 +139,7 @@ curl http://localhost:8000/cancellation/status/test-123 \
 
 All existing tests have been updated and continue to pass:
 - **29 integration tests** covering HTTP endpoints, auth, broadcasting
-- **9 router unit tests** covering service methods and error handling  
+- **9 router unit tests** covering service methods and error handling
 - **7 service unit tests** covering cancellation logic and callbacks
 - **3 tests for disabled state** ensuring graceful degradation
 
