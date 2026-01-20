@@ -16,6 +16,7 @@ It handles:
 
 # Standard
 import base64
+import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
 import os
@@ -36,6 +37,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import orjson
+from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
@@ -1792,7 +1794,11 @@ class ToolService:
         # Team names are loaded via joinedload(DbTool.email_team)
         result = []
         for s in tools_db:
-            result.append(self.convert_tool_to_read(s, include_metrics=False, include_auth=False))
+            try:
+                result.append(self.convert_tool_to_read(s, include_metrics=False, include_auth=False))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert tool {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining tools instead of failing completely
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -1918,7 +1924,11 @@ class ToolService:
 
         result = []
         for tool in tools:
-            result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics, include_auth=False))
+            try:
+                result.append(self.convert_tool_to_read(tool, include_metrics=include_metrics, include_auth=False))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert tool {getattr(tool, 'id', 'unknown')} ({getattr(tool, 'name', 'unknown')}): {e}")
+                # Continue with remaining tools instead of failing completely
 
         return result
 
@@ -2045,7 +2055,11 @@ class ToolService:
         # Convert to ToolRead objects
         result = []
         for tool in tools:
-            result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False))
+            try:
+                result.append(self.convert_tool_to_read(tool, include_metrics=False, include_auth=False))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert tool {getattr(tool, 'id', 'unknown')} ({getattr(tool, 'name', 'unknown')}): {e}")
+                # Continue with remaining tools instead of failing completely
 
         next_cursor = None
         # Generate cursor if there are more results (cursor-based pagination)

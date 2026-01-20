@@ -21,6 +21,7 @@ Examples:
 """
 
 # Standard
+import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
 import mimetypes
@@ -37,6 +38,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 import parse
+from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -1056,8 +1058,12 @@ class ResourceService:
         # Convert to ResourceRead (common for both pagination types)
         result = []
         for s in resources_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(self.convert_resource_to_read(s, include_metrics=False))
+            try:
+                s.team = team_map.get(s.team_id) if s.team_id else None
+                result.append(self.convert_resource_to_read(s, include_metrics=False))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert resource {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining resources instead of failing completely
         # Return appropriate format based on pagination type
         if page is not None:
             # Page-based format
@@ -1194,8 +1200,12 @@ class ResourceService:
 
         result = []
         for t in resources:
-            t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self.convert_resource_to_read(t, include_metrics=False))
+            try:
+                t.team = team_map.get(str(t.team_id)) if t.team_id else None
+                result.append(self.convert_resource_to_read(t, include_metrics=False))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                # Continue with remaining resources instead of failing completely
         return result
 
     async def list_server_resources(
@@ -1297,8 +1307,12 @@ class ResourceService:
 
         result = []
         for t in resources:
-            t.team = team_map.get(str(t.team_id)) if t.team_id else None
-            result.append(self.convert_resource_to_read(t, include_metrics=False))
+            try:
+                t.team = team_map.get(str(t.team_id)) if t.team_id else None
+                result.append(self.convert_resource_to_read(t, include_metrics=False))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert resource {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+                # Continue with remaining resources instead of failing completely
         return result
 
     async def _record_resource_metric(self, db: Session, resource: DbResource, start_time: float, success: bool, error_message: Optional[str]) -> None:
