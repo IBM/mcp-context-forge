@@ -1374,14 +1374,14 @@ class ResourceService:
         """
         return get_cached_ssl_context(ca_certificate)
 
-    async def invoke_resource(
+    async def invoke_resource(  # pylint: disable=unused-argument
         self,
         db: Session,
         resource_id: str,
         resource_uri: str,
         resource_template_uri: Optional[str] = None,
         user_identity: Optional[Union[str, Dict[str, Any]]] = None,
-        meta_data: Optional[Dict[str, Any]] = None,
+        meta_data: Optional[Dict[str, Any]] = None,  # Reserved for future MCP SDK support
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1684,7 +1684,7 @@ class ResourceService:
                         db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
                         db.close()
 
-                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None, meta_data: Optional[Dict[str, Any]] = None) -> str | None:
+                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
                             Connect to an SSE-based gateway and retrieve the text content of a resource.
 
@@ -1697,6 +1697,10 @@ class ResourceService:
                             initialization failure, etc.), the method logs the exception and returns
                             ``None`` instead of raising.
 
+                            Note:
+                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
+                                When the SDK adds support, meta_data can be added back here.
+
                             Args:
                                 server_url (str):
                                     The base URL of the SSE gateway to connect to.
@@ -1706,9 +1710,6 @@ class ResourceService:
                                     Optional dictionary of headers (e.g., OAuth Bearer tokens) to
                                     include in the SSE connection request. Defaults to an empty
                                     dictionary when not provided.
-                                meta_data (Optional[Dict[str, Any]]):
-                                    Optional metadata dictionary to pass to the gateway during
-                                    resource reading.
 
                             Returns:
                                 str | None:
@@ -1767,7 +1768,7 @@ class ResourceService:
                                 return None
 
                         async def connect_to_streamablehttp_server(
-                            server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None, meta_data: Optional[Dict[str, Any]] = None
+                            server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None
                         ) -> str | None:
                             """
                             Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
@@ -1781,6 +1782,10 @@ class ResourceService:
                             resource reading, the function logs the error and returns ``None`` instead
                             of propagating the exception.
 
+                            Note:
+                                MCP SDK 1.25.0 read_resource() does not support meta parameter.
+                                When the SDK adds support, meta_data can be added back here.
+
                             Args:
                                 server_url (str):
                                     The endpoint URL of the StreamableHTTP gateway.
@@ -1789,8 +1794,6 @@ class ResourceService:
                                 authentication (Optional[Dict[str, str]]):
                                     Optional dictionary of authentication headers (e.g., API keys or
                                     Bearer tokens). Defaults to an empty dictionary when not provided.
-                                meta_data (Optional[Dict[str, Any]]):
-                                    Optional metadata dictionary to pass to the gateway
 
                             Returns:
                                 str | None:
@@ -1854,9 +1857,11 @@ class ResourceService:
 
                         resource_text = ""
                         if (gateway_transport).lower() == "sse":
-                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri, meta_data=meta_data)
+                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
+                            resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:
-                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri, meta_data=meta_data)
+                            # Note: meta_data not passed - MCP SDK 1.25.0 read_resource() doesn't support it
+                            resource_text = await connect_to_streamablehttp_server(server_url=gateway_url, authentication=headers, uri=uri)
                         success = True  # Mark as successful before returning
                         return resource_text
                     except Exception as e:
