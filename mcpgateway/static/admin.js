@@ -16730,7 +16730,24 @@ window.clearSearch = clearSearch;
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
 
-    // NOTE: No need to clone inputs anymore - memoization prevents duplicate initialization
+    // Clone inputs to remove existing event listeners before re-adding.
+    // This prevents duplicate listeners when re-initializing after reset.
+    const searchInputIds = [
+        "catalog-search-input",
+        "gateways-search-input",
+        "tools-search-input",
+        "resources-search-input",
+        "prompts-search-input",
+        "a2a-agents-search-input",
+    ];
+
+    searchInputIds.forEach((inputId) => {
+        const input = document.getElementById(inputId);
+        if (input) {
+            const newInput = input.cloneNode(true);
+            input.parentNode.replaceChild(newInput, input);
+        }
+    });
 
     // Virtual Servers search
     const catalogSearchInput = document.getElementById("catalog-search-input");
