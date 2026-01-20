@@ -7,7 +7,7 @@ const MASKED_AUTH_VALUE = "*****";
 // Centralized chart management to prevent "Canvas is already in use" errors
 window.chartRegistry = {
     charts: new Map(),
-    
+
     register(id, chart) {
         // Destroy existing chart with same ID before registering new one
         if (this.charts.has(id)) {
@@ -16,7 +16,7 @@ window.chartRegistry = {
         this.charts.set(id, chart);
         console.log(`Chart registered: ${id}`);
     },
-    
+
     destroy(id) {
         const chart = this.charts.get(id);
         if (chart) {
@@ -29,14 +29,14 @@ window.chartRegistry = {
             this.charts.delete(id);
         }
     },
-    
+
     destroyAll() {
         console.log(`Destroying all charts (${this.charts.size} total)`);
         this.charts.forEach((chart, id) => {
             this.destroy(id);
         });
     },
-    
+
     destroyByPrefix(prefix) {
         const toDestroy = [];
         this.charts.forEach((chart, id) => {
@@ -44,25 +44,27 @@ window.chartRegistry = {
                 toDestroy.push(id);
             }
         });
-        console.log(`Destroying ${toDestroy.length} charts with prefix: ${prefix}`);
-        toDestroy.forEach(id => this.destroy(id));
+        console.log(
+            `Destroying ${toDestroy.length} charts with prefix: ${prefix}`,
+        );
+        toDestroy.forEach((id) => this.destroy(id));
     },
-    
+
     has(id) {
         return this.charts.has(id);
     },
-    
+
     get(id) {
         return this.charts.get(id);
     },
-    
+
     size() {
         return this.charts.size;
-    }
+    },
 };
 
 // Cleanup all charts on page unload
-window.addEventListener('beforeunload', () => {
+window.addEventListener("beforeunload", () => {
     window.chartRegistry.destroyAll();
 });
 
@@ -7187,12 +7189,16 @@ function showTab(tabName) {
         }
 
         // Destroy observability charts when leaving the observability tab
-        const currentPanel = document.querySelector('.tab-panel:not(.hidden)');
-        if (currentPanel && currentPanel.id === 'observability-panel' && tabName !== 'observability') {
-            console.log('Leaving observability tab, destroying charts...');
-            window.chartRegistry.destroyByPrefix('metrics-');
-            window.chartRegistry.destroyByPrefix('tools-');
-            window.chartRegistry.destroyByPrefix('prompts-');
+        const currentPanel = document.querySelector(".tab-panel:not(.hidden)");
+        if (
+            currentPanel &&
+            currentPanel.id === "observability-panel" &&
+            tabName !== "observability"
+        ) {
+            console.log("Leaving observability tab, destroying charts...");
+            window.chartRegistry.destroyByPrefix("metrics-");
+            window.chartRegistry.destroyByPrefix("tools-");
+            window.chartRegistry.destroyByPrefix("prompts-");
         }
 
         // Navigation styling (immediate)
@@ -7467,10 +7473,12 @@ function showTab(tabName) {
 
                 if (tabName === "observability") {
                     // Ensure clean slate when entering observability tab
-                    console.log('Entering observability tab, ensuring clean chart state...');
-                    window.chartRegistry.destroyByPrefix('metrics-');
-                    window.chartRegistry.destroyByPrefix('tools-');
-                    window.chartRegistry.destroyByPrefix('prompts-');
+                    console.log(
+                        "Entering observability tab, ensuring clean chart state...",
+                    );
+                    window.chartRegistry.destroyByPrefix("metrics-");
+                    window.chartRegistry.destroyByPrefix("tools-");
+                    window.chartRegistry.destroyByPrefix("prompts-");
                 }
 
                 if (tabName === "plugins") {

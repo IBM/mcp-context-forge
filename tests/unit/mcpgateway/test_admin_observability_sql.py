@@ -485,7 +485,7 @@ class TestPromptStatistics:
 
         mock_db.query.return_value = mock_query
 
-        from mcpgateway.admin import get_prompt_errors
+        from mcpgateway.admin import get_prompts_errors
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
@@ -494,7 +494,7 @@ class TestPromptStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_prompt_errors(mock_request, hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_prompts_errors(hours=24, limit=20, _user=mock_user))
 
         assert "prompts" in result
 
@@ -559,7 +559,7 @@ class TestResourceStatistics:
 
         mock_db.query.return_value = mock_query
 
-        from mcpgateway.admin import get_resource_errors
+        from mcpgateway.admin import get_resources_errors
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
@@ -568,6 +568,6 @@ class TestResourceStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_resource_errors(mock_request, hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_resources_errors(hours=24, limit=20, _user=mock_user))
 
         assert "resources" in result

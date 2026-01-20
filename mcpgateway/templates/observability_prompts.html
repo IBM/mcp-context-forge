@@ -14,7 +14,7 @@ window.createPromptsController = function() {
       mostUsed: null,
       overallHealth: 'good'
     },
-    
+
     /**
      * Destroy all Chart.js instances to prevent canvas reuse errors
      */
@@ -23,7 +23,7 @@ window.createPromptsController = function() {
       window.chartRegistry.destroyByPrefix('prompts-');
       this.charts = {};
     },
-    
+
     /**
      * Cleanup resources on component destroy
      */
@@ -31,14 +31,14 @@ window.createPromptsController = function() {
       this.destroyAllCharts();
       this.stopAutoRefresh();
     },
-    
+
     async init() {
       // Clean up any existing charts first
       this.destroyAllCharts();
-      
+
       await this.loadAllMetrics();
       this.startAutoRefresh();
-      
+
       // Add cleanup on component destroy
       this.$el.addEventListener('destroy', () => {
         this.cleanup();
@@ -161,14 +161,14 @@ window.createPromptsController = function() {
             console.warn('promptUsageChart canvas became hidden, aborting render');
             return;
           }
-          
+
           // Verify canvas is still in DOM and get valid context
           const ctx = canvas.getContext('2d');
           if (!ctx) {
             console.error('Failed to get 2d context for promptUsageChart');
             return;
           }
-          
+
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -281,14 +281,14 @@ window.createPromptsController = function() {
             console.warn('promptSlownessChart canvas became hidden, aborting render');
             return;
           }
-          
+
           // Verify canvas is still in DOM and get valid context
           const ctx = canvas.getContext('2d');
           if (!ctx) {
             console.error('Failed to get 2d context for promptSlownessChart');
             return;
           }
-          
+
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -397,14 +397,14 @@ window.createPromptsController = function() {
             console.warn('promptErrorProneChart canvas became hidden, aborting render');
             return;
           }
-          
+
           // Verify canvas is still in DOM and get valid context
           const ctx = canvas.getContext('2d');
           if (!ctx) {
             console.error('Failed to get 2d context for promptErrorProneChart');
             return;
           }
-          
+
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -465,7 +465,7 @@ window.createPromptsController = function() {
         }
       });
     },
-    
+
     startAutoRefresh() {
       // Clear any existing interval
       if (this.autoRefreshInterval) {
@@ -478,7 +478,7 @@ window.createPromptsController = function() {
         }
       }, 60000);
     },
-    
+
     stopAutoRefresh() {
       if (this.autoRefreshInterval) {
         clearInterval(this.autoRefreshInterval);

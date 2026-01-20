@@ -37,16 +37,16 @@
             console.log('Metrics view already loaded, skipping fetch');
             return;
         }
-        
+
         // Prevent concurrent loads
         if (this.metricsLoading) {
             console.log('Metrics view already loading, skipping');
             return;
         }
-        
+
         this.metricsLoading = true;
         console.log('Loading metrics view for the first time...');
-        
+
         try {
             const response = await fetch('{{ root_path }}/admin/observability/metrics/partial');
             if (response.ok) {
@@ -56,7 +56,7 @@
                     this.metricsLoading = false;
                     return;
                 }
-                
+
                 const html = await response.text();
                 const container = document.getElementById('metrics-container');
                 if (!container) {
@@ -64,7 +64,7 @@
                     this.metricsLoading = false;
                     return;
                 }
-                
+
                 container.innerHTML = html;
 
                 // Execute any script tags (innerHTML doesn't execute them)
@@ -81,12 +81,12 @@
 
                 // Wait for scripts to execute and charts to render
                 await new Promise(resolve => setTimeout(resolve, 100));
-                
+
                 // Re-initialize Alpine.js
                 if (window.Alpine) {
                     window.Alpine.initTree(container);
                 }
-                
+
                 // Only mark as loaded if we're still on the metrics view
                 if (this.viewMode === 'metrics') {
                     this.metricsLoaded = true;
@@ -107,16 +107,16 @@
             console.log('Tools view already loaded, skipping fetch');
             return;
         }
-        
+
         // Prevent concurrent loads
         if (this.toolsLoading) {
             console.log('Tools view already loading, skipping');
             return;
         }
-        
+
         this.toolsLoading = true;
         console.log('Loading tools view for the first time...');
-        
+
         try {
             const response = await fetch('{{ root_path }}/admin/observability/tools/partial');
             if (response.ok) {
@@ -126,7 +126,7 @@
                     this.toolsLoading = false;
                     return;
                 }
-                
+
                 const html = await response.text();
                 const container = document.getElementById('tools-container');
                 if (!container) {
@@ -134,7 +134,7 @@
                     this.toolsLoading = false;
                     return;
                 }
-                
+
                 container.innerHTML = html;
 
                 // Execute any script tags (innerHTML doesn't execute them)
@@ -151,12 +151,12 @@
 
                 // Wait for scripts to execute and charts to render
                 await new Promise(resolve => setTimeout(resolve, 100));
-                
+
                 // Re-initialize Alpine.js
                 if (window.Alpine) {
                     window.Alpine.initTree(container);
                 }
-                
+
                 // Only mark as loaded if we're still on the tools view
                 if (this.viewMode === 'tools') {
                     this.toolsLoaded = true;
@@ -177,16 +177,16 @@
             console.log('Prompts view already loaded, skipping fetch');
             return;
         }
-        
+
         // Prevent concurrent loads
         if (this.promptsLoading) {
             console.log('Prompts view already loading, skipping');
             return;
         }
-        
+
         this.promptsLoading = true;
         console.log('Loading prompts view for the first time...');
-        
+
         try {
             const response = await fetch('{{ root_path }}/admin/observability/prompts/partial');
             if (response.ok) {
@@ -196,7 +196,7 @@
                     this.promptsLoading = false;
                     return;
                 }
-                
+
                 const html = await response.text();
                 const container = document.getElementById('prompts-container');
                 if (!container) {
@@ -204,7 +204,7 @@
                     this.promptsLoading = false;
                     return;
                 }
-                
+
                 container.innerHTML = html;
 
                 // Execute any script tags (innerHTML doesn't execute them)
@@ -221,12 +221,12 @@
 
                 // Wait for scripts to execute and charts to render
                 await new Promise(resolve => setTimeout(resolve, 100));
-                
+
                 // Re-initialize Alpine.js
                 if (window.Alpine) {
                     window.Alpine.initTree(container);
                 }
-                
+
                 // Only mark as loaded if we're still on the prompts view
                 if (this.viewMode === 'prompts') {
                     this.promptsLoaded = true;
@@ -247,16 +247,16 @@
             console.log('Resources view already loaded, skipping fetch');
             return;
         }
-        
+
         // Prevent concurrent loads
         if (this.resourcesLoading) {
             console.log('Resources view already loading, skipping');
             return;
         }
-        
+
         this.resourcesLoading = true;
         console.log('Loading resources view for the first time...');
-        
+
         try {
             const response = await fetch('{{ root_path }}/admin/observability/resources/partial');
             if (response.ok) {
@@ -266,7 +266,7 @@
                     this.resourcesLoading = false;
                     return;
                 }
-                
+
                 const html = await response.text();
                 const container = document.getElementById('resources-container');
                 if (!container) {
@@ -274,7 +274,7 @@
                     this.resourcesLoading = false;
                     return;
                 }
-                
+
                 container.innerHTML = html;
 
                 // Execute any script tags (innerHTML doesn't execute them)
@@ -291,12 +291,12 @@
 
                 // Wait for scripts to execute
                 await new Promise(resolve => setTimeout(resolve, 100));
-                
+
                 // Re-initialize Alpine.js
                 if (window.Alpine) {
                     window.Alpine.initTree(container);
                 }
-                
+
                 // Only mark as loaded if we're still on the resources view
                 if (this.viewMode === 'resources') {
                     this.resourcesLoaded = true;

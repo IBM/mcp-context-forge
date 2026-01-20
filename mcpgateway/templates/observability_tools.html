@@ -14,7 +14,7 @@ window.createToolsController = function() {
       mostUsed: null,
       overallHealth: 'good'
     },
-    
+
     /**
      * Destroy all Chart.js instances to prevent canvas reuse errors
      */
@@ -23,7 +23,7 @@ window.createToolsController = function() {
       window.chartRegistry.destroyByPrefix('tools-');
       this.charts = {};
     },
-    
+
     /**
      * Cleanup resources on component destroy
      */
@@ -31,14 +31,14 @@ window.createToolsController = function() {
       this.destroyAllCharts();
       this.stopAutoRefresh();
     },
-    
+
     async init() {
       // Clean up any existing charts first
       this.destroyAllCharts();
-      
+
       await this.loadAllMetrics();
       this.startAutoRefresh();
-      
+
       // Add cleanup on component destroy
       this.$el.addEventListener('destroy', () => {
         this.cleanup();
@@ -179,14 +179,14 @@ window.createToolsController = function() {
             console.warn('toolUsageChart canvas became hidden, aborting render');
             return;
           }
-          
+
           // Verify canvas is still in DOM and get valid context
           const ctx = canvas.getContext('2d');
           if (!ctx) {
             console.error('Failed to get 2d context for toolUsageChart');
             return;
           }
-          
+
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -333,14 +333,14 @@ window.createToolsController = function() {
             console.warn('toolSlownessChart canvas became hidden, aborting render');
             return;
           }
-          
+
           // Verify canvas is still in DOM and get valid context
           const ctx = canvas.getContext('2d');
           if (!ctx) {
             console.error('Failed to get 2d context for toolSlownessChart');
             return;
           }
-          
+
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -449,14 +449,14 @@ window.createToolsController = function() {
             console.warn('toolErrorProneChart canvas became hidden, aborting render');
             return;
           }
-          
+
           // Verify canvas is still in DOM and get valid context
           const ctx = canvas.getContext('2d');
           if (!ctx) {
             console.error('Failed to get 2d context for toolErrorProneChart');
             return;
           }
-          
+
           const chart = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -517,7 +517,7 @@ window.createToolsController = function() {
         }
       });
     },
-    
+
     startAutoRefresh() {
       // Clear any existing interval
       if (this.autoRefreshInterval) {
@@ -530,7 +530,7 @@ window.createToolsController = function() {
         }
       }, 60000);
     },
-    
+
     stopAutoRefresh() {
       if (this.autoRefreshInterval) {
         clearInterval(this.autoRefreshInterval);
