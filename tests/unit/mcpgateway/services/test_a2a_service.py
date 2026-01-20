@@ -317,7 +317,8 @@ class TestA2AAgentService:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_agent_success(self, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_invoke_agent_success(self, mock_get_for_update, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
         """Test successful agent invocation."""
         # Mock HTTP client (shared client pattern)
         mock_client = AsyncMock()
@@ -327,19 +328,24 @@ class TestA2AAgentService:
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Mock database operations (no auth for this basic test)
-        service.get_agent_by_name = AsyncMock(
-            return_value=MagicMock(
-                id=sample_db_agent.id,
-                name=sample_db_agent.name,
-                enabled=True,
-                endpoint_url=sample_db_agent.endpoint_url,
-                auth_type=None,
-                auth_value=None,
-                protocol_version=sample_db_agent.protocol_version,
-                agent_type="generic",
-            )
-        )
+        # Mock database operations - agent lookup by name returns ID
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
+
+        # Mock get_for_update to return agent with proper attributes
+        mock_agent = MagicMock()
+        mock_agent.id = sample_db_agent.id
+        mock_agent.name = sample_db_agent.name
+        mock_agent.enabled = True
+        mock_agent.endpoint_url = sample_db_agent.endpoint_url
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.protocol_version = sample_db_agent.protocol_version
+        mock_agent.agent_type = "generic"
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_get_for_update.return_value = mock_agent
 
         # Mock fresh_db_session for last_interaction update
         mock_ts_db = MagicMock()
@@ -386,7 +392,8 @@ class TestA2AAgentService:
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
-    async def test_invoke_agent_http_error(self, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_invoke_agent_http_error(self, mock_get_for_update, mock_get_client, mock_fresh_db, mock_metrics_buffer_fn, service, mock_db, sample_db_agent):
         """Test agent invocation with HTTP error."""
         # Mock HTTP client with error response (shared client pattern)
         mock_client = AsyncMock()
@@ -396,19 +403,24 @@ class TestA2AAgentService:
         mock_client.post.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        # Mock database operations (no auth for this basic test)
-        service.get_agent_by_name = AsyncMock(
-            return_value=MagicMock(
-                id=sample_db_agent.id,
-                name=sample_db_agent.name,
-                enabled=True,
-                endpoint_url=sample_db_agent.endpoint_url,
-                auth_type=None,
-                auth_value=None,
-                protocol_version=sample_db_agent.protocol_version,
-                agent_type="generic",
-            )
-        )
+        # Mock database operations - agent lookup by name returns ID
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
+
+        # Mock get_for_update to return agent with proper attributes
+        mock_agent = MagicMock()
+        mock_agent.id = sample_db_agent.id
+        mock_agent.name = sample_db_agent.name
+        mock_agent.enabled = True
+        mock_agent.endpoint_url = sample_db_agent.endpoint_url
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.protocol_version = sample_db_agent.protocol_version
+        mock_agent.agent_type = "generic"
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_get_for_update.return_value = mock_agent
 
         # Mock fresh_db_session for last_interaction update
         mock_ts_db = MagicMock()
