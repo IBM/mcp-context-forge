@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, SessionLocal
+from mcpgateway.db import SessionLocal
 from mcpgateway.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
@@ -37,9 +37,6 @@ security = HTTPBearer(auto_error=False)
 
 def get_db() -> Generator[Session, None, None]:
     """Get database session for dependency injection.
-
-    DEPRECATED: Use fresh_db_session() context manager instead to avoid session accumulation.
-    This function is kept for backwards compatibility with endpoints that still use Depends(get_db).
 
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.

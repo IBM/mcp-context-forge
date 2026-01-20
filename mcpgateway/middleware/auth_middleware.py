@@ -28,7 +28,11 @@ from starlette.responses import Response
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import get_request_session
+
+# Backwards-compatible alias for tests and older modules that patch
+# `SessionLocal` in middleware modules.
+SessionLocal = get_request_session
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.security_logger import get_security_logger
 
@@ -124,7 +128,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Log successful authentication (only if logging level is "all")
             # DB session created only when needed
             if log_success:
-                db = SessionLocal()
+                db = get_request_session()
                 try:
                     security_logger.log_authentication_attempt(
                         user_id=user_id,
@@ -138,11 +142,6 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log successful auth: {log_error}")
-                finally:
-                    try:
-                        db.close()
-                    except Exception as close_error:
-                        logger.debug(f"Failed to close database session: {close_error}")
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed
@@ -151,7 +150,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Log failed authentication attempt (based on logging level)
             # DB session created only when needed
             if log_failure:
-                db = SessionLocal()
+                db = get_request_session()
                 try:
                     security_logger.log_authentication_attempt(
                         user_id="unknown",
@@ -166,11 +165,6 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     db.commit()
                 except Exception as log_error:
                     logger.debug(f"Failed to log auth failure: {log_error}")
-                finally:
-                    try:
-                        db.close()
-                    except Exception as close_error:
-                        logger.debug(f"Failed to close database session: {close_error}")
 
         # Continue with request
         return await call_next(request)

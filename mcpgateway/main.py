@@ -84,6 +84,7 @@ from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddl
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
+from mcpgateway.middleware.session_middleware import SessionMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
 from mcpgateway.routers.server_well_known import router as server_well_known_router
@@ -1772,6 +1773,9 @@ app.add_middleware(
     expose_headers=["Content-Length", "X-Request-ID", "X-Password-Change-Required"],
     max_age=600,  # Cache preflight requests for 10 minutes
 )
+
+# Session middleware: ensures request-scoped DB session cleanup
+app.add_middleware(SessionMiddleware)
 
 # Add response compression middleware (Brotli, Zstd, GZip)
 # Automatically negotiates compression algorithm based on client Accept-Encoding header

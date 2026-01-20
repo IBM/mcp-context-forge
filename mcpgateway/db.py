@@ -28,6 +28,7 @@ import logging
 import os
 from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
+from contextvars import ContextVar
 
 # Third-Party
 import jsonschema
@@ -450,6 +451,48 @@ class ResilientSession(Session):
 # allowing continued access to attributes without re-querying the database.
 # This is essential when commits happen during read operations (e.g., to release transactions).
 SessionLocal = sessionmaker(class_=ResilientSession, autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+
+# Request-scoped session storage to ensure single session reused across
+# middleware and route handlers during a single request lifecycle.
+_request_session: ContextVar[Optional[Session]] = ContextVar("db_session", default=None)
+
+
+def get_request_session() -> Session:
+    """Get or create a request-scoped SQLAlchemy Session.
+
+    This returns the current request session if one exists, otherwise it
+    creates a new `SessionLocal()` instance, stores it in a ContextVar and
+    returns it. Sessions created outside of a request context (background
+    jobs) should continue to use `SessionLocal()` directly.
+    """
+    session = _request_session.get()
+    if session is None:
+        session = SessionLocal()
+        _request_session.set(session)
+    return session
+
+
+def close_request_session() -> None:
+    """Close and clear the request-scoped session if present.
+
+    This performs a best-effort rollback of any open transaction and then
+    closes the session and clears the ContextVar.
+    """
+    session = _request_session.get()
+    if not session:
+        return
+    try:
+        try:
+            if session.in_transaction():
+                session.rollback()
+        except Exception:
+            pass
+        try:
+            session.close()
+        except Exception:
+            pass
+    finally:
+        _request_session.set(None)
 
 
 @event.listens_for(ResilientSession, "after_transaction_end")
@@ -5399,7 +5442,9 @@ def get_db() -> Generator[Session, Any, None]:
         True
         >>> gen.close()
     """
-    db = SessionLocal()
+    # Use request-scoped session so middleware and route handlers reuse a
+    # single session during the request lifecycle.
+    db = get_request_session()
     try:
         yield db
         db.commit()
@@ -5413,7 +5458,9 @@ def get_db() -> Generator[Session, Any, None]:
                 pass  # nosec B110 - Best effort cleanup on connection failure
         raise
     finally:
-        db.close()
+        # Do not close here: the request-scoped session is closed by
+        # the SessionMiddleware at the end of the request.
+        pass
 
 
 def get_for_update(
