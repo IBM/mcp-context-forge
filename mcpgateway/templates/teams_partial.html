@@ -129,7 +129,10 @@
     {% set base_url = root_path + '/admin/teams/partial' %}
     {% set hx_target = '#unified-teams-list' %}
     {% set hx_indicator = '#teams-loading' %}
+    {% set table_name = 'teams' %}
     {# Use query_params from context, default to empty dict if not provided #}
     {% if query_params is not defined %}{% set query_params = {} %}{% endif %}
+    {% autoescape false %}
     {% include 'pagination_controls.html' %}
+    {% endautoescape %}
 </div>

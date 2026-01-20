@@ -17188,39 +17188,39 @@ function initializeTabState() {
         }, 100);
     }
 
-    // Set checkbox states based on URL parameter
+    // Set checkbox states based on URL parameters (namespaced per table, with legacy fallback)
     const urlParams = new URLSearchParams(window.location.search);
-    const includeInactive = urlParams.get("include_inactive") === "true";
+    const legacyIncludeInactive = urlParams.get("include_inactive") === "true";
 
-    const checkboxes = [
-        "show-inactive-tools",
-        "show-inactive-resources",
-        "show-inactive-prompts",
-        "show-inactive-gateways",
-        "show-inactive-servers",
-        "show-inactive-a2a-agents",
-        "show-inactive-tools-toolops",
-    ];
-    checkboxes.forEach((id) => {
+    // Map checkbox IDs to their table names for namespaced URL params
+    const checkboxTableMap = {
+        "show-inactive-tools": "tools",
+        "show-inactive-resources": "resources",
+        "show-inactive-prompts": "prompts",
+        "show-inactive-gateways": "gateways",
+        "show-inactive-servers": "servers",
+        "show-inactive-a2a-agents": "agents",
+        "show-inactive-tools-toolops": "toolops",
+    };
+    Object.entries(checkboxTableMap).forEach(([id, tableName]) => {
         const checkbox = safeGetElement(id);
         if (checkbox) {
-            checkbox.checked = includeInactive;
+            // Prefer namespaced param, fall back to legacy for backwards compatibility
+            const namespacedValue = urlParams.get(tableName + "_inactive");
+            if (namespacedValue !== null) {
+                checkbox.checked = namespacedValue === "true";
+            } else {
+                checkbox.checked = legacyIncludeInactive;
+            }
         }
     });
 
-    // Add URL state persistence for show-inactive toggles
-    document.querySelectorAll(".show-inactive-toggle").forEach((checkbox) => {
-        checkbox.addEventListener("change", () => {
-            const url = new URL(window.location);
-            if (checkbox.checked) {
-                url.searchParams.set("include_inactive", "true");
-            } else {
-                url.searchParams.delete("include_inactive");
-            }
-            window.history.replaceState({}, document.title, url.toString());
-        });
+    // Note: URL state persistence for show-inactive toggles is now handled by
+    // updateInactiveUrlState() in admin.html via @change handlers on checkboxes.
+    // The handlers write namespaced params (e.g., servers_inactive, tools_inactive).
 
-        // Disable toggle until its target exists (prevents race with initial HTMX load)
+    // Disable toggle until its target exists (prevents race with initial HTMX load)
+    document.querySelectorAll(".show-inactive-toggle").forEach((checkbox) => {
         const targetSelector = checkbox.getAttribute("hx-target");
         if (targetSelector && !document.querySelector(targetSelector)) {
             checkbox.disabled = true;

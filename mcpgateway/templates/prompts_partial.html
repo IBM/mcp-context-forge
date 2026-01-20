@@ -83,6 +83,9 @@
   {% set base_url = root_path + '/admin/prompts/partial' %}
   {% set hx_target = '#prompts-table' %}
   {% set hx_indicator = '#prompts-loading' %}
+  {% set table_name = 'prompts' %}
   {% set query_params = {'include_inactive': include_inactive} %}
+  {% autoescape false %}
   {% include 'pagination_controls.html' %}
+  {% endautoescape %}
 </div>
