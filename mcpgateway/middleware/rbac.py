@@ -25,7 +25,11 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import get_db, get_request_session
+
+# Backwards-compatible alias for tests and older modules that patch
+# `SessionLocal` in middleware modules.
+SessionLocal = get_request_session
 from mcpgateway.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
@@ -34,39 +38,9 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
-def get_db() -> Generator[Session, None, None]:
-    """Get database session for dependency injection.
-
-    Commits the transaction on successful completion to avoid implicit rollbacks
-    for read-only operations. Rolls back explicitly on exception.
-
-    Yields:
-        Session: SQLAlchemy database session
-
-    Raises:
-        Exception: Re-raises any exception after rolling back the transaction.
-
-    Examples:
-        >>> gen = get_db()
-        >>> db = next(gen)
-        >>> hasattr(db, 'query')
-        True
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
+# Using centralized `get_db` from `mcpgateway.db` which now provides a
+# request-scoped session. Middleware and routes should use that dependency
+# to ensure a single session per request.
 
 
 async def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:

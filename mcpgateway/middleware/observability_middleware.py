@@ -27,7 +27,11 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import get_request_session
+
+# Backwards-compatible alias for tests and older modules that patch
+# `SessionLocal` in middleware modules.
+SessionLocal = get_request_session
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
@@ -105,8 +109,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
 
         try:
-            # Create database session
-            db = SessionLocal()
+            # Create or get request-scoped database session
+            db = get_request_session()
 
             # Start trace (use external trace_id if provided for distributed tracing)
             trace_id = self.service.start_trace(
@@ -148,9 +152,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             if db:
                 try:
                     db.rollback()  # Error path - rollback any partial transaction
-                    db.close()
-                except Exception as close_error:
-                    logger.debug(f"Failed to close database session during cleanup: {close_error}")
+                except Exception:
+                    pass
             # Continue without tracing
             return await call_next(request)
 
@@ -218,11 +221,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             raise
 
         finally:
-            # Always close database session - observability service handles its own commits
+            # Do not close the request-scoped session here; cleanup is handled
+            # by the SessionMiddleware at the end of the request lifecycle.
             if db:
                 try:
                     if db.in_transaction():
                         db.rollback()
-                    db.close()
-                except Exception as close_error:
-                    logger.warning(f"Failed to close database session: {close_error}")
+                except Exception:
+                    pass
