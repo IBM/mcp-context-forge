@@ -82,7 +82,11 @@ class OrchestrationService:
         logger.info("OrchestrationService: Shutdown complete")
 
     async def _listen_for_cancellations(self) -> None:
-        """Listen for cancellation events from other workers via Redis pubsub."""
+        """Listen for cancellation events from other workers via Redis pubsub.
+
+        Raises:
+            asyncio.CancelledError: When the listener task is cancelled during shutdown.
+        """
         if not self._redis:
             return
 
@@ -110,7 +114,15 @@ class OrchestrationService:
             logger.error(f"OrchestrationService: Pubsub listener error: {e}")
 
     async def _cancel_run_local(self, run_id: str, reason: Optional[str] = None) -> bool:
-        """Cancel a run locally without publishing to Redis (internal use)."""
+        """Cancel a run locally without publishing to Redis (internal use).
+
+        Args:
+            run_id: Unique identifier for the run to cancel.
+            reason: Optional textual reason for the cancellation request.
+
+        Returns:
+            bool: True if the run was found and cancelled, False if not found.
+        """
         async with self._lock:
             entry = self._runs.get(run_id)
             if not entry:
@@ -198,7 +210,12 @@ class OrchestrationService:
         return True
 
     async def _publish_cancellation(self, run_id: str, reason: Optional[str] = None) -> None:
-        """Publish cancellation event to Redis for other workers."""
+        """Publish cancellation event to Redis for other workers.
+
+        Args:
+            run_id: Unique identifier for the run being cancelled.
+            reason: Optional textual reason for the cancellation.
+        """
         if not self._redis:
             return
 
