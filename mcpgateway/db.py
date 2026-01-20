@@ -23,12 +23,12 @@ Examples:
 
 # Standard
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 import logging
 import os
 from typing import Any, cast, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
-from contextvars import ContextVar
 
 # Third-Party
 import jsonschema
