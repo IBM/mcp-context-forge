@@ -95,7 +95,17 @@ def is_path_traversal(uri: str) -> bool:
     Returns:
         bool: True if path traversal detected
     """
-    return ".." in uri or uri.startswith("/") or "\\" in uri
+    # Don't treat leading slash as traversal — only detect explicit '..'
+    # path segments or backslash sequences. This checks for '..' as
+    # a path segment (../ or /.. ) and backslashes which are suspicious
+    # on POSIX systems when present in URIs/paths.
+    if "\\" in uri:
+        return True
+    # Match .. as a path segment: beginning or after a slash, and followed
+    # by a slash or end-of-string.
+    if re.search(r'(^|/)\.{2}(?:/|$)', uri):
+        return True
+    return False
 
 
 class ValidationMiddleware(BaseHTTPMiddleware):
@@ -113,7 +123,9 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             app: FastAPI application instance
         """
         super().__init__(app)
-        self.enabled = settings.experimental_validate_io
+        # Enable middleware when either the experimental flag or the
+        # explicit validation middleware flag is set (backwards compatible).
+        self.enabled = bool(settings.experimental_validate_io or settings.validation_middleware_enabled)
         self.strict = settings.validation_strict
         self.sanitize = settings.sanitize_output
         self.allowed_roots = [Path(root).resolve() for root in settings.allowed_roots]
@@ -122,7 +134,14 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         # Performance optimization settings
         self.max_body_size = settings.validation_max_body_size
         self.max_response_size = settings.validation_max_response_size
-        self.skip_endpoint_patterns = [re.compile(pattern) for pattern in settings.validation_skip_endpoints]
+        # Compile skip-endpoint regexes defensively so an invalid pattern
+        # in the environment doesn't crash the app startup.
+        self.skip_endpoint_patterns: list[re.Pattern] = []
+        for pattern in settings.validation_skip_endpoints:
+            try:
+                self.skip_endpoint_patterns.append(re.compile(pattern))
+            except re.error:
+                logger.warning("[VALIDATION] Invalid skip endpoint regex skipped: %s", pattern)
         self.sample_large_responses = settings.validation_sample_large_responses
         self.sample_size = settings.validation_sample_size
         
