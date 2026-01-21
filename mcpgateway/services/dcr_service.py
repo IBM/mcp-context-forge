@@ -84,8 +84,20 @@ class DcrService:
                 logger.debug(f"Using cached AS metadata for {issuer}")
                 return cached_entry["metadata"]
 
+        # > If the issuer identifier value contains a path component, any
+        # > terminating "/" MUST be removed before inserting "/.well-known/" and
+        # > the well-known URI suffix between the host component and the path
+        # > component.
+        # > -- RFC 8414 Section 3.1 second paragraph: https://datatracker.ietf.org/doc/html/rfc8414#section-3.1
+        #
+        # The spec is ambiguous whether the terminating slash in the mostly-path-less "https://example.com/"
+        # should be removed. Because of an incompatibility with the MCP python SDK:
+        # https://github.com/modelcontextprotocol/python-sdk/issues/1919, we choose to believe that even a lonely "/" is
+        # a path component.
+        discovery_base_url = issuer.rstrip("/")
+
         # Try RFC 8414 path first
-        rfc8414_url = f"{issuer}/.well-known/oauth-authorization-server"
+        rfc8414_url = f"{discovery_base_url}/.well-known/oauth-authorization-server"
 
         try:
             client = await self._get_client()
@@ -106,7 +118,7 @@ class DcrService:
             logger.debug(f"RFC 8414 discovery failed for {issuer}: {e}, trying OIDC fallback")
 
         # Try OIDC discovery fallback
-        oidc_url = f"{issuer}/.well-known/openid-configuration"
+        oidc_url = f"{discovery_base_url}/.well-known/openid-configuration"
 
         try:
             client = await self._get_client()
@@ -163,7 +175,7 @@ class DcrService:
         registration_request = {
             "client_name": client_name,
             "redirect_uris": [redirect_uri],
-            "grant_types": ["authorization_code"],
+            "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "token_endpoint_auth_method": self.settings.dcr_token_endpoint_auth_method,
             "scope": " ".join(scopes),
