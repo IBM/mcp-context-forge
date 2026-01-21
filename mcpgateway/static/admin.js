@@ -3384,7 +3384,11 @@ async function viewAgent(agentId) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label || JSON.stringify(tag)
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -4294,7 +4298,11 @@ async function viewResource(resourceId) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label || JSON.stringify(tag)
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -5213,7 +5221,11 @@ async function viewGateway(gatewayId) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label || JSON.stringify(tag)
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -14140,10 +14152,13 @@ async function viewTool(toolId) {
             if (tagsElement) {
                 if (tool.tags && tool.tags.length > 0) {
                     tagsElement.innerHTML = tool.tags
-                        .map(
-                            (tag) =>
-                                `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${escapeHtml(tag)}</span>`,
-                        )
+                        .map((tag) => {
+                            const raw =
+                                typeof tag === "object" && tag !== null
+                                    ? tag.id || tag.label || JSON.stringify(tag)
+                                    : tag;
+                            return `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${escapeHtml(raw)}</span>`;
+                        })
                         .join("");
                 } else {
                     tagsElement.textContent = "None";
@@ -20718,7 +20733,15 @@ function showTokenDetailsModal(token) {
             <div class="mb-6">
                 <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Tags</h4>
                 <div class="flex flex-wrap gap-2">
-                    ${token.tags.map((tag) => `<span class="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded">${escapeHtml(tag)}</span>`).join("")}
+                    ${token.tags
+                        .map((tag) => {
+                            const raw =
+                                typeof tag === "object" && tag !== null
+                                    ? tag.id || tag.label || JSON.stringify(tag)
+                                    : tag;
+                            return `<span class="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded">${escapeHtml(raw)}</span>`;
+                        })
+                        .join("")}
                 </div>
             </div>
             `
