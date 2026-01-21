@@ -7171,6 +7171,72 @@ function getDefaultTabName() {
 
 let tabSwitchTimeout = null;
 
+/**
+ * Dynamically detects which pagination table names belong to a given tab panel
+ * by scanning for pagination control elements within that panel.
+ * Returns array of table names (e.g., ['tools'], ['servers'], etc.)
+ */
+function getTableNamesForTab(tabName) {
+    const panel = document.getElementById(`${tabName}-panel`);
+    if (!panel) {
+        return [];
+    }
+
+    // Find all pagination control elements within this panel
+    // Pattern: id="<tableName>-pagination-controls"
+    const paginationControls = panel.querySelectorAll(
+        '[id$="-pagination-controls"]',
+    );
+
+    const tableNames = [];
+    paginationControls.forEach((control) => {
+        // Extract table name from id: "tools-pagination-controls" -> "tools"
+        const match = control.id.match(/^(.+)-pagination-controls$/);
+        if (match) {
+            tableNames.push(match[1]);
+        }
+    });
+
+    return tableNames;
+}
+
+/**
+ * Cleans up URL params for tables not belonging to the target tab
+ * Keeps only params for the current tab's tables and global params (team_id)
+ * Automatically detects which tables belong to the tab by scanning the DOM.
+ */
+function cleanUpUrlParamsForTab(targetTabName) {
+    const currentUrl = new URL(window.location.href);
+    const newParams = new URLSearchParams();
+
+    // Dynamically detect which tables belong to this tab
+    const targetTables = getTableNamesForTab(targetTabName);
+
+    // Preserve global params
+    if (currentUrl.searchParams.has("team_id")) {
+        newParams.set("team_id", currentUrl.searchParams.get("team_id"));
+    }
+
+    // Only keep params for tables that belong to the target tab
+    currentUrl.searchParams.forEach((value, key) => {
+        // Check if this param belongs to one of the target tab's tables
+        for (const tableName of targetTables) {
+            const prefix = tableName + "_";
+            if (key.startsWith(prefix)) {
+                newParams.set(key, value);
+                break;
+            }
+        }
+    });
+
+    // Update URL
+    const newUrl =
+        currentUrl.pathname +
+        (newParams.toString() ? "?" + newParams.toString() : "") +
+        currentUrl.hash;
+    window.history.replaceState({}, "", newUrl);
+}
+
 function showTab(tabName) {
     try {
         if (!isAdminUser() && isAdminOnlyTab(tabName)) {
@@ -7204,6 +7270,9 @@ function showTab(tabName) {
             // Dispatch event so Alpine components can stop intervals and reset state
             document.dispatchEvent(new CustomEvent("observability:leave"));
         }
+
+        // Clean up URL params from other tabs when switching tabs
+        cleanUpUrlParamsForTab(tabName);
 
         // Navigation styling (immediate)
         document.querySelectorAll(".tab-panel").forEach((p) => {
