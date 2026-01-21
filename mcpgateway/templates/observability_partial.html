@@ -1,5 +1,19 @@
 <!-- htmlhint doctype-first:false -->
 <!-- Observability Dashboard Partial -->
+<script>
+// Dark mode aware Chart.js defaults - shared across all observability charts
+if (!window.getChartDefaults) {
+  window.getChartDefaults = function() {
+    const isDark = document.documentElement.classList.contains('dark');
+    return {
+      color: isDark ? '#e5e7eb' : '#374151',
+      gridColor: isDark ? '#374151' : '#e5e7eb',
+      titleColor: isDark ? '#f3f4f6' : '#1f2937',
+      tickColor: isDark ? '#d1d5db' : '#6b7280',
+    };
+  };
+}
+</script>
 <div class="observability-container" x-data="{
     viewMode: 'traces',
     selectedTrace: null,
@@ -457,382 +471,16 @@
     $watch('selectedQueryId', () => { if(selectedQueryId) applySavedQuery(); });
 ">
     <style>
-        .observability-container {
-            /* No extra padding - parent already has p-4 lg:p-6 */
-        }
-        .view-toggle-btn {
-            padding: 0.5rem 1rem;
-            border-radius: 0.375rem;
-            border: 1px solid #d1d5db;
-            background: white;
-            cursor: pointer;
-            font-size: 0.875rem;
-            transition: all 0.2s;
-        }
-        .view-toggle-btn:hover {
-            background: #f3f4f6;
-        }
-        .view-toggle-btn.active {
-            background: #3b82f6;
-            color: white;
-            border-color: #3b82f6;
-        }
-        .obs-header {
-            margin-bottom: 2rem;
-            padding-bottom: 1rem;
-            border-bottom: 2px solid #e5e7eb;
-        }
-        .obs-header-top {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-        .obs-tabs-row {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-        }
-        .obs-title {
-            font-size: 1.875rem;
-            font-weight: 700;
-            color: #1f2937;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        .obs-filters {
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-        }
-        .obs-filter-btn {
-            padding: 0.5rem 1rem;
-            border-radius: 0.375rem;
-            border: 1px solid #d1d5db;
-            background: white;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .obs-filter-btn:hover {
-            background: #f3f4f6;
-        }
-        .obs-filter-btn.active {
-            background: #3b82f6;
-            color: white;
-            border-color: #3b82f6;
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-        .stat-card {
-            background: white;
-            border-radius: 0.5rem;
-            padding: 1.5rem;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            border-left: 4px solid #3b82f6;
-        }
-        .stat-card.success {
-            border-left-color: #10b981;
-        }
-        .stat-card.error {
-            border-left-color: #ef4444;
-        }
-        .stat-card.warning {
-            border-left-color: #f59e0b;
-        }
-        .stat-label {
-            font-size: 0.875rem;
-            color: #6b7280;
-            margin-bottom: 0.5rem;
-        }
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #1f2937;
-        }
-        .stat-unit {
-            font-size: 1rem;
-            color: #6b7280;
-            margin-left: 0.25rem;
-        }
-        .traces-table {
-            width: 100%;
-            background: white;
-            border-radius: 0.5rem;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-        .traces-table table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .traces-table th {
-            background: #f9fafb;
-            padding: 0.75rem 1rem;
-            text-align: left;
-            font-size: 0.875rem;
-            font-weight: 600;
-            color: #6b7280;
-            border-bottom: 1px solid #e5e7eb;
-        }
-        .traces-table td {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid #e5e7eb;
-        }
-        .traces-table tr:hover {
-            background: #f9fafb;
-            cursor: pointer;
-        }
-        .status-badge {
-            display: inline-block;
-            padding: 0.25rem 0.75rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        .status-ok {
-            background: #d1fae5;
-            color: #065f46;
-        }
-        .status-error {
-            background: #fee2e2;
-            color: #991b1b;
-        }
-        .duration-badge {
-            padding: 0.25rem 0.5rem;
-            border-radius: 0.25rem;
-            font-size: 0.875rem;
-            font-family: monospace;
-        }
-        .duration-fast {
-            background: #d1fae5;
-            color: #065f46;
-        }
-        .duration-medium {
-            background: #fef3c7;
-            color: #92400e;
-        }
-        .duration-slow {
-            background: #fee2e2;
-            color: #991b1b;
-        }
-        .trace-detail-modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-        }
-        .trace-detail-content {
-            background: white;
-            border-radius: 0.5rem;
-            max-width: 90%;
-            max-height: 90%;
-            overflow: auto;
-            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
-        }
-        .trace-detail-header {
-            padding: 1.5rem;
-            border-bottom: 1px solid #e5e7eb;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .trace-detail-body {
-            padding: 1.5rem;
-        }
-        .waterfall {
-            margin-top: 1rem;
-        }
-        .span-row {
-            display: flex;
-            align-items: center;
-            padding: 0.5rem;
-            border-bottom: 1px solid #e5e7eb;
-        }
-        .span-name {
-            width: 200px;
-            font-size: 0.875rem;
-            color: #374151;
-        }
+        /* Minimal styles for components that need precise positioning */
         .span-timeline {
             flex: 1;
             height: 24px;
             position: relative;
-            background: #f3f4f6;
-            border-radius: 0.25rem;
-        }
-        .span-bar {
-            position: absolute;
-            height: 100%;
-            background: #3b82f6;
-            border-radius: 0.25rem;
-            display: flex;
-            align-items: center;
-            padding: 0 0.5rem;
-            font-size: 0.75rem;
-            color: white;
-        }
-        .span-bar.error {
-            background: #ef4444;
-        }
-        .span-duration {
-            width: 80px;
-            text-align: right;
-            font-size: 0.875rem;
-            color: #6b7280;
-            font-family: monospace;
-        }
-        .refresh-btn {
-            padding: 0.5rem 1rem;
-            background: #3b82f6;
-            color: white;
-            border: none;
-            border-radius: 0.375rem;
-            cursor: pointer;
-            font-weight: 500;
-            transition: background 0.2s;
-        }
-        .refresh-btn:hover {
-            background: #2563eb;
-        }
-        .empty-state {
-            text-align: center;
-            padding: 3rem;
-            color: #6b7280;
-        }
-        .empty-state-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-        }
-
-        /* Gantt Chart Styles */
-        .gantt-container {
-            background: white;
-            border: 1px solid #e5e7eb;
-            border-radius: 0.5rem;
-            padding: 1rem;
-            min-height: 400px;
-        }
-        .gantt-toolbar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid #e5e7eb;
-        }
-        .gantt-info {
-            font-size: 0.875rem;
-            color: #374151;
-        }
-        .gantt-controls {
-            display: flex;
-            gap: 0.5rem;
-        }
-        .gantt-btn {
-            padding: 0.375rem 0.75rem;
-            background: #f3f4f6;
-            border: 1px solid #d1d5db;
-            border-radius: 0.375rem;
-            font-size: 0.875rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .gantt-btn:hover {
-            background: #e5e7eb;
-        }
-        .gantt-timescale {
-            position: relative;
-            height: 40px;
-            border-bottom: 2px solid #d1d5db;
-            margin-bottom: 0.5rem;
-        }
-        .time-marker {
-            position: absolute;
-            top: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .time-tick {
-            width: 1px;
-            height: 10px;
-            background: #9ca3af;
-        }
-        .time-label {
-            font-size: 0.75rem;
-            color: #6b7280;
-            margin-top: 0.25rem;
-        }
-        .gantt-spans {
-            max-height: 600px;
-            overflow-y: auto;
-        }
-        .span-row {
-            display: flex;
-            align-items: center;
-            padding: 0.25rem 0;
-            border-bottom: 1px solid #f3f4f6;
-            transition: background 0.1s;
-        }
-        .span-row:hover {
-            background: #f9fafb;
-        }
-        .critical-path-row {
-            background: #fef3c7 !important;
-        }
-        .span-name {
-            width: 250px;
-            font-size: 0.875rem;
-            color: #374151;
-            display: flex;
-            align-items: center;
-            gap: 0.25rem;
-        }
-        .span-toggle {
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-size: 0.75rem;
-            padding: 0.125rem;
-            color: #6b7280;
-            width: 16px;
-            height: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .span-spacer {
-            width: 16px;
-            display: inline-block;
-        }
-        .span-label {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .span-timeline {
-            flex: 1;
-            height: 24px;
-            position: relative;
-            background: #f9fafb;
-            border-radius: 0.25rem;
             margin: 0 0.5rem;
         }
         .span-bar {
             position: absolute;
             height: 100%;
-            background: #3b82f6;
             border-radius: 0.25rem;
             cursor: pointer;
             transition: opacity 0.2s;
@@ -847,72 +495,27 @@
         .critical-path-bar {
             box-shadow: 0 0 0 2px #f59e0b;
         }
-        .span-bar-label {
-            font-size: 0.7rem;
-            color: white;
-            font-weight: 500;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-        }
-        .span-duration {
-            width: 100px;
-            text-align: right;
-            font-size: 0.75rem;
-            color: #6b7280;
-            font-family: monospace;
-        }
-        .gantt-legend {
+        .time-marker {
+            position: absolute;
+            top: 0;
             display: flex;
-            gap: 1rem;
-            margin-top: 1rem;
-            padding-top: 1rem;
-            border-top: 1px solid #e5e7eb;
-            font-size: 0.875rem;
-        }
-        .legend-item {
-            display: flex;
+            flex-direction: column;
             align-items: center;
-            gap: 0.5rem;
-        }
-        .legend-color {
-            width: 16px;
-            height: 16px;
-            border-radius: 0.25rem;
-        }
-        .legend-color.critical-path {
-            background: #fbbf24;
-            border: 2px solid #f59e0b;
-        }
-        .view-toggle-btn {
-            padding: 0.5rem 1rem;
-            background: #f3f4f6;
-            border: 1px solid #d1d5db;
-            border-radius: 0.375rem;
-            font-size: 0.875rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .view-toggle-btn:hover {
-            background: #e5e7eb;
-        }
-        .view-toggle-btn.active {
-            background: #3b82f6;
-            color: white;
-            border-color: #3b82f6;
         }
     </style>
 
     <!-- Header -->
-    <div class="obs-header">
+    <div class="mb-8 pb-4 border-b-2 border-gray-200 dark:border-gray-700">
         <!-- Title and Filters Row -->
-        <div class="obs-header-top">
-            <h1 class="obs-title">
+        <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
+            <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
                 <span>🔍</span>
                 Observability Dashboard
             </h1>
-            <div class="obs-filters" x-show="viewMode === 'traces'" style="margin: 0;">
+            <div class="flex gap-4 items-center" x-show="viewMode === 'traces'">
             <select
                 x-model="selectedQueryId"
-                class="obs-filter-btn"
+                class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
                 style="min-width: 200px;"
             >
                 <option value="">📋 Saved Queries</option>
@@ -921,7 +524,7 @@
                 </template>
             </select>
             <button
-                class="obs-filter-btn"
+                class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
                 @click="showSaveQueryModal = true"
                 title="Save current filters as a query"
             >
@@ -929,7 +532,7 @@
             </button>
             <select
                 x-model="timeRange"
-                class="obs-filter-btn"
+                class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
             >
                 <option value="1h">Last Hour</option>
                 <option value="6h">Last 6 Hours</option>
@@ -938,21 +541,21 @@
             </select>
             <select
                 x-model="statusFilter"
-                class="obs-filter-btn"
+                class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
             >
                 <option value="all" selected>All Status</option>
                 <option value="ok">Success Only</option>
                 <option value="error">Errors Only</option>
             </select>
             <button
-                class="obs-filter-btn"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all dark:border-gray-600 dark:hover:bg-gray-600"
+                :class="showAdvancedFilters ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100'"
                 @click="showAdvancedFilters = !showAdvancedFilters"
-                :class="{'active': showAdvancedFilters}"
             >
                 ⚙️ Advanced Filters
             </button>
             <button
-                class="refresh-btn"
+                class="px-4 py-2 text-sm bg-blue-500 text-white rounded-md cursor-pointer font-medium transition-colors hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500"
                 @click="refreshStats(); refreshTraces();"
             >
                 🔄 Refresh
@@ -961,39 +564,39 @@
         </div>
 
         <!-- View Mode Tabs Row -->
-        <div class="obs-tabs-row">
+        <div class="flex gap-2 flex-wrap">
             <button
                 @click="viewMode = 'traces'"
-                :class="{'active': viewMode === 'traces'}"
-                class="view-toggle-btn"
+                :class="viewMode === 'traces' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
                 📋 Traces
             </button>
             <button
                 @click="viewMode = 'metrics'; loadMetricsView()"
-                :class="{'active': viewMode === 'metrics'}"
-                class="view-toggle-btn"
+                :class="viewMode === 'metrics' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
                 📊 Advanced Metrics
             </button>
             <button
                 @click="viewMode = 'tools'; loadToolsView()"
-                :class="{'active': viewMode === 'tools'}"
-                class="view-toggle-btn"
+                :class="viewMode === 'tools' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
                 🔧 MCP Tools
             </button>
             <button
                 @click="viewMode = 'prompts'; loadPromptsView()"
-                :class="{'active': viewMode === 'prompts'}"
-                class="view-toggle-btn"
+                :class="viewMode === 'prompts' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
                 💬 Prompts
             </button>
             <button
                 @click="viewMode = 'resources'; loadResourcesView()"
-                :class="{'active': viewMode === 'resources'}"
-                class="view-toggle-btn"
+                :class="viewMode === 'resources' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
             >
                 📦 Resources
             </button>
@@ -1005,48 +608,45 @@
     <!-- Advanced Filters Panel -->
     <div x-show="showAdvancedFilters"
          x-transition
-         style="background: white; border-radius: 0.5rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        <h3 style="margin: 0 0 1rem 0; font-size: 1.125rem; font-weight: 600; color: #374151;">
+         class="bg-white dark:bg-gray-800 rounded-lg p-6 mb-6 shadow-sm dark:shadow-gray-900/30">
+        <h3 class="m-0 mb-4 text-lg font-semibold text-gray-700 dark:text-gray-200">
             🔧 Advanced Filters
         </h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
             <!-- Duration Range -->
             <div>
-                <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem;">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Min Duration (ms)
                 </label>
                 <input
                     type="number"
                     x-model="minDuration"
                     placeholder="e.g., 100"
-                    class="obs-filter-btn"
-                    style="width: 100%;"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
                     @change="refreshTraces()"
                 />
             </div>
             <div>
-                <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem;">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Max Duration (ms)
                 </label>
                 <input
                     type="number"
                     x-model="maxDuration"
                     placeholder="e.g., 5000"
-                    class="obs-filter-btn"
-                    style="width: 100%;"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
                     @change="refreshTraces()"
                 />
             </div>
 
             <!-- HTTP Method -->
             <div>
-                <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem;">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     HTTP Method
                 </label>
                 <select
                     x-model="httpMethod"
-                    class="obs-filter-btn"
-                    style="width: 100%;"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600"
                     @change="refreshTraces()"
                 >
                     <option value="">All Methods</option>
@@ -1060,71 +660,66 @@
 
             <!-- User Email -->
             <div>
-                <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem;">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     User Email
                 </label>
                 <input
                     type="text"
                     x-model="userEmail"
                     placeholder="admin@example.com"
-                    class="obs-filter-btn"
-                    style="width: 100%;"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
                     @input.debounce.500ms="refreshTraces()"
                 />
             </div>
 
             <!-- Name Search -->
             <div>
-                <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem;">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Trace Name
                 </label>
                 <input
                     type="text"
                     x-model="nameSearch"
                     placeholder="e.g., GET /api/tools"
-                    class="obs-filter-btn"
-                    style="width: 100%;"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
                     @input.debounce.500ms="refreshTraces()"
                 />
             </div>
 
             <!-- Attribute Search -->
             <div>
-                <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem;">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Attribute Search
                 </label>
                 <input
                     type="text"
                     x-model="attributeSearch"
                     placeholder="Search in attributes..."
-                    class="obs-filter-btn"
-                    style="width: 100%;"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
                     @input.debounce.500ms="refreshTraces()"
                 />
             </div>
 
             <!-- Tool Name Filter -->
             <div>
-                <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem;">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     🔧 MCP Tool Name
                 </label>
                 <input
                     type="text"
                     x-model="toolName"
                     placeholder="Filter by tool name..."
-                    class="obs-filter-btn"
-                    style="width: 100%;"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
                     @input.debounce.500ms="refreshTraces()"
                 />
             </div>
         </div>
 
         <!-- Clear Filters Button -->
-        <div style="margin-top: 1rem; text-align: right;">
+        <div class="mt-4 text-right">
             <button
-                class="obs-filter-btn"
+                class="px-6 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
                 @click="minDuration=''; maxDuration=''; httpMethod=''; userEmail=''; nameSearch=''; attributeSearch=''; refreshTraces();"
-                style="padding: 0.5rem 1.5rem;"
             >
                 🗑️ Clear All Filters
             </button>
@@ -1133,30 +728,30 @@
 
     <!-- Statistics Cards -->
     <div id="stats-container">
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Loading statistics...</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm dark:shadow-gray-900/30 border-l-4 border-blue-500">
+                <div class="text-sm text-gray-600 dark:text-gray-400 mb-2">Loading statistics...</div>
             </div>
         </div>
     </div>
 
     <!-- Traces Table -->
-    <div class="traces-table">
-        <table>
+    <div class="w-full bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 overflow-hidden">
+        <table class="w-full border-collapse">
             <thead>
                 <tr>
-                    <th>Timestamp</th>
-                    <th>Method</th>
-                    <th>Endpoint</th>
-                    <th>Status</th>
-                    <th>Duration</th>
-                    <th>User</th>
-                    <th>Actions</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Timestamp</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Method</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Endpoint</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Status</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Duration</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">User</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Actions</th>
                 </tr>
             </thead>
             <tbody id="traces-list">
                 <tr>
-                    <td colspan="7" style="text-align: center; padding: 2rem;">
+                    <td colspan="7" class="text-center py-8 text-gray-500 dark:text-gray-400">
                         Loading traces...
                     </td>
                 </tr>
@@ -1167,9 +762,9 @@
     <!-- Trace Detail Modal (shown when trace is selected) -->
     <div x-show="selectedTrace"
          x-cloak
-         class="trace-detail-modal"
+         class="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-[1000]"
          @click.self="selectedTrace = null">
-        <div class="trace-detail-content" id="trace-detail-content">
+        <div class="bg-white dark:bg-gray-800 rounded-lg max-w-[90%] max-h-[90%] overflow-auto shadow-2xl" id="trace-detail-content">
             <!-- Loaded via HTMX -->
         </div>
     </div>
@@ -1177,81 +772,80 @@
     <!-- Save Query Modal -->
     <div x-show="showSaveQueryModal"
          x-cloak
-         class="trace-detail-modal"
+         class="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-[1000]"
          @click.self="showSaveQueryModal = false">
-        <div class="trace-detail-content" style="max-width: 600px; padding: 2rem;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 1rem;">
-                <h2 style="font-size: 1.5rem; font-weight: 700; color: #1f2937; margin: 0;">💾 Save Query</h2>
-                <button @click="showSaveQueryModal = false" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #6b7280;">×</button>
+        <div class="bg-white dark:bg-gray-800 rounded-lg max-w-2xl w-full mx-4 p-8 shadow-2xl">
+            <div class="flex justify-between items-center mb-6 pb-4 border-b border-gray-200 dark:border-gray-700">
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 m-0">💾 Save Query</h2>
+                <button @click="showSaveQueryModal = false" class="bg-transparent border-0 text-2xl cursor-pointer text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100">×</button>
             </div>
 
-            <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+            <div class="flex flex-col gap-6">
                 <!-- Query Name -->
                 <div>
-                    <label style="display: block; font-size: 0.875rem; font-weight: 600; color: #374151; margin-bottom: 0.5rem;">
-                        Query Name <span style="color: #ef4444;">*</span>
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        Query Name <span class="text-red-500">*</span>
                     </label>
                     <input
                         x-model="saveQueryName"
                         type="text"
                         placeholder="e.g., Slow Requests Last Hour"
-                        style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem;"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
                     />
                 </div>
 
                 <!-- Query Description -->
                 <div>
-                    <label style="display: block; font-size: 0.875rem; font-weight: 600; color: #374151; margin-bottom: 0.5rem;">
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
                         Description (optional)
                     </label>
                     <textarea
                         x-model="saveQueryDescription"
                         placeholder="What does this query help you find?"
                         rows="3"
-                        style="width: 100%; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 0.375rem; font-size: 0.875rem; resize: vertical;"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-y focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
                     ></textarea>
                 </div>
 
                 <!-- Share with Team -->
-                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <div class="flex items-center gap-2">
                     <input
                         x-model="saveQueryIsShared"
                         type="checkbox"
                         id="save-query-shared"
-                        style="width: 1.125rem; height: 1.125rem;"
+                        class="w-4 h-4 text-blue-600 border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
                     />
-                    <label for="save-query-shared" style="font-size: 0.875rem; font-weight: 500; color: #374151; cursor: pointer;">
+                    <label for="save-query-shared" class="text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
                         Share with team (visible to all users)
                     </label>
                 </div>
 
                 <!-- Current Filters Preview -->
-                <div style="background: #f9fafb; border-radius: 0.5rem; padding: 1rem;">
-                    <p style="font-size: 0.75rem; font-weight: 600; color: #6b7280; margin: 0 0 0.5rem 0; text-transform: uppercase;">Current Filters</p>
-                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; font-size: 0.875rem; color: #374151;">
+                <div class="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+                    <p class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2 uppercase">Current Filters</p>
+                    <div class="grid grid-cols-2 gap-2 text-sm text-gray-700 dark:text-gray-300">
                         <div x-show="timeRange"><strong>Time:</strong> <span x-text="timeRange"></span></div>
                         <div x-show="statusFilter"><strong>Status:</strong> <span x-text="statusFilter"></span></div>
                         <div x-show="minDuration"><strong>Min Duration:</strong> <span x-text="minDuration + 'ms'"></span></div>
                         <div x-show="maxDuration"><strong>Max Duration:</strong> <span x-text="maxDuration + 'ms'"></span></div>
                         <div x-show="httpMethod"><strong>HTTP Method:</strong> <span x-text="httpMethod"></span></div>
                         <div x-show="userEmail"><strong>User:</strong> <span x-text="userEmail"></span></div>
-                        <div x-show="nameSearch" style="grid-column: span 2;"><strong>Name:</strong> <span x-text="nameSearch"></span></div>
-                        <div x-show="attributeSearch" style="grid-column: span 2;"><strong>Attributes:</strong> <span x-text="attributeSearch"></span></div>
+                        <div x-show="nameSearch" class="col-span-2"><strong>Name:</strong> <span x-text="nameSearch"></span></div>
+                        <div x-show="attributeSearch" class="col-span-2"><strong>Attributes:</strong> <span x-text="attributeSearch"></span></div>
                     </div>
                 </div>
 
                 <!-- Action Buttons -->
-                <div style="display: flex; justify-content: flex-end; gap: 1rem; padding-top: 1rem; border-top: 1px solid #e5e7eb;">
+                <div class="flex justify-end gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
                     <button
                         @click="showSaveQueryModal = false"
-                        style="padding: 0.5rem 1.5rem; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 0.375rem; cursor: pointer; font-weight: 500;"
+                        class="px-6 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md cursor-pointer font-medium hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
                     >
                         Cancel
                     </button>
                     <button
                         @click="saveCurrentQuery()"
-                        class="refresh-btn"
-                        style="padding: 0.5rem 1.5rem;"
+                        class="px-6 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-md cursor-pointer font-medium hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
                     >
                         Save Query
                     </button>
@@ -1263,28 +857,28 @@
 
     <!-- Metrics View -->
     <div x-show="viewMode === 'metrics'" id="metrics-container">
-        <div style="padding: 2rem; text-align: center; color: #6b7280;">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
             Loading metrics dashboard...
         </div>
     </div>
 
     <!-- Tools View -->
     <div x-show="viewMode === 'tools'" id="tools-container">
-        <div style="padding: 2rem; text-align: center; color: #6b7280;">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
             Loading tool metrics dashboard...
         </div>
     </div>
 
     <!-- Prompts View -->
     <div x-show="viewMode === 'prompts'" id="prompts-container">
-        <div style="padding: 2rem; text-align: center; color: #6b7280;">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
             Loading prompt metrics dashboard...
         </div>
     </div>
 
     <!-- Resources View -->
     <div x-show="viewMode === 'resources'" id="resources-container">
-        <div style="padding: 2rem; text-align: center; color: #6b7280;">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
             Loading resource metrics dashboard...
         </div>
     </div>

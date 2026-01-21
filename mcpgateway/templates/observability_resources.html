@@ -156,6 +156,12 @@ window.createResourcesController = function() {
       const canvas = document.getElementById('resourceUsageChart');
       if (!canvas) return;
 
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('resourceUsageChart canvas is hidden, deferring render');
+        return;
+      }
+
       // Destroy existing chart via global registry
       window.chartRegistry.destroy('resources-usage');
 
@@ -166,58 +172,94 @@ window.createResourcesController = function() {
         return;
       }
 
-      const chart = new Chart(canvas, {
-        type: 'bar',
-        data: {
-          labels: data.resources.map(r => r.resource_uri),
-          datasets: [
-            {
-              label: 'Fetch Count',
-              data: data.resources.map(r => r.count),
-              backgroundColor: 'rgba(34, 197, 94, 0.6)',
-              borderColor: '#22c55e',
-              borderWidth: 1,
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('resourceUsageChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for resourceUsageChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: data.resources.map(r => r.resource_uri),
+              datasets: [
+                {
+                  label: 'Fetch Count',
+                  data: data.resources.map(r => r.count),
+                  backgroundColor: 'rgba(34, 197, 94, 0.6)',
+                  borderColor: '#22c55e',
+                  borderWidth: 1,
+                },
+              ],
             },
-          ],
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: `Resource Fetch Frequency (Last ${this.timeRange}h)`,
-            },
-            legend: {
-              display: false,
-            },
-            tooltip: {
-              callbacks: {
-                label: function (context) {
-                  const resource = data.resources[context.dataIndex];
-                  return [
-                    `Fetches: ${resource.count}`,
-                    `Percentage: ${resource.percentage}%`
-                  ];
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                title: {
+                  display: true,
+                  text: `Resource Fetch Frequency (Last ${this.timeRange}h)`,
+                  color: defaults.titleColor,
+                },
+                legend: {
+                  display: false,
+                },
+                tooltip: {
+                  callbacks: {
+                    label: function (context) {
+                      const resource = data.resources[context.dataIndex];
+                      return [
+                        `Fetches: ${resource.count}`,
+                        `Percentage: ${resource.percentage}%`
+                      ];
+                    },
+                  },
+                },
+              },
+              scales: {
+                x: {
+                  beginAtZero: true,
+                  title: {
+                    display: true,
+                    text: 'Number of Fetches',
+                    color: defaults.titleColor,
+                  },
+                  ticks: {
+                    color: defaults.tickColor,
+                  },
+                  grid: {
+                    color: defaults.gridColor,
+                  },
+                },
+                y: {
+                  ticks: {
+                    color: defaults.tickColor,
+                  },
+                  grid: {
+                    color: defaults.gridColor,
+                  },
                 },
               },
             },
-          },
-          scales: {
-            x: {
-              beginAtZero: true,
-              title: {
-                display: true,
-                text: 'Number of Fetches',
-              },
-            },
-          },
-        },
+          });
+          // Register with global registry
+          window.chartRegistry.register('resources-usage', chart);
+          this.charts.resourceUsage = chart;
+        } catch (e) {
+          console.error('Failed to create resource usage chart:', e);
+        }
       });
-      // Register with global registry
-      window.chartRegistry.register('resources-usage', chart);
-      this.charts.resourceUsage = chart;
     },
     renderResourcePerformanceTable(data) {
       const tbody = document.querySelector('#resourcePerformanceTable tbody');
@@ -226,17 +268,17 @@ window.createResourcesController = function() {
       tbody.innerHTML = data.resources
         .map(
           (resource, idx) => `
-            <tr>
-              <td class="px-4 py-2 text-sm text-gray-700">${idx + 1}</td>
-              <td class="px-4 py-2 text-sm font-mono text-gray-900">${resource.resource_uri}</td>
-              <td class="px-4 py-2 text-sm text-gray-600">${resource.count}</td>
-              <td class="px-4 py-2 text-sm text-orange-600 font-medium">${resource.avg_duration_ms} ms</td>
-              <td class="px-4 py-2 text-sm text-green-600">${resource.min_duration_ms} ms</td>
-              <td class="px-4 py-2 text-sm text-blue-600">${resource.p50} ms</td>
-              <td class="px-4 py-2 text-sm text-indigo-600">${resource.p90} ms</td>
-              <td class="px-4 py-2 text-sm text-purple-600">${resource.p95} ms</td>
-              <td class="px-4 py-2 text-sm text-pink-600">${resource.p99} ms</td>
-              <td class="px-4 py-2 text-sm text-red-600">${resource.max_duration_ms} ms</td>
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-400">${idx + 1}</td>
+              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-200">${resource.resource_uri}</td>
+              <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">${resource.count}</td>
+              <td class="px-4 py-2 text-sm text-orange-600 dark:text-orange-400 font-medium">${resource.avg_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-green-600 dark:text-green-400">${resource.min_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-blue-600 dark:text-blue-400">${resource.p50} ms</td>
+              <td class="px-4 py-2 text-sm text-indigo-600 dark:text-indigo-400">${resource.p90} ms</td>
+              <td class="px-4 py-2 text-sm text-purple-600 dark:text-purple-400">${resource.p95} ms</td>
+              <td class="px-4 py-2 text-sm text-pink-600 dark:text-pink-400">${resource.p99} ms</td>
+              <td class="px-4 py-2 text-sm text-red-600 dark:text-red-400">${resource.max_duration_ms} ms</td>
             </tr>
           `
         )
@@ -245,6 +287,12 @@ window.createResourcesController = function() {
     renderResourceSlownessChart(data) {
       const canvas = document.getElementById('resourceSlownessChart');
       if (!canvas) return;
+
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('resourceSlownessChart canvas is hidden, deferring render');
+        return;
+      }
 
       // Destroy existing chart via global registry
       window.chartRegistry.destroy('resources-slowness');
@@ -261,72 +309,117 @@ window.createResourcesController = function() {
         .sort((a, b) => b.p95 - a.p95)
         .slice(0, 10);
 
-      const chart = new Chart(canvas, {
-        type: 'bar',
-        data: {
-          labels: sortedResources.map(r => r.resource_uri),
-          datasets: [
-            {
-              label: 'p95 Latency (ms)',
-              data: sortedResources.map(r => r.p95),
-              backgroundColor: 'rgba(239, 68, 68, 0.6)',
-              borderColor: '#ef4444',
-              borderWidth: 1,
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('resourceSlownessChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for resourceSlownessChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: sortedResources.map(r => r.resource_uri),
+              datasets: [
+                {
+                  label: 'p95 Latency (ms)',
+                  data: sortedResources.map(r => r.p95),
+                  backgroundColor: 'rgba(239, 68, 68, 0.6)',
+                  borderColor: '#ef4444',
+                  borderWidth: 1,
+                },
+                {
+                  label: 'p50 Latency (ms)',
+                  data: sortedResources.map(r => r.p50),
+                  backgroundColor: 'rgba(34, 197, 94, 0.6)',
+                  borderColor: '#22c55e',
+                  borderWidth: 1,
+                },
+              ],
             },
-            {
-              label: 'p50 Latency (ms)',
-              data: sortedResources.map(r => r.p50),
-              backgroundColor: 'rgba(34, 197, 94, 0.6)',
-              borderColor: '#22c55e',
-              borderWidth: 1,
-            },
-          ],
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: `Top 10 Slowest Resources (Last ${this.timeRange}h)`,
-            },
-            legend: {
-              display: true,
-              position: 'top',
-            },
-            tooltip: {
-              callbacks: {
-                label: function (context) {
-                  const resource = sortedResources[context.dataIndex];
-                  return [
-                    `${context.dataset.label}: ${context.parsed.x} ms`,
-                    `Avg: ${resource.avg_duration_ms} ms`,
-                    `Max: ${resource.max_duration_ms} ms`,
-                    `Fetches: ${resource.count}`
-                  ];
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                title: {
+                  display: true,
+                  text: `Top 10 Slowest Resources (Last ${this.timeRange}h)`,
+                  color: defaults.titleColor,
+                },
+                legend: {
+                  display: true,
+                  position: 'top',
+                  labels: {
+                    color: defaults.color,
+                  },
+                },
+                tooltip: {
+                  callbacks: {
+                    label: function (context) {
+                      const resource = sortedResources[context.dataIndex];
+                      return [
+                        `${context.dataset.label}: ${context.parsed.x} ms`,
+                        `Avg: ${resource.avg_duration_ms} ms`,
+                        `Max: ${resource.max_duration_ms} ms`,
+                        `Fetches: ${resource.count}`
+                      ];
+                    },
+                  },
+                },
+              },
+              scales: {
+                x: {
+                  beginAtZero: true,
+                  title: {
+                    display: true,
+                    text: 'Latency (ms)',
+                    color: defaults.titleColor,
+                  },
+                  ticks: {
+                    color: defaults.tickColor,
+                  },
+                  grid: {
+                    color: defaults.gridColor,
+                  },
+                },
+                y: {
+                  ticks: {
+                    color: defaults.tickColor,
+                  },
+                  grid: {
+                    color: defaults.gridColor,
+                  },
                 },
               },
             },
-          },
-          scales: {
-            x: {
-              beginAtZero: true,
-              title: {
-                display: true,
-                text: 'Latency (ms)',
-              },
-            },
-          },
-        },
+          });
+          // Register with global registry
+          window.chartRegistry.register('resources-slowness', chart);
+          this.charts.resourceSlowness = chart;
+        } catch (e) {
+          console.error('Failed to create resource slowness chart:', e);
+        }
       });
-      // Register with global registry
-      window.chartRegistry.register('resources-slowness', chart);
-      this.charts.resourceSlowness = chart;
     },
     renderResourceErrorProneChart(data) {
       const canvas = document.getElementById('resourceErrorProneChart');
       if (!canvas) return;
+
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('resourceErrorProneChart canvas is hidden, deferring render');
+        return;
+      }
 
       // Destroy existing chart via global registry
       window.chartRegistry.destroy('resources-errorprone');
@@ -348,65 +441,108 @@ window.createResourcesController = function() {
         const ctx = canvas.getContext('2d');
         if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
         const parent = canvas.parentElement;
-        parent.innerHTML = '<p style="text-align: center; color: #10b981; padding: 2rem;">✓ No errors found - all resources fetched successfully!</p>';
+        if (parent) {
+          // Use safe DOM manipulation instead of innerHTML with static content
+          parent.textContent = '';
+          const p = document.createElement('p');
+          p.className = 'text-center text-emerald-500 p-8';
+          p.textContent = '✓ No errors found - all resources fetched successfully!';
+          parent.appendChild(p);
+        }
         return;
       }
 
-      const chart = new Chart(canvas, {
-        type: 'bar',
-        data: {
-          labels: sortedResources.map(r => r.resource_uri),
-          datasets: [
-            {
-              label: 'Error Rate (%)',
-              data: sortedResources.map(r => r.error_rate),
-              backgroundColor: 'rgba(239, 68, 68, 0.6)',
-              borderColor: '#ef4444',
-              borderWidth: 1,
+      requestAnimationFrame(() => {
+        try {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('resourceErrorProneChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for resourceErrorProneChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+              labels: sortedResources.map(r => r.resource_uri),
+              datasets: [
+                {
+                  label: 'Error Rate (%)',
+                  data: sortedResources.map(r => r.error_rate),
+                  backgroundColor: 'rgba(239, 68, 68, 0.6)',
+                  borderColor: '#ef4444',
+                  borderWidth: 1,
+                },
+              ],
             },
-          ],
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: `Top 10 Error-Prone Resources (Last ${this.timeRange}h)`,
-            },
-            legend: {
-              display: false,
-            },
-            tooltip: {
-              callbacks: {
-                label: function (context) {
-                  const resource = sortedResources[context.dataIndex];
-                  return [
-                    `Error Rate: ${resource.error_rate}%`,
-                    `Errors: ${resource.error_count}`,
-                    `Total: ${resource.total_count}`,
-                    `Success: ${resource.total_count - resource.error_count}`
-                  ];
+            options: {
+              indexAxis: 'y',
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                title: {
+                  display: true,
+                  text: `Top 10 Error-Prone Resources (Last ${this.timeRange}h)`,
+                  color: defaults.titleColor,
+                },
+                legend: {
+                  display: false,
+                },
+                tooltip: {
+                  callbacks: {
+                    label: function (context) {
+                      const resource = sortedResources[context.dataIndex];
+                      return [
+                        `Error Rate: ${resource.error_rate}%`,
+                        `Errors: ${resource.error_count}`,
+                        `Total: ${resource.total_count}`,
+                        `Success: ${resource.total_count - resource.error_count}`
+                      ];
+                    },
+                  },
+                },
+              },
+              scales: {
+                x: {
+                  beginAtZero: true,
+                  max: 100,
+                  title: {
+                    display: true,
+                    text: 'Error Rate (%)',
+                    color: defaults.titleColor,
+                  },
+                  ticks: {
+                    color: defaults.tickColor,
+                  },
+                  grid: {
+                    color: defaults.gridColor,
+                  },
+                },
+                y: {
+                  ticks: {
+                    color: defaults.tickColor,
+                  },
+                  grid: {
+                    color: defaults.gridColor,
+                  },
                 },
               },
             },
-          },
-          scales: {
-            x: {
-              beginAtZero: true,
-              max: 100,
-              title: {
-                display: true,
-                text: 'Error Rate (%)',
-              },
-            },
-          },
-        },
+          });
+          // Register with global registry
+          window.chartRegistry.register('resources-errorprone', chart);
+          this.charts.resourceErrorProne = chart;
+        } catch (e) {
+          console.error('Failed to create resource error-prone chart:', e);
+        }
       });
-      // Register with global registry
-      window.chartRegistry.register('resources-errorprone', chart);
-      this.charts.resourceErrorProne = chart;
     },
     startAutoRefresh() {
       this.stopAutoRefresh();
@@ -421,11 +557,11 @@ window.createResourcesController = function() {
 
 <div class="resources-dashboard" x-data="createResourcesController()" x-init="init()">
   <!-- Header with filters -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-4">
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-4">
     <div class="flex flex-wrap gap-4 items-end">
       <div class="flex-1 min-w-[200px]">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Time Range</label>
-        <select x-model="timeRange" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Time Range</label>
+        <select x-model="timeRange" class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400">
           <option value="1">Last 1 Hour</option>
           <option value="6">Last 6 Hours</option>
           <option value="24">Last 24 Hours</option>
@@ -434,8 +570,8 @@ window.createResourcesController = function() {
         </select>
       </div>
       <div class="flex-1 min-w-[200px]">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Results Limit</label>
-        <select x-model="limit" class="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Results Limit</label>
+        <select x-model="limit" class="w-full border border-gray-300 dark:border-gray-600 rounded-md px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400">
           <option value="10">Top 10</option>
           <option value="20">Top 20</option>
           <option value="50">Top 50</option>
@@ -443,68 +579,68 @@ window.createResourcesController = function() {
         </select>
       </div>
       <div class="flex-shrink-0">
-        <button @click="applyFilters()" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <button @click="applyFilters()" class="px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:bg-blue-700 dark:hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 transition-colors">
           Apply Filters
         </button>
       </div>
     </div>
-    <div x-show="loading" class="mt-3 text-sm text-gray-600">
+    <div x-show="loading" class="mt-3 text-sm text-gray-600 dark:text-gray-400">
       Loading resource metrics...
     </div>
-    <div x-show="error" class="mt-3 text-sm text-red-600" x-text="error"></div>
+    <div x-show="error" class="mt-3 text-sm text-red-600 dark:text-red-400" x-text="error"></div>
   </div>
 
   <!-- Summary Cards -->
   <div class="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
     <!-- Overall Health Card -->
-    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4" :class="{
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4" :class="{
       'border-green-500': summaryCards.overallHealth === 'good',
       'border-yellow-500': summaryCards.overallHealth === 'warning',
       'border-red-500': summaryCards.overallHealth === 'critical'
     }">
       <div class="flex items-center justify-between">
         <div>
-          <p class="text-sm font-medium text-gray-600">Overall Health</p>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Overall Health</p>
           <p class="mt-2 text-3xl font-bold" :class="{
-            'text-green-600': summaryCards.overallHealth === 'good',
-            'text-yellow-600': summaryCards.overallHealth === 'warning',
-            'text-red-600': summaryCards.overallHealth === 'critical'
+            'text-green-600 dark:text-green-400': summaryCards.overallHealth === 'good',
+            'text-yellow-600 dark:text-yellow-400': summaryCards.overallHealth === 'warning',
+            'text-red-600 dark:text-red-400': summaryCards.overallHealth === 'critical'
           }" x-text="summaryCards.overallHealth === 'good' ? '🟢 Healthy' : summaryCards.overallHealth === 'warning' ? '🟡 Warning' : '🔴 Critical'"></p>
         </div>
       </div>
     </div>
 
     <!-- Most Used Resource Card -->
-    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-green-500">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-green-500">
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-600">Most Fetched</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.mostUsed?.name || 'N/A'"></p>
-          <p class="text-sm text-green-600 font-medium" x-text="summaryCards.mostUsed ? `${summaryCards.mostUsed.value} ${summaryCards.mostUsed.metric}` : ''"></p>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Most Fetched</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostUsed?.name || 'N/A'"></p>
+          <p class="text-sm text-green-600 dark:text-green-400 font-medium" x-text="summaryCards.mostUsed ? `${summaryCards.mostUsed.value} ${summaryCards.mostUsed.metric}` : ''"></p>
         </div>
         <div class="text-3xl">📦</div>
       </div>
     </div>
 
     <!-- Slowest Resource Card -->
-    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-orange-500">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-orange-500">
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-600">Slowest Resource</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.slowest?.name || 'N/A'"></p>
-          <p class="text-sm text-orange-600 font-medium" x-text="summaryCards.slowest ? `${summaryCards.slowest.value} ${summaryCards.slowest.metric}` : ''"></p>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Slowest Resource</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.slowest?.name || 'N/A'"></p>
+          <p class="text-sm text-orange-600 dark:text-orange-400 font-medium" x-text="summaryCards.slowest ? `${summaryCards.slowest.value} ${summaryCards.slowest.metric}` : ''"></p>
         </div>
         <div class="text-3xl">🐌</div>
       </div>
     </div>
 
     <!-- Most Error-Prone Resource Card -->
-    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-red-500">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6 border-l-4 border-red-500">
       <div class="flex items-center justify-between">
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium text-gray-600">Most Error-Prone</p>
-          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.mostErrorProne?.name || 'None'"></p>
-          <p class="text-sm text-red-600 font-medium" x-text="summaryCards.mostErrorProne ? `${summaryCards.mostErrorProne.value}${summaryCards.mostErrorProne.metric}` : '0% errors'"></p>
+          <p class="text-sm font-medium text-gray-600 dark:text-gray-400">Most Error-Prone</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" x-text="summaryCards.mostErrorProne?.name || 'None'"></p>
+          <p class="text-sm text-red-600 dark:text-red-400 font-medium" x-text="summaryCards.mostErrorProne ? `${summaryCards.mostErrorProne.value}${summaryCards.mostErrorProne.metric}` : '0% errors'"></p>
         </div>
         <div class="text-3xl">⚠️</div>
       </div>
@@ -512,46 +648,46 @@ window.createResourcesController = function() {
   </div>
 
   <!-- Resource Usage Chart -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
-    <div style="height: 400px;">
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
       <canvas id="resourceUsageChart"></canvas>
     </div>
   </div>
 
   <!-- Top 10 Slowest Resources Chart -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
-    <div style="height: 400px;">
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
       <canvas id="resourceSlownessChart"></canvas>
     </div>
   </div>
 
   <!-- Top 10 Error-Prone Resources Chart -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
-    <div style="height: 400px;">
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <div class="h-[400px]">
       <canvas id="resourceErrorProneChart"></canvas>
     </div>
   </div>
 
   <!-- Resource Performance Table -->
-  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
-    <h3 class="text-lg font-semibold text-gray-900 mb-4">Resource Performance Metrics</h3>
+  <div class="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-6">
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Resource Performance Metrics</h3>
     <div class="overflow-x-auto">
-      <table id="resourcePerformanceTable" class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
+      <table id="resourcePerformanceTable" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700/50">
           <tr>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Resource URI</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Count</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Min</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p50</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p90</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p95</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p99</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">#</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Resource URI</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Count</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Avg</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Min</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">p50</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">p90</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">p95</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">p99</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Max</th>
           </tr>
         </thead>
-        <tbody class="bg-white divide-y divide-gray-200"></tbody>
+        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"></tbody>
       </table>
     </div>
   </div>
