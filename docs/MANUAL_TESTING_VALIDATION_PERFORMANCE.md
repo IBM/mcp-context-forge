@@ -26,8 +26,7 @@ SANITIZE_OUTPUT=true
 VALIDATION_MAX_BODY_SIZE=1048576  # 1MB
 VALIDATION_MAX_RESPONSE_SIZE=5242880  # 5MB
 # Use comma-separated patterns OR JSON array format
-VALIDATION_SKIP_ENDPOINTS=^/health$,^/metrics$,^/static/.*
-# Alternative JSON format: VALIDATION_SKIP_ENDPOINTS=["^/health$","^/metrics$","^/static/.*"]
+VALIDATION_SKIP_ENDPOINTS='["^/health$","^/metrics$","^/static/.*"]'
 VALIDATION_CACHE_ENABLED=true
 VALIDATION_CACHE_MAX_SIZE=1000
 VALIDATION_CACHE_TTL=300
@@ -64,6 +63,7 @@ The gateway should start on `http://localhost:4444` (or your configured port).
 1. Test health endpoint (should skip validation):
 ```bash
 curl -v http://localhost:4444/health
+-H "Authorization: Bearer $TOKEN" \
 ```
 
 2. Check logs for:
@@ -74,11 +74,13 @@ curl -v http://localhost:4444/health
 3. Test metrics endpoint (should skip validation):
 ```bash
 curl -v http://localhost:4444/metrics
+-H "Authorization: Bearer $TOKEN" \
 ```
 
 4. Test a regular API endpoint (should validate):
 ```bash
-curl -v http://localhost:4444/api/servers
+curl -v http://localhost:4444/servers
+-H "Authorization: Bearer $TOKEN" \
 ```
 
 **Expected Results**:
@@ -105,9 +107,9 @@ with open("/tmp/large_payload.json", "w") as f:
 EOF
 ```
 
-2. Send the large payload:
+2. Send the large payload to a tools endpoint:
 ```bash
-curl -X POST http://localhost:4444/api/test \
+curl -X POST http://localhost:4444/tools \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d @/tmp/large_payload.json \
@@ -136,12 +138,12 @@ curl -X POST http://localhost:4444/api/test \
 ```bash
 # First request (cache miss)
 curl -X 'PUT' \
-  'http://localhost:4444/prompts/{prompt_id}' \
+  'http://localhost:4444/prompts/7c3406144e7c49cca9eeb857b8224ac1' \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
-  "tags": ["test cpu"]
+  "tags": ["JAN cpu"]
 }'  \
   -w "\nTime: %{time_total}s\n"
 
@@ -150,7 +152,7 @@ curl -X 'PUT' \
   'http://localhost:4444/prompts/{prompt_id}' \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
   "tags": ["test cpu"]
 }'  \
@@ -161,7 +163,7 @@ curl -X 'PUT' \
   'http://localhost:4444/prompts/{prompt_id}' \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
   "tags": ["test cpu"]
 }'  \
@@ -186,11 +188,11 @@ curl -X 'PUT' \
 
 **Steps**:
 
-1. Create an endpoint that returns a large response (if not available, you can modify a test endpoint):
+1. Request a list endpoint that may return a large response:
 ```bash
 # Request a large response (>5MB to skip, or >10KB to sample)
-curl -X GET http://localhost:4444/api/large-data \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+curl -X GET http://localhost:4444/servers \
+  -H "Authorization: Bearer $TOKEN" \
   -v
 ```
 
@@ -218,31 +220,48 @@ curl -X GET http://localhost:4444/api/large-data \
 
 **Steps**:
 
-1. Create a payload with dangerous patterns:
+1. Create a payload with dangerous patterns for tool creation:
 ```bash
-cat > /tmp/dangerous_payload.json << 'EOF'
+cat > /tmp/dangerous_payload1.json << 'EOF'
 {
-  "command": "rm -rf /",
-  "script": "$(malicious)"
+  "name": "dangerous_tool",
+  "displayName": "Dangerous Tool",
+  "description": "rm -rf / $(malicious) dangerous command injection test",
+  "url": "http://example.com/$(malicious)",
+  "integration_type": "REST",
+  "request_type": "SSE",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string",
+        "default": "rm -rf /"
+      }
+    }
+  }
 }
 EOF
 ```
 
-2. Send the request multiple times:
+2. Send the request multiple times to a tools endpoint:
 ```bash
 # First request (validation fails, cached)
-curl -X POST http://localhost:4444/api/test \
+curl -X POST http://localhost:4444/tools \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -d @/tmp/dangerous_payload.json \
+  -H "Authorization: Bearer $TOKEN" \
+  -d @/tmp/dangerous_payload1.json \
   -v
+   \
+  -w "\nTime: %{time_total}s\n"
 
 # Second request (cached failure)
-curl -X POST http://localhost:4444/api/test \
+curl -X POST http://localhost:4444/tools \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d @/tmp/dangerous_payload.json \
   -v
+   \
+  -w "\nTime: %{time_total}s\n"
 ```
 
 **Expected Results**:
@@ -265,11 +284,11 @@ VALIDATION_CACHE_TTL=10  # 10 seconds
 
 2. Restart the gateway
 
-3. Send a request:
+3. Send a request to a tools endpoint:
 ```bash
-curl -X POST http://localhost:4444/api/test \
+curl -X POST http://localhost:4444/tools \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"test": "data"}' \
   -v
 ```
@@ -278,7 +297,7 @@ curl -X POST http://localhost:4444/api/test \
 
 5. Send the same request again:
 ```bash
-curl -X POST http://localhost:4444/api/test \
+curl -X POST http://localhost:4444/tools \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{"test": "data"}' \
@@ -346,7 +365,7 @@ ab -n 1000 -c 10 -p /tmp/test_payload.json \
 ab -n 100 -c 5 -p /tmp/large_payload.json \
   -T "application/json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:4444/api/test
+  http://localhost:4444/tools
 ```
 
 3. Disable optimizations and run the same benchmarks
@@ -380,7 +399,7 @@ EOF
 3. Run benchmark:
 ```bash
 # With optimizations
-wrk -t4 -c100 -d30s -s /tmp/post.lua http://localhost:4444/api/test
+wrk -t4 -c100 -d30s -s /tmp/post.lua http://localhost:4444/tools
 
 # Disable optimizations and run again
 ```
@@ -422,14 +441,11 @@ Compare CPU usage with and without optimizations during load tests.
 
 ### 3. Check Cache Statistics
 
-You can add a debug endpoint to check cache statistics (optional):
+You can check metrics endpoint for cache statistics:
 
-```python
-# Add to your test script
-import requests
-
-response = requests.get("http://localhost:4444/api/debug/cache-stats")
-print(response.json())
+```bash
+# Check metrics endpoint
+curl http://localhost:4444/metrics
 ```
 
 ---
