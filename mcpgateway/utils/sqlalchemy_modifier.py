@@ -7,6 +7,7 @@ Authors: Madhav Kandukuri
 SQLAlchemy modifiers
 
 - json_contains_expr: handles json_contains logic for different dialects
+- json_contains_tag_expr: handles tag filtering for dict-format tags [{id, label}]
 """
 
 # Standard
@@ -36,6 +37,102 @@ def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
     if isinstance(values, str):
         return [values]
     return list(values)
+
+
+def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], match_any: bool = True) -> Any:
+    """
+    Return a SQLAlchemy expression that is True when JSON column `col`
+    contains tags matching the given values. Handles both legacy List[str]
+    and new List[Dict[str, str]] (with 'id' field) tag formats.
+
+    Args:
+        session: database session
+        col: column that contains JSON array of tags
+        values: list of tag IDs to match against
+        match_any: Boolean to set OR (True) or AND (False) matching
+
+    Returns:
+        Any: SQLAlchemy boolean expression suitable for use in .where()
+
+    Raises:
+        RuntimeError: If dialect is not supported
+        ValueError: If values is empty
+    """
+    values_list = _ensure_list(values)
+    if not values_list:
+        raise ValueError("values must be non-empty")
+
+    dialect = session.get_bind().dialect.name
+
+    # ---------- MySQL ----------
+    # For dict-format tags: use JSON_SEARCH to find tags with matching id
+    # JSON_SEARCH returns path if found, NULL otherwise
+    if dialect == "mysql":
+        # Build conditions that check for both string tags and dict tags with matching id
+        conditions = []
+        for tag_value in values_list:
+            # Check if tag exists as plain string OR as dict with matching id
+            # JSON_SEARCH(col, 'one', value) finds plain string value
+            # JSON_CONTAINS with path $.*.id checks dict format
+            string_match = func.json_search(col, "one", tag_value).isnot(None)
+            dict_match = func.json_contains(col, orjson.dumps([{"id": tag_value}]).decode()) == 1
+            conditions.append(or_(string_match, dict_match))
+
+        if match_any:
+            return or_(*conditions)
+        return and_(*conditions)
+
+    # ---------- PostgreSQL ----------
+    # For dict-format tags: use jsonb_path_query_array to extract ids
+    if dialect == "postgresql":
+        # Build conditions for each tag value
+        conditions = []
+        for tag_value in values_list:
+            # Check if any element is the string OR has id matching the value
+            # This handles both ["tag"] and [{"id": "tag", "label": "Tag"}] formats
+            string_match = col.contains([tag_value])
+            dict_match = col.contains([{"id": tag_value}])
+            conditions.append(or_(string_match, dict_match))
+
+        if match_any:
+            return or_(*conditions)
+        return and_(*conditions)
+
+    # ---------- SQLite (json1) ----------
+    # For dict-format tags: use json_extract to get the 'id' field
+    # Use CASE WHEN type = 'object' to avoid "malformed JSON" error on string elements
+    if dialect == "sqlite":
+        table_name = getattr(getattr(col, "table", None), "name", None)
+        column_name = getattr(col, "name", None) or str(col)
+        col_ref = f"{table_name}.{column_name}" if table_name else column_name
+
+        if match_any:
+            # Build placeholders with unique param names
+            params = {}
+            placeholders = []
+            for i, t in enumerate(values_list):
+                pname = f"t_{uuid.uuid4().hex[:8]}_{i}"
+                placeholders.append(f":{pname}")
+                params[pname] = t
+            placeholders_sql = ",".join(placeholders)
+            # Check string values directly, extract $.id only from objects (type='object')
+            sql = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value IN ({placeholders_sql}) OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) IN ({placeholders_sql}))"  # nosec B608
+            sq = text(sql)
+            return sq.bindparams(**params)
+
+        # all-of: return AND of EXISTS for each value
+        exists_clauses = []
+        for t in values_list:
+            pname = f"t_{uuid.uuid4().hex[:8]}"
+            # Check string values directly, extract $.id only from objects (type='object')
+            sql = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{pname} OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :{pname})"  # nosec B608
+            clause = text(sql).bindparams(**{pname: t})
+            exists_clauses.append(clause)
+        if len(exists_clauses) == 1:
+            return exists_clauses[0]
+        return and_(*exists_clauses)
+
+    raise RuntimeError(f"Unsupported dialect for json_contains_tag: {dialect}")
 
 
 def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_any: bool = True) -> Any:

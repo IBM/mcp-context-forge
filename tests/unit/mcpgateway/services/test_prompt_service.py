@@ -652,7 +652,7 @@ class TestPromptService:
         session.get_bind.return_value = bind
 
         with patch("mcpgateway.services.prompt_service.select", return_value=mock_query):
-            with patch("mcpgateway.services.prompt_service.json_contains_expr") as mock_json_contains:
+            with patch("mcpgateway.services.prompt_service.json_contains_tag_expr") as mock_json_contains:
                 # return a fake condition object that query.where will accept
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
