@@ -30,10 +30,17 @@ Development tools:
 * Testing: `pytest`, `httpx`
 * Serving: `uvicorn`, `gunicorn`
 
+Frontend tools (Admin UI):
+
+* Linters: ESLint, Stylelint, HTMLHint, Biome
+* Formatting: Prettier
+* Security: Retire.js (vulnerability scanning)
+
 Code style and consistency is enforced via:
 
 ```bash
 make lint          # runs ruff, mypy, black, isort
+make lint-web      # runs ESLint, HTMLHint, Stylelint
 make pre-commit    # runs pre-commit hooks on staged files
 ```
 
@@ -48,15 +55,21 @@ Test coverage includes:
 * Unit tests under `tests/unit/`
 * Integration tests under `tests/integration/`
 * End-to-end tests under `tests/e2e/`
+* UI automation under `tests/playwright/` (Playwright)
+* Load testing under `tests/locust/` (Locust)
 * Example payload performance testing under `tests/hey/`
 
 Use:
 
 ```bash
-make test                  # run full suite
-python3 -m pytest tests/unit     # run only unit tests
-python3 -m pytest tests/e2e      # run end-to-end scenarios
+make test                        # run full suite
+pytest tests/unit/               # run only unit tests
+pytest tests/e2e/                # run end-to-end scenarios
+pytest tests/playwright/         # run UI automation tests
+locust -f tests/locust/locustfile.py --host=http://localhost:4444  # load testing
 ```
+
+Note: JavaScript unit tests are not yet implemented; frontend testing relies on Playwright for UI automation.
 
 ### Database Performance Testing
 

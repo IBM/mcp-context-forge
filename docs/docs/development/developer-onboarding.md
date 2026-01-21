@@ -79,9 +79,29 @@
     - [ ] `make shell-linters-install`, `make shell-lint`
     - [ ] `make hadolint` (Dockerfile linting)
 
-???+ check "Unit tests"
+???+ check "Python unit tests"
 
     - [ ] `make test` passes all cases
+    - [ ] `make coverage` generates coverage report
+
+???+ check "UI automation (Playwright)"
+
+    - [ ] `playwright install` (one-time browser setup)
+    - [ ] `pytest tests/playwright/` passes
+    - [ ] `pytest tests/playwright/ -k admin` validates Admin UI flows
+
+???+ check "Load testing (Locust)"
+
+    - [ ] `locust -f tests/locust/locustfile.py --host=http://localhost:4444`
+    - [ ] Access dashboard at http://localhost:8089
+    - [ ] Verify no errors under moderate load (50-100 users)
+
+???+ check "Frontend linting"
+
+    - [ ] `make eslint` - JavaScript linting
+    - [ ] `make lint-web` - ESLint + HTMLHint + Stylelint
+    - [ ] `make format-web` - Prettier formatting
+    - [ ] Note: JS unit tests not yet implemented
 
 ---
 
