@@ -302,7 +302,7 @@ LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.title="mcp/mcpgateway" \
       org.opencontainers.image.description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="1.0.0-BETA-1"
+      org.opencontainers.image.version="1.0.0-BETA-2"
 
 # ----------------------------------------------------------------------------
 # Copy the entire prepared root filesystem from the builder stage

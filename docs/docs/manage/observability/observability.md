@@ -235,7 +235,7 @@ mcpgateway
 # Or with Docker
 docker run -e OTEL_ENABLE_OBSERVABILITY=true \
            -e OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4317 \
-           ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+           ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
 ```
 
 ## Configuration Reference
@@ -342,7 +342,7 @@ spec:
       containers:
 
       - name: gateway
-        image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+        image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
         env:
 
         - name: OTEL_ENABLE_OBSERVABILITY

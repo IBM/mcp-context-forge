@@ -23,7 +23,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   --network=host \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
 
 docker logs mcpgateway
 ```

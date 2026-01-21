@@ -5,7 +5,7 @@ resource "helm_release" "mcpgw" {
   name       = "mcpgateway"
   repository = "oci://ghcr.io/ibm/mcp-context-forge-chart/mcp-context-forge-chart"
   chart      = "mcpgateway"
-  version    = "1.0.0-BETA-1"
+  version    = "1.0.0-BETA-2"
 
   values = [
     yamlencode({

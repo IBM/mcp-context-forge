@@ -1,6 +1,6 @@
 [package]
 name = "plugins_rust"
-version = "1.0.0-BETA-1"
+version = "1.0.0-BETA-2"
 edition = "2021"
 authors = ["MCP Gateway Contributors"]
 description = "High-performance Rust implementations of MCP Gateway plugins"
