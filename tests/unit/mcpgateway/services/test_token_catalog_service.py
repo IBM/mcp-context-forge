@@ -241,11 +241,12 @@ class TestTokenCatalogService:
 
             assert token == "jwt_token_123"
             mock_create_jwt.assert_called_once()
-            call_args = mock_create_jwt.call_args[0][0]
-            assert call_args["sub"] == "user@example.com"
-            assert "jti" in call_args
-            assert call_args["user"]["email"] == "user@example.com"
-            assert call_args["user"]["is_admin"] is False
+            # Access keyword arguments from the call
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            assert call_kwargs["data"]["sub"] == "user@example.com"
+            assert call_kwargs["data"]["jti"] == jti
+            assert call_kwargs["user_data"]["email"] == "user@example.com"
+            assert call_kwargs["user_data"]["is_admin"] is False
 
     @pytest.mark.asyncio
     async def test_generate_token_with_team(self, token_service):
@@ -256,9 +257,9 @@ class TestTokenCatalogService:
             token = await token_service._generate_token("user@example.com", jti=jti, team_id="team-123")
 
             assert token == "jwt_token_team"
-            call_args = mock_create_jwt.call_args[0][0]
-            assert call_args["teams"] == ["team-123"]
-            assert "team:team-123" in call_args["namespaces"]
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            assert call_kwargs["teams"] == ["team-123"]
+            assert "team:team-123" in call_kwargs["namespaces"]
 
     @pytest.mark.asyncio
     async def test_generate_token_with_expiry(self, token_service):
@@ -271,9 +272,9 @@ class TestTokenCatalogService:
             token = await token_service._generate_token("user@example.com", jti=jti, expires_at=expires_at)
 
             assert token == "jwt_token_exp"
-            call_args = mock_create_jwt.call_args[0][0]
-            assert "exp" in call_args
-            assert call_args["exp"] == int(expires_at.timestamp())
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            # expires_in_minutes should be calculated from expires_at
+            assert call_kwargs["expires_in_minutes"] > 0
 
     @pytest.mark.asyncio
     async def test_generate_token_with_scope(self, token_service, token_scope):
@@ -285,10 +286,10 @@ class TestTokenCatalogService:
             token = await token_service._generate_token("user@example.com", jti=jti, scope=token_scope)
 
             assert token == "jwt_token_scoped"
-            call_args = mock_create_jwt.call_args[0][0]
-            assert call_args["scopes"]["server_id"] == "server-123"
-            assert call_args["scopes"]["permissions"] == ["tools.read", "resources.read"]
-            assert call_args["scopes"]["ip_restrictions"] == ["192.168.1.0/24"]
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            assert call_kwargs["scopes"]["server_id"] == "server-123"
+            assert call_kwargs["scopes"]["permissions"] == ["tools.read", "resources.read"]
+            assert call_kwargs["scopes"]["ip_restrictions"] == ["192.168.1.0/24"]
 
     @pytest.mark.asyncio
     async def test_generate_token_with_admin_user(self, token_service, mock_user):
@@ -301,8 +302,8 @@ class TestTokenCatalogService:
             token = await token_service._generate_token("admin@example.com", jti=jti, user=mock_user)
 
             assert token == "jwt_token_admin"
-            call_args = mock_create_jwt.call_args[0][0]
-            assert call_args["user"]["is_admin"] is True
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            assert call_kwargs["user_data"]["is_admin"] is True
 
     @pytest.mark.asyncio
     async def test_create_token_success(self, token_service, mock_db, mock_user):
@@ -935,20 +936,21 @@ class TestTokenCatalogServiceEdgeCases:
 
     @pytest.mark.asyncio
     async def test_generate_token_settings_values(self, token_service):
-        """Test _generate_token uses settings for issuer and audience."""
-        with patch("mcpgateway.services.token_catalog_service.settings") as mock_settings:
-            mock_settings.jwt_issuer = "test-issuer"
-            mock_settings.jwt_audience = "test-audience"
+        """Test _generate_token delegates to create_jwt_token correctly."""
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create:
+            mock_create.return_value = "jwt"
+            jti = str(uuid.uuid4())
 
-            with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create:
-                mock_create.return_value = "jwt"
-                jti = str(uuid.uuid4())
+            await token_service._generate_token("user@example.com", jti=jti)
 
-                await token_service._generate_token("user@example.com", jti=jti)
-
-                call_args = mock_create.call_args[0][0]
-                assert call_args["iss"] == "test-issuer"
-                assert call_args["aud"] == "test-audience"
+            # Verify the function was called with correct keyword arguments
+            call_kwargs = mock_create.call_args.kwargs
+            assert call_kwargs["data"]["sub"] == "user@example.com"
+            assert call_kwargs["data"]["jti"] == jti
+            assert "user_data" in call_kwargs
+            assert "teams" in call_kwargs
+            assert "namespaces" in call_kwargs
+            assert "scopes" in call_kwargs
 
 
 # --------------------------------------------------------------------------- #

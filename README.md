@@ -2345,14 +2345,100 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ## Authentication examples
 
+### ⚠️ Security Warning: CLI Token Generation
+
+The CLI token generator (`create_jwt_token.py`) has access to `JWT_SECRET_KEY` and can create tokens with ANY claims. It bypasses all API security controls including:
+- User authentication and authorization
+- Team membership validation
+- Permission scope containment
+- Audit logging
+
+**Only use the CLI tool for:**
+- Development and testing environments
+- Controlled CI/CD pipelines with proper secret management
+- Admin bootstrapping when database is unavailable
+
+**For production token management**, use the `/tokens` API endpoint which enforces proper security controls.
+
+---
+
+### Simple Token (Basic Testing)
+
 ```bash
-# Generate a JWT token using JWT_SECRET_KEY and export it as MCPGATEWAY_BEARER_TOKEN
-# Note that the module needs to be installed. If running locally use:
-export MCPGATEWAY_BEARER_TOKEN=$(JWT_SECRET_KEY=my-test-key python3 -m mcpgateway.utils.create_jwt_token)
+# Generate a simple JWT token for basic testing
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 # Use the JWT token in an API call
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools
 ```
+
+### Rich Token with Admin Privileges (⚠️ DEV/TEST ONLY)
+
+```bash
+# Generate admin token with elevated privileges
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com \
+    --admin \
+    --full-name "Admin User" \
+    --exp 10080 \
+    --secret my-test-key 2>/dev/null | head -1)
+```
+
+### Team-Scoped Token (⚠️ DEV/TEST ONLY)
+
+```bash
+# Generate token scoped to specific teams
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username user@example.com \
+    --teams team-123,team-456 \
+    --full-name "Team User" \
+    --exp 10080 \
+    --secret my-test-key 2>/dev/null | head -1)
+```
+
+### Token with Permission Scopes (⚠️ DEV/TEST ONLY)
+
+```bash
+# Generate token with specific permission restrictions
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username user@example.com \
+    --scopes '{"permissions": ["tools.read", "resources.read"], "server_id": "server-123"}' \
+    --exp 10080 \
+    --secret my-test-key 2>/dev/null | head -1)
+```
+
+### Production Token Management
+
+For production environments, always use the `/tokens` API endpoint:
+
+```bash
+# Authenticate first (interactive login required)
+curl -X POST http://localhost:4444/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@example.com", "password": "your-password"}'
+
+# Create team-scoped token via API (with validation)
+curl -X POST http://localhost:4444/tokens \
+  -H "Authorization: Bearer $AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "My Production Token",
+    "description": "Token for production access",
+    "team_id": "team-123",
+    "expires_in_days": 30,
+    "scope": {
+      "permissions": ["tools.read", "resources.read"]
+    }
+  }'
+```
+
+The API endpoint validates:
+- User exists in database
+- User is an active team member
+- Permissions don't exceed caller's permissions
+- Token name is unique
+- All operations are logged for audit
 
 ---
 
