@@ -79,3 +79,59 @@ curl http://localhost:4444/tools
 ```
 
 You should see `[]` or registered tools (once added).
+
+---
+
+## 🎨 Frontend Tooling
+
+The Admin UI uses plain JavaScript (not TypeScript). Frontend tooling requires Node.js:
+
+```bash
+npm install        # install frontend dev dependencies
+```
+
+### Linting & Formatting
+
+```bash
+make eslint        # lint JavaScript with ESLint
+make lint-web      # ESLint + HTMLHint + Stylelint
+make format-web    # format with Prettier
+```
+
+### Frontend Stack
+
+| Tool | Purpose |
+|------|---------|
+| ESLint | JavaScript linting (neostandard + prettier) |
+| Prettier | Code formatting |
+| Stylelint | CSS linting |
+| HTMLHint | HTML linting |
+| Biome | Fast JS/TS formatter/linter |
+| Retire.js | Dependency vulnerability scanning |
+
+### UI Testing
+
+```bash
+# Playwright (UI automation)
+playwright install              # one-time browser setup
+pytest tests/playwright/        # run UI tests
+
+# Locust (load testing)
+locust -f tests/locust/locustfile.py --host=http://localhost:4444
+```
+
+Note: JavaScript unit tests are not yet implemented. Testing efforts focus on the Python backend (pytest) and UI automation (Playwright).
+
+### Air-Gapped Mode (Local Development)
+
+To test the Admin UI without CDN dependencies:
+
+```bash
+# Download vendor libraries to mcpgateway/static/vendor/
+./scripts/download-cdn-assets.sh
+
+# Run with air-gapped mode
+MCPGATEWAY_UI_AIRGAPPED=true make dev
+```
+
+This downloads HTMX, Alpine.js, Tailwind, CodeMirror, Chart.js, and Font Awesome for fully offline UI operation. See [Admin UI - Air-Gapped Mode](../overview/ui.md#-air-gapped-mode) for details.
