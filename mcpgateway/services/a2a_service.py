@@ -36,7 +36,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -652,9 +652,9 @@ class A2AAgentService:
         if visibility:
             query = query.where(DbA2AAgent.visibility == visibility)
 
-        # Add tag filtering if tags are provided
+        # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
-            query = query.where(json_contains_expr(db, DbA2AAgent.tags, tags, match_any=True))
+            query = query.where(json_contains_tag_expr(db, DbA2AAgent.tags, tags, match_any=True))
 
         # Use unified pagination helper - handles both page and cursor pagination
         pag_result = await unified_paginate(

@@ -88,7 +88,7 @@ from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_pa
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
-from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
@@ -1763,9 +1763,9 @@ class ToolService:
             else:
                 query = query.where(DbTool.gateway_id == gateway_id)
 
-        # Add tag filtering if tags are provided
+        # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
-            query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
+            query = query.where(json_contains_tag_expr(db, DbTool.tags, tags, match_any=True))
 
         # Use unified pagination helper - handles both page and cursor pagination
         pag_result = await unified_paginate(
@@ -2033,7 +2033,7 @@ class ToolService:
                 query = query.where(DbTool.gateway_id == gateway_id)
 
         if tags:
-            query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
+            query = query.where(json_contains_tag_expr(db, DbTool.tags, tags, match_any=True))
 
         # Apply cursor filter (WHERE id > last_id)
         if last_id:

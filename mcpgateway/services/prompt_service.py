@@ -50,7 +50,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
-from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -1027,9 +1027,9 @@ class PromptService:
             if visibility:
                 query = query.where(DbPrompt.visibility == visibility)
 
-        # Add tag filtering if tags are provided
+        # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
-            query = query.where(json_contains_expr(db, DbPrompt.tags, tags, match_any=True))
+            query = query.where(json_contains_tag_expr(db, DbPrompt.tags, tags, match_any=True))
 
         # Use unified pagination helper - handles both page and cursor pagination
         pag_result = await unified_paginate(

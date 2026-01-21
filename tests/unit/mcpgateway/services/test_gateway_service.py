@@ -1751,7 +1751,7 @@ class TestGatewayService:
         gateway_service.convert_gateway_to_read = MagicMock(return_value=mocked_gateway_read)
 
         with patch("mcpgateway.services.gateway_service.select", side_effect=mock_select):
-            with patch("mcpgateway.services.gateway_service.json_contains_expr") as mock_json_contains:
+            with patch("mcpgateway.services.gateway_service.json_contains_tag_expr") as mock_json_contains:
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
 

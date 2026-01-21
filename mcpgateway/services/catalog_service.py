@@ -358,13 +358,24 @@ class CatalogService:
 
                 # Build dict for GatewayRead validation with converted tags
                 # This avoids mutating the database object
+                # Handle both legacy List[str] and new List[Dict[str, str]] tag formats
+                if db_gateway.tags:
+                    if isinstance(db_gateway.tags[0], str):
+                        # Legacy format: convert to dict format
+                        tags_for_read = validate_tags_field(db_gateway.tags)
+                    else:
+                        # Already in dict format, pass through
+                        tags_for_read = db_gateway.tags
+                else:
+                    tags_for_read = []
+
                 gateway_dict = {
                     "id": db_gateway.id,
                     "name": db_gateway.name,
                     "slug": db_gateway.slug,
                     "url": db_gateway.url,
                     "description": db_gateway.description,
-                    "tags": validate_tags_field(db_gateway.tags) if db_gateway.tags else [],
+                    "tags": tags_for_read,
                     "transport": db_gateway.transport,
                     "capabilities": db_gateway.capabilities,
                     "created_at": db_gateway.created_at,
