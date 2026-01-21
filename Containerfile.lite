@@ -85,9 +85,9 @@ ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 RUN set -euo pipefail \
     && dnf upgrade -y \
     && dnf install -y \
-         python${PYTHON_VERSION} \
-         python${PYTHON_VERSION}-devel \
-         binutils openssl-devel gcc postgresql-devel gcc-c++ curl \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
+        binutils openssl-devel gcc postgresql-devel gcc-c++ curl \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && dnf clean all
 
@@ -204,10 +204,10 @@ ARG PYTHON_VERSION=3.12
 # OCI image metadata
 # ----------------------------------------------------------------------------
 LABEL maintainer="Mihai Criveti" \
-      org.opencontainers.image.title="mcp/mcpgateway" \
-      org.opencontainers.image.description="ContextForge MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
-      org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="1.0.0-BETA-1"
+    org.opencontainers.image.title="mcp/mcpgateway" \
+    org.opencontainers.image.description="ContextForge MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
+    org.opencontainers.image.licenses="Apache-2.0" \
+    org.opencontainers.image.version="1.0.0-BETA-1"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies
@@ -218,10 +218,10 @@ LABEL maintainer="Mihai Criveti" \
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
-        python${PYTHON_VERSION} \
-        ca-certificates \
-        procps-ng \
-        shadow-utils \
+    python${PYTHON_VERSION} \
+    ca-certificates \
+    procps-ng \
+    shadow-utils \
     && microdnf clean all \
     && rm -rf /var/cache/yum
 
@@ -274,7 +274,7 @@ USER 1001
 # Health check
 # ----------------------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD ["python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
+    CMD ["python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
 
 # ----------------------------------------------------------------------------
 # Entrypoint
