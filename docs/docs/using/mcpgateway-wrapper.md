@@ -53,7 +53,7 @@ Launching it in your terminal (ex: `python3 -m mcpgateway.wrapper`) is useful fo
     docker run -i --rm --network=host \
       -e MCP_SERVER_URL=$MCP_SERVER_URL \
       -e MCP_AUTH=$MCP_AUTH \
-      ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 \
+      ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 \
       python3 -m mcpgateway.wrapper
     ```
 
