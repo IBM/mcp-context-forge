@@ -1,7 +1,6 @@
 use crate::post_result::PostResult;
 use crate::streamer::{McpStreamClient, SID};
 use futures::StreamExt;
-use reqwest::header::CONTENT_TYPE;
 use tracing::error;
 
 impl McpStreamClient {

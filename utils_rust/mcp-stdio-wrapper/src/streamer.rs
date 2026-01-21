@@ -1,7 +1,7 @@
 use reqwest::Client;
 use tokio::sync::RwLock;
 
-pub const SID: &'static str = "mcp-session-id";
+pub const SID: &str = "mcp-session-id";
 
 #[derive(Debug)]
 pub struct McpStreamClient {

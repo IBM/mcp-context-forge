@@ -1,6 +1,6 @@
 use mcp_stdio_wrapper::logger::init_logger;
 use mcp_stdio_wrapper::streamer::McpStreamClient;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 const URL: &str = "http://localhost:8000/mcp";
 pub const INIT: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"wrapper","version":"0.0.1"}}}"#;
