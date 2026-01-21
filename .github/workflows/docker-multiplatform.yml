@@ -6,7 +6,7 @@
 #   - linux/amd64 (native on ubuntu-latest) - built on all triggers
 #   - linux/arm64 (native on ubuntu-24.04-arm) - skipped on PRs
 #   - linux/s390x (QEMU emulation on ubuntu-latest) - skipped on PRs
-#   - linux/ppc64le (QEMU emulation on ubuntu-latest) - skipped on PRs
+#   - linux/ppc64le (QEMU emulation on ubuntu-latest) - only on tagged releases
 #
 # Pipeline:
 #   1. Build platform images in parallel (amd64 only on PRs)
@@ -22,6 +22,7 @@ name: Multiplatform Docker Build
 on:
   push:
     branches: ["main"]
+    tags: ["v*"]
     paths:
       - 'Containerfile.lite'
       - 'mcpgateway/**'
@@ -87,34 +88,36 @@ jobs:
             qemu: true
             cache_mode: min
             run_on_pr: false  # Skip on PRs (QEMU is slow)
+            tag_only: true    # Only build on tagged releases (QEMU is slow)
 
     runs-on: ${{ matrix.runner }}
 
     # Skip non-amd64 builds on PRs for faster CI feedback
-    # Condition: run if (run_on_pr is true) OR (not a pull_request)
+    # Skip tag_only builds (ppc64le) on non-tag pushes
+    # Condition: run if ((run_on_pr is true) OR (not a pull_request)) AND (not tag_only OR is a tag)
     steps:
       - name: Checkout code
-        if: matrix.run_on_pr || github.event_name != 'pull_request'
+        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         uses: actions/checkout@v5
 
       - name: Set image name lowercase
-        if: matrix.run_on_pr || github.event_name != 'pull_request'
+        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         run: |
           IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
           echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
 
       - name: Set up QEMU
-        if: matrix.qemu && (matrix.run_on_pr || github.event_name != 'pull_request')
+        if: matrix.qemu && (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         uses: docker/setup-qemu-action@v3
         with:
           platforms: ${{ matrix.platform }}
 
       - name: Set up Docker Buildx
-        if: matrix.run_on_pr || github.event_name != 'pull_request'
+        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request'
+        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request' && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -122,7 +125,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata
-        if: matrix.run_on_pr || github.event_name != 'pull_request'
+        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -131,7 +134,7 @@ jobs:
             type=raw,value=${{ matrix.suffix }}-${{ github.sha }}
 
       - name: Build and push
-        if: matrix.run_on_pr || github.event_name != 'pull_request'
+        if: (matrix.run_on_pr || github.event_name != 'pull_request') && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -149,7 +152,7 @@ jobs:
           provenance: false
 
       - name: Export digest
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request'
+        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request' && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
@@ -157,7 +160,7 @@ jobs:
           echo "Digest for ${{ matrix.suffix }}: $digest"
 
       - name: Upload digest
-        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request'
+        if: (matrix.run_on_pr || github.event_name != 'pull_request') && github.event_name != 'pull_request' && (!matrix.tag_only || startsWith(github.ref, 'refs/tags/'))
         uses: actions/upload-artifact@v4
         with:
           name: digest-${{ matrix.suffix }}
@@ -194,15 +197,25 @@ jobs:
         run: |
           SHA=${{ github.sha }}
           IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          IS_TAG="${{ startsWith(github.ref, 'refs/tags/') }}"
 
           echo "Creating multiplatform manifest..."
+
+          # Base images (always included)
+          IMAGES="${IMAGE}:amd64-${SHA} ${IMAGE}:arm64-${SHA} ${IMAGE}:s390x-${SHA}"
+
+          # Include ppc64le only on tagged releases
+          if [ "$IS_TAG" = "true" ]; then
+            echo "Tagged release detected - including ppc64le"
+            IMAGES="${IMAGES} ${IMAGE}:ppc64le-${SHA}"
+          else
+            echo "Non-tagged build - skipping ppc64le"
+          fi
+
           docker buildx imagetools create \
             --tag "${IMAGE}:${SHA}" \
             --tag "${IMAGE}:latest" \
-            "${IMAGE}:amd64-${SHA}" \
-            "${IMAGE}:arm64-${SHA}" \
-            "${IMAGE}:s390x-${SHA}" \
-            "${IMAGE}:ppc64le-${SHA}"
+            $IMAGES
 
           echo "Manifest created successfully"
 
