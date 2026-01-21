@@ -3384,7 +3384,11 @@ async function viewAgent(agentId) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -4294,7 +4298,11 @@ async function viewResource(resourceId) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -5213,7 +5221,12 @@ async function viewGateway(gatewayId) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label
+                            : tag;
+
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -14140,10 +14153,13 @@ async function viewTool(toolId) {
             if (tagsElement) {
                 if (tool.tags && tool.tags.length > 0) {
                     tagsElement.innerHTML = tool.tags
-                        .map(
-                            (tag) =>
-                                `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${escapeHtml(tag)}</span>`,
-                        )
+                        .map((tag) => {
+                            const raw =
+                                typeof tag === "object" && tag !== null
+                                    ? tag.id || tag.label
+                                    : tag;
+                            return `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${escapeHtml(raw)}</span>`;
+                        })
                         .join("");
                 } else {
                     tagsElement.textContent = "None";
