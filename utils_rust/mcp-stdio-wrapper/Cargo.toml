@@ -1,0 +1,23 @@
+[package]
+name = "mcp_stdio_wrapper"
+version = "0.1.0"
+edition = "2024"
+default-run = "mcp_stdio_wrapper"
+
+[dependencies]
+dotenvy = "0.15.7"
+flume = "0.12.0"
+rmcp = "0.13.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = ["full"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+envy = "0.4.2"
+clap = { version = "4.5.54", features = ["derive"] }
+reqwest = { version = "0.13.1", features = ["json", "stream"] }
+futures = "0.3.31"
+
+
+[features]
+manual = []
