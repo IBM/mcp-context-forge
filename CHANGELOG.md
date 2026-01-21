@@ -8,10 +8,10 @@
 
 ### Overview
 
-This release delivers **massive performance improvements**, **enterprise-scale reliability**, and **production-hardening** with **219 issues resolved**:
+This release delivers **massive performance improvements**, **enterprise-scale reliability**, and **production-hardening** with **222 issues resolved** (103 features, 97 bugs, 22 tasks):
 
-- **⚡ 100+ Performance Optimizations** - N+1 query elimination, connection pooling (PgBouncer), caching (L1/L2), Granian HTTP server, orjson serialization
-- **🔧 80+ Bug Fixes** - RBAC, pagination, OAuth, Admin UI, multi-tenancy, and MCP protocol compliance
+- **⚡ 103 Features** - N+1 query elimination, connection pooling (PgBouncer), caching (L1/L2), Granian HTTP server, orjson serialization
+- **🔧 97 Bug Fixes** - RBAC, pagination, OAuth, Admin UI, multi-tenancy, and MCP protocol compliance
 - **🔐 Security Enhancements** - JWT lifecycle management, environment isolation, team membership validation
 - **🏗️ Platform Expansion** - ppc64le (IBM POWER) architecture, external PostgreSQL support, Helm improvements
 - **📊 Observability** - Prometheus/Grafana monitoring profile, metrics rollup optimization, detailed request logging
@@ -337,7 +337,7 @@ DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
 
 ### Overview
 
-This release marks the first beta milestone toward 1.0.0 GA, delivering **multi-architecture container support**, **gRPC-to-MCP protocol translation**, **air-gapped deployment capabilities**, and **significant performance improvements** with **25+ issues resolved**:
+This release marks the first beta milestone toward 1.0.0 GA, delivering **multi-architecture container support**, **gRPC-to-MCP protocol translation**, **air-gapped deployment capabilities**, and **significant performance improvements** with **84 issues resolved**:
 
 - **🏗️ Multi-Architecture Containers** - ARM64 and s390x architecture support for broader deployment options
 - **🔌 gRPC-to-MCP Translation** - Experimental gRPC service interface for MCP protocol operations
@@ -972,7 +972,7 @@ docker compose up -d
 
 ### Overview
 
-This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Registry & gRPC Protocol Translation** with **50+ issues resolved** and **47+ PRs merged**, bringing significant improvements across authentication, plugin framework, gRPC integration, and developer experience:
+This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Registry & gRPC Protocol Translation** with **110 issues resolved** and **47+ PRs merged**, bringing significant improvements across authentication, plugin framework, gRPC integration, and developer experience:
 
 - **🔌 gRPC-to-MCP Protocol Translation** - Zero-configuration gRPC service discovery, automatic protocol translation, TLS/mTLS support
 - **🔐 Advanced OAuth Features** - Password Grant Flow, Dynamic Client Registration (DCR), PKCE support, token refresh
@@ -1305,7 +1305,7 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 
 ### Overview
 
-**This major release implements [EPIC #860]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping**, transforming MCP Gateway from a single-tenant system into a **production-ready enterprise multi-tenant platform** with team-based resource scoping, comprehensive authentication, and enterprise SSO integration.
+**This major release implements [EPIC #860]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping**, transforming MCP Gateway from a single-tenant system into a **production-ready enterprise multi-tenant platform** with team-based resource scoping, comprehensive authentication, and enterprise SSO integration. **38 issues resolved**.
 
 **Impact:** Complete architectural transformation enabling secure team collaboration, enterprise SSO integration, and scalable multi-tenant deployments.
 
@@ -1600,7 +1600,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 ### Overview
 
-This major release focuses on **Security, Scale & Smart Automation** with **118 commits** and **50+ issues resolved**, bringing significant improvements across multiple domains:
+This major release focuses on **Security, Scale & Smart Automation** with **118 commits** and **93 issues resolved**, bringing significant improvements across multiple domains:
 
 - **🔌 Plugin Framework** - Comprehensive plugin system with pre/post hooks for extensible gateway capabilities
 - **🤖 A2A (Agent-to-Agent) Support** - Full integration for external AI agents (OpenAI, Anthropic, custom agents)
@@ -1779,7 +1779,7 @@ This release showcases the power of open-source collaboration, bringing together
 
 ### Overview
 
-This release focuses on enterprise-grade operability with **42 issues resolved**, bringing major improvements to authentication, configuration management, error handling, and developer experience. Key achievements include:
+This release focuses on enterprise-grade operability with **45 issues resolved**, bringing major improvements to authentication, configuration management, error handling, and developer experience. Key achievements include:
 
 - **Enhanced JWT token security** with mandatory expiration when configured
 - **Improved UI/UX** with better error messages, validation, and test tool enhancements
@@ -1965,7 +1965,7 @@ Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
 
 ### Overview
 
-This release represents a major milestone in code quality, security, and reliability. With [52 issues resolved](https://github.com/IBM/mcp-context-forge/issues?q=is%3Aissue%20state%3Aclosed%20milestone%3A%22Release%200.4.0%22), we've achieved:
+This release represents a major milestone in code quality, security, and reliability. With [59 issues resolved](https://github.com/IBM/mcp-context-forge/issues?q=is%3Aissue%20state%3Aclosed%20milestone%3A%22Release%200.4.0%22), we've achieved:
 - **100% security scanner compliance** (Bandit, Grype, nodejsscan)
 - **60% docstring coverage** with enhanced documentation
 - **82% pytest coverage** including end-to-end testing and security tests
