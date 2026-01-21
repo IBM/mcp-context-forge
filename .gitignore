@@ -273,9 +273,6 @@ plugins_rust/target/
 plugins_rust/**/*.rs.bk
 plugins_rust/Cargo.lock
 
-# CDN vendor assets (downloaded during container build)
-mcpgateway/static/vendor/
-
 # Generated performance test files
 nginx.conf
 docker-compose.perf.yml
