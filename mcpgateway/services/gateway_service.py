@@ -106,7 +106,7 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
-from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
@@ -1432,9 +1432,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if visibility:
                 query = query.where(DbGateway.visibility == visibility)
 
-        # Add tag filtering if tags are provided
+        # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
-            query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
+            query = query.where(json_contains_tag_expr(db, DbGateway.tags, tags, match_any=True))
         # Use unified pagination helper - handles both page and cursor pagination
         pag_result = await unified_paginate(
             db=db,
@@ -4089,9 +4089,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if isinstance(gateway.auth_value, dict):
             gateway_dict["auth_value"] = encode_auth(gateway.auth_value)
 
-        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
         if gateway.tags:
-            gateway_dict["tags"] = validate_tags_field(gateway.tags)
+            # Check tags are list of strings or list of Dict[str, str]
+            if isinstance(gateway.tags[0], str):
+                # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
+                gateway_dict["tags"] = validate_tags_field(gateway.tags)
+            else:
+                gateway_dict["tags"] = gateway.tags
         else:
             gateway_dict["tags"] = []
 
@@ -4111,7 +4115,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Prepare a gateway object for GatewayRead validation.
 
         Ensures auth_value is in the correct format (encoded string) for the schema.
-        Converts tags from List[str] (database format) to List[Dict[str, str]] (schema format).
+        Converts legacy List[str] tags to List[Dict[str, str]] format for GatewayRead schema.
 
         Args:
             gateway: Gateway database object
@@ -4123,11 +4127,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if isinstance(gateway.auth_value, dict):
             gateway.auth_value = encode_auth(gateway.auth_value)
 
-        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
-        # Database stores: ["git", "development"]
-        # GatewayRead expects: [{"id": "git", "label": "git"}, {"id": "development", "label": "development"}]
+        # Handle legacy List[str] tags - convert to List[Dict[str, str]] for GatewayRead schema
         if gateway.tags:
-            gateway.tags = validate_tags_field(gateway.tags)
+            if isinstance(gateway.tags[0], str):
+                # Legacy format: convert to dict format
+                gateway.tags = validate_tags_field(gateway.tags)
 
         return gateway
 
