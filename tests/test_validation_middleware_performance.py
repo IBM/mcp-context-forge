@@ -84,24 +84,29 @@ class TestValidationMiddlewarePerformance:
     @pytest.fixture
     def middleware(self, mock_app):
         """Create validation middleware instance."""
-        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
-            mock_settings.experimental_validate_io = True
-            mock_settings.validation_strict = True
-            mock_settings.sanitize_output = True
-            mock_settings.allowed_roots = []
-            mock_settings.dangerous_patterns = [r"[;&|`$(){}\[\]<>]"]
-            mock_settings.validation_max_body_size = 1024
-            mock_settings.validation_max_response_size = 2048
-            mock_settings.validation_skip_endpoints = [r"^/health$", r"^/metrics$"]
-            mock_settings.validation_cache_enabled = True
-            mock_settings.validation_cache_max_size = 100
-            mock_settings.validation_cache_ttl = 300
-            mock_settings.validation_sample_large_responses = True
-            mock_settings.validation_sample_size = 512
-            mock_settings.environment = "production"
-            mock_settings.max_param_length = 1000
-            
-            return ValidationMiddleware(mock_app)
+        patcher = patch("mcpgateway.middleware.validation_middleware.settings")
+        mock_settings = patcher.start()
+        mock_settings.environment = "production"
+        mock_settings.experimental_validate_io = True
+        mock_settings.validation_strict = True
+        mock_settings.sanitize_output = True
+        mock_settings.allowed_roots = []
+        mock_settings.dangerous_patterns = [r"[;&|`$(){}\[\]<>]"]
+        mock_settings.validation_max_body_size = 1024
+        mock_settings.validation_max_response_size = 2048
+        mock_settings.validation_skip_endpoints = [r"^/health$", r"^/metrics$"]
+        mock_settings.validation_cache_enabled = True
+        mock_settings.validation_cache_max_size = 100
+        mock_settings.validation_cache_ttl = 300
+        mock_settings.validation_sample_large_responses = True
+        mock_settings.validation_sample_size = 512
+        mock_settings.max_param_length = 1000
+        
+        middleware_instance = ValidationMiddleware(mock_app)
+        
+        yield middleware_instance
+        
+        patcher.stop()
 
     @pytest.mark.asyncio
     async def test_skip_endpoint_validation(self, middleware):
@@ -210,8 +215,8 @@ class TestValidationMiddlewarePerformance:
     @pytest.mark.asyncio
     async def test_cache_validation_failure(self, middleware):
         """Test that validation failures are also cached."""
-        # Body with dangerous pattern
-        body = b'{"cmd": "rm -rf /"}'
+        # Body with dangerous pattern - use a pattern that will actually trigger validation failure
+        body = b'{"cmd": "rm -rf /", "test": "value with ; semicolon"}'
         
         request = MagicMock(spec=Request)
         request.url.path = "/api/test"
@@ -222,14 +227,16 @@ class TestValidationMiddlewarePerformance:
         
         call_next = AsyncMock(return_value=Response())
         
-        # First request - should fail validation
-        with pytest.raises(HTTPException):
+        # First request - should fail validation due to dangerous pattern in value
+        with pytest.raises(HTTPException) as exc_info:
             await middleware.dispatch(request, call_next)
+        assert exc_info.value.status_code == 422
         
         # Second request with same body - should use cached failure
         request.body = AsyncMock(return_value=body)
-        with pytest.raises(HTTPException):
+        with pytest.raises(HTTPException) as exc_info:
             await middleware.dispatch(request, call_next)
+        assert exc_info.value.status_code == 422
         
         # Verify failure was cached
         cache_key = middleware._get_cache_key(body)
@@ -254,7 +261,8 @@ class TestValidationMiddlewarePerformance:
         """Test endpoint pattern matching."""
         assert middleware._should_skip_endpoint("/health") is True
         assert middleware._should_skip_endpoint("/metrics") is True
-        assert middleware._should_skip_endpoint("/static/css/style.css") is True
+        # /static/ is not in the configured skip patterns, so it should not be skipped
+        assert middleware._should_skip_endpoint("/static/css/style.css") is False
         assert middleware._should_skip_endpoint("/api/test") is False
 
     def test_cache_key_generation(self, middleware):
@@ -286,7 +294,8 @@ class TestValidationMiddlewarePerformance:
         body = b"test\x00data\x1f"
         response = Response(content=body)
         response.body = body
-        response.headers = {}
+        # Don't try to set headers directly - Response.headers is read-only
+        # The middleware will update headers when it sanitizes
         
         call_next = AsyncMock(return_value=response)
         
@@ -315,6 +324,11 @@ class TestValidationMiddlewarePerformance:
 
 class TestValidationMiddlewareBenchmark:
     """Benchmark tests for validation middleware performance."""
+
+    @pytest.fixture
+    def mock_app(self):
+        """Create mock FastAPI app."""
+        return MagicMock()
 
     @pytest.fixture
     def middleware_with_cache(self, mock_app):

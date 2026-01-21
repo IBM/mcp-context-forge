@@ -79,6 +79,8 @@ class LRUCache:
             value: Validation result
         """
         if key in self.cache:
+            # Update existing entry with new value and timestamp
+            self.cache[key] = (value, time.time())
             self.cache.move_to_end(key)
         else:
             if len(self.cache) >= self.max_size:
