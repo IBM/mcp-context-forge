@@ -65,6 +65,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.DB_POOL_SIZE | string | `"15"` |  |
 | mcpContextForge.config.DB_POOL_TIMEOUT | string | `"30"` |  |
 | mcpContextForge.config.DB_RETRY_INTERVAL_MS | string | `"2000"` |  |
+| mcpContextForge.config.DB_SQLITE_BUSY_TIMEOUT | string | `"5000"` |  |
 | mcpContextForge.config.DEBUG | string | `"false"` |  |
 | mcpContextForge.config.DEFAULT_PASSTHROUGH_HEADERS | string | `"[\"X-Tenant-Id\", \"X-Trace-Id\"]"` |  |
 | mcpContextForge.config.DEFAULT_ROOTS | string | `"[]"` |  |
@@ -735,3 +736,4 @@ Kubernetes: `>=1.21.0-0`
 | serviceAccount.automountServiceAccountToken | bool | `true` | Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting) |
 | serviceAccount.create | bool | `false` | Create a ServiceAccount for all pods in this release |
 | serviceAccount.name | string | `""` | ServiceAccount name. If empty and create=true, uses release fullname. If create=false, uses this name or "default" |
+

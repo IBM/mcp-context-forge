@@ -2155,6 +2155,7 @@ Automatic management of metrics data to prevent unbounded table growth and maint
 | `DB_POOL_RECYCLE`.      | Recycle connections (secs)      | `3600`  | int > 0 |
 | `DB_MAX_RETRIES` .      | Max retry attempts at startup (exponential backoff) | `30`    | int > 0 |
 | `DB_RETRY_INTERVAL_MS`  | Base retry interval (ms), doubles each attempt up to 30s | `2000`  | int > 0 |
+| `DB_SQLITE_BUSY_TIMEOUT`| SQLite lock wait timeout (ms)   | `5000`  | 1000-60000 |
 
 ### Cache Backend
 
