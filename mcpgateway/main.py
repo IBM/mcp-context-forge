@@ -170,6 +170,7 @@ set_logging_service(logging_service)
 # Wait for database to be ready before creating tables
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
+
 def _start_migrations() -> None:
     """Start Alembic migrations according to configured `migration_mode`.
 
