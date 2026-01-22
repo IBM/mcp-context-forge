@@ -296,11 +296,15 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Backpressure provides overload protection by rejecting excess requests with
       # immediate 503 responses instead of queuing them (which can cause OOM/timeouts).
-      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 128 = 2048 concurrent
+      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 8 × 128 = 1024 concurrent
       # Requests beyond this limit receive immediate 503 (no queuing, no OOM)
-      - GRANIAN_WORKERS=16
+      #
+      # Memory sizing: Each worker uses ~350-450MB RSS baseline, spiking to 700MB-1.9GB under load.
+      # With 8GB container limit: 8 workers × 450MB = 3.6GB baseline, leaving 4.4GB headroom.
+      # Previous: 16 workers × 450MB = 7.2GB baseline, only 0.8GB headroom → OOM kills
+      - GRANIAN_WORKERS=8
       - GRANIAN_BACKLOG=4096
-      - GRANIAN_BACKPRESSURE=128
+      - GRANIAN_BACKPRESSURE=256        # Increased to compensate for fewer workers (8×256=2048 capacity)
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
       - GRANIAN_RESPAWN_FAILED=true
       # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
