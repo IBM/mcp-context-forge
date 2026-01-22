@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod comprehensive_tests {
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::Arc;
     use filesystem_server::sandbox::Sandbox;
-    use filesystem_server::tools::edit::{edit_file, Edit, move_file};
+    use filesystem_server::tools::edit::{Edit, edit_file, move_file};
     use filesystem_server::tools::info::get_file_info;
     use filesystem_server::tools::read::{read_file, read_multiple_files};
     use filesystem_server::tools::search::{list_directory, search_files};
     use filesystem_server::tools::write::{create_directory, write_file};
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
     use tempfile::TempDir;
     use tokio::fs as async_fs;
 
@@ -33,9 +33,13 @@ mod comprehensive_tests {
 
         // 2. Write file with initial content
         let file_path = format!("{}/README.md", docs_dir);
-        write_file(&sandbox, &file_path, "# My Document\nVersion 1.0\n".to_string())
-            .await
-            .expect("write initial content");
+        write_file(
+            &sandbox,
+            &file_path,
+            "# My Document\nVersion 1.0\n".to_string(),
+        )
+        .await
+        .expect("write initial content");
 
         // 3. Read and verify initial content
         let initial_content = read_file(&sandbox, &file_path)
@@ -103,7 +107,6 @@ mod comprehensive_tests {
         assert!(entries.iter().any(|e| e.contains("README.md")));
     }
 
-
     #[tokio::test]
     async fn test_complete_permission_and_metadata_workflow() {
         let temp_dir = TempDir::new().unwrap();
@@ -148,7 +151,10 @@ mod comprehensive_tests {
             .expect("get updated info");
         let updated_val: serde_json::Value = serde_json::from_str(&updated_info).unwrap();
         let updated_size = updated_val["size"].as_u64().unwrap();
-        assert!(updated_size > initial_size, "File should be larger after edit");
+        assert!(
+            updated_size > initial_size,
+            "File should be larger after edit"
+        );
 
         // 5. Set specific permissions and verify
         let file_path_pb = temp_dir.path().join("config/settings.json");
@@ -206,12 +212,20 @@ mod comprehensive_tests {
             .expect("create code");
 
         // 2. Create various files
-        write_file(&sandbox, &format!("{}/readme.md", docs_dir), "# Read me".to_string())
-            .await
-            .expect("write readme");
-        write_file(&sandbox, &format!("{}/guide.md", docs_dir), "# Guide".to_string())
-            .await
-            .expect("write guide");
+        write_file(
+            &sandbox,
+            &format!("{}/readme.md", docs_dir),
+            "# Read me".to_string(),
+        )
+        .await
+        .expect("write readme");
+        write_file(
+            &sandbox,
+            &format!("{}/guide.md", docs_dir),
+            "# Guide".to_string(),
+        )
+        .await
+        .expect("write guide");
         write_file(
             &sandbox,
             &format!("{}/script.py", code_dir),
@@ -226,9 +240,13 @@ mod comprehensive_tests {
         )
         .await
         .expect("write js");
-        write_file(&sandbox, &format!("{}/image.txt", images_dir), "fake image".to_string())
-            .await
-            .expect("write fake image");
+        write_file(
+            &sandbox,
+            &format!("{}/image.txt", images_dir),
+            "fake image".to_string(),
+        )
+        .await
+        .expect("write fake image");
 
         // 3. Search for Markdown files
         let md_files = search_files(&sandbox, &root, "*.md", vec![])
@@ -276,9 +294,13 @@ mod comprehensive_tests {
             .await
             .expect("create archive");
 
-        move_file(&sandbox, &readme_path, &format!("{}/readme.md", archive_dir))
-            .await
-            .expect("move readme");
+        move_file(
+            &sandbox,
+            &readme_path,
+            &format!("{}/readme.md", archive_dir),
+        )
+        .await
+        .expect("move readme");
         move_file(
             &sandbox,
             &format!("{}/guide.md", docs_dir),
@@ -366,14 +388,10 @@ mod comprehensive_tests {
             .expect("edit project2");
 
         // 5. Read and verify both files
-        let content1 = read_file(&sandbox, &file1)
-            .await
-            .expect("read project1");
+        let content1 = read_file(&sandbox, &file1).await.expect("read project1");
         assert!(content1.contains("Project One"));
 
-        let content2 = read_file(&sandbox, &file2)
-            .await
-            .expect("read project2");
+        let content2 = read_file(&sandbox, &file2).await.expect("read project2");
         assert!(content2.contains("Project Two"));
 
         // 5.5. Read multiple files at once
@@ -410,29 +428,23 @@ mod comprehensive_tests {
         assert!(backup2_val["size"].as_u64().unwrap() > 0);
 
         // 8. List directories in both roots
-        let root1_entries = list_directory(&sandbox, &root1)
-            .await
-            .expect("list root1");
+        let root1_entries = list_directory(&sandbox, &root1).await.expect("list root1");
         assert!(root1_entries.iter().any(|e| e.ends_with("/")));
 
-        let root2_entries = list_directory(&sandbox, &root2)
-            .await
-            .expect("list root2");
+        let root2_entries = list_directory(&sandbox, &root2).await.expect("list root2");
         assert!(root2_entries.iter().any(|e| e.ends_with("/")));
     }
 
     #[tokio::test]
     async fn test_server_initialize_handler() {
-        use filesystem_server::server::{FilesystemServer, AppContext};
+        use filesystem_server::server::{AppContext, FilesystemServer};
         use rmcp::ServerHandler;
 
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path().to_string_lossy().to_string();
 
         // 1. Create sandbox and server
-        let sandbox = Sandbox::new(vec![root])
-            .await
-            .expect("sandbox init failed");
+        let sandbox = Sandbox::new(vec![root]).await.expect("sandbox init failed");
         let ctx = Arc::new(AppContext {
             sandbox: Arc::new(sandbox),
         });
@@ -474,7 +486,7 @@ mod comprehensive_tests {
 
     #[tokio::test]
     async fn test_filesystem_server_initialization() {
-        use filesystem_server::server::{FilesystemServer, AppContext};
+        use filesystem_server::server::{AppContext, FilesystemServer};
 
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path().to_string_lossy().to_string();
@@ -573,23 +585,15 @@ mod comprehensive_tests {
 
         // Write file in first root
         let file1 = temp_dir1.path().join("file1.txt");
-        write_file(
-            &sandbox,
-            file1.to_str().unwrap(),
-            "From root1".to_string(),
-        )
-        .await
-        .expect("write to root1");
+        write_file(&sandbox, file1.to_str().unwrap(), "From root1".to_string())
+            .await
+            .expect("write to root1");
 
         // Write file in second root
         let file2 = temp_dir2.path().join("file2.txt");
-        write_file(
-            &sandbox,
-            file2.to_str().unwrap(),
-            "From root2".to_string(),
-        )
-        .await
-        .expect("write to root2");
+        write_file(&sandbox, file2.to_str().unwrap(), "From root2".to_string())
+            .await
+            .expect("write to root2");
 
         // Verify both files exist and are accessible
         let content1 = read_file(&sandbox, file1.to_str().unwrap())
