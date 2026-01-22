@@ -38,6 +38,8 @@ import os
 from pathlib import Path
 import tempfile
 from typing import cast
+from datetime import datetime
+import time
 
 # Third-Party
 from alembic import command
@@ -54,7 +56,10 @@ from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
 _MIGRATION_LOCK_PATH = os.path.join(tempfile.gettempdir(), "mcpgateway_migration.lock")
-_MIGRATION_LOCK_TIMEOUT = 300  # seconds to wait for lock (5 minutes for slow migrations)
+
+# Module-level migration status so other parts of the app (health) can inspect
+# Possible states: pending, running, succeeded, failed, skipped
+migration_status: dict = {"state": "pending", "started_at": None, "finished_at": None, "message": None}
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -119,9 +124,23 @@ def advisory_lock(conn: Connection):
     # Postgres requires a BIGINT lock ID (arbitrary hash of the string)
     pg_lock_id = 42424242424242
 
+    timeout = getattr(settings, "migration_timeout", 300)
+
     if dialect == "postgresql":
-        logger.info("Acquiring Postgres advisory lock...")
-        conn.execute(text(f"SELECT pg_advisory_lock({pg_lock_id})"))
+        logger.info("Acquiring Postgres advisory lock (with timeout)...")
+        # Use pg_try_advisory_lock in a loop with a timeout to avoid indefinite blocking
+        deadline = time.time() + float(timeout)
+        acquired = False
+        while time.time() < deadline:
+            res = conn.execute(text(f"SELECT pg_try_advisory_lock({pg_lock_id})")).scalar()
+            if res:
+                acquired = True
+                break
+            time.sleep(0.5)
+
+        if not acquired:
+            raise TimeoutError(f"Could not acquire Postgres advisory lock within {int(timeout)}s")
+
         try:
             yield
         finally:
@@ -131,9 +150,9 @@ def advisory_lock(conn: Connection):
     elif dialect in ["mysql", "mariadb"]:
         logger.info("Acquiring MySQL advisory lock...")
         # GET_LOCK returns 1 if successful, 0 if timed out, NULL on error
-        result = conn.execute(text(f"SELECT GET_LOCK('{lock_id}', {_MIGRATION_LOCK_TIMEOUT})")).scalar()
+        result = conn.execute(text(f"SELECT GET_LOCK('{lock_id}', {int(timeout)})")).scalar()
         if result != 1:
-            raise TimeoutError(f"Could not acquire MySQL lock '{lock_id}' within {_MIGRATION_LOCK_TIMEOUT}s")
+            raise TimeoutError(f"Could not acquire MySQL lock '{lock_id}' within {int(timeout)}s")
         try:
             yield
         finally:
@@ -142,8 +161,8 @@ def advisory_lock(conn: Connection):
 
     else:
         # Fallback for SQLite (single-host/container) or other DBs
-        logger.info(f"Using FileLock fallback for {dialect}...")
-        file_lock = FileLock(_MIGRATION_LOCK_PATH, timeout=_MIGRATION_LOCK_TIMEOUT)
+        logger.info(f"Using FileLock fallback for {dialect} (timeout={int(timeout)}s)...")
+        file_lock = FileLock(_MIGRATION_LOCK_PATH, timeout=int(timeout))
         with file_lock:
             yield
 
@@ -537,6 +556,35 @@ async def bootstrap_resource_assignments(conn: Connection) -> None:
         logger.error(f"Failed to bootstrap resource assignments: {e}")
 
 
+def run_batched_update(connection: Connection, select_sql: str, update_sql: str, batch_size: int = 1000) -> int:
+    """
+    Helper to run large data migrations in batches.
+
+    Args:
+        connection: Locked SQLAlchemy connection
+        select_sql: SQL that selects ids to process, must support LIMIT :batch
+        update_sql: SQL to update a single batch; should reference a list/tuple parameter :ids
+        batch_size: Number of rows per batch
+
+    Returns:
+        Number of rows updated
+    """
+    total = 0
+    while True:
+        ids = [row[0] for row in connection.execute(text(select_sql), {"batch": batch_size}).fetchall()]
+        if not ids:
+            break
+        # Execute update for this batch
+        connection.execute(text(update_sql).bindparams(ids=ids), {"ids": ids})
+        try:
+            connection.commit()
+        except Exception:
+            # Best-effort commit per batch; bubble up error to caller
+            raise
+        total += len(ids)
+    return total
+
+
 async def main() -> None:
     """
     Bootstrap or upgrade the database schema, then log readiness.
@@ -554,6 +602,10 @@ async def main() -> None:
     Raises:
         Exception: If migration or bootstrap fails
     """
+    # Mark migration as running so health endpoint can report
+    migration_status["state"] = "running"
+    migration_status["started_at"] = datetime.utcnow().isoformat()
+
     engine = create_engine(settings.database_url)
     ini_path = files("mcpgateway").joinpath("alembic.ini")
     cfg = Config(str(ini_path))  # path in container
@@ -624,14 +676,20 @@ async def main() -> None:
                 await bootstrap_resource_assignments(conn)
 
                 conn.commit()  # Ensure all migration changes are permanently committed
-
     except Exception as e:
         logger.error(f"Migration/Bootstrap failed: {e}")
+        migration_status["state"] = "failed"
+        migration_status["finished_at"] = datetime.utcnow().isoformat()
+        migration_status["message"] = str(e)
         # Allow retry logic or container restart to handle transient issues
         raise
     finally:
         # Dispose the engine to close all connections in the pool
         engine.dispose()
+
+    migration_status["state"] = "succeeded"
+    migration_status["finished_at"] = datetime.utcnow().isoformat()
+    migration_status["message"] = None
 
     logger.info("Database ready")
 
