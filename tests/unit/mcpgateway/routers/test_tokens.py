@@ -46,8 +46,28 @@ from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorator
 
 
 @pytest.fixture(autouse=True)
-def setup_rbac_mocks():
-    """Setup and teardown RBAC mocks for each test."""
+def setup_rbac_mocks(monkeypatch):
+    """Setup and teardown RBAC mocks for each test.
+
+    Note: As of Issue #1865, permission decorators use fresh_db_session()
+    for short-lived permission checks instead of user_context["db"].
+    """
+    # Standard
+    from contextlib import contextmanager
+
+    # Mock fresh_db_session to avoid real DB connections in unit tests
+    @contextmanager
+    def mock_fresh_db_session():
+        yield MagicMock()
+
+    # Mock PermissionService to always grant permissions
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission = AsyncMock(return_value=True)
+    mock_perm_service.check_admin_permission = AsyncMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.middleware.rbac.fresh_db_session", mock_fresh_db_session)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+
     originals = patch_rbac_decorators()
     yield
     restore_rbac_decorators(originals)
@@ -60,25 +80,31 @@ def mock_db():
 
 
 @pytest.fixture
-def mock_current_user(mock_db):
-    """Create a mock current user with db context."""
+def mock_current_user():
+    """Create a mock current user context.
+
+    Note: As of Issue #1865, user context no longer includes 'db' key.
+    Permission decorators use fresh_db_session() for short-lived permission checks.
+    """
     return {
         "email": "test@example.com",
         "is_admin": False,
         "permissions": ["tokens.create", "tokens.read"],
-        "db": mock_db,  # Include db in user context for RBAC decorator
         "auth_method": "jwt",  # Required for interactive session check
     }
 
 
 @pytest.fixture
-def mock_admin_user(mock_db):
-    """Create a mock admin user with db context."""
+def mock_admin_user():
+    """Create a mock admin user context.
+
+    Note: As of Issue #1865, user context no longer includes 'db' key.
+    Permission decorators use fresh_db_session() for short-lived permission checks.
+    """
     return {
         "email": "admin@example.com",
         "is_admin": True,
         "permissions": ["*"],
-        "db": mock_db,  # Include db in user context for RBAC decorator
         "auth_method": "jwt",  # Required for interactive session check
     }
 

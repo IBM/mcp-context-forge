@@ -32,6 +32,9 @@ def create_mock_user_context(
 ) -> Dict:
     """Create a mock user context for RBAC testing.
 
+    Note: As of Issue #1865, user context no longer includes a 'db' key.
+    Permission decorators now use fresh_db_session() for short-lived permission checks.
+
     Args:
         email: User email address
         full_name: User's full name
@@ -50,7 +53,6 @@ def create_mock_user_context(
         "ip_address": ip_address,
         "user_agent": user_agent,
         "auth_method": auth_method,
-        "db": MagicMock(),  # Mock database session
     }
 
 

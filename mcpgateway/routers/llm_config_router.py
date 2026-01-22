@@ -65,12 +65,14 @@ llm_provider_service = LLMProviderService()
 @require_permission("admin.system_config")
 async def create_provider(
     provider_data: LLMProviderCreate,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMProviderResponse:
     """Create a new LLM provider.
 
     Args:
         provider_data: Provider configuration data.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -80,7 +82,6 @@ async def create_provider(
         HTTPException: If provider name conflicts or creation fails.
     """
     try:
-        db = current_user_ctx["db"]
         provider = llm_provider_service.create_provider(
             db=db,
             provider_data=provider_data,
@@ -109,6 +110,7 @@ async def list_providers(
     enabled_only: bool = Query(False, description="Only return enabled providers"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMProviderListResponse:
     """List all LLM providers.
@@ -117,12 +119,12 @@ async def list_providers(
         enabled_only: Filter to enabled providers only.
         page: Page number.
         page_size: Items per page.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
         Paginated list of providers.
     """
-    db = current_user_ctx["db"]
     providers, total = llm_provider_service.list_providers(
         db=db,
         enabled_only=enabled_only,
@@ -149,12 +151,14 @@ async def list_providers(
 @require_permission("admin.system_config")
 async def get_provider(
     provider_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMProviderResponse:
     """Get an LLM provider by ID.
 
     Args:
         provider_id: Provider ID.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -164,7 +168,6 @@ async def get_provider(
         HTTPException: If provider is not found.
     """
     try:
-        db = current_user_ctx["db"]
         provider = llm_provider_service.get_provider(db, provider_id)
         model_count = len(provider.models)
         return llm_provider_service.to_provider_response(provider, model_count)
@@ -182,6 +185,7 @@ async def get_provider(
 async def update_provider(
     provider_id: str,
     provider_data: LLMProviderUpdate,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMProviderResponse:
     """Update an LLM provider.
@@ -189,6 +193,7 @@ async def update_provider(
     Args:
         provider_id: Provider ID.
         provider_data: Updated provider data.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -198,7 +203,6 @@ async def update_provider(
         HTTPException: If provider is not found or name conflicts.
     """
     try:
-        db = current_user_ctx["db"]
         provider = llm_provider_service.update_provider(
             db=db,
             provider_id=provider_id,
@@ -222,19 +226,20 @@ async def update_provider(
 @require_permission("admin.system_config")
 async def delete_provider(
     provider_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> None:
     """Delete an LLM provider.
 
     Args:
         provider_id: Provider ID.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Raises:
         HTTPException: If provider is not found.
     """
     try:
-        db = current_user_ctx["db"]
         llm_provider_service.delete_provider(db, provider_id)
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -250,6 +255,7 @@ async def delete_provider(
 async def set_provider_state(
     provider_id: str,
     activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMProviderResponse:
     """Set provider enabled state.
@@ -257,6 +263,7 @@ async def set_provider_state(
     Args:
         provider_id: Provider ID.
         activate: If provided, sets enabled to this value. If None, inverts current state.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -266,7 +273,6 @@ async def set_provider_state(
         HTTPException: If provider is not found.
     """
     try:
-        db = current_user_ctx["db"]
         provider = llm_provider_service.set_provider_state(db, provider_id, activate)
         model_count = len(provider.models)
         return llm_provider_service.to_provider_response(provider, model_count)
@@ -283,12 +289,14 @@ async def set_provider_state(
 @require_permission("admin.system_config")
 async def check_provider_health(
     provider_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> ProviderHealthCheck:
     """Check health of an LLM provider.
 
     Args:
         provider_id: Provider ID.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -298,7 +306,6 @@ async def check_provider_health(
         HTTPException: If provider is not found.
     """
     try:
-        db = current_user_ctx["db"]
         return await llm_provider_service.check_provider_health(db, provider_id)
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -319,12 +326,14 @@ async def check_provider_health(
 @require_permission("admin.system_config")
 async def create_model(
     model_data: LLMModelCreate,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMModelResponse:
     """Create a new LLM model.
 
     Args:
         model_data: Model configuration data.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -334,7 +343,6 @@ async def create_model(
         HTTPException: If provider is not found or model conflicts.
     """
     try:
-        db = current_user_ctx["db"]
         model = llm_provider_service.create_model(db, model_data)
         provider = llm_provider_service.get_provider(db, model.provider_id)
         return llm_provider_service.to_model_response(model, provider)
@@ -356,6 +364,7 @@ async def list_models(
     enabled_only: bool = Query(False, description="Only return enabled models"),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMModelListResponse:
     """List all LLM models.
@@ -365,12 +374,12 @@ async def list_models(
         enabled_only: Filter to enabled models only.
         page: Page number.
         page_size: Items per page.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
         Paginated list of models.
     """
-    db = current_user_ctx["db"]
     models, total = llm_provider_service.list_models(
         db=db,
         provider_id=provider_id,
@@ -404,12 +413,14 @@ async def list_models(
 @require_permission("admin.system_config")
 async def get_model(
     model_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMModelResponse:
     """Get an LLM model by ID.
 
     Args:
         model_id: Model ID.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -419,7 +430,6 @@ async def get_model(
         HTTPException: If model is not found.
     """
     try:
-        db = current_user_ctx["db"]
         model = llm_provider_service.get_model(db, model_id)
         try:
             provider = llm_provider_service.get_provider(db, model.provider_id)
@@ -440,6 +450,7 @@ async def get_model(
 async def update_model(
     model_id: str,
     model_data: LLMModelUpdate,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMModelResponse:
     """Update an LLM model.
@@ -447,6 +458,7 @@ async def update_model(
     Args:
         model_id: Model ID.
         model_data: Updated model data.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -456,7 +468,6 @@ async def update_model(
         HTTPException: If model is not found.
     """
     try:
-        db = current_user_ctx["db"]
         model = llm_provider_service.update_model(db, model_id, model_data)
         try:
             provider = llm_provider_service.get_provider(db, model.provider_id)
@@ -476,19 +487,20 @@ async def update_model(
 @require_permission("admin.system_config")
 async def delete_model(
     model_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> None:
     """Delete an LLM model.
 
     Args:
         model_id: Model ID.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Raises:
         HTTPException: If model is not found.
     """
     try:
-        db = current_user_ctx["db"]
         llm_provider_service.delete_model(db, model_id)
     except LLMModelNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -504,6 +516,7 @@ async def delete_model(
 async def set_model_state(
     model_id: str,
     activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> LLMModelResponse:
     """Set model enabled state.
@@ -511,6 +524,7 @@ async def set_model_state(
     Args:
         model_id: Model ID.
         activate: If provided, sets enabled to this value. If None, inverts current state.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -520,7 +534,6 @@ async def set_model_state(
         HTTPException: If model is not found.
     """
     try:
-        db = current_user_ctx["db"]
         model = llm_provider_service.set_model_state(db, model_id, activate)
         try:
             provider = llm_provider_service.get_provider(db, model.provider_id)

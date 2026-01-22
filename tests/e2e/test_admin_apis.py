@@ -112,10 +112,9 @@ async def client(app_with_temp_db):
             return next(test_db_dependency())
         return test_db_dependency
 
-    # Create mock user context with actual test database session
+    # Create mock user context (db no longer needed - permission decorators use fresh_db_session(), Issue #1865)
     test_db_session = get_test_db_session()
     test_user_context = create_mock_user_context(email="admin@example.com", full_name="Test Admin", is_admin=True)
-    test_user_context["db"] = test_db_session
 
     # Mock admin authentication function
     async def mock_require_admin_auth():
@@ -342,7 +341,7 @@ class TestAdminToolAPIs:
         from mcpgateway.services.team_management_service import TeamManagementService
 
         # Get db session from test fixture context
-        # The client fixture sets test_user_context["db"]
+        # Note: user context no longer includes db (Issue #1865)
         db = None
         if hasattr(client, "_default_params") and "db" in client._default_params:
             db = client._default_params["db"]

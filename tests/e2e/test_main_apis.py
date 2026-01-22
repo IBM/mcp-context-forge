@@ -189,9 +189,8 @@ async def temp_db():
         """Mock JWT token function."""
         return generate_test_jwt()
 
-    # Create custom user context with real database session
+    # Create custom user context (db no longer needed - permission decorators use fresh_db_session(), Issue #1865)
     test_user_context = create_mock_user_context(email="testuser@example.com", full_name="Test User", is_admin=True)
-    test_user_context["db"] = TestSessionLocal()  # Use real database session from this fixture
 
     # Create a simple mock function for get_current_user_with_permissions
     async def simple_mock_user_with_permissions():
