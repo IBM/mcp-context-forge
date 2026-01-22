@@ -369,7 +369,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["&&", "||", "$(", "> ", "< "],
         description='Substrings forbidden in tool descriptions. Override via TOOL_DESCRIPTION_FORBIDDEN_PATTERNS env var as a JSON array, e.g. \'["&&","||"]\'.',
     )
-    
+
     # Validation Performance Optimization Settings
     validation_max_body_size: int = Field(default=1048576, description="Maximum request body size in bytes to validate (1MB default, 0=unlimited)")
     validation_max_response_size: int = Field(default=5242880, description="Maximum response size in bytes to sanitize (5MB default, 0=unlimited)")
