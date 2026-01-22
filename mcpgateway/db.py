@@ -451,6 +451,37 @@ class ResilientSession(Session):
 # This is essential when commits happen during read operations (e.g., to release transactions).
 SessionLocal = sessionmaker(class_=ResilientSession, autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
 
+# Configurable session factory for fresh_db_session()
+# This can be overridden by tests to use a test database instead of production
+_fresh_session_factory: sessionmaker = SessionLocal
+
+
+def set_fresh_session_factory(factory: sessionmaker) -> None:
+    """Override the session factory used by fresh_db_session().
+
+    This is primarily for testing purposes, allowing tests to redirect
+    fresh_db_session() to use a test database instead of the production database.
+
+    Args:
+        factory: A SQLAlchemy sessionmaker to use for fresh_db_session().
+
+    Example:
+        >>> from mcpgateway.db import set_fresh_session_factory
+        >>> test_session_factory = sessionmaker(bind=test_engine)
+        >>> set_fresh_session_factory(test_session_factory)
+    """
+    global _fresh_session_factory
+    _fresh_session_factory = factory
+
+
+def reset_fresh_session_factory() -> None:
+    """Reset the session factory used by fresh_db_session() to the default.
+
+    This should be called after tests to restore the original behavior.
+    """
+    global _fresh_session_factory
+    _fresh_session_factory = SessionLocal
+
 
 @event.listens_for(ResilientSession, "after_transaction_end")
 def end_transaction_cleanup(_session, _transaction):
@@ -5418,7 +5449,7 @@ def fresh_db_session() -> Generator[Session, Any, None]:
         ...     hasattr(db, 'query')
         True
     """
-    db = SessionLocal()
+    db = _fresh_session_factory()
     try:
         yield db
         db.commit()  # Commit on successful exit (even for read-only operations)
