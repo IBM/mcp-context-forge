@@ -11,12 +11,14 @@ SQLAlchemy modifiers
 """
 
 # Standard
+from functools import lru_cache
 from typing import Any, Iterable, List, Union
 import uuid
 
 # Third-Party
 import orjson
 from sqlalchemy import and_, func, or_, text
+from sqlalchemy.sql.elements import TextClause
 
 
 def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
@@ -37,6 +39,78 @@ def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
     if isinstance(values, str):
         return [values]
     return list(values)
+
+
+@lru_cache(maxsize=128)
+def _sqlite_tag_any_template(col_ref: str, n: int) -> TextClause:
+    """
+    Build and cache a SQLite SQL template for matching ANY of the given tags
+    inside a JSON array column.
+
+    This template supports both legacy string tags and object-style tags
+    (e.g., {"id": "api"}). It safely guards `json_extract` with
+    `CASE WHEN type = 'object'` to avoid malformed JSON errors on string values.
+
+    The generated SQL uses deterministic positional bind parameters
+    (:p0, :p1, ...) so that the same query shape can be reused and cached
+    efficiently by SQLAlchemy and SQLite.
+
+    This function returns a SQLAlchemy `text()` object representing only
+    the SQL structure. Values must be bound separately using `.bindparams()`.
+
+    Args:
+        col_ref (str): Fully-qualified column reference (e.g., "resources.tags").
+        n (int): Number of tag values being matched. Determines the number of placeholders (:p0, :p1, ...).
+
+    Returns:
+        sqlalchemy.sql.elements.TextClause:
+            A reusable SQL template for matching ANY of the given tags.
+    """
+    if n == 1:
+        tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :p0 OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :p0)"  # nosec B608
+        sql = tmp_.strip()
+    else:
+        placeholders = ",".join(f":p{i}" for i in range(n))
+        tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value IN ({placeholders}) OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) IN ({placeholders}))"  # nosec B608
+        sql = tmp_.strip()
+
+    return text(sql)
+
+
+@lru_cache(maxsize=128)
+def _sqlite_tag_all_template(col_ref: str, n: int) -> TextClause:
+    """
+    Build and cache a SQLite SQL template for matching ALL of the given tags
+    inside a JSON array column.
+
+    This is implemented as an AND-chain of EXISTS subqueries, where each
+    subquery ensures the presence of one required tag.
+
+    This template supports both legacy string tags and object-style tags
+    (e.g., {"id": "api"}). It safely guards `json_extract` with
+    `CASE WHEN type = 'object'` to avoid malformed JSON errors on string values.
+
+    The generated SQL uses deterministic positional bind parameters
+    (:p0, :p1, ...) so that the same query shape can be reused and cached
+    efficiently by SQLAlchemy and SQLite.
+
+    This function returns a SQLAlchemy `text()` object representing only
+    the SQL structure. Values must be bound separately using `.bindparams()`.
+
+    Args:
+        col_ref (str): Fully-qualified column reference (e.g., "resources.tags").
+        n (int): Number of tag values being matched. Determines the number of placeholders (:p0, :p1, ...).
+
+    Returns:
+        sqlalchemy.sql.elements.TextClause:
+            A reusable SQL template for matching ALL of the given tags.
+    """
+    clauses = []
+    for i in range(n):
+        tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :p{i} OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :p{i})"  # nosec B608
+        clauses.append(tmp_.strip())
+
+    return text(" AND ".join(clauses))
 
 
 def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], match_any: bool = True) -> Any:
@@ -106,31 +180,18 @@ def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], matc
         column_name = getattr(col, "name", None) or str(col)
         col_ref = f"{table_name}.{column_name}" if table_name else column_name
 
-        if match_any:
-            # Build placeholders with unique param names
-            params = {}
-            placeholders = []
-            for i, t in enumerate(values_list):
-                pname = f"t_{uuid.uuid4().hex[:8]}_{i}"
-                placeholders.append(f":{pname}")
-                params[pname] = t
-            placeholders_sql = ",".join(placeholders)
-            # Check string values directly, extract $.id only from objects (type='object')
-            sql = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value IN ({placeholders_sql}) OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) IN ({placeholders_sql}))"  # nosec B608
-            sq = text(sql)
-            return sq.bindparams(**params)
+        n = len(values_list)
+        if n == 0:
+            raise ValueError("values must be non-empty")
 
-        # all-of: return AND of EXISTS for each value
-        exists_clauses = []
-        for t in values_list:
-            pname = f"t_{uuid.uuid4().hex[:8]}"
-            # Check string values directly, extract $.id only from objects (type='object')
-            sql = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{pname} OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :{pname})"  # nosec B608
-            clause = text(sql).bindparams(**{pname: t})
-            exists_clauses.append(clause)
-        if len(exists_clauses) == 1:
-            return exists_clauses[0]
-        return and_(*exists_clauses)
+        params = {f"p{i}": t for i, t in enumerate(values_list)}
+
+        if match_any:
+            tmpl = _sqlite_tag_any_template(col_ref, n)
+            return tmpl.bindparams(**params)
+
+        tmpl = _sqlite_tag_all_template(col_ref, n)
+        return tmpl.bindparams(**params)
 
     raise RuntimeError(f"Unsupported dialect for json_contains_tag: {dialect}")
 
