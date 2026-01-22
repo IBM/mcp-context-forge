@@ -57,7 +57,7 @@
         MCP Registry
       </h2>
       <button
-        onclick="refreshCatalog()"
+        onclick="Admin.refreshCatalog()"
         class="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors flex items-center gap-2"
         title="Refresh catalog"
       >
@@ -512,7 +512,7 @@
       Key", "OAuth2.1 & API Key"] %}
       <button
         class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-        onclick="showApiKeyModal('{{ server.id }}', '{{ server.name }}', '{{ server.url }}')"
+        onclick="Admin.showApiKeyModal('{{ server.id }}', '{{ server.name }}', '{{ server.url }}')"
       >
         Add Server
       </button>
@@ -578,7 +578,7 @@
           Add Server
         </h3>
         <button
-          onclick="closeApiKeyModal()"
+          onclick="Admin.closeApiKeyModal()"
           class="text-gray-400 hover:text-gray-500"
         >
           <svg
@@ -627,7 +627,7 @@
           placeholder="Enter your API key"
         />
         <button
-          onclick="registerServerWithApiKey()"
+          onclick="Admin.registerServerWithApiKey()"
           class="w-full mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
         >
           Register Server

@@ -38,25 +38,25 @@
                     <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
                         <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
                             {% if can_modify %}
-                            <button onclick="enrichTool('{{ tool.id }}')"
+                            <button onclick="Admin.enrichTool('{{ tool.id }}')"
                                     class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
                                 Enrich
                             </button>
-                            <button onclick="generateToolTestCases('{{ tool.id }}')"
+                            <button onclick="Admin.generateToolTestCases('{{ tool.id }}')"
                                     class="col-span-2 px-2 py-1 text-[11px] font-small rounded-md text-purple-600 hover:bg-purple-50">
                                 Generate Test Cases
                             </button>
-                            <button onclick="validateTool('{{ tool.id }}')"
+                            <button onclick="Admin.validateTool('{{ tool.id }}')"
                                     class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
                                 Validate
                             </button>
                             {% endif %}
-                            <button onclick="viewTool('{{ tool.id }}')"
+                            <button onclick="Admin.viewTool('{{ tool.id }}')"
                                     class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
                                 View
                             </button>
                             {% if can_modify %}
-                            <button onclick="editTool('{{ tool.id }}')"
+                            <button onclick="Admin.editTool('{{ tool.id }}')"
                                     class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
                                 Edit
                             </button>
