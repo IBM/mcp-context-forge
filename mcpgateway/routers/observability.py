@@ -840,7 +840,6 @@ def _get_query_performance_python(db: Session, cutoff_time: datetime, hours: int
     }
 
 
-
 @router.get("/instrumentation/queue-stats")
 @require_permission("admin.system_config")
 async def get_instrumentation_queue_stats(_user=Depends(get_current_user_with_permissions)):
