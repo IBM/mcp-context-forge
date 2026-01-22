@@ -180,25 +180,25 @@ class ResponseCacheByPromptPlugin(Plugin):
 
         vec = _vectorize(text)
         query_tokens = set(vec.keys())
-        
+
         # Fast path: use inverted index to find candidate entries
         # Only consider entries that share at least one token with query
         tool_index = self._index.get(tool, {})
         candidate_indices: Set[int] = set()
-        
+
         for token in query_tokens:
             if token in tool_index:
                 candidate_indices.update(tool_index[token])
-        
+
         # If no candidates found via index, fall back to empty result
         if not candidate_indices:
             return None, 0.0
-        
+
         # Compute similarity only for candidates
         best: Optional[_Entry] = None
         best_sim = 0.0
         now = time.time()
-        
+
         for idx in candidate_indices:
             if idx >= len(bucket):
                 continue
@@ -209,7 +209,7 @@ class ResponseCacheByPromptPlugin(Plugin):
             if sim > best_sim:
                 best = e
                 best_sim = sim
-        
+
         return best, best_sim
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
@@ -267,34 +267,34 @@ class ResponseCacheByPromptPlugin(Plugin):
         vec = _vectorize(text)
         tokens = set(vec.keys())
         entry = _Entry(text=text, vec=vec, value=payload.result, expires_at=time.time() + max(1, int(self._cfg.ttl)), tokens=tokens)
-        
+
         bucket = self._cache.setdefault(tool, [])
         entry_idx = len(bucket)
         bucket.append(entry)
-        
+
         # Update inverted index for new entry
         tool_index = self._index[tool]
         for token in tokens:
             tool_index[token].add(entry_idx)
-        
+
         # Evict expired entries and rebuild index
         now = time.time()
         # Filter out expired entries
         valid_entries = [e for e in bucket if e.expires_at > now]
-        
+
         # Cap size if needed
         if len(valid_entries) > self._cfg.max_entries:
             valid_entries = valid_entries[-self._cfg.max_entries:]
-        
+
         # Rebuild bucket and index if we removed or modified entries
         if len(valid_entries) != len(bucket):
             bucket.clear()
             bucket.extend(valid_entries)
-            
+
             # Rebuild inverted index for this tool
             self._index[tool].clear()
             for new_idx, entry in enumerate(bucket):
                 for token in entry.tokens:
                     self._index[tool][token].add(new_idx)
-        
+
         return ToolPostInvokeResult(metadata={"approx_cache_stored": True})
