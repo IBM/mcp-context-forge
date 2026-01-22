@@ -20,7 +20,7 @@ window.createResourcesController = function() {
      */
     destroyAllCharts() {
       // Use global registry for centralized cleanup
-      window.chartRegistry.destroyByPrefix('resources-');
+      Admin.chartRegistry.destroyByPrefix('resources-');
       this.charts = {};
     },
 
@@ -163,7 +163,7 @@ window.createResourcesController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('resources-usage');
+      Admin.chartRegistry.destroy('resources-usage');
 
       // Handle empty data
       if (!data.resources || data.resources.length === 0) {
@@ -254,7 +254,7 @@ window.createResourcesController = function() {
             },
           });
           // Register with global registry
-          window.chartRegistry.register('resources-usage', chart);
+          Admin.chartRegistry.register('resources-usage', chart);
           this.charts.resourceUsage = chart;
         } catch (e) {
           console.error('Failed to create resource usage chart:', e);
@@ -295,7 +295,7 @@ window.createResourcesController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('resources-slowness');
+      Admin.chartRegistry.destroy('resources-slowness');
 
       // Handle empty data
       if (!data.resources || data.resources.length === 0) {
@@ -404,7 +404,7 @@ window.createResourcesController = function() {
             },
           });
           // Register with global registry
-          window.chartRegistry.register('resources-slowness', chart);
+          Admin.chartRegistry.register('resources-slowness', chart);
           this.charts.resourceSlowness = chart;
         } catch (e) {
           console.error('Failed to create resource slowness chart:', e);
@@ -422,7 +422,7 @@ window.createResourcesController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('resources-errorprone');
+      Admin.chartRegistry.destroy('resources-errorprone');
 
       // Handle empty data
       if (!data.resources || data.resources.length === 0) {
@@ -537,7 +537,7 @@ window.createResourcesController = function() {
             },
           });
           // Register with global registry
-          window.chartRegistry.register('resources-errorprone', chart);
+          Admin.chartRegistry.register('resources-errorprone', chart);
           this.charts.resourceErrorProne = chart;
         } catch (e) {
           console.error('Failed to create resource error-prone chart:', e);

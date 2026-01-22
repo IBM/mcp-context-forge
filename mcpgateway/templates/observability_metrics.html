@@ -18,7 +18,7 @@ window.createMetricsController = function() {
      */
     destroyAllCharts() {
       // Use global registry for centralized cleanup
-      window.chartRegistry.destroyByPrefix('metrics-');
+      Admin.chartRegistry.destroyByPrefix('metrics-');
       this.charts = {};
     },
 
@@ -175,7 +175,7 @@ window.createMetricsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('metrics-percentile');
+      Admin.chartRegistry.destroy('metrics-percentile');
 
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
@@ -283,7 +283,7 @@ window.createMetricsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('metrics-percentile', chart);
+          Admin.chartRegistry.register('metrics-percentile', chart);
           this.charts.percentile = chart;
         } catch (e) {
           console.error('Failed to create percentile chart:', e);
@@ -308,7 +308,7 @@ window.createMetricsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('metrics-timeseries');
+      Admin.chartRegistry.destroy('metrics-timeseries');
 
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
@@ -415,7 +415,7 @@ window.createMetricsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('metrics-timeseries', chart);
+          Admin.chartRegistry.register('metrics-timeseries', chart);
           this.charts.timeSeries = chart;
         } catch (e) {
           console.error('Failed to create time series chart:', e);
@@ -493,7 +493,7 @@ window.createMetricsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('metrics-heatmap');
+      Admin.chartRegistry.destroy('metrics-heatmap');
 
       // Flatten the 2D heatmap data for Chart.js matrix
       const heatmapData = [];
@@ -609,7 +609,7 @@ window.createMetricsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('metrics-heatmap', chart);
+          Admin.chartRegistry.register('metrics-heatmap', chart);
           this.charts.heatmap = chart;
         } catch (e) {
           console.error('Failed to create heatmap chart:', e);
