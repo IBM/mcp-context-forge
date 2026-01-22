@@ -4999,12 +4999,14 @@ async def subscribe_roots_changes(
 ##################
 @utility_router.post("/rpc/")
 @utility_router.post("/rpc")
-async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """Handle RPC requests.
+async def handle_rpc(request: Request, user=Depends(get_current_user_with_permissions)):
+    """Handle RPC requests with optimized session management.
+
+    Uses fresh_db_session() for each database operation to release connections
+    immediately after use, preventing pool exhaustion under load (Issue #2323, #2330).
 
     Args:
         request (Request): The incoming FastAPI request.
-        db (Session): Database session.
         user: The authenticated user (dict with RBAC context).
 
     Returns:
@@ -5061,14 +5063,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
-            else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                if server_id:
+                    tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                    result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                else:
+                    tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                    result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                    if next_cursor:
+                        result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions (token_teams is None)
@@ -5078,17 +5082,21 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
-            else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
-                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                if server_id:
+                    tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                    result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                else:
+                    tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                    result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                    if next_cursor:
+                        result["nextCursor"] = next_cursor
         elif method == "list_gateways":
-            gateways = await gateway_service.list_gateways(db, include_inactive=False)
-            result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                gateways = await gateway_service.list_gateways(db, include_inactive=False)
+                result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
         elif method == "list_roots":
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
@@ -5100,14 +5108,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
-                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
-            else:
-                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
-                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                if server_id:
+                    resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
+                    result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+                else:
+                    resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                    result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+                    if next_cursor:
+                        result["nextCursor"] = next_cursor
         elif method == "resources/read":
             uri = params.get("uri")
             request_id = params.get("requestId", None)
@@ -5129,26 +5139,30 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
             try:
-                result = await resource_service.read_resource(
-                    db,
-                    resource_uri=uri,
-                    request_id=request_id,
-                    user=auth_user_email,
-                    server_id=server_id,
-                    token_teams=auth_token_teams,
-                    plugin_context_table=plugin_context_table,
-                    plugin_global_context=plugin_global_context,
-                    meta_data=meta_data,
-                )
-                if hasattr(result, "model_dump"):
-                    result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-                else:
-                    result = {"contents": [result]}
+                # Use fresh_db_session to release connection immediately (Issue #2323)
+                with fresh_db_session() as db:
+                    result = await resource_service.read_resource(
+                        db,
+                        resource_uri=uri,
+                        request_id=request_id,
+                        user=auth_user_email,
+                        server_id=server_id,
+                        token_teams=auth_token_teams,
+                        plugin_context_table=plugin_context_table,
+                        plugin_global_context=plugin_global_context,
+                        meta_data=meta_data,
+                    )
+                    if hasattr(result, "model_dump"):
+                        result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
+                    else:
+                        result = {"contents": [result]}
             except ValueError:
                 # Resource has no local content, forward to upstream MCP server
-                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
+                # Use separate fresh_db_session for forward_request (Issue #2323)
+                with fresh_db_session() as db:
+                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                    if hasattr(result, "model_dump"):
+                        result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "resources/subscribe":
             # MCP spec-compliant resource subscription endpoint
             uri = params.get("uri")
@@ -5157,7 +5171,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get user email for subscriber ID
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
-            await resource_service.subscribe_resource(db, subscription)
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                await resource_service.subscribe_resource(db, subscription)
             result = {}
         elif method == "resources/unsubscribe":
             # MCP spec-compliant resource unsubscription endpoint
@@ -5167,7 +5183,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get user email for subscriber ID
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
-            await resource_service.unsubscribe_resource(db, subscription)
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                await resource_service.unsubscribe_resource(db, subscription)
             result = {}
         elif method == "prompts/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
@@ -5177,14 +5195,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = None  # Admin unrestricted
             elif token_teams is None:
                 token_teams = []  # Non-admin without teams = public-only (secure default)
-            if server_id:
-                prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
-                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
-            else:
-                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
-                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
-                if next_cursor:
-                    result["nextCursor"] = next_cursor
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                if server_id:
+                    prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                    result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+                else:
+                    prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                    result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+                    if next_cursor:
+                        result["nextCursor"] = next_cursor
         elif method == "prompts/get":
             name = params.get("name")
             arguments = params.get("arguments", {})
@@ -5203,19 +5223,21 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
-            result = await prompt_service.get_prompt(
-                db,
-                name,
-                arguments,
-                user=auth_user_email,
-                server_id=server_id,
-                token_teams=auth_token_teams,
-                plugin_context_table=plugin_context_table,
-                plugin_global_context=plugin_global_context,
-                _meta_data=meta_data,
-            )
-            if hasattr(result, "model_dump"):
-                result = result.model_dump(by_alias=True, exclude_none=True)
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                result = await prompt_service.get_prompt(
+                    db,
+                    name,
+                    arguments,
+                    user=auth_user_email,
+                    server_id=server_id,
+                    token_teams=auth_token_teams,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                    _meta_data=meta_data,
+                )
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "ping":
             # Per the MCP spec, a ping returns an empty result.
             result = {}
@@ -5271,26 +5293,31 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 async def execute_tool():
                     """Execute tool invocation with fallback to gateway forwarding.
 
+                    Uses fresh_db_session to release connection immediately (Issue #2323).
+                    Connection is released before downstream HTTP calls complete.
+
                     Returns:
                         The tool invocation result or gateway forwarding result.
                     """
-                    try:
-                        return await tool_service.invoke_tool(
-                            db=db,
-                            name=name,
-                            arguments=arguments,
-                            request_headers=headers,
-                            app_user_email=oauth_user_email,
-                            user_email=auth_user_email,
-                            token_teams=auth_token_teams,
-                            server_id=server_id,
-                            plugin_context_table=plugin_context_table,
-                            plugin_global_context=plugin_global_context,
-                            meta_data=meta_data,
-                        )
-                    except ValueError:
-                        # Fallback to gateway forwarding
-                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                    # Use fresh_db_session for each database operation
+                    with fresh_db_session() as db:
+                        try:
+                            return await tool_service.invoke_tool(
+                                db=db,
+                                name=name,
+                                arguments=arguments,
+                                request_headers=headers,
+                                app_user_email=oauth_user_email,
+                                user_email=auth_user_email,
+                                token_teams=auth_token_teams,
+                                server_id=server_id,
+                                plugin_context_table=plugin_context_table,
+                                plugin_global_context=plugin_global_context,
+                                meta_data=meta_data,
+                            )
+                        except ValueError:
+                            # Fallback to gateway forwarding
+                            return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
 
                 tool_task = asyncio.create_task(execute_tool())
 
@@ -5325,12 +5352,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             elif token_teams_rpc is None:
                 token_teams_rpc = []  # Non-admin without teams = public-only
 
-            resource_templates = await resource_service.list_resource_templates(
-                db,
-                user_email=user_email_rpc,
-                token_teams=token_teams_rpc,
-            )
-            result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                resource_templates = await resource_service.list_resource_templates(
+                    db,
+                    user_email=user_email_rpc,
+                    token_teams=token_teams_rpc,
+                )
+                result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
         elif method == "roots/list":
             # MCP spec-compliant method name
             roots = await root_service.list_roots()
@@ -5368,7 +5397,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "sampling/createMessage":
             # MCP spec-compliant sampling endpoint
-            result = await sampling_handler.create_message(db, params)
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                result = await sampling_handler.create_message(db, params)
         elif method.startswith("sampling/"):
             # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
@@ -5458,7 +5489,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = {}
         elif method == "completion/complete":
             # MCP spec-compliant completion endpoint
-            result = await completion_service.handle_completion(db, params)
+            # Use fresh_db_session to release connection immediately (Issue #2323)
+            with fresh_db_session() as db:
+                result = await completion_service.handle_completion(db, params)
         elif method.startswith("completion/"):
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
@@ -5494,30 +5527,33 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
             meta_data = params.get("_meta", None)
 
+            # Use fresh_db_session for each database operation (Issue #2323)
             try:
-                result = await tool_service.invoke_tool(
-                    db=db,
-                    name=method,
-                    arguments=params,
-                    request_headers=headers,
-                    app_user_email=oauth_user_email,
-                    user_email=auth_user_email,
-                    token_teams=auth_token_teams,
-                    server_id=server_id,
-                    plugin_context_table=plugin_context_table,
-                    plugin_global_context=plugin_global_context,
-                    meta_data=meta_data,
-                )
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
+                with fresh_db_session() as db:
+                    result = await tool_service.invoke_tool(
+                        db=db,
+                        name=method,
+                        arguments=params,
+                        request_headers=headers,
+                        app_user_email=oauth_user_email,
+                        user_email=auth_user_email,
+                        token_teams=auth_token_teams,
+                        server_id=server_id,
+                        plugin_context_table=plugin_context_table,
+                        plugin_global_context=plugin_global_context,
+                        meta_data=meta_data,
+                    )
+                    if hasattr(result, "model_dump"):
+                        result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
                 raise
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:
-                    result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
-                    if hasattr(result, "model_dump"):
-                        result = result.model_dump(by_alias=True, exclude_none=True)
+                    with fresh_db_session() as db:
+                        result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                        if hasattr(result, "model_dump"):
+                            result = result.model_dump(by_alias=True, exclude_none=True)
                 except Exception:
                     # If all else fails, return invalid method error
                     raise JSONRPCError(-32000, "Invalid method", params)

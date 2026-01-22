@@ -257,8 +257,8 @@ services:
       # Option B: QueuePool + pre_ping - better performance, validates before use
       - DB_POOL_CLASS=queue
       - DB_POOL_PRE_PING=true          # Validate connections before use (SELECT 1)
-      - DB_POOL_SIZE=20                # Pool size per worker
-      - DB_MAX_OVERFLOW=10             # Extra connections under load
+      - DB_POOL_SIZE=80                # Pool size per worker (48 workers × 100 = 4800 < 5000 MAX_CLIENT_CONN)
+      - DB_MAX_OVERFLOW=20             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
       - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -489,7 +489,7 @@ services:
       # Application code now properly closes transactions via get_db() commit-on-success pattern
       # This timeout is a safety net for any edge cases
       - "-c"
-      - "idle_in_transaction_session_timeout=300s"  # Kill stuck transactions after 300s (aligned with PgBouncer)
+      - "idle_in_transaction_session_timeout=300s"  # Kill stuck transactions after 300s
       - "-c"
       - "statement_timeout=120s"           # Kill runaway queries after 120s
       - "-c"
@@ -612,15 +612,15 @@ services:
       - SERVER_LIFETIME=3600           # Recycle server connections after 1 hour (prevents stale state)
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
-      - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
-      - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
+      - QUERY_WAIT_TIMEOUT=120         # Max wait for available connection before failing request (increased for load test)
+      - CLIENT_IDLE_TIMEOUT=600        # Close idle client connections (increased for load test)
+      - SERVER_CONNECT_TIMEOUT=10      # Timeout for new connections to PostgreSQL (increased)
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (allows slow admin page rendering)
+      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
