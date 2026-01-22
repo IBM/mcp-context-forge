@@ -3100,7 +3100,11 @@
                   name="oauth_enabled"
                   id="server-oauth-enabled"
                   class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+<<<<<<< HEAD
                   onchange="Admin.safeGetELement('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+=======
+                  onchange="Admin.document.getElementById('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+>>>>>>> 0ce8f75a (Create admin scope)
                 />
                 <label
                   for="server-oauth-enabled"
@@ -3510,7 +3514,11 @@
                       />
                       <div
                         id="dropdown-file-drop-zone"
+<<<<<<< HEAD
                         onclick="Admin.safeGetELement('dropdown-file-input').click()"
+=======
+                        onclick="Admin.document.getElementById('dropdown-file-input').click()"
+>>>>>>> 0ce8f75a (Create admin scope)
                         class="cursor-pointer"
                       >
                         <svg
@@ -5831,7 +5839,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div
                 id="ca-certificate-upload-drop-zone"
                 class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-gray-400 dark:hover:border-gray-500 cursor-pointer"
+<<<<<<< HEAD
                 onclick="Admin.safeGetElement('upload-ca-certificate').click()"
+=======
+                onclick="Admin.document.getElementById('upload-ca-certificate').click()"
+>>>>>>> 0ce8f75a (Create admin scope)
               >
                 <div class="space-y-2">
                   <svg
@@ -11278,7 +11290,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       name="oauth_enabled"
                       id="edit-server-oauth-enabled"
                       class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+<<<<<<< HEAD
                       onchange="Admin.safeGetElement('edit-server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+=======
+                      onchange="Admin.document.getElementById('edit-server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+>>>>>>> 0ce8f75a (Create admin scope)
                     />
                     <label
                       for="edit-server-oauth-enabled"
@@ -12675,8 +12691,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <html><head><title>Permission Audit</title></head><body>
             ${auditHtml}
             <div style="text-align: center; margin-top: 20px;">
-              <button onclick="window.print()" style="padding: 10px 20px; background: #4F46E5; color: white; border: none; border-radius: 4px; cursor: pointer;">Print Report</button>
-              <button onclick="window.close()" style="padding: 10px 20px; background: #6B7280; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px;">Close</button>
+              <button onclick="Admin.window.print()" style="padding: 10px 20px; background: #4F46E5; color: white; border: none; border-radius: 4px; cursor: pointer;">Print Report</button>
+              <button onclick="Admin.window.close()" style="padding: 10px 20px; background: #6B7280; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px;">Close</button>
             </div>
             </body></html>
           `);
@@ -12983,7 +12999,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     )
                     .join("")}
                 </ul>
-                <button onclick="this.closest('.fixed').remove()"
+                <button onclick="Admin.this.closest('.fixed').remove()"
                         class="mt-4 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 w-full">
                   Close
                 </button>
@@ -14610,7 +14626,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
+<<<<<<< HEAD
           onclick="Admin.safeGetElement('team-edit-modal').classList.add('hidden')"
+=======
+          onclick="Admin.document.getElementById('team-edit-modal').classList.add('hidden')"
+>>>>>>> 0ce8f75a (Create admin scope)
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14636,7 +14656,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
+<<<<<<< HEAD
           onclick="Admin.safeGetElement('team-join-requests-modal').classList.add('hidden')"
+=======
+          onclick="Admin.document.getElementById('team-join-requests-modal').classList.add('hidden')"
+>>>>>>> 0ce8f75a (Create admin scope)
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14651,7 +14675,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               Team Join Requests
             </h3>
             <button
+<<<<<<< HEAD
               onclick="Admin.safeGetElement('team-join-requests-modal').classList.add('hidden')"
+=======
+              onclick="Admin.document.getElementById('team-join-requests-modal').classList.add('hidden')"
+>>>>>>> 0ce8f75a (Create admin scope)
               class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
               <svg
