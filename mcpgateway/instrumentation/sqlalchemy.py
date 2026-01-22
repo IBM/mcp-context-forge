@@ -26,6 +26,9 @@ from typing import Any, Optional
 from sqlalchemy import event
 from sqlalchemy.engine import Connection, Engine
 
+# First-Party
+from mcpgateway.config import settings
+
 logger = logging.getLogger(__name__)
 
 # Thread-local storage for tracking queries in progress
@@ -58,10 +61,14 @@ class InstrumentationQueue:
     """
 
     def __init__(self, maxsize: Optional[int] = None) -> None:
+        """Initialize the instrumentation queue.
+
+        Args:
+            maxsize: Maximum queue size. If None, uses settings.instrumentation_queue_size or defaults to 1000.
+        """
         # Import settings lazily to avoid import cycles during module
         # initialization in tests or tooling.
         try:
-            from mcpgateway.config import settings
 
             cfg_size = getattr(settings, "instrumentation_queue_size", None)
         except Exception:
@@ -76,8 +83,13 @@ class InstrumentationQueue:
     def put(self, span: dict) -> bool:
         """Non-blocking put that returns success status.
 
-        Returns True if span was enqueued, False if queue was full.
         Updates total and dropped counters for metrics tracking.
+
+        Args:
+            span: Dictionary containing span data to enqueue.
+
+        Returns:
+            True if span was enqueued, False if queue was full.
         """
         try:
             self._queue.put_nowait(span)
@@ -93,8 +105,13 @@ class InstrumentationQueue:
     def put_nowait(self, span: dict) -> None:
         """Non-blocking put that mirrors Queue.put_nowait semantics.
 
-        Raises ``queue.Full`` when the queue is full. Counters are still
-        updated to track totals and drops for metrics.
+        Counters are still updated to track totals and drops for metrics.
+
+        Args:
+            span: Dictionary containing span data to enqueue.
+
+        Raises:
+            queue.Full: When the queue is full.
         """
         with self._lock:
             self._total_count += 1
@@ -106,9 +123,26 @@ class InstrumentationQueue:
             raise
 
     def get(self, timeout: Optional[float] = None):
+        """Get an item from the queue.
+
+        Args:
+            timeout: Optional timeout in seconds. If None, blocks indefinitely.
+
+        Returns:
+            The next span dict from the queue.
+
+        Raises:
+            queue.Empty: If timeout expires before an item is available.
+        """
         return self._queue.get(timeout=timeout)
 
     def task_done(self) -> None:
+        """Indicate that a formerly enqueued task is complete.
+
+        Used by queue consumer threads to signal completion of processing.
+        For each get() used to fetch a task, a subsequent call to task_done()
+        tells the queue that the processing is complete.
+        """
         self._queue.task_done()
 
     @property
@@ -142,7 +176,7 @@ class InstrumentationQueue:
                 drop_rate = 0.0
             else:
                 drop_rate = float(self._dropped_count) / float(self._total_count)
-            
+
             return {
                 "total": self._total_count,
                 "dropped": self._dropped_count,
