@@ -35,6 +35,7 @@ import hashlib
 import html
 import os as _os  # local alias to avoid collisions
 import sys
+from threading import Thread
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
@@ -169,28 +170,45 @@ set_logging_service(logging_service)
 # Wait for database to be ready before creating tables
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
-# Create database tables according to configured migration mode
-mode = getattr(settings, "migration_mode", "async").lower()
-if mode not in ("async", "sync", "skip"):
-    mode = "async"
+def _start_migrations() -> None:
+    """Start Alembic migrations according to configured `migration_mode`.
 
-if mode == "skip":
-    logger.info("Migrations skipped (MIGRATION_MODE=skip)")
-elif mode == "sync":
-    # Blocking (legacy) behavior
-    asyncio.run(bootstrap_db())
-else:
+    Respects settings.migration_mode which can be 'async', 'sync', or 'skip'.
+    Runs migrations synchronously when 'sync', skips when 'skip', and
+    attempts to start them in background when 'async' (attach to running
+    event loop or spawn a daemon thread when none exists).
+    """
+    migration_mode = getattr(settings, "migration_mode", "async")
+    try:
+        migration_mode = str(migration_mode).lower()
+    except Exception:
+        migration_mode = "async"
+
+    if migration_mode not in ("async", "sync", "skip"):
+        migration_mode = "async"
+
+    if migration_mode == "skip":
+        logger.info("Migrations skipped (MIGRATION_MODE=skip)")
+        return
+
+    if migration_mode == "sync":
+        # Blocking (legacy) behavior
+        asyncio.run(bootstrap_db())
+        return
+
     # Async/background migrations: try to attach to running loop or spawn a background thread
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         # No running loop (import-time); run migrations in a daemon thread to avoid blocking startup
-        from threading import Thread
-
         t = Thread(target=lambda: asyncio.run(bootstrap_db()), daemon=True)
         t.start()
     else:
         loop.create_task(bootstrap_db())
+
+
+# Start migrations at import time according to configuration
+_start_migrations()
 
 # Initialize plugin manager as a singleton (honor env overrides for tests)
 _env_flag = _os.getenv("PLUGINS_ENABLED")
@@ -6685,13 +6703,13 @@ def healthcheck():
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        status = {"status": "healthy"}
+        result = {"status": "healthy"}
         try:
             # Attach migration status if available
-            status["migration"] = getattr(bootstrap_db_module, "migration_status", None)
+            result["migration"] = getattr(bootstrap_db_module, "migration_status", None)
         except Exception:
-            status["migration"] = None
-        return status
+            result["migration"] = None
+        return result
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:

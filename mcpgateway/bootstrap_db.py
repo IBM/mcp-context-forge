@@ -582,11 +582,8 @@ def run_batched_update(connection: Connection, select_sql: str, update_sql: str,
             break
         # Execute update for this batch
         connection.execute(text(update_sql).bindparams(ids=ids), {"ids": ids})
-        try:
-            connection.commit()
-        except Exception:
-            # Best-effort commit per batch; bubble up error to caller
-            raise
+        # Commit per batch; allow exceptions to propagate to caller
+        connection.commit()
         total += len(ids)
     return total
 
@@ -606,7 +603,8 @@ async def main() -> None:
         None
 
     Raises:
-        Exception: If migration or bootstrap fails
+        TimeoutError: If the advisory lock cannot be acquired within the configured timeout.
+        Exception: If migration or bootstrap fails for other reasons.
     """
     # Mark migration as running so health endpoint can report
     migration_status["state"] = "running"
