@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import fresh_db_session, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
@@ -70,9 +70,7 @@ async def list_traces(
     attribute_search: Optional[str] = Query(None, description="Free-text search within trace attributes"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    _user=Depends(get_current_user_with_permissions)):
     """List traces with optional filtering.
 
     Query traces with various filters including time range, duration, status, HTTP method,
@@ -124,22 +122,23 @@ async def list_traces(
         >>> asyncio.run(run_list_traces())
         't1'
     """
-    service = ObservabilityService()
-    traces = service.query_traces(
-        db=db,
-        start_time=start_time,
-        end_time=end_time,
-        min_duration_ms=min_duration_ms,
-        max_duration_ms=max_duration_ms,
-        status=status,
-        http_status_code=http_status_code,
-        http_method=http_method,
-        user_email=user_email,
-        attribute_search=attribute_search,
-        limit=limit,
-        offset=offset,
-    )
-    return traces
+    with fresh_db_session() as db:
+        service = ObservabilityService()
+        traces = service.query_traces(
+            db=db,
+            start_time=start_time,
+            end_time=end_time,
+            min_duration_ms=min_duration_ms,
+            max_duration_ms=max_duration_ms,
+            status=status,
+            http_status_code=http_status_code,
+            http_method=http_method,
+            user_email=user_email,
+            attribute_search=attribute_search,
+            limit=limit,
+            offset=offset,
+        )
+        return traces
 
 
 @router.post("/traces/query", response_model=List[ObservabilityTraceRead])
@@ -147,9 +146,7 @@ async def list_traces(
 async def query_traces_advanced(
     # Third-Party
     request_body: dict,
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    _user=Depends(get_current_user_with_permissions)):
     """Advanced trace querying with attribute filtering.
 
     POST endpoint that accepts a JSON body with complex filtering criteria,
@@ -212,53 +209,54 @@ async def query_traces_advanced(
         >>> asyncio.run(run_query_traces())
         'tx'
     """
-    # Third-Party
-    from pydantic import ValidationError
+    with fresh_db_session() as db:
+        # Third-Party
+        from pydantic import ValidationError
 
-    try:
-        # Extract filters from request body
-        service = ObservabilityService()
+        try:
+            # Extract filters from request body
+            service = ObservabilityService()
 
-        # Parse datetime strings if provided
-        start_time = request_body.get("start_time")
-        if start_time and isinstance(start_time, str):
-            start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            # Parse datetime strings if provided
+            start_time = request_body.get("start_time")
+            if start_time and isinstance(start_time, str):
+                start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
 
-        end_time = request_body.get("end_time")
-        if end_time and isinstance(end_time, str):
-            end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            end_time = request_body.get("end_time")
+            if end_time and isinstance(end_time, str):
+                end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
 
-        traces = service.query_traces(
-            db=db,
-            start_time=start_time,
-            end_time=end_time,
-            min_duration_ms=request_body.get("min_duration_ms"),
-            max_duration_ms=request_body.get("max_duration_ms"),
-            status=request_body.get("status"),
-            status_in=request_body.get("status_in"),
-            status_not_in=request_body.get("status_not_in"),
-            http_status_code=request_body.get("http_status_code"),
-            http_status_code_in=request_body.get("http_status_code_in"),
-            http_method=request_body.get("http_method"),
-            http_method_in=request_body.get("http_method_in"),
-            user_email=request_body.get("user_email"),
-            user_email_in=request_body.get("user_email_in"),
-            attribute_filters=request_body.get("attribute_filters"),
-            attribute_filters_or=request_body.get("attribute_filters_or"),
-            attribute_search=request_body.get("attribute_search"),
-            name_contains=request_body.get("name_contains"),
-            order_by=request_body.get("order_by", "start_time_desc"),
-            limit=request_body.get("limit", 100),
-            offset=request_body.get("offset", 0),
-        )
-        return traces
-    except (ValidationError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
+            traces = service.query_traces(
+                db=db,
+                start_time=start_time,
+                end_time=end_time,
+                min_duration_ms=request_body.get("min_duration_ms"),
+                max_duration_ms=request_body.get("max_duration_ms"),
+                status=request_body.get("status"),
+                status_in=request_body.get("status_in"),
+                status_not_in=request_body.get("status_not_in"),
+                http_status_code=request_body.get("http_status_code"),
+                http_status_code_in=request_body.get("http_status_code_in"),
+                http_method=request_body.get("http_method"),
+                http_method_in=request_body.get("http_method_in"),
+                user_email=request_body.get("user_email"),
+                user_email_in=request_body.get("user_email_in"),
+                attribute_filters=request_body.get("attribute_filters"),
+                attribute_filters_or=request_body.get("attribute_filters_or"),
+                attribute_search=request_body.get("attribute_search"),
+                name_contains=request_body.get("name_contains"),
+                order_by=request_body.get("order_by", "start_time_desc"),
+                limit=request_body.get("limit", 100),
+                offset=request_body.get("offset", 0),
+            )
+            return traces
+        except (ValidationError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
 
 
 @router.get("/traces/{trace_id}", response_model=ObservabilityTraceWithSpans)
 @require_permission("admin.system_config")
-async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)):
+async def get_trace(trace_id: str, _user=Depends(get_current_user_with_permissions)):
     """Get a trace by ID with all its spans and events.
 
     Returns a complete trace with all nested spans and their events,
@@ -299,11 +297,12 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
         >>> asyncio.run(run_found_trace())
         'found'
     """
-    service = ObservabilityService()
-    trace = service.get_trace_with_spans(db, trace_id)
-    if not trace:
-        raise HTTPException(status_code=404, detail="Trace not found")
-    return trace
+    with fresh_db_session() as db:
+        service = ObservabilityService()
+        trace = service.get_trace_with_spans(db, trace_id)
+        if not trace:
+            raise HTTPException(status_code=404, detail="Trace not found")
+        return trace
 
 
 @router.get("/spans", response_model=List[ObservabilitySpanRead])
@@ -316,9 +315,7 @@ async def list_spans(
     end_time: Optional[datetime] = Query(None, description="Filter spans before this time"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    _user=Depends(get_current_user_with_permissions)):
     """List spans with optional filtering.
 
     Query spans by trace ID, resource type, resource name, or time range.
@@ -356,27 +353,26 @@ async def list_spans(
         >>> asyncio.run(run_list_spans())
         's1'
     """
-    service = ObservabilityService()
-    spans = service.query_spans(
-        db=db,
-        trace_id=trace_id,
-        resource_type=resource_type,
-        resource_name=resource_name,
-        start_time=start_time,
-        end_time=end_time,
-        limit=limit,
-        offset=offset,
-    )
-    return spans
+    with fresh_db_session() as db:
+        service = ObservabilityService()
+        spans = service.query_spans(
+            db=db,
+            trace_id=trace_id,
+            resource_type=resource_type,
+            resource_name=resource_name,
+            start_time=start_time,
+            end_time=end_time,
+            limit=limit,
+            offset=offset,
+        )
+        return spans
 
 
 @router.delete("/traces/cleanup")
 @require_permission("admin.system_config")
 async def cleanup_old_traces(
     days: int = Query(7, ge=1, description="Delete traces older than this many days"),
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    _user=Depends(get_current_user_with_permissions)):
     """Delete traces older than a specified number of days.
 
     Cleans up old trace data to manage storage. Cascading deletes will
@@ -403,19 +399,18 @@ async def cleanup_old_traces(
         >>> asyncio.run(run_cleanup())
         5
     """
-    service = ObservabilityService()
-    cutoff_time = datetime.now() - timedelta(days=days)
-    deleted = service.delete_old_traces(db, cutoff_time)
-    return {"deleted": deleted, "cutoff_time": cutoff_time}
+    with fresh_db_session() as db:
+        service = ObservabilityService()
+        cutoff_time = datetime.now() - timedelta(days=days)
+        deleted = service.delete_old_traces(db, cutoff_time)
+        return {"deleted": deleted, "cutoff_time": cutoff_time}
 
 
 @router.get("/stats")
 @require_permission("admin.system_config")
 async def get_stats(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    _user=Depends(get_current_user_with_permissions)):
     """Get observability statistics.
 
     Returns summary statistics including:
@@ -431,43 +426,44 @@ async def get_stats(
     Returns:
         dict: Statistics including counts, error rate, and slowest endpoints
     """
-    # Third-Party
-    from sqlalchemy import func
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import func
 
-    # First-Party
-    from mcpgateway.db import ObservabilityTrace
+        # First-Party
+        from mcpgateway.db import ObservabilityTrace
 
-    ObservabilityService()
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+        ObservabilityService()
+        cutoff_time = datetime.now() - timedelta(hours=hours)
 
-    # Get basic counts
-    total_traces = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time).scalar()
+        # Get basic counts
+        total_traces = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time).scalar()
 
-    success_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "ok").scalar()
+        success_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "ok").scalar()
 
-    error_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "error").scalar()
+        error_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "error").scalar()
 
-    avg_duration = db.query(func.avg(ObservabilityTrace.duration_ms)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None)).scalar() or 0
+        avg_duration = db.query(func.avg(ObservabilityTrace.duration_ms)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None)).scalar() or 0
 
-    # Get slowest endpoints
-    slowest = (
-        db.query(ObservabilityTrace.name, func.avg(ObservabilityTrace.duration_ms).label("avg_duration"), func.count(ObservabilityTrace.trace_id).label("count"))
-        .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
-        .group_by(ObservabilityTrace.name)
-        .order_by(func.avg(ObservabilityTrace.duration_ms).desc())
-        .limit(10)
-        .all()
-    )
+        # Get slowest endpoints
+        slowest = (
+            db.query(ObservabilityTrace.name, func.avg(ObservabilityTrace.duration_ms).label("avg_duration"), func.count(ObservabilityTrace.trace_id).label("count"))
+            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
+            .group_by(ObservabilityTrace.name)
+            .order_by(func.avg(ObservabilityTrace.duration_ms).desc())
+            .limit(10)
+            .all()
+        )
 
-    return {
-        "time_window_hours": hours,
-        "total_traces": total_traces,
-        "success_count": success_count,
-        "error_count": error_count,
-        "error_rate": (error_count / total_traces * 100) if total_traces > 0 else 0,
-        "avg_duration_ms": round(avg_duration, 2),
-        "slowest_endpoints": [{"name": row[0], "avg_duration_ms": round(row[1], 2), "count": row[2]} for row in slowest],
-    }
+        return {
+            "time_window_hours": hours,
+            "total_traces": total_traces,
+            "success_count": success_count,
+            "error_count": error_count,
+            "error_rate": (error_count / total_traces * 100) if total_traces > 0 else 0,
+            "avg_duration_ms": round(avg_duration, 2),
+            "slowest_endpoints": [{"name": row[0], "avg_duration_ms": round(row[1], 2), "count": row[2]} for row in slowest],
+        }
 
 
 @router.post("/traces/export")
@@ -475,9 +471,7 @@ async def get_stats(
 async def export_traces(
     request_body: dict,
     format: str = Query("json", description="Export format (json, csv, ndjson)"),
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    _user=Depends(get_current_user_with_permissions)):
     """Export traces in various formats.
 
     POST endpoint that accepts filter criteria (same as /traces/query) and exports
@@ -544,118 +538,117 @@ async def export_traces(
         >>> asyncio.run(run_ndjson_export())
         'StreamingResponse'
     """
-    # Standard
-    import csv
-    import io
+    with fresh_db_session() as db:
+        # Standard
+        import csv
+        import io
 
-    # Third-Party
-    from starlette.responses import Response, StreamingResponse
+        # Third-Party
+        from starlette.responses import Response, StreamingResponse
 
-    # Validate format
-    if format not in ["json", "csv", "ndjson"]:
-        raise HTTPException(status_code=400, detail="format must be one of: json, csv, ndjson")
+        # Validate format
+        if format not in ["json", "csv", "ndjson"]:
+            raise HTTPException(status_code=400, detail="format must be one of: json, csv, ndjson")
 
-    try:
-        service = ObservabilityService()
+        try:
+            service = ObservabilityService()
 
-        # Parse datetime strings
-        start_time = request_body.get("start_time")
-        if start_time and isinstance(start_time, str):
-            start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            # Parse datetime strings
+            start_time = request_body.get("start_time")
+            if start_time and isinstance(start_time, str):
+                start_time = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
 
-        end_time = request_body.get("end_time")
-        if end_time and isinstance(end_time, str):
-            end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+            end_time = request_body.get("end_time")
+            if end_time and isinstance(end_time, str):
+                end_time = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
 
-        # Query traces
-        traces = service.query_traces(
-            db=db,
-            start_time=start_time,
-            end_time=end_time,
-            min_duration_ms=request_body.get("min_duration_ms"),
-            max_duration_ms=request_body.get("max_duration_ms"),
-            status=request_body.get("status"),
-            status_in=request_body.get("status_in"),
-            http_status_code=request_body.get("http_status_code"),
-            http_method=request_body.get("http_method"),
-            user_email=request_body.get("user_email"),
-            order_by=request_body.get("order_by", "start_time_desc"),
-            limit=request_body.get("limit", 1000),  # Higher limit for export
-            offset=request_body.get("offset", 0),
-        )
+            # Query traces
+            traces = service.query_traces(
+                db=db,
+                start_time=start_time,
+                end_time=end_time,
+                min_duration_ms=request_body.get("min_duration_ms"),
+                max_duration_ms=request_body.get("max_duration_ms"),
+                status=request_body.get("status"),
+                status_in=request_body.get("status_in"),
+                http_status_code=request_body.get("http_status_code"),
+                http_method=request_body.get("http_method"),
+                user_email=request_body.get("user_email"),
+                order_by=request_body.get("order_by", "start_time_desc"),
+                limit=request_body.get("limit", 1000),  # Higher limit for export
+                offset=request_body.get("offset", 0),
+            )
 
-        if format == "json":
-            # Standard JSON response
-            return [
-                {
-                    "trace_id": t.trace_id,
-                    "name": t.name,
-                    "start_time": t.start_time.isoformat() if t.start_time else None,
-                    "end_time": t.end_time.isoformat() if t.end_time else None,
-                    "duration_ms": t.duration_ms,
-                    "status": t.status,
-                    "http_method": t.http_method,
-                    "http_url": t.http_url,
-                    "http_status_code": t.http_status_code,
-                    "user_email": t.user_email,
-                }
-                for t in traces
-            ]
+            if format == "json":
+                # Standard JSON response
+                return [
+                    {
+                        "trace_id": t.trace_id,
+                        "name": t.name,
+                        "start_time": t.start_time.isoformat() if t.start_time else None,
+                        "end_time": t.end_time.isoformat() if t.end_time else None,
+                        "duration_ms": t.duration_ms,
+                        "status": t.status,
+                        "http_method": t.http_method,
+                        "http_url": t.http_url,
+                        "http_status_code": t.http_status_code,
+                        "user_email": t.user_email,
+                    }
+                    for t in traces
+                ]
 
-        elif format == "csv":
-            # CSV export
-            output = io.StringIO()
-            writer = csv.writer(output)
+            elif format == "csv":
+                # CSV export
+                output = io.StringIO()
+                writer = csv.writer(output)
 
-            # Write header
-            writer.writerow(["trace_id", "name", "start_time", "duration_ms", "status", "http_method", "http_status_code", "user_email"])
+                # Write header
+                writer.writerow(["trace_id", "name", "start_time", "duration_ms", "status", "http_method", "http_status_code", "user_email"])
 
-            # Write data
-            for t in traces:
-                writer.writerow(
-                    [t.trace_id, t.name, t.start_time.isoformat() if t.start_time else "", t.duration_ms or "", t.status, t.http_method or "", t.http_status_code or "", t.user_email or ""]
-                )
-
-            output.seek(0)
-            return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=traces.csv"})
-
-        elif format == "ndjson":
-            # Newline-delimited JSON (streaming)
-            def generate():
-                """Yield newline-delimited JSON strings for each trace.
-
-                This nested generator is used to stream NDJSON responses.
-
-                Yields:
-                    str: A JSON-encoded line (with trailing newline) for a trace.
-                """
+                # Write data
                 for t in traces:
-                    yield orjson.dumps(
-                        {
-                            "trace_id": t.trace_id,
-                            "name": t.name,
-                            "start_time": t.start_time.isoformat() if t.start_time else None,
-                            "duration_ms": t.duration_ms,
-                            "status": t.status,
-                            "http_method": t.http_method,
-                            "http_status_code": t.http_status_code,
-                            "user_email": t.user_email,
-                        }
-                    ).decode() + "\n"
+                    writer.writerow(
+                        [t.trace_id, t.name, t.start_time.isoformat() if t.start_time else "", t.duration_ms or "", t.status, t.http_method or "", t.http_status_code or "", t.user_email or ""]
+                    )
 
-            return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
+                output.seek(0)
+                return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=traces.csv"})
 
-    except (ValueError, Exception) as e:
-        raise HTTPException(status_code=400, detail=f"Export failed: {e}")
+            elif format == "ndjson":
+                # Newline-delimited JSON (streaming)
+                def generate():
+                    """Yield newline-delimited JSON strings for each trace.
+
+                    This nested generator is used to stream NDJSON responses.
+
+                    Yields:
+                        str: A JSON-encoded line (with trailing newline) for a trace.
+                    """
+                    for t in traces:
+                        yield orjson.dumps(
+                            {
+                                "trace_id": t.trace_id,
+                                "name": t.name,
+                                "start_time": t.start_time.isoformat() if t.start_time else None,
+                                "duration_ms": t.duration_ms,
+                                "status": t.status,
+                                "http_method": t.http_method,
+                                "http_status_code": t.http_status_code,
+                                "user_email": t.user_email,
+                            }
+                        ).decode() + "\n"
+
+                return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
+
+        except (ValueError, Exception) as e:
+            raise HTTPException(status_code=400, detail=f"Export failed: {e}")
 
 
 @router.get("/analytics/query-performance")
 @require_permission("admin.system_config")
 async def get_query_performance(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
-    db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
-):
+    _user=Depends(get_current_user_with_permissions)):
     """Get query performance analytics.
 
     Returns performance metrics about trace queries including:
@@ -708,17 +701,18 @@ async def get_query_performance(
         4
 
     """
+    with fresh_db_session() as db:
 
-    # First-Party
+        # First-Party
 
-    ObservabilityService()
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+        ObservabilityService()
+        cutoff_time = datetime.now() - timedelta(hours=hours)
 
-    # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
-    dialect_name = db.get_bind().dialect.name
-    if dialect_name == "postgresql":
-        return _get_query_performance_postgresql(db, cutoff_time, hours)
-    return _get_query_performance_python(db, cutoff_time, hours)
+        # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
+        dialect_name = db.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            return _get_query_performance_postgresql(db, cutoff_time, hours)
+        return _get_query_performance_python(db, cutoff_time, hours)
 
 
 def _get_query_performance_postgresql(db: Session, cutoff_time: datetime, hours: int) -> dict:

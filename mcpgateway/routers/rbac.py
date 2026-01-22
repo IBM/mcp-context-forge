@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import Permissions, SessionLocal
+from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
 from mcpgateway.services.permission_service import PermissionService
@@ -77,7 +77,7 @@ def get_db() -> Generator[Session, None, None]:
 
 @router.post("/roles", response_model=RoleResponse)
 @require_admin_permission()
-async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions)):
     """Create a new role.
 
     Requires admin permissions to create roles.
@@ -98,27 +98,28 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
         >>> asyncio.iscoroutinefunction(create_role)
         True
     """
-    try:
-        role_service = RoleService(db)
-        role = await role_service.create_role(
-            name=role_data.name,
-            description=role_data.description,
-            scope=role_data.scope,
-            permissions=role_data.permissions,
-            inherits_from=role_data.inherits_from,
-            created_by=user["email"],
-            is_system_role=role_data.is_system_role or False,
-        )
+    with fresh_db_session() as db:
+        try:
+            role_service = RoleService(db)
+            role = await role_service.create_role(
+                name=role_data.name,
+                description=role_data.description,
+                scope=role_data.scope,
+                permissions=role_data.permissions,
+                inherits_from=role_data.inherits_from,
+                created_by=user["email"],
+                is_system_role=role_data.is_system_role or False,
+            )
 
-        logger.info(f"Role created: {role.id} by {user['email']}")
-        return RoleResponse.from_orm(role)
+            logger.info(f"Role created: {role.id} by {user['email']}")
+            return RoleResponse.from_orm(role)
 
-    except ValueError as e:
-        logger.error(f"Role creation validation error: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(f"Role creation failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create role")
+        except ValueError as e:
+            logger.error(f"Role creation validation error: {e}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            logger.error(f"Role creation failed: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create role")
 
 
 @router.get("/roles", response_model=List[RoleResponse])
@@ -126,9 +127,7 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
 async def list_roles(
     scope: Optional[str] = Query(None, description="Filter by scope"),
     active_only: bool = Query(True, description="Show only active roles"),
-    user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
-):
+    user=Depends(get_current_user_with_permissions)):
     """List all roles.
 
     Args:
@@ -148,20 +147,21 @@ async def list_roles(
         >>> asyncio.iscoroutinefunction(list_roles)
         True
     """
-    try:
-        role_service = RoleService(db)
-        roles = await role_service.list_roles(scope=scope)
+    with fresh_db_session() as db:
+        try:
+            role_service = RoleService(db)
+            roles = await role_service.list_roles(scope=scope)
 
-        return [RoleResponse.from_orm(role) for role in roles]
+            return [RoleResponse.from_orm(role) for role in roles]
 
-    except Exception as e:
-        logger.error(f"Failed to list roles: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve roles")
+        except Exception as e:
+            logger.error(f"Failed to list roles: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve roles")
 
 
 @router.get("/roles/{role_id}", response_model=RoleResponse)
 @require_permission("admin.user_management")
-async def get_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)):
     """Get role details by ID.
 
     Args:
@@ -180,25 +180,26 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
         >>> asyncio.iscoroutinefunction(get_role)
         True
     """
-    try:
-        role_service = RoleService(db)
-        role = await role_service.get_role_by_id(role_id)
+    with fresh_db_session() as db:
+        try:
+            role_service = RoleService(db)
+            role = await role_service.get_role_by_id(role_id)
 
-        if not role:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+            if not role:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        return RoleResponse.from_orm(role)
+            return RoleResponse.from_orm(role)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get role {role_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve role")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get role {role_id}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve role")
 
 
 @router.put("/roles/{role_id}", response_model=RoleResponse)
 @require_admin_permission()
-async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions)):
     """Update an existing role.
 
     Args:
@@ -218,29 +219,30 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
         >>> asyncio.iscoroutinefunction(update_role)
         True
     """
-    try:
-        role_service = RoleService(db)
-        role = await role_service.update_role(role_id, **role_data.dict(exclude_unset=True))
+    with fresh_db_session() as db:
+        try:
+            role_service = RoleService(db)
+            role = await role_service.update_role(role_id, **role_data.dict(exclude_unset=True))
 
-        if not role:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+            if not role:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        logger.info(f"Role updated: {role_id} by {user['email']}")
-        return RoleResponse.from_orm(role)
+            logger.info(f"Role updated: {role_id} by {user['email']}")
+            return RoleResponse.from_orm(role)
 
-    except HTTPException:
-        raise
-    except ValueError as e:
-        logger.error(f"Role update validation error: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(f"Role update failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update role")
+        except HTTPException:
+            raise
+        except ValueError as e:
+            logger.error(f"Role update validation error: {e}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            logger.error(f"Role update failed: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update role")
 
 
 @router.delete("/roles/{role_id}")
 @require_admin_permission()
-async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions)):
     """Delete a role.
 
     Args:
@@ -259,21 +261,22 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
         >>> asyncio.iscoroutinefunction(delete_role)
         True
     """
-    try:
-        role_service = RoleService(db)
-        success = await role_service.delete_role(role_id)
+    with fresh_db_session() as db:
+        try:
+            role_service = RoleService(db)
+            success = await role_service.delete_role(role_id)
 
-        if not success:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
+            if not success:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
 
-        logger.info(f"Role deleted: {role_id} by {user['email']}")
-        return {"message": "Role deleted successfully"}
+            logger.info(f"Role deleted: {role_id} by {user['email']}")
+            return {"message": "Role deleted successfully"}
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Role deletion failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete role")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Role deletion failed: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete role")
 
 
 # ===== User Role Assignment Endpoints =====
@@ -281,7 +284,7 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
 
 @router.post("/users/{user_email}/roles", response_model=UserRoleResponse)
 @require_permission("admin.user_management")
-async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRequest, user=Depends(get_current_user_with_permissions)):
     """Assign a role to a user.
 
     Args:
@@ -301,21 +304,22 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
         >>> asyncio.iscoroutinefunction(assign_role_to_user)
         True
     """
-    try:
-        role_service = RoleService(db)
-        user_role = await role_service.assign_role_to_user(
-            user_email=user_email, role_id=assignment_data.role_id, scope=assignment_data.scope, scope_id=assignment_data.scope_id, granted_by=user["email"], expires_at=assignment_data.expires_at
-        )
+    with fresh_db_session() as db:
+        try:
+            role_service = RoleService(db)
+            user_role = await role_service.assign_role_to_user(
+                user_email=user_email, role_id=assignment_data.role_id, scope=assignment_data.scope, scope_id=assignment_data.scope_id, granted_by=user["email"], expires_at=assignment_data.expires_at
+            )
 
-        logger.info(f"Role assigned: {assignment_data.role_id} to {user_email} by {user['email']}")
-        return UserRoleResponse.from_orm(user_role)
+            logger.info(f"Role assigned: {assignment_data.role_id} to {user_email} by {user['email']}")
+            return UserRoleResponse.from_orm(user_role)
 
-    except ValueError as e:
-        logger.error(f"Role assignment validation error: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(f"Role assignment failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to assign role")
+        except ValueError as e:
+            logger.error(f"Role assignment validation error: {e}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            logger.error(f"Role assignment failed: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to assign role")
 
 
 @router.get("/users/{user_email}/roles", response_model=List[UserRoleResponse])
@@ -324,9 +328,7 @@ async def get_user_roles(
     user_email: str,
     scope: Optional[str] = Query(None, description="Filter by scope"),
     active_only: bool = Query(True, description="Show only active assignments"),
-    user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
-):
+    user=Depends(get_current_user_with_permissions)):
     """Get roles assigned to a user.
 
     Args:
@@ -347,15 +349,16 @@ async def get_user_roles(
         >>> asyncio.iscoroutinefunction(get_user_roles)
         True
     """
-    try:
-        permission_service = PermissionService(db)
-        user_roles = await permission_service.get_user_roles(user_email=user_email, scope=scope, include_expired=not active_only)
+    with fresh_db_session() as db:
+        try:
+            permission_service = PermissionService(db)
+            user_roles = await permission_service.get_user_roles(user_email=user_email, scope=scope, include_expired=not active_only)
 
-        return [UserRoleResponse.from_orm(user_role) for user_role in user_roles]
+            return [UserRoleResponse.from_orm(user_role) for user_role in user_roles]
 
-    except Exception as e:
-        logger.error(f"Failed to get user roles for {user_email}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user roles")
+        except Exception as e:
+            logger.error(f"Failed to get user roles for {user_email}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user roles")
 
 
 @router.delete("/users/{user_email}/roles/{role_id}")
@@ -365,9 +368,7 @@ async def revoke_user_role(
     role_id: str,
     scope: Optional[str] = Query(None, description="Scope filter"),
     scope_id: Optional[str] = Query(None, description="Scope ID filter"),
-    user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
-):
+    user=Depends(get_current_user_with_permissions)):
     """Revoke a role from a user.
 
     Args:
@@ -389,21 +390,22 @@ async def revoke_user_role(
         >>> asyncio.iscoroutinefunction(revoke_user_role)
         True
     """
-    try:
-        role_service = RoleService(db)
-        success = await role_service.revoke_role_from_user(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id)
+    with fresh_db_session() as db:
+        try:
+            role_service = RoleService(db)
+            success = await role_service.revoke_role_from_user(user_email=user_email, role_id=role_id, scope=scope, scope_id=scope_id)
 
-        if not success:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
+            if not success:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role assignment not found")
 
-        logger.info(f"Role revoked: {role_id} from {user_email} by {user['email']}")
-        return {"message": "Role revoked successfully"}
+            logger.info(f"Role revoked: {role_id} from {user_email} by {user['email']}")
+            return {"message": "Role revoked successfully"}
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Role revocation failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke role")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Role revocation failed: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to revoke role")
 
 
 # ===== Permission Checking Endpoints =====
@@ -411,7 +413,7 @@ async def revoke_user_role(
 
 @router.post("/permissions/check", response_model=PermissionCheckResponse)
 @require_permission("admin.security_audit")
-async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_current_user_with_permissions)):
     """Check if a user has specific permission.
 
     Args:
@@ -430,28 +432,29 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
         >>> asyncio.iscoroutinefunction(check_permission)
         True
     """
-    try:
-        permission_service = PermissionService(db)
-        granted = await permission_service.check_permission(
-            user_email=check_data.user_email,
-            permission=check_data.permission,
-            resource_type=check_data.resource_type,
-            resource_id=check_data.resource_id,
-            team_id=check_data.team_id,
-            ip_address=user.get("ip_address"),
-            user_agent=user.get("user_agent"),
-        )
+    with fresh_db_session() as db:
+        try:
+            permission_service = PermissionService(db)
+            granted = await permission_service.check_permission(
+                user_email=check_data.user_email,
+                permission=check_data.permission,
+                resource_type=check_data.resource_type,
+                resource_id=check_data.resource_id,
+                team_id=check_data.team_id,
+                ip_address=user.get("ip_address"),
+                user_agent=user.get("user_agent"),
+            )
 
-        return PermissionCheckResponse(user_email=check_data.user_email, permission=check_data.permission, granted=granted, checked_at=datetime.now(tz=timezone.utc), checked_by=user["email"])
+            return PermissionCheckResponse(user_email=check_data.user_email, permission=check_data.permission, granted=granted, checked_at=datetime.now(tz=timezone.utc), checked_by=user["email"])
 
-    except Exception as e:
-        logger.error(f"Permission check failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to check permission")
+        except Exception as e:
+            logger.error(f"Permission check failed: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to check permission")
 
 
 @router.get("/permissions/user/{user_email}", response_model=List[str])
 @require_permission("admin.security_audit")
-async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions)):
     """Get all effective permissions for a user.
 
     Args:
@@ -471,15 +474,16 @@ async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(N
         >>> asyncio.iscoroutinefunction(get_user_permissions)
         True
     """
-    try:
-        permission_service = PermissionService(db)
-        permissions = await permission_service.get_user_permissions(user_email=user_email, team_id=team_id)
+    with fresh_db_session() as db:
+        try:
+            permission_service = PermissionService(db)
+            permissions = await permission_service.get_user_permissions(user_email=user_email, team_id=team_id)
 
-        return sorted(list(permissions))
+            return sorted(list(permissions))
 
-    except Exception as e:
-        logger.error(f"Failed to get user permissions for {user_email}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user permissions")
+        except Exception as e:
+            logger.error(f"Failed to get user permissions for {user_email}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve user permissions")
 
 
 @router.get("/permissions/available", response_model=PermissionListResponse)
@@ -510,7 +514,7 @@ async def get_available_permissions(user=Depends(get_current_user_with_permissio
 
 
 @router.get("/my/roles", response_model=List[UserRoleResponse])
-async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_my_roles(user=Depends(get_current_user_with_permissions)):
     """Get current user's role assignments.
 
     Args:
@@ -528,19 +532,20 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Sess
         >>> asyncio.iscoroutinefunction(get_my_roles)
         True
     """
-    try:
-        permission_service = PermissionService(db)
-        user_roles = await permission_service.get_user_roles(user_email=user["email"], include_expired=False)
+    with fresh_db_session() as db:
+        try:
+            permission_service = PermissionService(db)
+            user_roles = await permission_service.get_user_roles(user_email=user["email"], include_expired=False)
 
-        return [UserRoleResponse.from_orm(user_role) for user_role in user_roles]
+            return [UserRoleResponse.from_orm(user_role) for user_role in user_roles]
 
-    except Exception as e:
-        logger.error(f"Failed to get my roles for {user['email']}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your roles")
+        except Exception as e:
+            logger.error(f"Failed to get my roles for {user['email']}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your roles")
 
 
 @router.get("/my/permissions", response_model=List[str])
-async def get_my_permissions(team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_my_permissions(team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions)):
     """Get current user's effective permissions.
 
     Args:
@@ -559,12 +564,13 @@ async def get_my_permissions(team_id: Optional[str] = Query(None, description="T
         >>> asyncio.iscoroutinefunction(get_my_permissions)
         True
     """
-    try:
-        permission_service = PermissionService(db)
-        permissions = await permission_service.get_user_permissions(user_email=user["email"], team_id=team_id)
+    with fresh_db_session() as db:
+        try:
+            permission_service = PermissionService(db)
+            permissions = await permission_service.get_user_permissions(user_email=user["email"], team_id=team_id)
 
-        return sorted(list(permissions))
+            return sorted(list(permissions))
 
-    except Exception as e:
-        logger.error(f"Failed to get my permissions for {user['email']}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your permissions")
+        except Exception as e:
+            logger.error(f"Failed to get my permissions for {user['email']}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve your permissions")

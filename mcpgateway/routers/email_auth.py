@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser, SessionLocal, utc_now
+from mcpgateway.db import fresh_db_session, EmailUser, SessionLocal, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     AuthenticationResponse,
@@ -229,7 +229,7 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
 
 
 @email_auth_router.post("/login", response_model=AuthenticationResponse)
-async def login(login_request: EmailLoginRequest, request: Request, db: Session = Depends(get_db)):
+async def login(login_request: EmailLoginRequest, request: Request):
     """Authenticate user with email and password.
 
     Args:
@@ -255,83 +255,84 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
               "password": "secure_password"
             }
     """
-    auth_service = EmailAuthService(db)
-    ip_address = get_client_ip(request)
-    user_agent = get_user_agent(request)
+    with fresh_db_session() as db:
+        auth_service = EmailAuthService(db)
+        ip_address = get_client_ip(request)
+        user_agent = get_user_agent(request)
 
-    try:
-        # Authenticate user
-        user = await auth_service.authenticate_user(email=login_request.email, password=login_request.password, ip_address=ip_address, user_agent=user_agent)
+        try:
+            # Authenticate user
+            user = await auth_service.authenticate_user(email=login_request.email, password=login_request.password, ip_address=ip_address, user_agent=user_agent)
 
-        if not user:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+            if not user:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-        # Password change enforcement respects master switch and individual toggles
-        needs_password_change = False
+            # Password change enforcement respects master switch and individual toggles
+            needs_password_change = False
 
-        if settings.password_change_enforcement_enabled:
-            # If flag is set on the user, always honor it (flag is cleared when password is changed)
-            if getattr(user, "password_change_required", False):
-                needs_password_change = True
-                logger.debug("User %s has password_change_required flag set", login_request.email)
+            if settings.password_change_enforcement_enabled:
+                # If flag is set on the user, always honor it (flag is cleared when password is changed)
+                if getattr(user, "password_change_required", False):
+                    needs_password_change = True
+                    logger.debug("User %s has password_change_required flag set", login_request.email)
 
-            # Enforce expiry-based password change if configured and not already required
-            if not needs_password_change:
-                try:
-                    pwd_changed = getattr(user, "password_changed_at", None)
-                    if isinstance(pwd_changed, datetime):
-                        age_days = (utc_now() - pwd_changed).days
-                        max_age = getattr(settings, "password_max_age_days", 90)
-                        if age_days >= max_age:
+                # Enforce expiry-based password change if configured and not already required
+                if not needs_password_change:
+                    try:
+                        pwd_changed = getattr(user, "password_changed_at", None)
+                        if isinstance(pwd_changed, datetime):
+                            age_days = (utc_now() - pwd_changed).days
+                            max_age = getattr(settings, "password_max_age_days", 90)
+                            if age_days >= max_age:
+                                needs_password_change = True
+                                logger.debug("User %s password expired (%s days >= %s)", login_request.email, age_days, max_age)
+                    except Exception as exc:
+                        logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
+
+                # Detect default password on login if enabled
+                if getattr(settings, "detect_default_password_on_login", True):
+                    # First-Party
+                    from mcpgateway.services.argon2_service import Argon2PasswordService
+
+                    password_service = Argon2PasswordService()
+                    is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                    if is_using_default_password:
+                        # Mark user for password change depending on configuration
+                        if getattr(settings, "require_password_change_for_default_password", True):
+                            user.password_change_required = True
                             needs_password_change = True
-                            logger.debug("User %s password expired (%s days >= %s)", login_request.email, age_days, max_age)
-                except Exception as exc:
-                    logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
+                            try:
+                                db.commit()
+                            except Exception as exc:  # log commit failures
+                                logger.warning("Failed to commit password_change_required flag for %s: %s", login_request.email, exc)
+                        else:
+                            logger.info("User %s is using default password but enforcement is disabled", login_request.email)
 
-            # Detect default password on login if enabled
-            if getattr(settings, "detect_default_password_on_login", True):
-                # First-Party
-                from mcpgateway.services.argon2_service import Argon2PasswordService
+            if needs_password_change:
+                logger.info(f"Login blocked for {login_request.email}: password change required")
+                return ORJSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Password change required. Please change your password before continuing."},
+                    headers={"X-Password-Change-Required": "true"},
+                )
 
-                password_service = Argon2PasswordService()
-                is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
-                if is_using_default_password:
-                    # Mark user for password change depending on configuration
-                    if getattr(settings, "require_password_change_for_default_password", True):
-                        user.password_change_required = True
-                        needs_password_change = True
-                        try:
-                            db.commit()
-                        except Exception as exc:  # log commit failures
-                            logger.warning("Failed to commit password_change_required flag for %s: %s", login_request.email, exc)
-                    else:
-                        logger.info("User %s is using default password but enforcement is disabled", login_request.email)
+            # Create access token
+            access_token, expires_in = await create_access_token(user)
 
-        if needs_password_change:
-            logger.info(f"Login blocked for {login_request.email}: password change required")
-            return ORJSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": "Password change required. Please change your password before continuing."},
-                headers={"X-Password-Change-Required": "true"},
-            )
+            # Return authentication response
+            return AuthenticationResponse(
+                access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+            )  # nosec B106 - OAuth2 token type, not a password
 
-        # Create access token
-        access_token, expires_in = await create_access_token(user)
-
-        # Return authentication response
-        return AuthenticationResponse(
-            access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-        )  # nosec B106 - OAuth2 token type, not a password
-
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
-    except Exception as e:
-        logger.error(f"Login error for {login_request.email}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
+        except HTTPException:
+            raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
+        except Exception as e:
+            logger.error(f"Login error for {login_request.email}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
 
 
 @email_auth_router.post("/register", response_model=AuthenticationResponse)
-async def register(registration_request: EmailRegistrationRequest, request: Request, db: Session = Depends(get_db)):
+async def register(registration_request: EmailRegistrationRequest, request: Request):
     """Register a new user account.
 
     Args:
@@ -353,42 +354,43 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
               "full_name": "New User"
             }
     """
-    auth_service = EmailAuthService(db)
-    get_client_ip(request)
-    get_user_agent(request)
+    with fresh_db_session() as db:
+        auth_service = EmailAuthService(db)
+        get_client_ip(request)
+        get_user_agent(request)
 
-    try:
-        # Create new user
-        user = await auth_service.create_user(
-            email=registration_request.email,
-            password=registration_request.password,
-            full_name=registration_request.full_name,
-            is_admin=False,  # Regular users cannot self-register as admin
-            auth_provider="local",
-        )
+        try:
+            # Create new user
+            user = await auth_service.create_user(
+                email=registration_request.email,
+                password=registration_request.password,
+                full_name=registration_request.full_name,
+                is_admin=False,  # Regular users cannot self-register as admin
+                auth_provider="local",
+            )
 
-        # Create access token
-        access_token, expires_in = await create_access_token(user)
+            # Create access token
+            access_token, expires_in = await create_access_token(user)
 
-        logger.info(f"New user registered: {user.email}")
+            logger.info(f"New user registered: {user.email}")
 
-        return AuthenticationResponse(
-            access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-        )  # nosec B106 - OAuth2 token type, not a password
+            return AuthenticationResponse(
+                access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+            )  # nosec B106 - OAuth2 token type, not a password
 
-    except EmailValidationError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except PasswordValidationError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except UserExistsError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except Exception as e:
-        logger.error(f"Registration error for {registration_request.email}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Registration service error")
+        except EmailValidationError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except PasswordValidationError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except UserExistsError as e:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        except Exception as e:
+            logger.error(f"Registration error for {registration_request.email}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Registration service error")
 
 
 @email_auth_router.post("/change-password", response_model=SuccessResponse)
-async def change_password(password_request: ChangePasswordRequest, request: Request, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def change_password(password_request: ChangePasswordRequest, request: Request, current_user: EmailUser = Depends(get_current_user)):
     """Change user's password.
 
     Args:
@@ -410,28 +412,29 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
               "new_password": "new_secure_password"
             }
     """
-    auth_service = EmailAuthService(db)
-    ip_address = get_client_ip(request)
-    user_agent = get_user_agent(request)
+    with fresh_db_session() as db:
+        auth_service = EmailAuthService(db)
+        ip_address = get_client_ip(request)
+        user_agent = get_user_agent(request)
 
-    try:
-        # Change password
-        success = await auth_service.change_password(
-            email=current_user.email, old_password=password_request.old_password, new_password=password_request.new_password, ip_address=ip_address, user_agent=user_agent
-        )
+        try:
+            # Change password
+            success = await auth_service.change_password(
+                email=current_user.email, old_password=password_request.old_password, new_password=password_request.new_password, ip_address=ip_address, user_agent=user_agent
+            )
 
-        if success:
-            return SuccessResponse(success=True, message="Password changed successfully")
-        else:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to change password")
+            if success:
+                return SuccessResponse(success=True, message="Password changed successfully")
+            else:
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to change password")
 
-    except AuthenticationError as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
-    except PasswordValidationError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(f"Password change error for {current_user.email}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password change service error")
+        except AuthenticationError as e:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+        except PasswordValidationError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            logger.error(f"Password change error for {current_user.email}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password change service error")
 
 
 @email_auth_router.get("/me", response_model=EmailUserResponse)
@@ -455,7 +458,7 @@ async def get_current_user_profile(current_user: EmailUser = Depends(get_current
 
 
 @email_auth_router.get("/events", response_model=list[AuthEventResponse])
-async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailUser = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailUser = Depends(get_current_user)):
     """Get authentication events for the current user.
 
     Args:
@@ -474,16 +477,17 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
         >>> # GET /auth/email/events?limit=10&offset=0
         >>> # Headers: Authorization: Bearer <token>
     """
-    auth_service = EmailAuthService(db)
+    with fresh_db_session() as db:
+        auth_service = EmailAuthService(db)
 
-    try:
-        events = await auth_service.get_auth_events(email=current_user.email, limit=limit, offset=offset)
+        try:
+            events = await auth_service.get_auth_events(email=current_user.email, limit=limit, offset=offset)
 
-        return [AuthEventResponse.model_validate(event) for event in events]
+            return [AuthEventResponse.model_validate(event) for event in events]
 
-    except Exception as e:
-        logger.error(f"Error getting auth events for {current_user.email}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve authentication events")
+        except Exception as e:
+            logger.error(f"Error getting auth events for {current_user.email}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve authentication events")
 
 
 # Admin-only endpoints

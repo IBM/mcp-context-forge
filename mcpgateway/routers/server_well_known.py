@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import get_db
+from mcpgateway.db import fresh_db_session, get_db
 from mcpgateway.db import Server as DbServer
 from mcpgateway.routers.well_known import get_base_url_with_protocol, get_well_known_file_content
 from mcpgateway.services.logging_service import LoggingService
@@ -41,9 +41,7 @@ router = APIRouter(tags=["Servers"])
 @router.get("/{server_id}/.well-known/oauth-protected-resource")
 async def server_oauth_protected_resource(
     request: Request,
-    server_id: str,
-    db: Session = Depends(get_db),
-) -> JSONResponse:
+    server_id: str) -> JSONResponse:
     """
     RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint for a specific server.
 
@@ -62,34 +60,33 @@ async def server_oauth_protected_resource(
     Raises:
         HTTPException: 404 if server not found, disabled, non-public, OAuth not enabled, or not configured.
     """
-    # Check global well-known toggle first to respect admin configuration
-    if not settings.well_known_enabled:
-        raise HTTPException(status_code=404, detail="Not found")
+    with fresh_db_session() as db:
+        # Check global well-known toggle first to respect admin configuration
+        if not settings.well_known_enabled:
+            raise HTTPException(status_code=404, detail="Not found")
 
-    # Build resource URL using proper protocol detection for proxies
-    # Note: get_base_url_with_protocol uses request.base_url which already includes root_path
-    base_url = get_base_url_with_protocol(request)
-    resource_url = f"{base_url}/servers/{server_id}"
+        # Build resource URL using proper protocol detection for proxies
+        # Note: get_base_url_with_protocol uses request.base_url which already includes root_path
+        base_url = get_base_url_with_protocol(request)
+        resource_url = f"{base_url}/servers/{server_id}"
 
-    try:
-        response_data = server_service.get_oauth_protected_resource_metadata(db, server_id, resource_url)
-    except ServerNotFoundError:
-        raise HTTPException(status_code=404, detail="Server not found")
-    except ServerError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        try:
+            response_data = server_service.get_oauth_protected_resource_metadata(db, server_id, resource_url)
+        except ServerNotFoundError:
+            raise HTTPException(status_code=404, detail="Server not found")
+        except ServerError as e:
+            raise HTTPException(status_code=404, detail=str(e))
 
-    # Add cache headers
-    headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
+        # Add cache headers
+        headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
 
-    return JSONResponse(content=response_data, headers=headers)
+        return JSONResponse(content=response_data, headers=headers)
 
 
 @router.get("/{server_id}/.well-known/{filename:path}", include_in_schema=False)
 async def server_well_known_file(
     server_id: str,
-    filename: str,
-    db: Session = Depends(get_db),
-) -> PlainTextResponse:
+    filename: str) -> PlainTextResponse:
     """
     Serve well-known URI files for a specific virtual server.
 
@@ -111,21 +108,22 @@ async def server_well_known_file(
     Raises:
         HTTPException: 404 if server not found, disabled, non-public, or file not configured.
     """
-    # Check global well-known toggle first to avoid leaking server existence
-    if not settings.well_known_enabled:
-        raise HTTPException(status_code=404, detail="Not found")
+    with fresh_db_session() as db:
+        # Check global well-known toggle first to avoid leaking server existence
+        if not settings.well_known_enabled:
+            raise HTTPException(status_code=404, detail="Not found")
 
-    # Validate server exists and is publicly accessible
-    server = db.get(DbServer, server_id)
+        # Validate server exists and is publicly accessible
+        server = db.get(DbServer, server_id)
 
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
+        if not server:
+            raise HTTPException(status_code=404, detail="Server not found")
 
-    if not server.enabled:
-        raise HTTPException(status_code=404, detail="Server not found")
+        if not server.enabled:
+            raise HTTPException(status_code=404, detail="Server not found")
 
-    if getattr(server, "visibility", "public") != "public":
-        raise HTTPException(status_code=404, detail="Server not found")
+        if getattr(server, "visibility", "public") != "public":
+            raise HTTPException(status_code=404, detail="Server not found")
 
-    # Use shared helper to get the file content
-    return get_well_known_file_content(filename)
+        # Use shared helper to get the file content
+        return get_well_known_file_content(filename)

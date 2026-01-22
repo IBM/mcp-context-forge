@@ -23,7 +23,7 @@ import orjson
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import get_db
+from mcpgateway.db import fresh_db_session, get_db
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.verify_credentials import require_auth
 
@@ -153,83 +153,82 @@ manager = ReverseProxyManager()
 
 @router.websocket("/ws")
 async def websocket_endpoint(
-    websocket: WebSocket,
-    db: Session = Depends(get_db),
-):
+    websocket: WebSocket):
     """WebSocket endpoint for reverse proxy connections.
 
     Args:
         websocket: WebSocket connection.
         db: Database session.
     """
-    await websocket.accept()
+    with fresh_db_session() as db:
+        await websocket.accept()
 
-    # Get session ID from headers or generate new one
-    session_id = websocket.headers.get("X-Session-ID", uuid.uuid4().hex)
+        # Get session ID from headers or generate new one
+        session_id = websocket.headers.get("X-Session-ID", uuid.uuid4().hex)
 
-    # Check authentication
-    user = None
-    auth_header = websocket.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        try:
-            # TODO: Validate token and get user
-            pass
-        except Exception as e:
-            LOGGER.warning(f"Authentication failed: {e}")
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
-            return
-
-    # Create session
-    session = ReverseProxySession(session_id, websocket, user)
-    await manager.add_session(session)
-
-    try:
-        LOGGER.info(f"Reverse proxy connected: {session_id}")
-
-        # Main message loop
-        while True:
+        # Check authentication
+        user = None
+        auth_header = websocket.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
             try:
-                message = await session.receive_message()
-                msg_type = message.get("type")
-
-                if msg_type == "register":
-                    # Register the server
-                    session.server_info = message.get("server", {})
-                    LOGGER.info(f"Registered server for session {session_id}: {session.server_info.get('name')}")
-
-                    # Send acknowledgment
-                    await session.send_message({"type": "register_ack", "sessionId": session_id, "status": "success"})
-
-                elif msg_type == "unregister":
-                    # Unregister the server
-                    LOGGER.info(f"Unregistering server for session {session_id}")
-                    break
-
-                elif msg_type == "heartbeat":
-                    # Respond to heartbeat
-                    await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": datetime.now(tz=timezone.utc).isoformat()})
-
-                elif msg_type in ("response", "notification"):
-                    # Handle MCP response/notification from the proxied server
-                    # TODO: Route to appropriate MCP client
-                    LOGGER.debug(f"Received {msg_type} from session {session_id}")
-
-                else:
-                    LOGGER.warning(f"Unknown message type from session {session_id}: {msg_type}")
-
-            except WebSocketDisconnect:
-                LOGGER.info(f"WebSocket disconnected: {session_id}")
-                break
-            except orjson.JSONDecodeError as e:
-                LOGGER.error(f"Invalid JSON from session {session_id}: {e}")
-                await session.send_message({"type": "error", "message": "Invalid JSON format"})
+                # TODO: Validate token and get user
+                pass
             except Exception as e:
-                LOGGER.error(f"Error handling message from session {session_id}: {e}")
-                await session.send_message({"type": "error", "message": str(e)})
+                LOGGER.warning(f"Authentication failed: {e}")
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed")
+                return
 
-    finally:
-        await manager.remove_session(session_id)
-        LOGGER.info(f"Reverse proxy session ended: {session_id}")
+        # Create session
+        session = ReverseProxySession(session_id, websocket, user)
+        await manager.add_session(session)
+
+        try:
+            LOGGER.info(f"Reverse proxy connected: {session_id}")
+
+            # Main message loop
+            while True:
+                try:
+                    message = await session.receive_message()
+                    msg_type = message.get("type")
+
+                    if msg_type == "register":
+                        # Register the server
+                        session.server_info = message.get("server", {})
+                        LOGGER.info(f"Registered server for session {session_id}: {session.server_info.get('name')}")
+
+                        # Send acknowledgment
+                        await session.send_message({"type": "register_ack", "sessionId": session_id, "status": "success"})
+
+                    elif msg_type == "unregister":
+                        # Unregister the server
+                        LOGGER.info(f"Unregistering server for session {session_id}")
+                        break
+
+                    elif msg_type == "heartbeat":
+                        # Respond to heartbeat
+                        await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": datetime.now(tz=timezone.utc).isoformat()})
+
+                    elif msg_type in ("response", "notification"):
+                        # Handle MCP response/notification from the proxied server
+                        # TODO: Route to appropriate MCP client
+                        LOGGER.debug(f"Received {msg_type} from session {session_id}")
+
+                    else:
+                        LOGGER.warning(f"Unknown message type from session {session_id}: {msg_type}")
+
+                except WebSocketDisconnect:
+                    LOGGER.info(f"WebSocket disconnected: {session_id}")
+                    break
+                except orjson.JSONDecodeError as e:
+                    LOGGER.error(f"Invalid JSON from session {session_id}: {e}")
+                    await session.send_message({"type": "error", "message": "Invalid JSON format"})
+                except Exception as e:
+                    LOGGER.error(f"Error handling message from session {session_id}: {e}")
+                    await session.send_message({"type": "error", "message": str(e)})
+
+        finally:
+            await manager.remove_session(session_id)
+            LOGGER.info(f"Reverse proxy session ended: {session_id}")
 
 
 @router.get("/sessions")

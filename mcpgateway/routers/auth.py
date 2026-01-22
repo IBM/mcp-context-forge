@@ -18,7 +18,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import fresh_db_session, SessionLocal
 from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -119,7 +119,7 @@ class LoginRequest(BaseModel):
 
 
 @auth_router.post("/login", response_model=AuthenticationResponse)
-async def login(login_request: LoginRequest, request: Request, db: Session = Depends(get_db)):
+async def login(login_request: LoginRequest, request: Request):
     """Authenticate user and return session JWT token.
 
     This endpoint provides Tier 1 authentication for session-based access.
@@ -149,33 +149,34 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
               "password": "ChangeMe_12345678$"
             }
     """
-    auth_service = EmailAuthService(db)
-    ip_address = get_client_ip(request)
-    user_agent = get_user_agent(request)
+    with fresh_db_session() as db:
+        auth_service = EmailAuthService(db)
+        ip_address = get_client_ip(request)
+        user_agent = get_user_agent(request)
 
-    try:
-        # Extract email from request
-        email = login_request.get_email()
+        try:
+            # Extract email from request
+            email = login_request.get_email()
 
-        # Authenticate user
-        user = await auth_service.authenticate_user(email=email, password=login_request.password, ip_address=ip_address, user_agent=user_agent)
+            # Authenticate user
+            user = await auth_service.authenticate_user(email=email, password=login_request.password, ip_address=ip_address, user_agent=user_agent)
 
-        if not user:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+            if not user:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-        # Create session JWT token (Tier 1 authentication)
-        access_token, expires_in = await create_access_token(user)
+            # Create session JWT token (Tier 1 authentication)
+            access_token, expires_in = await create_access_token(user)
 
-        logger.info(f"User {email} authenticated successfully")
+            logger.info(f"User {email} authenticated successfully")
 
-        # Return session token for UI access and API key management
-        return AuthenticationResponse(
-            access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
-        )  # nosec B106 - OAuth2 token type, not a password
+            # Return session token for UI access and API key management
+            return AuthenticationResponse(
+                access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+            )  # nosec B106 - OAuth2 token type, not a password
 
-    except ValueError as e:
-        logger.warning(f"Login validation error: {e}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(f"Login error for {login_request.email or login_request.username}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")
+        except ValueError as e:
+            logger.warning(f"Login validation error: {e}")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            logger.error(f"Login error for {login_request.email or login_request.username}: {e}")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Authentication service error")

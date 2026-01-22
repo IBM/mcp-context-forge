@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import get_db
+from mcpgateway.db import fresh_db_session, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.sso_service import SSOService
 
@@ -94,8 +94,7 @@ class SSOCallbackResponse(BaseModel):
 
 @sso_router.get("/providers", response_model=List[SSOProviderResponse])
 async def list_sso_providers(
-    db: Session = Depends(get_db),
-) -> List[SSOProviderResponse]:
+    ) -> List[SSOProviderResponse]:
     """List available SSO providers for login.
 
     Args:
@@ -112,22 +111,21 @@ async def list_sso_providers(
         >>> asyncio.iscoroutinefunction(list_sso_providers)
         True
     """
-    if not settings.sso_enabled:
-        raise HTTPException(status_code=404, detail="SSO authentication is disabled")
+    with fresh_db_session() as db:
+        if not settings.sso_enabled:
+            raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
-    sso_service = SSOService(db)
-    providers = sso_service.list_enabled_providers()
+        sso_service = SSOService(db)
+        providers = sso_service.list_enabled_providers()
 
-    return [SSOProviderResponse(id=provider.id, name=provider.name, display_name=provider.display_name) for provider in providers]
+        return [SSOProviderResponse(id=provider.id, name=provider.name, display_name=provider.display_name) for provider in providers]
 
 
 @sso_router.get("/login/{provider_id}", response_model=SSOLoginResponse)
 async def initiate_sso_login(
     provider_id: str,
     redirect_uri: str = Query(..., description="Callback URI after authentication"),
-    scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes"),
-    db: Session = Depends(get_db),
-) -> SSOLoginResponse:
+    scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes")) -> SSOLoginResponse:
     """Initiate SSO authentication flow.
 
     Args:
@@ -147,25 +145,26 @@ async def initiate_sso_login(
         >>> asyncio.iscoroutinefunction(initiate_sso_login)
         True
     """
-    if not settings.sso_enabled:
-        raise HTTPException(status_code=404, detail="SSO authentication is disabled")
+    with fresh_db_session() as db:
+        if not settings.sso_enabled:
+            raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
-    sso_service = SSOService(db)
-    scope_list = scopes.split() if scopes else None
+        sso_service = SSOService(db)
+        scope_list = scopes.split() if scopes else None
 
-    auth_url = sso_service.get_authorization_url(provider_id, redirect_uri, scope_list)
-    if not auth_url:
-        raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found or disabled")
+        auth_url = sso_service.get_authorization_url(provider_id, redirect_uri, scope_list)
+        if not auth_url:
+            raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found or disabled")
 
-    # Extract state from URL for client reference
-    # Standard
-    import urllib.parse
+        # Extract state from URL for client reference
+        # Standard
+        import urllib.parse
 
-    parsed = urllib.parse.urlparse(auth_url)
-    params = urllib.parse.parse_qs(parsed.query)
-    state = params.get("state", [""])[0]
+        parsed = urllib.parse.urlparse(auth_url)
+        params = urllib.parse.parse_qs(parsed.query)
+        state = params.get("state", [""])[0]
 
-    return SSOLoginResponse(authorization_url=auth_url, state=state)
+        return SSOLoginResponse(authorization_url=auth_url, state=state)
 
 
 @sso_router.get("/callback/{provider_id}")
@@ -174,9 +173,7 @@ async def handle_sso_callback(
     code: str = Query(..., description="Authorization code from SSO provider"),
     state: str = Query(..., description="CSRF state parameter"),
     request: Request = None,
-    response: Response = None,
-    db: Session = Depends(get_db),
-):
+    response: Response = None):
     """Handle SSO authentication callback.
 
     Args:
@@ -198,45 +195,46 @@ async def handle_sso_callback(
         >>> asyncio.iscoroutinefunction(handle_sso_callback)
         True
     """
-    if not settings.sso_enabled:
-        raise HTTPException(status_code=404, detail="SSO authentication is disabled")
+    with fresh_db_session() as db:
+        if not settings.sso_enabled:
+            raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
-    # Get root path for URL construction
-    root_path = request.scope.get("root_path", "") if request else ""
+        # Get root path for URL construction
+        root_path = request.scope.get("root_path", "") if request else ""
 
-    sso_service = SSOService(db)
+        sso_service = SSOService(db)
 
-    # Handle OAuth callback
-    user_info = await sso_service.handle_oauth_callback(provider_id, code, state)
-    if not user_info:
-        # Redirect back to login with error
+        # Handle OAuth callback
+        user_info = await sso_service.handle_oauth_callback(provider_id, code, state)
+        if not user_info:
+            # Redirect back to login with error
+            # Third-Party
+            from fastapi.responses import RedirectResponse
+
+            return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+
+        # Authenticate or create user
+        access_token = await sso_service.authenticate_or_create_user(user_info)
+        if not access_token:
+            # Redirect back to login with error
+            # Third-Party
+            from fastapi.responses import RedirectResponse
+
+            return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
+
+        # Create redirect response
         # Third-Party
         from fastapi.responses import RedirectResponse
 
-        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
+        redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
 
-    # Authenticate or create user
-    access_token = await sso_service.authenticate_or_create_user(user_info)
-    if not access_token:
-        # Redirect back to login with error
-        # Third-Party
-        from fastapi.responses import RedirectResponse
+        # Set secure HTTP-only cookie using the same method as email auth
+        # First-Party
+        from mcpgateway.utils.security_cookies import set_auth_cookie
 
-        return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
+        set_auth_cookie(redirect_response, access_token, remember_me=False)
 
-    # Create redirect response
-    # Third-Party
-    from fastapi.responses import RedirectResponse
-
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
-
-    # Set secure HTTP-only cookie using the same method as email auth
-    # First-Party
-    from mcpgateway.utils.security_cookies import set_auth_cookie
-
-    set_auth_cookie(redirect_response, access_token, remember_me=False)
-
-    return redirect_response
+        return redirect_response
 
 
 # Admin endpoints for SSO provider management
@@ -244,9 +242,7 @@ async def handle_sso_callback(
 @require_permission("admin.sso_providers:create")
 async def create_sso_provider(
     provider_data: SSOProviderCreateRequest,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Dict:
+    user=Depends(get_current_user_with_permissions)) -> Dict:
     """Create new SSO provider configuration (Admin only).
 
     Args:
@@ -260,31 +256,30 @@ async def create_sso_provider(
     Raises:
         HTTPException: If provider already exists or creation fails
     """
-    sso_service = SSOService(db)
+    with fresh_db_session() as db:
+        sso_service = SSOService(db)
 
-    # Check if provider already exists
-    existing = sso_service.get_provider(provider_data.id)
-    if existing:
-        raise HTTPException(status_code=409, detail=f"SSO provider '{provider_data.id}' already exists")
+        # Check if provider already exists
+        existing = sso_service.get_provider(provider_data.id)
+        if existing:
+            raise HTTPException(status_code=409, detail=f"SSO provider '{provider_data.id}' already exists")
 
-    provider = sso_service.create_provider(provider_data.dict())
+        provider = sso_service.create_provider(provider_data.dict())
 
-    return {
-        "id": provider.id,
-        "name": provider.name,
-        "display_name": provider.display_name,
-        "provider_type": provider.provider_type,
-        "is_enabled": provider.is_enabled,
-        "created_at": provider.created_at,
-    }
+        return {
+            "id": provider.id,
+            "name": provider.name,
+            "display_name": provider.display_name,
+            "provider_type": provider.provider_type,
+            "is_enabled": provider.is_enabled,
+            "created_at": provider.created_at,
+        }
 
 
 @sso_router.get("/admin/providers", response_model=List[Dict])
 @require_permission("admin.sso_providers:read")
 async def list_all_sso_providers(
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> List[Dict]:
+    user=Depends(get_current_user_with_permissions)) -> List[Dict]:
     """List all SSO providers including disabled ones (Admin only).
 
     Args:
@@ -294,39 +289,38 @@ async def list_all_sso_providers(
     Returns:
         List of all SSO providers with configuration details.
     """
-    # Third-Party
-    from sqlalchemy import select
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select
 
-    # First-Party
-    from mcpgateway.db import SSOProvider
+        # First-Party
+        from mcpgateway.db import SSOProvider
 
-    stmt = select(SSOProvider)
-    result = db.execute(stmt)
-    providers = result.scalars().all()
+        stmt = select(SSOProvider)
+        result = db.execute(stmt)
+        providers = result.scalars().all()
 
-    return [
-        {
-            "id": provider.id,
-            "name": provider.name,
-            "display_name": provider.display_name,
-            "provider_type": provider.provider_type,
-            "is_enabled": provider.is_enabled,
-            "trusted_domains": provider.trusted_domains,
-            "auto_create_users": provider.auto_create_users,
-            "created_at": provider.created_at,
-            "updated_at": provider.updated_at,
-        }
-        for provider in providers
-    ]
+        return [
+            {
+                "id": provider.id,
+                "name": provider.name,
+                "display_name": provider.display_name,
+                "provider_type": provider.provider_type,
+                "is_enabled": provider.is_enabled,
+                "trusted_domains": provider.trusted_domains,
+                "auto_create_users": provider.auto_create_users,
+                "created_at": provider.created_at,
+                "updated_at": provider.updated_at,
+            }
+            for provider in providers
+        ]
 
 
 @sso_router.get("/admin/providers/{provider_id}", response_model=Dict)
 @require_permission("admin.sso_providers:read")
 async def get_sso_provider(
     provider_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Dict:
+    user=Depends(get_current_user_with_permissions)) -> Dict:
     """Get SSO provider details (Admin only).
 
     Args:
@@ -340,30 +334,31 @@ async def get_sso_provider(
     Raises:
         HTTPException: If provider not found
     """
-    sso_service = SSOService(db)
-    provider = sso_service.get_provider(provider_id)
+    with fresh_db_session() as db:
+        sso_service = SSOService(db)
+        provider = sso_service.get_provider(provider_id)
 
-    if not provider:
-        raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
+        if not provider:
+            raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
-    return {
-        "id": provider.id,
-        "name": provider.name,
-        "display_name": provider.display_name,
-        "provider_type": provider.provider_type,
-        "client_id": provider.client_id,
-        "authorization_url": provider.authorization_url,
-        "token_url": provider.token_url,
-        "userinfo_url": provider.userinfo_url,
-        "issuer": provider.issuer,
-        "scope": provider.scope,
-        "trusted_domains": provider.trusted_domains,
-        "auto_create_users": provider.auto_create_users,
-        "team_mapping": provider.team_mapping,
-        "is_enabled": provider.is_enabled,
-        "created_at": provider.created_at,
-        "updated_at": provider.updated_at,
-    }
+        return {
+            "id": provider.id,
+            "name": provider.name,
+            "display_name": provider.display_name,
+            "provider_type": provider.provider_type,
+            "client_id": provider.client_id,
+            "authorization_url": provider.authorization_url,
+            "token_url": provider.token_url,
+            "userinfo_url": provider.userinfo_url,
+            "issuer": provider.issuer,
+            "scope": provider.scope,
+            "trusted_domains": provider.trusted_domains,
+            "auto_create_users": provider.auto_create_users,
+            "team_mapping": provider.team_mapping,
+            "is_enabled": provider.is_enabled,
+            "created_at": provider.created_at,
+            "updated_at": provider.updated_at,
+        }
 
 
 @sso_router.put("/admin/providers/{provider_id}", response_model=Dict)
@@ -371,9 +366,7 @@ async def get_sso_provider(
 async def update_sso_provider(
     provider_id: str,
     provider_data: SSOProviderUpdateRequest,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Dict:
+    user=Depends(get_current_user_with_permissions)) -> Dict:
     """Update SSO provider configuration (Admin only).
 
     Args:
@@ -388,34 +381,33 @@ async def update_sso_provider(
     Raises:
         HTTPException: If provider not found or update fails
     """
-    sso_service = SSOService(db)
+    with fresh_db_session() as db:
+        sso_service = SSOService(db)
 
-    # Filter out None values
-    update_data = {k: v for k, v in provider_data.dict().items() if v is not None}
-    if not update_data:
-        raise HTTPException(status_code=400, detail="No update data provided")
+        # Filter out None values
+        update_data = {k: v for k, v in provider_data.dict().items() if v is not None}
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No update data provided")
 
-    provider = sso_service.update_provider(provider_id, update_data)
-    if not provider:
-        raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
+        provider = sso_service.update_provider(provider_id, update_data)
+        if not provider:
+            raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
-    return {
-        "id": provider.id,
-        "name": provider.name,
-        "display_name": provider.display_name,
-        "provider_type": provider.provider_type,
-        "is_enabled": provider.is_enabled,
-        "updated_at": provider.updated_at,
-    }
+        return {
+            "id": provider.id,
+            "name": provider.name,
+            "display_name": provider.display_name,
+            "provider_type": provider.provider_type,
+            "is_enabled": provider.is_enabled,
+            "updated_at": provider.updated_at,
+        }
 
 
 @sso_router.delete("/admin/providers/{provider_id}")
 @require_permission("admin.sso_providers:delete")
 async def delete_sso_provider(
     provider_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Dict:
+    user=Depends(get_current_user_with_permissions)) -> Dict:
     """Delete SSO provider configuration (Admin only).
 
     Args:
@@ -429,12 +421,13 @@ async def delete_sso_provider(
     Raises:
         HTTPException: If provider not found
     """
-    sso_service = SSOService(db)
+    with fresh_db_session() as db:
+        sso_service = SSOService(db)
 
-    if not sso_service.delete_provider(provider_id):
-        raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
+        if not sso_service.delete_provider(provider_id):
+            raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
-    return {"message": f"SSO provider '{provider_id}' deleted successfully"}
+        return {"message": f"SSO provider '{provider_id}' deleted successfully"}
 
 
 # ---------------------------------------------------------------------------
@@ -467,9 +460,7 @@ class ApprovalActionRequest(BaseModel):
 @require_permission("admin.user_management")
 async def list_pending_approvals(
     include_expired: bool = Query(False, description="Include expired approval requests"),
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> List[PendingUserApprovalResponse]:
+    user=Depends(get_current_user_with_permissions)) -> List[PendingUserApprovalResponse]:
     """List pending SSO user approval requests (Admin only).
 
     Args:
@@ -480,40 +471,41 @@ async def list_pending_approvals(
     Returns:
         List of pending approval requests
     """
-    # Third-Party
-    from sqlalchemy import select
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select
 
-    # First-Party
-    from mcpgateway.db import PendingUserApproval
-
-    query = select(PendingUserApproval)
-
-    if not include_expired:
         # First-Party
-        from mcpgateway.db import utc_now
+        from mcpgateway.db import PendingUserApproval
 
-        query = query.where(PendingUserApproval.expires_at > utc_now())
+        query = select(PendingUserApproval)
 
-    # Filter by status
-    query = query.where(PendingUserApproval.status == "pending")
-    query = query.order_by(PendingUserApproval.requested_at.desc())
+        if not include_expired:
+            # First-Party
+            from mcpgateway.db import utc_now
 
-    result = db.execute(query)
-    pending_approvals = result.scalars().all()
+            query = query.where(PendingUserApproval.expires_at > utc_now())
 
-    return [
-        PendingUserApprovalResponse(
-            id=approval.id,
-            email=approval.email,
-            full_name=approval.full_name,
-            auth_provider=approval.auth_provider,
-            requested_at=approval.requested_at.isoformat(),
-            expires_at=approval.expires_at.isoformat(),
-            status=approval.status,
-            sso_metadata=approval.sso_metadata,
-        )
-        for approval in pending_approvals
-    ]
+        # Filter by status
+        query = query.where(PendingUserApproval.status == "pending")
+        query = query.order_by(PendingUserApproval.requested_at.desc())
+
+        result = db.execute(query)
+        pending_approvals = result.scalars().all()
+
+        return [
+            PendingUserApprovalResponse(
+                id=approval.id,
+                email=approval.email,
+                full_name=approval.full_name,
+                auth_provider=approval.auth_provider,
+                requested_at=approval.requested_at.isoformat(),
+                expires_at=approval.expires_at.isoformat(),
+                status=approval.status,
+                sso_metadata=approval.sso_metadata,
+            )
+            for approval in pending_approvals
+        ]
 
 
 @sso_router.post("/pending-approvals/{approval_id}/action")
@@ -521,9 +513,7 @@ async def list_pending_approvals(
 async def handle_approval_request(
     approval_id: str,
     request: ApprovalActionRequest,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Dict:
+    user=Depends(get_current_user_with_permissions)) -> Dict:
     """Approve or reject a pending SSO user registration (Admin only).
 
     Args:
@@ -538,39 +528,40 @@ async def handle_approval_request(
     Raises:
         HTTPException: If approval not found or invalid action
     """
-    # Third-Party
-    from sqlalchemy import select
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select
 
-    # First-Party
-    from mcpgateway.db import PendingUserApproval
+        # First-Party
+        from mcpgateway.db import PendingUserApproval
 
-    # Get pending approval
-    approval = db.execute(select(PendingUserApproval).where(PendingUserApproval.id == approval_id)).scalar_one_or_none()
+        # Get pending approval
+        approval = db.execute(select(PendingUserApproval).where(PendingUserApproval.id == approval_id)).scalar_one_or_none()
 
-    if not approval:
-        raise HTTPException(status_code=404, detail="Approval request not found")
+        if not approval:
+            raise HTTPException(status_code=404, detail="Approval request not found")
 
-    if approval.status != "pending":
-        raise HTTPException(status_code=400, detail=f"Approval request is already {approval.status}")
+        if approval.status != "pending":
+            raise HTTPException(status_code=400, detail=f"Approval request is already {approval.status}")
 
-    if approval.is_expired():
-        approval.status = "expired"
-        db.commit()
-        raise HTTPException(status_code=400, detail="Approval request has expired")
+        if approval.is_expired():
+            approval.status = "expired"
+            db.commit()
+            raise HTTPException(status_code=400, detail="Approval request has expired")
 
-    admin_email = user["email"]
+        admin_email = user["email"]
 
-    if request.action == "approve":
-        approval.approve(admin_email, request.notes)
-        db.commit()
-        return {"message": f"User {approval.email} approved successfully"}
+        if request.action == "approve":
+            approval.approve(admin_email, request.notes)
+            db.commit()
+            return {"message": f"User {approval.email} approved successfully"}
 
-    elif request.action == "reject":
-        if not request.reason:
-            raise HTTPException(status_code=400, detail="Rejection reason is required")
-        approval.reject(admin_email, request.reason, request.notes)
-        db.commit()
-        return {"message": f"User {approval.email} rejected"}
+        elif request.action == "reject":
+            if not request.reason:
+                raise HTTPException(status_code=400, detail="Rejection reason is required")
+            approval.reject(admin_email, request.reason, request.notes)
+            db.commit()
+            return {"message": f"User {approval.email} rejected"}
 
-    else:
-        raise HTTPException(status_code=400, detail="Invalid action. Must be 'approve' or 'reject'")
+        else:
+            raise HTTPException(status_code=400, detail="Invalid action. Must be 'approve' or 'reject'")

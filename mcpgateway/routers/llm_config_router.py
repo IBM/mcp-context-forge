@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.db import get_db
+from mcpgateway.db import fresh_db_session, get_db
 from mcpgateway.llm_schemas import (
     GatewayModelsResponse,
     LLMModelCreate,
@@ -543,9 +543,7 @@ async def set_model_state(
     description="Get enabled models for the LLM Chat dropdown.",
 )
 async def get_gateway_models(
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-) -> GatewayModelsResponse:
+    current_user: dict = Depends(get_current_user)) -> GatewayModelsResponse:
     """Get enabled models for the LLM Chat dropdown.
 
     This endpoint is used by the LLM Chat UI to populate the model selector.
@@ -558,5 +556,6 @@ async def get_gateway_models(
     Returns:
         List of available gateway models.
     """
-    models = llm_provider_service.get_gateway_models(db)
-    return GatewayModelsResponse(models=models, count=len(models))
+    with fresh_db_session() as db:
+        models = llm_provider_service.get_gateway_models(db)
+        return GatewayModelsResponse(models=models, count=len(models))
