@@ -931,6 +931,27 @@ class Settings(BaseSettings):
         description="Maximum request body size to log in detailed mode (bytes). Separate from log_max_size_mb which is for file rotation.",
     )
 
+    # Optional: endpoints to skip for detailed request logging (prefix match)
+    log_detailed_skip_endpoints: List[str] = Field(
+        default_factory=list,
+        description="List of path prefixes to skip when log_detailed_requests is enabled",
+    )
+
+    # Whether to attempt resolving user identity via DB fallback when logging.
+    # Keep default False to avoid implicit DB queries during normal request handling.
+    log_resolve_user_identity: bool = Field(
+        default=False,
+        description="If true, RequestLoggingMiddleware will attempt DB fallback to resolve user identity when needed",
+    )
+
+    # Sampling rate for detailed request logging (0.0-1.0). Applied when log_detailed_requests is enabled.
+    log_detailed_sample_rate: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of requests to sample for detailed logging (0.0-1.0)",
+    )
+
     # Log Buffer (for in-memory storage in admin UI)
     log_buffer_size_mb: float = 1.0  # Size of in-memory log buffer in MB
 
