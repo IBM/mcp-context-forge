@@ -1593,7 +1593,16 @@ if plugin_manager:
 # IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
 # Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
 # Detailed payload logging only runs if log_detailed_requests=True
-app.add_middleware(RequestLoggingMiddleware, enable_gateway_logging=True, log_detailed_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_detailed_max_body_size)
+app.add_middleware(
+    RequestLoggingMiddleware,
+    enable_gateway_logging=True,
+    log_detailed_requests=settings.log_requests,
+    log_level=settings.log_level,
+    max_body_size=settings.log_detailed_max_body_size,
+    log_resolve_user_identity=settings.log_resolve_user_identity,
+    log_detailed_skip_endpoints=settings.log_detailed_skip_endpoints,
+    log_detailed_sample_rate=settings.log_detailed_sample_rate,
+)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
