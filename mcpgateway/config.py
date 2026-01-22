@@ -314,7 +314,7 @@ class Settings(BaseSettings):
         ],
         description="Regex patterns for dangerous input",
     )
-    
+
     # Validation Performance Optimization Settings
     validation_max_body_size: int = Field(default=1048576, description="Maximum request body size in bytes to validate (1MB default, 0=unlimited)")
     validation_max_response_size: int = Field(default=5242880, description="Maximum response size in bytes to sanitize (5MB default, 0=unlimited)")
