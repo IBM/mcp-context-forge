@@ -25,7 +25,7 @@ async def test_{{plugin_name.lower().replace(' ', '_').replace('-', '_')}}():
     plugin = {{plugin_name}}(config)
 
     # Test your plugin logic
-    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is an argument"})
+    payload = PromptPrehookPayload(prompt_id="test_prompt", args={"arg0": "This is an argument"})
     context = PluginContext(request_id="1", server_id="2")
     result = await plugin.prompt_pre_fetch(payload, context)
     assert result.continue_processing
