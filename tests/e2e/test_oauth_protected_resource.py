@@ -111,6 +111,12 @@ async def oauth_test_db():
 
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
 
+    # Override fresh_db_session() to use test database (Issue #2323 fix uses this)
+    # First-Party
+    from mcpgateway.db import set_fresh_session_factory
+
+    set_fresh_session_factory(TestSessionLocal)
+
     def override_get_db():
         db = TestSessionLocal()
         try:
@@ -174,6 +180,13 @@ async def oauth_test_db():
     # Cleanup
     sec_patcher.stop()
     app.dependency_overrides.clear()
+
+    # Reset fresh_db_session() to use production database
+    # First-Party
+    from mcpgateway.db import reset_fresh_session_factory
+
+    reset_fresh_session_factory()
+
     os.close(db_fd)
     os.unlink(db_path)
 
