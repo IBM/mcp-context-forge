@@ -301,8 +301,8 @@ services:
       #
       # Memory sizing: Each worker uses ~350-450MB RSS baseline, spiking to 700MB-1.9GB under load.
       # With 8GB container limit: 8 workers × 450MB = 3.6GB baseline, leaving 4.4GB headroom.
-      # Previous: 16 workers × 450MB = 7.2GB baseline, only 0.8GB headroom → OOM kills
-      - GRANIAN_WORKERS=8
+      # - 16 workers × 450MB = 7.2GB baseline, only 0.8GB headroom - so use 12GB
+      - GRANIAN_WORKERS=16
       - GRANIAN_BACKLOG=4096
       - GRANIAN_BACKPRESSURE=256        # Increased to compensate for fewer workers (8×256=2048 capacity)
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
