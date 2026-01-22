@@ -247,8 +247,8 @@ def _write_span_to_db(span_data: dict) -> None:
         # Clear recursion guard even if errors occurred
         try:
             setattr(_instrumentation_context, "inside_span_creation", False)
-        except Exception:
-            pass
+        except Exception as e:  # pylint: disable=broad-except
+            logger.debug(f"Failed to clear instrumentation context flag: {e}")
 
 
 def _span_writer_worker() -> None:
