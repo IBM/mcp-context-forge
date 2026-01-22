@@ -105,7 +105,7 @@ def is_path_traversal(uri: str) -> bool:
         return True
     # Match .. as a path segment: beginning or after a slash, and followed
     # by a slash or end-of-string.
-    if re.search(r'(^|/)\.{2}(?:/|$)', uri):
+    if re.search(r"(^|/)\.{2}(?:/|$)", uri):
         return True
     return False
 
@@ -132,7 +132,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         self.sanitize = settings.sanitize_output
         self.allowed_roots = [Path(root).resolve() for root in settings.allowed_roots]
         self.dangerous_patterns = [re.compile(pattern) for pattern in settings.dangerous_patterns]
-        
+
         # Performance optimization settings
         self.max_body_size = settings.validation_max_body_size
         self.max_response_size = settings.validation_max_response_size
@@ -146,14 +146,11 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 logger.warning("[VALIDATION] Invalid skip endpoint regex skipped: %s", pattern)
         self.sample_large_responses = settings.validation_sample_large_responses
         self.sample_size = settings.validation_sample_size
-        
+
         # Initialize cache if enabled
         self.cache: Optional[LRUCache] = None
         if settings.validation_cache_enabled:
-            self.cache = LRUCache(
-                max_size=settings.validation_cache_max_size,
-                ttl=settings.validation_cache_ttl
-            )
+            self.cache = LRUCache(max_size=settings.validation_cache_max_size, ttl=settings.validation_cache_ttl)
 
     async def dispatch(self, request: Request, call_next):
         """Process request with validation and response sanitization.
@@ -254,11 +251,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 # Check body size threshold
                 body_size = len(body)
                 if self.max_body_size > 0 and body_size > self.max_body_size:
-                    logger.info(
-                        "[VALIDATION] Skipping validation for large request body: %d bytes (threshold: %d)",
-                        body_size,
-                        self.max_body_size
-                    )
+                    logger.info("[VALIDATION] Skipping validation for large request body: %d bytes (threshold: %d)", body_size, self.max_body_size)
                     return
                 # Check cache for identical payloads
                 if self.cache:
@@ -274,17 +267,17 @@ class ValidationMiddleware(BaseHTTPMiddleware):
                 try:
                     data = orjson.loads(body)
                     self._validate_json_data(data)
-                    
+
                     # Cache successful validation
                     if self.cache:
                         self.cache.set(cache_key, True)
-                        
+
                 except HTTPException:
                     # Cache validation failure
                     if self.cache:
                         self.cache.set(cache_key, False)
                     raise
-                    
+
             except orjson.JSONDecodeError:
                 pass  # Let other middleware handle JSON errors
 
@@ -379,54 +372,35 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Returns:
             Response: Sanitized response
         """
-        logger.info("response: %s", response)
-        logger.info("response type: %s", type(response))
         if not hasattr(response, "body"):
-            logger.info("I am here not body")
             return response
 
         try:
             body = response.body
-            logger.info("[VALIDATION] Sanitizing response: %d bytes", len(body))    
+            logger.info("[VALIDATION] Sanitizing response: %d bytes", len(body))
             if not body:
                 return response
 
             body_size = len(body)
-            logger.info("[VALIDATION] Sanitizing response: %d bytes", body_size)    
-            
+            logger.info("[VALIDATION] Sanitizing response: %d bytes", body_size)
+
             # Check response size threshold
             if self.max_response_size > 0 and body_size > self.max_response_size:
-                logger.info(
-                    "[VALIDATION] Skipping sanitization for large response: %d bytes (threshold: %d)",
-                    body_size,
-                    self.max_response_size
-                )
+                logger.info("[VALIDATION] Skipping sanitization for large response: %d bytes (threshold: %d)", body_size, self.max_response_size)
                 return response
 
             # For large responses, sample instead of full sanitization
             if self.sample_large_responses and body_size > self.sample_size:
-                logger.info(
-                    "[VALIDATION] Sampling response for sanitization: %d bytes (sample: %d)",
-                    body_size,
-                    self.sample_size
-                )
+                logger.info("[VALIDATION] Sampling response for sanitization: %d bytes (sample: %d)", body_size, self.sample_size)
                 # Sample from beginning, middle, and end
                 sample_chunk = self.sample_size // 3
                 if isinstance(body, bytes):
-                    samples = [
-                        body[:sample_chunk],
-                        body[body_size // 2 - sample_chunk // 2:body_size // 2 + sample_chunk // 2],
-                        body[-sample_chunk:]
-                    ]
+                    samples = [body[:sample_chunk], body[body_size // 2 - sample_chunk // 2 : body_size // 2 + sample_chunk // 2], body[-sample_chunk:]]
                     sample_body = b"".join(samples).decode("utf-8", errors="replace")
                 else:
-                    samples = [
-                        body[:sample_chunk],
-                        body[body_size // 2 - sample_chunk // 2:body_size // 2 + sample_chunk // 2],
-                        body[-sample_chunk:]
-                    ]
+                    samples = [body[:sample_chunk], body[body_size // 2 - sample_chunk // 2 : body_size // 2 + sample_chunk // 2], body[-sample_chunk:]]
                     sample_body = "".join(samples)
-                
+
                 # Check sample for control characters
                 if not re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", sample_body):
                     logger.info("[VALIDATION] Sample clean, skipping full sanitization")
@@ -446,5 +420,3 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             logger.warning("Failed to sanitize response: %s", e)
 
         return response
-
-
