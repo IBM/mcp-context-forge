@@ -46,6 +46,15 @@ class InstrumentationQueue:
 
     This provides a simple drop-rate metric and a bounded queue used by
     the background span writer.
+
+    Examples:
+        >>> queue = InstrumentationQueue(maxsize=100)
+        >>> queue.put({"span": "data"})
+        True
+        >>> queue.drop_rate  # Check drop rate
+        0.0
+        >>> queue.stats  # Get all metrics
+        {'total': 1, 'dropped': 0, 'drop_rate': 0.0, 'maxsize': 100}
     """
 
     def __init__(self, maxsize: Optional[int] = None) -> None:
@@ -65,15 +74,36 @@ class InstrumentationQueue:
         self._lock = threading.Lock()
 
     def put(self, span: dict) -> bool:
+        """Non-blocking put that returns success status.
+
+        Returns True if span was enqueued, False if queue was full.
+        Updates total and dropped counters for metrics tracking.
+        """
+        try:
+            self._queue.put_nowait(span)
+            with self._lock:
+                self._total_count += 1
+            return True
+        except queue.Full:
+            with self._lock:
+                self._total_count += 1
+                self._dropped_count += 1
+            return False
+
+    def put_nowait(self, span: dict) -> None:
+        """Non-blocking put that mirrors Queue.put_nowait semantics.
+
+        Raises ``queue.Full`` when the queue is full. Counters are still
+        updated to track totals and drops for metrics.
+        """
         with self._lock:
             self._total_count += 1
         try:
             self._queue.put_nowait(span)
-            return True
         except queue.Full:
             with self._lock:
                 self._dropped_count += 1
-            return False
+            raise
 
     def get(self, timeout: Optional[float] = None):
         return self._queue.get(timeout=timeout)
@@ -83,10 +113,42 @@ class InstrumentationQueue:
 
     @property
     def drop_rate(self) -> float:
+        """Calculate the drop rate (dropped/total).
+
+        Returns:
+            float: Drop rate between 0.0 and 1.0, or 0.0 if no spans processed yet.
+        """
         with self._lock:
             if self._total_count == 0:
                 return 0.0
             return float(self._dropped_count) / float(self._total_count)
+
+    @property
+    def stats(self) -> dict:
+        """Get all queue statistics in a single call.
+
+        Returns:
+            dict: Dictionary containing total, dropped, drop_rate, and maxsize.
+
+        Examples:
+            >>> queue = InstrumentationQueue(maxsize=100)
+            >>> queue.put({"span": "data"})
+            True
+            >>> queue.stats
+            {'total': 1, 'dropped': 0, 'drop_rate': 0.0, 'maxsize': 100}
+        """
+        with self._lock:
+            if self._total_count == 0:
+                drop_rate = 0.0
+            else:
+                drop_rate = float(self._dropped_count) / float(self._total_count)
+            
+            return {
+                "total": self._total_count,
+                "dropped": self._dropped_count,
+                "drop_rate": drop_rate,
+                "maxsize": self._maxsize,
+            }
 
 
 _span_queue: InstrumentationQueue = InstrumentationQueue()
@@ -351,13 +413,37 @@ def _create_query_span(
             "row_count": row_count,
         }
 
-        # Enqueue for background processing (non-blocking)
+        # Enqueue for background processing using non-blocking semantics.
+        # Support both the custom InstrumentationQueue (which exposes
+        # `put` returning bool and `put_nowait`) and plain `queue.Queue`
+        # instances (which expose `put_nowait`). Prefer non-blocking
+        # `put_nowait` when available to avoid blocking the producer.
         try:
-            ok = _span_queue.put(span_data)
-            if ok:
-                logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
+            if hasattr(_span_queue, "put_nowait"):
+                try:
+                    _span_queue.put_nowait(span_data)
+                    logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
+                except queue.Full:
+                    logger.warning("Span queue is full, dropping span data")
             else:
-                logger.warning("Span queue is full, dropping span data")
+                # Fallback: call `put` and interpret boolean return when
+                # provided by a custom implementation. If `put` returns
+                # None, treat it as success (best-effort).
+                put_fn = getattr(_span_queue, "put", None)
+                if put_fn is None:
+                    logger.warning("No queue put available, dropping span data")
+                else:
+                    try:
+                        res = put_fn(span_data)
+                        if res is True:
+                            logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
+                        elif res is False:
+                            logger.warning("Span queue is full, dropping span data")
+                        else:
+                            # treat None/other as success
+                            logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
+                    except Exception as e:  # pragma: no cover - defensive
+                        logger.warning(f"Failed to enqueue span data: {e}")
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(f"Failed to enqueue span data: {e}")
 
