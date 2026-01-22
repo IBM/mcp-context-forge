@@ -50,3 +50,42 @@ def test_port_valid(port):
 def test_port_invalid(port):
     with pytest.raises(ValidationError):
         Settings(port=port)
+
+
+# --- log_detailed_sample_rate tests ---
+
+@pytest.mark.parametrize("rate", [0.0, 0.5, 1.0])
+def test_log_detailed_sample_rate_valid(rate):
+    settings = Settings(log_detailed_sample_rate=rate, _env_file=None)
+    assert settings.log_detailed_sample_rate == rate
+
+
+@pytest.mark.parametrize("rate", [-0.1, 1.1, 2.0])
+def test_log_detailed_sample_rate_invalid(rate):
+    with pytest.raises(ValidationError):
+        Settings(log_detailed_sample_rate=rate, _env_file=None)
+
+
+# --- log_detailed_skip_endpoints tests ---
+
+def test_log_detailed_skip_endpoints_default():
+    settings = Settings(_env_file=None)
+    assert settings.log_detailed_skip_endpoints == []
+
+
+def test_log_detailed_skip_endpoints_list():
+    settings = Settings(log_detailed_skip_endpoints=["/metrics", "/health"], _env_file=None)
+    assert settings.log_detailed_skip_endpoints == ["/metrics", "/health"]
+
+
+# --- log_resolve_user_identity tests ---
+
+def test_log_resolve_user_identity_default():
+    settings = Settings(_env_file=None)
+    assert settings.log_resolve_user_identity is False
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_log_resolve_user_identity_valid(value):
+    settings = Settings(log_resolve_user_identity=value, _env_file=None)
+    assert settings.log_resolve_user_identity == value

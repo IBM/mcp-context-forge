@@ -289,3 +289,178 @@ async def test_no_logging_for_skipped_paths(mock_structured_logger, dummy_call_n
 def test_sensitive_keys_is_frozenset():
     """SENSITIVE_KEYS should be a frozenset for performance."""
     assert isinstance(SENSITIVE_KEYS, frozenset)
+
+
+# --- Skip endpoints tests ---
+
+@pytest.mark.asyncio
+async def test_skip_endpoints_skips_detailed_logging(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Paths matching skip_endpoints should skip detailed logging."""
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        log_detailed_skip_endpoints=["/metrics", "/api/v1/status"],
+    )
+    scope: Scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/metrics",
+        "headers": [],
+        "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Detailed logging should be skipped, so no "📩 Incoming request" logged
+    assert not any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+@pytest.mark.asyncio
+async def test_skip_endpoints_prefix_match(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Skip endpoints should match path prefixes."""
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        log_detailed_skip_endpoints=["/api/v1/"],
+    )
+    scope: Scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/v1/users/123",
+        "headers": [],
+        "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Detailed logging should be skipped for paths starting with /api/v1/
+    assert not any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+@pytest.mark.asyncio
+async def test_skip_endpoints_non_matching_path_logs(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Paths not matching skip_endpoints should still log."""
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        log_detailed_skip_endpoints=["/metrics"],
+    )
+    body = b'{"data": "test"}'
+    request = make_request(body=body)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Path /test doesn't match /metrics, so detailed logging should occur
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+# --- Sampling tests ---
+
+@pytest.mark.asyncio
+async def test_sampling_rate_zero_skips_all(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Sample rate of 0.0 should skip all detailed logging."""
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        log_detailed_sample_rate=0.0,
+    )
+    body = b'{"data": "test"}'
+    request = make_request(body=body)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # With sample rate 0.0, no detailed logging should occur
+    assert not any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+@pytest.mark.asyncio
+async def test_sampling_rate_one_logs_all(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Sample rate of 1.0 should log all requests."""
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        log_detailed_sample_rate=1.0,
+    )
+    body = b'{"data": "test"}'
+    request = make_request(body=body)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # With sample rate 1.0, detailed logging should occur
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+# --- User identity resolution gating tests ---
+
+@pytest.mark.asyncio
+async def test_log_resolve_user_identity_false_skips_db_lookup(mock_structured_logger, dummy_call_next, monkeypatch):
+    """When log_resolve_user_identity=False, DB lookup should be skipped."""
+    # Track if get_current_user was called
+    get_current_user_called = []
+
+    async def mock_get_current_user(credentials):
+        get_current_user_called.append(True)
+        return MagicMock(id=1, email="test@example.com")
+
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.get_current_user", mock_get_current_user)
+
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
+        log_resolve_user_identity=False,  # Explicitly disable DB lookup
+    )
+    scope: Scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
+        "headers": Headers({"Authorization": "Bearer test-token"}).raw,
+        "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # get_current_user should NOT be called when log_resolve_user_identity=False
+    assert len(get_current_user_called) == 0
+
+
+@pytest.mark.asyncio
+async def test_log_resolve_user_identity_true_attempts_db_lookup(mock_structured_logger, dummy_call_next, monkeypatch):
+    """When log_resolve_user_identity=True, DB lookup should be attempted."""
+    # Track if get_current_user was called
+    get_current_user_called = []
+
+    async def mock_get_current_user(credentials):
+        get_current_user_called.append(True)
+        return MagicMock(id=1, email="test@example.com")
+
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.get_current_user", mock_get_current_user)
+
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
+        log_resolve_user_identity=True,  # Enable DB lookup
+    )
+    scope: Scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
+        "headers": Headers({"Authorization": "Bearer test-token"}).raw,
+        "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # get_current_user SHOULD be called when log_resolve_user_identity=True
+    assert len(get_current_user_called) == 1

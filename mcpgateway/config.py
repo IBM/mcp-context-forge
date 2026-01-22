@@ -88,6 +88,7 @@ def _normalize_env_list_vars() -> None:
         "SSO_GITHUB_ADMIN_ORGS",
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
+        "LOG_DETAILED_SKIP_ENDPOINTS",
     ]
     for key in keys:
         raw = os.environ.get(key)
