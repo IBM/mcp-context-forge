@@ -10,6 +10,39 @@ This module provides middleware for FastAPI to log incoming HTTP requests
 with sensitive data masking. It masks JWT tokens, passwords, and other
 sensitive information in headers and request bodies while preserving
 debugging information.
+
+Examples:
+    >>> from mcpgateway.middleware.request_logging_middleware import (
+    ...     mask_sensitive_data, mask_jwt_in_cookies, mask_sensitive_headers, SENSITIVE_KEYS
+    ... )
+
+    Check that SENSITIVE_KEYS contains expected values:
+    >>> "password" in SENSITIVE_KEYS
+    True
+    >>> "token" in SENSITIVE_KEYS
+    True
+    >>> "authorization" in SENSITIVE_KEYS
+    True
+
+    Mask nested sensitive data:
+    >>> data = {"credentials": {"password": "secret", "username": "admin"}}
+    >>> masked = mask_sensitive_data(data)
+    >>> masked["credentials"]["password"]
+    '******'
+    >>> masked["credentials"]["username"]
+    'admin'
+
+    Test mask_jwt_in_cookies with various inputs:
+    >>> mask_jwt_in_cookies("access_token=xyz123; user=john")
+    'access_token=******; user=john'
+
+    Test mask_sensitive_headers with mixed headers:
+    >>> headers = {"Content-Type": "application/json", "secret": "mysecret"}
+    >>> result = mask_sensitive_headers(headers)
+    >>> result["Content-Type"]
+    'application/json'
+    >>> result["secret"]
+    '******'
 """
 
 # Standard
@@ -52,6 +85,22 @@ def mask_sensitive_data(data, max_depth: int = 10):
 
     Returns:
         The data structure with sensitive values masked
+
+    Examples:
+        >>> mask_sensitive_data({"username": "john", "password": "secret123"})
+        {'username': 'john', 'password': '******'}
+
+        >>> mask_sensitive_data({"user": {"name": "john", "token": "abc123"}})
+        {'user': {'name': 'john', 'token': '******'}}
+
+        >>> mask_sensitive_data([{"apikey": "key1"}, {"data": "safe"}])
+        [{'apikey': '******'}, {'data': 'safe'}]
+
+        >>> mask_sensitive_data("plain string")
+        'plain string'
+
+        >>> mask_sensitive_data({"level": {"nested": {}}}, max_depth=1)
+        {'level': '<nested too deep>'}
     """
     if max_depth <= 0:
         return "<nested too deep>"
@@ -71,6 +120,22 @@ def mask_jwt_in_cookies(cookie_header):
 
     Returns:
         Cookie header string with JWT tokens masked
+
+    Examples:
+        >>> mask_jwt_in_cookies("jwt_token=abc123; theme=dark")
+        'jwt_token=******; theme=dark'
+
+        >>> mask_jwt_in_cookies("session_id=xyz; auth_token=secret")
+        'session_id=******; auth_token=******'
+
+        >>> mask_jwt_in_cookies("user=john; preference=light")
+        'user=john; preference=light'
+
+        >>> mask_jwt_in_cookies("")
+        ''
+
+        >>> mask_jwt_in_cookies(None) is None
+        True
     """
     if not cookie_header:
         return cookie_header
@@ -101,6 +166,20 @@ def mask_sensitive_headers(headers):
 
     Returns:
         Dictionary of headers with sensitive values masked
+
+    Examples:
+        >>> mask_sensitive_headers({"Authorization": "Bearer token123"})
+        {'Authorization': '******'}
+
+        >>> mask_sensitive_headers({"Content-Type": "application/json"})
+        {'Content-Type': 'application/json'}
+
+        >>> mask_sensitive_headers({"apikey": "secret", "X-Custom": "value"})
+        {'apikey': '******', 'X-Custom': 'value'}
+
+        >>> result = mask_sensitive_headers({"Cookie": "jwt_token=abc; theme=dark"})
+        >>> "******" in result["Cookie"]
+        True
     """
     masked_headers = {}
     for key, value in headers.items():
@@ -120,6 +199,25 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     Logs incoming requests including method, path, headers, and body while
     masking sensitive information like passwords, tokens, and authorization headers.
+
+    Examples:
+        >>> middleware = RequestLoggingMiddleware(
+        ...     app=None,
+        ...     enable_gateway_logging=True,
+        ...     log_detailed_requests=True,
+        ...     log_detailed_skip_endpoints=["/metrics", "/health"],
+        ...     log_detailed_sample_rate=0.5,
+        ... )
+        >>> middleware.enable_gateway_logging
+        True
+        >>> middleware.log_detailed_requests
+        True
+        >>> middleware.log_detailed_skip_endpoints
+        ['/metrics', '/health']
+        >>> middleware.log_detailed_sample_rate
+        0.5
+        >>> middleware.log_resolve_user_identity
+        False
     """
 
     def __init__(

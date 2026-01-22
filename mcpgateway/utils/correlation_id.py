@@ -40,6 +40,15 @@ def get_correlation_id() -> Optional[str]:
 
     Returns:
         Optional[str]: The correlation ID if set, None otherwise
+
+    Example:
+        >>> clear_correlation_id()  # Start fresh
+        >>> get_correlation_id() is None
+        True
+        >>> set_correlation_id("test-123")
+        >>> get_correlation_id()
+        'test-123'
+        >>> clear_correlation_id()
     """
     return _correlation_id_context.get()
 
@@ -52,6 +61,12 @@ def set_correlation_id(correlation_id: str) -> None:
 
     Args:
         correlation_id: The correlation ID to set (typically a UUID or client-provided ID)
+
+    Example:
+        >>> set_correlation_id("my-request-id")
+        >>> get_correlation_id()
+        'my-request-id'
+        >>> clear_correlation_id()
     """
     _correlation_id_context.set(correlation_id)
 
@@ -64,6 +79,14 @@ def clear_correlation_id() -> None:
 
     Note: This is optional as ContextVar automatically cleans up when the
     async task completes.
+
+    Example:
+        >>> set_correlation_id("temp-id")
+        >>> get_correlation_id() is not None
+        True
+        >>> clear_correlation_id()
+        >>> get_correlation_id() is None
+        True
     """
     _correlation_id_context.set(None)
 
@@ -76,6 +99,13 @@ def generate_correlation_id() -> str:
 
     Returns:
         str: A new UUID in hex format (32 characters, no hyphens)
+
+    Example:
+        >>> cid = generate_correlation_id()
+        >>> len(cid) == 32
+        True
+        >>> cid.isalnum()
+        True
     """
     return uuid.uuid4().hex
 

@@ -148,6 +148,22 @@ class Settings(BaseSettings):
         True
         >>> isinstance(s5.allowed_origins, set)
         True
+        >>> s6 = Settings(log_detailed_skip_endpoints=["/metrics", "/health"])
+        >>> s6.log_detailed_skip_endpoints
+        ['/metrics', '/health']
+        >>> s7 = Settings(log_detailed_sample_rate=0.5)
+        >>> s7.log_detailed_sample_rate
+        0.5
+        >>> s8 = Settings(log_resolve_user_identity=True)
+        >>> s8.log_resolve_user_identity
+        True
+        >>> s9 = Settings()
+        >>> s9.log_detailed_skip_endpoints
+        []
+        >>> s9.log_detailed_sample_rate
+        1.0
+        >>> s9.log_resolve_user_identity
+        False
     """
 
     # Basic Settings
