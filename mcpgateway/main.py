@@ -67,6 +67,7 @@ from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, get_user_team_roles, normalize_token_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
+import mcpgateway.bootstrap_db as bootstrap_db_module
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
@@ -168,13 +169,28 @@ set_logging_service(logging_service)
 # Wait for database to be ready before creating tables
 wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s
 
-# Create database tables
-try:
-    loop = asyncio.get_running_loop()
-except RuntimeError:
+# Create database tables according to configured migration mode
+mode = getattr(settings, "migration_mode", "async").lower()
+if mode not in ("async", "sync", "skip"):
+    mode = "async"
+
+if mode == "skip":
+    logger.info("Migrations skipped (MIGRATION_MODE=skip)")
+elif mode == "sync":
+    # Blocking (legacy) behavior
     asyncio.run(bootstrap_db())
 else:
-    loop.create_task(bootstrap_db())
+    # Async/background migrations: try to attach to running loop or spawn a background thread
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop (import-time); run migrations in a daemon thread to avoid blocking startup
+        from threading import Thread
+
+        t = Thread(target=lambda: asyncio.run(bootstrap_db()), daemon=True)
+        t.start()
+    else:
+        loop.create_task(bootstrap_db())
 
 # Initialize plugin manager as a singleton (honor env overrides for tests)
 _env_flag = _os.getenv("PLUGINS_ENABLED")
@@ -6669,7 +6685,13 @@ def healthcheck():
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        return {"status": "healthy"}
+        status = {"status": "healthy"}
+        try:
+            # Attach migration status if available
+            status["migration"] = getattr(bootstrap_db_module, "migration_status", None)
+        except Exception:
+            status["migration"] = None
+        return status
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
