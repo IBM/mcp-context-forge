@@ -2,6 +2,7 @@ nav:
   - index.md
   - unittest.md
   - basic.md
+  - entra-id-e2e.md
   - performance.md
   - acceptance.md
   - fuzzing.md
