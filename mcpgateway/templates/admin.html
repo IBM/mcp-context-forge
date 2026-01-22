@@ -2833,7 +2833,7 @@
                     hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                     hx-trigger="load"
                     hx-swap="innerHTML"
-                    hx-on::after-swap="initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
+                    hx-on::after-swap="Admin.initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
                   >
                     <!-- Tools will be loaded via HTMX -->
                     <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -2905,7 +2905,7 @@
                   hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on::after-swap="initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
+                  hx-on::after-swap="Admin.initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
                 >
                   <!-- Resources will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -2965,7 +2965,7 @@
                   hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                   hx-trigger="load"
                   hx-swap="innerHTML"
-                  hx-on::after-swap="initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
+                  hx-on::after-swap="Admin.initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
                 >
                   <!-- Prompts will be loaded via HTMX -->
                   <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11079,7 +11079,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
+                        hx-on::after-swap="Admin.initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
                       >
                         <!-- Tools will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11154,7 +11154,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
+                        hx-on::after-swap="Admin.initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
                       >
                         <!-- Resources will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11221,7 +11221,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
                         hx-trigger="load"
                         hx-swap="innerHTML"
-                        hx-on::after-swap="initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
+                        hx-on::after-swap="Admin.initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
                       >
                         <!-- Prompts will be loaded via HTMX -->
                         <div class="text-center py-4 text-gray-500 dark:text-gray-400">
@@ -11774,7 +11774,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         </div>
       </div>
     <!-- Scripts -->
-    <script>
+    <script defer>
       // User creation form event handler
       document.addEventListener('DOMContentLoaded', function() {
         const createUserForm = document.getElementById('create-user-form');
@@ -11795,19 +11795,19 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       });
 
       // Build mapping objects using your existing tools, resources, and prompts arrays
-      window.toolMapping = {};
+      Admin.toolMapping = {};
       {% for tool in tools %}
-      window.toolMapping["{{ tool.id }}"] = "{{ tool.name }}";
+      Admin.toolMapping["{{ tool.id }}"] = "{{ tool.name }}";
       {% endfor %}
 
-      window.resourceMapping = {};
+      Admin.resourceMapping = {};
       {% for resource in resources %}
-      window.resourceMapping["{{ resource.id }}"] = "{{ resource.name }}";
+      Admin.resourceMapping["{{ resource.id }}"] = "{{ resource.name }}";
       {% endfor %}
 
-      window.promptMapping = {};
+      Admin.promptMapping = {};
       {% for prompt in prompts %}
-      window.promptMapping["{{ prompt.id }}"] = "{{ prompt.displayName or prompt.originalName or prompt.name }}";
+      Admin.promptMapping["{{ prompt.id }}"] = "{{ prompt.displayName or prompt.originalName or prompt.name }}";
       {% endfor %}
 
       window.ROOT_PATH = {{ root_path | tojson }};
@@ -15080,7 +15080,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       });
 
       // NOTE: Select All / Clear All handlers for Resources and Prompts are now handled
-      // by initResourceSelect() and initPromptSelect() functions in admin.js.
+      // by Admin.initResourceSelect() and Admin.initPromptSelect() functions in admin.js.
       // Those functions properly fetch ALL IDs from the server and maintain state,
       // so items that load via pagination are also included in the selection.
       // The handlers are attached via HTMX's hx-on::after-swap attribute.
