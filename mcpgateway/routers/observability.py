@@ -838,3 +838,36 @@ def _get_query_performance_python(db: Session, cutoff_time: datetime, hours: int
         "min_duration_ms": round(durations[0], 2),
         "max_duration_ms": round(durations[-1], 2),
     }
+
+
+
+@router.get("/instrumentation/queue-stats")
+@require_permission("admin.system_config")
+async def get_instrumentation_queue_stats(_user=Depends(get_current_user_with_permissions)):
+    """Get instrumentation queue statistics.
+
+    Returns metrics about the background span queue including:
+    - Total spans processed
+    - Dropped spans count
+    - Drop rate (percentage)
+    - Queue max size
+
+    This helps monitor observability data reliability under load.
+
+    Returns:
+        dict: Queue statistics including total, dropped, drop_rate, and maxsize
+
+    Examples:
+        >>> import asyncio
+        >>> import mcpgateway.routers.observability as obs
+        >>> from mcpgateway.config import settings
+        >>> async def run_queue_stats():
+        ...     stats = await obs.get_instrumentation_queue_stats(_user={"email": settings.platform_admin_email, "db": None})
+        ...     return "total" in stats and "drop_rate" in stats
+        >>> asyncio.run(run_queue_stats())
+        True
+    """
+    # First-Party
+    from mcpgateway.instrumentation.sqlalchemy import _span_queue
+
+    return _span_queue.stats
