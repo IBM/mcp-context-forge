@@ -68,7 +68,7 @@ from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import fresh_db_session, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
@@ -2131,11 +2131,13 @@ async def list_servers(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[ServerRead], Dict[str, Any]]:
     """
     Lists servers accessible to the user, with team filtering and cursor pagination support.
+
+    Uses fresh_db_session() for short-lived database access to prevent holding
+    connections during response serialization (Issue #2323).
 
     Args:
         request (Request): The incoming request object for team_id retrieval.
@@ -2146,7 +2148,6 @@ async def list_servers(
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2172,25 +2173,27 @@ async def list_servers(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use consolidated server listing with optional team filtering
-    logger.debug(f"User: {user_email} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
-    data, next_cursor = await server_service.list_servers(
-        db=db,
-        cursor=cursor,
-        limit=limit,
-        include_inactive=include_inactive,
-        tags=tags_list,
-        user_email=user_email if (team_id or visibility) else None,
-        team_id=team_id,
-        visibility=visibility,
-    )
-
-    if include_pagination:
-        payload = {"servers": [server.model_dump(by_alias=True) for server in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
-    return data
+    # Use fresh_db_session() for short-lived database access (Issue #2323)
+    with fresh_db_session() as db:
+        # Use consolidated server listing with optional team filtering
+        logger.debug(f"User: {user_email} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+        data, next_cursor = await server_service.list_servers(
+            db=db,
+            cursor=cursor,
+            limit=limit,
+            include_inactive=include_inactive,
+            tags=tags_list,
+            user_email=user_email if (team_id or visibility) else None,
+            team_id=team_id,
+            visibility=visibility,
+        )
+        # Convert to dicts while session is open
+        if include_pagination:
+            payload = {"servers": [server.model_dump(by_alias=True) for server in data]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+            return payload
+        return [server.model_dump(by_alias=True) for server in data]
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
@@ -2714,11 +2717,13 @@ async def list_a2a_agents(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     limit: Optional[int] = Query(None, description="Maximum number of agents to return"),
-    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[A2AAgentRead], Dict[str, Any]]:
     """
     Lists A2A agents user has access to with cursor pagination and team filtering.
+
+    Uses fresh_db_session() for short-lived database access to prevent holding
+    connections during response serialization (Issue #2323).
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval.
@@ -2729,7 +2734,6 @@ async def list_a2a_agents(
         cursor (Optional[str]): Cursor for pagination.
         include_pagination (bool): Include cursor pagination metadata in response.
         limit (Optional[int]): Maximum number of agents to return.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2776,25 +2780,27 @@ async def list_a2a_agents(
 
     logger.debug(f"User: {user_email} requested A2A agent list with team_id={team_id}, visibility={visibility}, tags={tags_list}, cursor={cursor}")
 
-    # Use consolidated agent listing with token-based team filtering
-    data, next_cursor = await a2a_service.list_agents(
-        db=db,
-        cursor=cursor,
-        include_inactive=include_inactive,
-        tags=tags_list,
-        limit=limit,
-        user_email=user_email,
-        token_teams=token_teams,
-        team_id=team_id,
-        visibility=visibility,
-    )
-
-    if include_pagination:
-        payload = {"agents": [agent.model_dump(by_alias=True) for agent in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
-    return data
+    # Use fresh_db_session() for short-lived database access (Issue #2323)
+    with fresh_db_session() as db:
+        # Use consolidated agent listing with token-based team filtering
+        data, next_cursor = await a2a_service.list_agents(
+            db=db,
+            cursor=cursor,
+            include_inactive=include_inactive,
+            tags=tags_list,
+            limit=limit,
+            user_email=user_email,
+            token_teams=token_teams,
+            team_id=team_id,
+            visibility=visibility,
+        )
+        # Convert to dicts while session is open
+        if include_pagination:
+            payload = {"agents": [agent.model_dump(by_alias=True) for agent in data]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+            return payload
+        return [agent.model_dump(by_alias=True) for agent in data]
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
@@ -3160,11 +3166,13 @@ async def list_tools(
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
-    db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[ToolRead], List[Dict], Dict]:
     """List all registered tools with team-based filtering and pagination support.
+
+    Uses fresh_db_session() for short-lived database access to prevent holding
+    connections during response serialization (Issue #2323).
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
@@ -3177,7 +3185,6 @@ async def list_tools(
         team_id: Optional team ID to filter tools by specific team
         visibility: Optional visibility filter (private, team, public)
         gateway_id: Optional gateway ID to filter tools by specific gateway
-        db: Database session
         apijsonpath: JSON path modifier to filter or transform the response
         user: Authenticated user with permissions
 
@@ -3218,30 +3225,34 @@ async def list_tools(
     if not is_empty_team_token:
         team_id = team_id or token_team_id
 
-    # Use unified list_tools() with token-based team filtering
-    # Always apply visibility filtering based on token scope
-    data, next_cursor = await tool_service.list_tools(
-        db=db,
-        cursor=cursor,
-        include_inactive=include_inactive,
-        tags=tags_list,
-        gateway_id=gateway_id,
-        limit=limit,
-        user_email=user_email,
-        team_id=team_id,
-        visibility=visibility,
-        token_teams=token_teams,
-    )
+    # Use fresh_db_session() for short-lived database access (Issue #2323)
+    # This prevents holding connections during response serialization
+    with fresh_db_session() as db:
+        # Use unified list_tools() with token-based team filtering
+        # Always apply visibility filtering based on token scope
+        data, next_cursor = await tool_service.list_tools(
+            db=db,
+            cursor=cursor,
+            include_inactive=include_inactive,
+            tags=tags_list,
+            gateway_id=gateway_id,
+            limit=limit,
+            user_email=user_email,
+            team_id=team_id,
+            visibility=visibility,
+            token_teams=token_teams,
+        )
+        # Convert to dicts while session is open to avoid lazy loading issues
+        if apijsonpath is None:
+            if include_pagination:
+                payload = {"tools": [tool.model_dump(by_alias=True) for tool in data]}
+                if next_cursor:
+                    payload["nextCursor"] = next_cursor
+                return payload
+            # Convert ToolRead objects to dicts before session closes
+            return [tool.model_dump(by_alias=True) for tool in data]
 
-    if apijsonpath is None:
-        if include_pagination:
-            payload = {"tools": [tool.model_dump(by_alias=True) for tool in data]}
-            if next_cursor:
-                payload["nextCursor"] = next_cursor
-            return payload
-        return data
-
-    tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
+        tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
 
     return jsonpath_modifier(tools_dict_list, apijsonpath.jsonpath, apijsonpath.mapping)
 
@@ -3647,11 +3658,13 @@ async def list_resources(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Retrieve a list of resources accessible to the user, with team filtering and cursor pagination support.
+
+    Uses fresh_db_session() for short-lived database access to prevent holding
+    connections during response serialization (Issue #2323).
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
@@ -3662,7 +3675,6 @@ async def list_resources(
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
         visibility (Optional[str]): Filter by visibility (private, team, public).
-        db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
@@ -3701,27 +3713,29 @@ async def list_resources(
     if not is_empty_team_token:
         team_id = team_id or token_team_id
 
-    # Use unified list_resources() with token-based team filtering
-    # Always apply visibility filtering based on token scope
-    logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
-    data, next_cursor = await resource_service.list_resources(
-        db=db,
-        cursor=cursor,
-        limit=limit,
-        include_inactive=include_inactive,
-        tags=tags_list,
-        user_email=user_email,
-        team_id=team_id,
-        visibility=visibility,
-        token_teams=token_teams,
-    )
-
-    if include_pagination:
-        payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
-    return data
+    # Use fresh_db_session() for short-lived database access (Issue #2323)
+    with fresh_db_session() as db:
+        # Use unified list_resources() with token-based team filtering
+        # Always apply visibility filtering based on token scope
+        logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+        data, next_cursor = await resource_service.list_resources(
+            db=db,
+            cursor=cursor,
+            limit=limit,
+            include_inactive=include_inactive,
+            tags=tags_list,
+            user_email=user_email,
+            team_id=team_id,
+            visibility=visibility,
+            token_teams=token_teams,
+        )
+        # Convert to dicts while session is open
+        if include_pagination:
+            payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+            return payload
+        return [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]
 
 
 @resource_router.post("", response_model=ResourceRead)
@@ -4106,11 +4120,13 @@ async def list_prompts(
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
     visibility: Optional[str] = None,
-    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
     List prompts accessible to the user, with team filtering and cursor pagination support.
+
+    Uses fresh_db_session() for short-lived database access to prevent holding
+    connections during response serialization (Issue #2323).
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
@@ -4121,7 +4137,6 @@ async def list_prompts(
         tags: Comma-separated list of tags to filter by.
         team_id: Filter by specific team ID.
         visibility: Filter by visibility (private, team, public).
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -4160,27 +4175,29 @@ async def list_prompts(
     if not is_empty_team_token:
         team_id = team_id or token_team_id
 
-    # Use consolidated prompt listing with token-based team filtering
-    # Always apply visibility filtering based on token scope
-    logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
-    data, next_cursor = await prompt_service.list_prompts(
-        db=db,
-        cursor=cursor,
-        limit=limit,
-        include_inactive=include_inactive,
-        tags=tags_list,
-        user_email=user_email,
-        team_id=team_id,
-        visibility=visibility,
-        token_teams=token_teams,
-    )
-
-    if include_pagination:
-        payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
-    return data
+    # Use fresh_db_session() for short-lived database access (Issue #2323)
+    with fresh_db_session() as db:
+        # Use consolidated prompt listing with token-based team filtering
+        # Always apply visibility filtering based on token scope
+        logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
+        data, next_cursor = await prompt_service.list_prompts(
+            db=db,
+            cursor=cursor,
+            limit=limit,
+            include_inactive=include_inactive,
+            tags=tags_list,
+            user_email=user_email,
+            team_id=team_id,
+            visibility=visibility,
+            token_teams=token_teams,
+        )
+        # Convert to dicts while session is open
+        if include_pagination:
+            payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+            return payload
+        return [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]
 
 
 @prompt_router.post("", response_model=PromptRead)
@@ -4584,11 +4601,13 @@ async def list_gateways(
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
-    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Union[List[GatewayRead], Dict[str, Any]]:
     """
     List all gateways with cursor pagination support.
+
+    Uses fresh_db_session() for short-lived database access to prevent holding
+    connections during response serialization (Issue #2323).
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval
@@ -4598,7 +4617,6 @@ async def list_gateways(
         include_inactive: Include inactive gateways.
         team_id (Optional): Filter by specific team ID.
         visibility (Optional): Filter by visibility (private, team, public).
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -4621,24 +4639,26 @@ async def list_gateways(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Use consolidated gateway listing with optional team filtering
-    logger.debug(f"User: {user_email} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
-    data, next_cursor = await gateway_service.list_gateways(
-        db=db,
-        cursor=cursor,
-        limit=limit,
-        include_inactive=include_inactive,
-        user_email=user_email if (team_id or visibility) else None,
-        team_id=team_id,
-        visibility=visibility,
-    )
-
-    if include_pagination:
-        payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
-        if next_cursor:
-            payload["nextCursor"] = next_cursor
-        return payload
-    return data
+    # Use fresh_db_session() for short-lived database access (Issue #2323)
+    with fresh_db_session() as db:
+        # Use consolidated gateway listing with optional team filtering
+        logger.debug(f"User: {user_email} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
+        data, next_cursor = await gateway_service.list_gateways(
+            db=db,
+            cursor=cursor,
+            limit=limit,
+            include_inactive=include_inactive,
+            user_email=user_email if (team_id or visibility) else None,
+            team_id=team_id,
+            visibility=visibility,
+        )
+        # Convert to dicts while session is open
+        if include_pagination:
+            payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
+            if next_cursor:
+                payload["nextCursor"] = next_cursor
+            return payload
+        return [gateway.model_dump(by_alias=True) for gateway in data]
 
 
 @gateway_router.post("", response_model=GatewayRead)
