@@ -123,7 +123,7 @@ class _Entry:
     vec: Dict[str, float]
     value: Any
     expires_at: float
-    tokens: Set[str] = field(default_factory=set)  # Pre-computed token set for quick filtering
+    tokens: set[str] = field(default_factory=set)  # Pre-computed token set for quick filtering
 
 
 class ResponseCacheByPromptPlugin(Plugin):
@@ -280,16 +280,16 @@ class ResponseCacheByPromptPlugin(Plugin):
         # Evict expired entries and rebuild index
         now = time.time()
         # Filter out expired entries
-        valid_entries = [(i, e) for i, e in enumerate(bucket) if e.expires_at > now]
+        valid_entries = [e for e in bucket if e.expires_at > now]
         
         # Cap size if needed
         if len(valid_entries) > self._cfg.max_entries:
-            valid_entries = valid_entries[-self._cfg.max_entries :]
+            valid_entries = valid_entries[-self._cfg.max_entries:]
         
         # Rebuild bucket and index if we removed or modified entries
         if len(valid_entries) != len(bucket):
             bucket.clear()
-            bucket.extend([e for _, e in valid_entries])
+            bucket.extend(valid_entries)
             
             # Rebuild inverted index for this tool
             self._index[tool].clear()
