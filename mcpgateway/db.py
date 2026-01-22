@@ -462,15 +462,20 @@ def set_fresh_session_factory(factory: sessionmaker) -> None:
     This is primarily for testing purposes, allowing tests to redirect
     fresh_db_session() to use a test database instead of the production database.
 
+    Note: This is a process-global override. If tests run in parallel, ensure
+    test isolation by using separate processes or serializing fixtures that
+    modify this setting.
+
     Args:
         factory: A SQLAlchemy sessionmaker to use for fresh_db_session().
 
     Example:
-        >>> from mcpgateway.db import set_fresh_session_factory
-        >>> test_session_factory = sessionmaker(bind=test_engine)
-        >>> set_fresh_session_factory(test_session_factory)
+        >>> from mcpgateway.db import set_fresh_session_factory, reset_fresh_session_factory, SessionLocal
+        >>> # Save and restore (tests should use reset_fresh_session_factory in cleanup)
+        >>> set_fresh_session_factory(SessionLocal)  # No-op, just demonstrating the API
+        >>> reset_fresh_session_factory()
     """
-    global _fresh_session_factory
+    global _fresh_session_factory  # pylint: disable=global-statement
     _fresh_session_factory = factory
 
 
@@ -479,7 +484,7 @@ def reset_fresh_session_factory() -> None:
 
     This should be called after tests to restore the original behavior.
     """
-    global _fresh_session_factory
+    global _fresh_session_factory  # pylint: disable=global-statement
     _fresh_session_factory = SessionLocal
 
 
