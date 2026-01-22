@@ -1855,6 +1855,9 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 | `LOG_FORMAT`            | Console log format                 | `json`            | `json`, `text`             |
 | `LOG_REQUESTS`          | Enable detailed request logging    | `false`           | `true`, `false`            |
 | `LOG_DETAILED_MAX_BODY_SIZE` | Max request body size to log (bytes) | `16384`       | `1024` - `1048576`         |
+| `LOG_DETAILED_SKIP_ENDPOINTS` | Path prefixes to skip from detailed logging | `[]` | Comma-separated list       |
+| `LOG_DETAILED_SAMPLE_RATE` | Sampling rate for detailed logging | `1.0`            | `0.0` - `1.0`              |
+| `LOG_RESOLVE_USER_IDENTITY` | Enable DB lookup for user identity | `false`         | `true`, `false`            |
 | `LOG_TO_FILE`           | **Enable file logging**            | **`false`**       | **`true`, `false`**        |
 | `LOG_FILE`              | Log filename (when enabled)        | `null`            | `mcpgateway.log`           |
 | `LOG_FOLDER`            | Directory for log files            | `null`            | `logs`, `/var/log/gateway` |
@@ -1870,7 +1873,8 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 - **Log Rotation**: When `LOG_ROTATION_ENABLED=true`, files rotate at `LOG_MAX_SIZE_MB` with `LOG_BACKUP_COUNT` backup files (e.g., `.log.1`, `.log.2`)
 - **Directory Creation**: Log folder is automatically created if it doesn't exist
 - **Centralized Service**: All modules use the unified `LoggingService` for consistent formatting
-- **Detailed Request Logging**: When `LOG_REQUESTS=true`, payload logging is truncated to `LOG_DETAILED_MAX_BODY_SIZE` and skipped for `/health`, `/healthz`, `/static`, and `/favicon.ico`
+- **Detailed Request Logging**: When `LOG_REQUESTS=true`, payload logging is truncated to `LOG_DETAILED_MAX_BODY_SIZE` and skipped for `/health`, `/healthz`, `/static`, `/favicon.ico`, and any paths in `LOG_DETAILED_SKIP_ENDPOINTS`
+- **Sampling**: Use `LOG_DETAILED_SAMPLE_RATE` to log only a fraction of requests (e.g., `0.1` for 10%) to reduce CPU overhead in high-traffic environments
 
 **Example Configurations:**
 
@@ -1896,6 +1900,11 @@ LOG_FILE=gateway.log
 # Optional: Enable detailed request payload logging (truncated)
 LOG_REQUESTS=true
 LOG_DETAILED_MAX_BODY_SIZE=16384
+
+# Optional: Reduce logging overhead in high-traffic environments
+LOG_REQUESTS=true
+LOG_DETAILED_SAMPLE_RATE=0.1           # Log only 10% of requests
+LOG_DETAILED_SKIP_ENDPOINTS=/metrics,/api/v1/status  # Skip high-volume endpoints
 ```
 
 **Default Behavior:**

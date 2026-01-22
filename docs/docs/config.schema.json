@@ -45,6 +45,12 @@
       "title": "Static Dir",
       "type": "string"
     },
+    "templates_auto_reload": {
+      "default": false,
+      "description": "Auto-reload Jinja2 templates on change (enable for development)",
+      "title": "Templates Auto Reload",
+      "type": "boolean"
+    },
     "app_root_path": {
       "default": "",
       "title": "App Root Path",
@@ -104,6 +110,11 @@
       "title": "Jwt Audience Verification",
       "type": "boolean"
     },
+    "jwt_issuer_verification": {
+      "default": true,
+      "title": "Jwt Issuer Verification",
+      "type": "boolean"
+    },
     "auth_required": {
       "default": true,
       "title": "Auth Required",
@@ -118,6 +129,18 @@
       "default": false,
       "description": "Require all JWT tokens to have expiration claims",
       "title": "Require Token Expiration",
+      "type": "boolean"
+    },
+    "require_jti": {
+      "default": false,
+      "description": "Require JTI (JWT ID) claim in all tokens for revocation support",
+      "title": "Require Jti",
+      "type": "boolean"
+    },
+    "require_user_in_db": {
+      "default": false,
+      "description": "Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
+      "title": "Require User In Db",
       "type": "boolean"
     },
     "embed_environment_in_tokens": {
@@ -482,6 +505,47 @@
       "description": "Microsoft Entra ID tenant ID",
       "title": "Sso Entra Tenant Id"
     },
+    "sso_entra_groups_claim": {
+      "default": "groups",
+      "description": "JWT claim for EntraID groups (groups/roles)",
+      "title": "Sso Entra Groups Claim",
+      "type": "string"
+    },
+    "sso_entra_admin_groups": {
+      "description": "EntraID groups granting platform_admin role (CSV/JSON)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Entra Admin Groups",
+      "type": "array"
+    },
+    "sso_entra_role_mappings": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Map EntraID groups to Context Forge roles (JSON: {group_id: role_name})",
+      "title": "Sso Entra Role Mappings",
+      "type": "object"
+    },
+    "sso_entra_default_role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Default role for EntraID users without group mapping (None = no role assigned)",
+      "title": "Sso Entra Default Role"
+    },
+    "sso_entra_sync_roles_on_login": {
+      "default": true,
+      "description": "Synchronize role assignments on each login",
+      "title": "Sso Entra Sync Roles On Login",
+      "type": "boolean"
+    },
     "sso_generic_enabled": {
       "default": false,
       "description": "Enable generic OIDC provider (Keycloak, Auth0, etc.)",
@@ -663,6 +727,12 @@
       "title": "Mcp Client Auth Enabled",
       "type": "boolean"
     },
+    "mcp_require_auth": {
+      "default": false,
+      "description": "Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. If true, all /mcp requests must include a valid Bearer token.",
+      "title": "Mcp Require Auth",
+      "type": "boolean"
+    },
     "trust_proxy_auth": {
       "default": false,
       "description": "Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
@@ -681,6 +751,20 @@
       "title": "Auth Encryption Secret",
       "type": "string",
       "writeOnly": true
+    },
+    "insecure_allow_queryparam_auth": {
+      "default": false,
+      "description": "Enable query parameter authentication for gateway peers. WARNING: API keys may appear in proxy logs. See CWE-598.",
+      "title": "Insecure Allow Queryparam Auth",
+      "type": "boolean"
+    },
+    "insecure_queryparam_auth_allowed_hosts": {
+      "description": "Allowlist of hosts permitted to use query parameter auth. Empty list allows any host when feature is enabled. Format: ['mcp.tavily.com', 'api.example.com']",
+      "items": {
+        "type": "string"
+      },
+      "title": "Insecure Queryparam Auth Allowed Hosts",
+      "type": "array"
     },
     "oauth_request_timeout": {
       "default": 30,
@@ -843,6 +927,48 @@
       "title": "Password Require Special",
       "type": "boolean"
     },
+    "password_change_enforcement_enabled": {
+      "default": true,
+      "description": "Master switch for password change enforcement checks",
+      "title": "Password Change Enforcement Enabled",
+      "type": "boolean"
+    },
+    "admin_require_password_change_on_bootstrap": {
+      "default": true,
+      "description": "Force admin to change password after bootstrap",
+      "title": "Admin Require Password Change On Bootstrap",
+      "type": "boolean"
+    },
+    "detect_default_password_on_login": {
+      "default": true,
+      "description": "Detect default password during login and mark user for change",
+      "title": "Detect Default Password On Login",
+      "type": "boolean"
+    },
+    "require_password_change_for_default_password": {
+      "default": true,
+      "description": "Require password change when user is created with the default password",
+      "title": "Require Password Change For Default Password",
+      "type": "boolean"
+    },
+    "password_policy_enabled": {
+      "default": true,
+      "description": "Enable password complexity validation for new/changed passwords",
+      "title": "Password Policy Enabled",
+      "type": "boolean"
+    },
+    "password_prevent_reuse": {
+      "default": true,
+      "description": "Prevent reusing the current password when changing",
+      "title": "Password Prevent Reuse",
+      "type": "boolean"
+    },
+    "password_max_age_days": {
+      "default": 90,
+      "description": "Password maximum age in days before expiry forces a change",
+      "title": "Password Max Age Days",
+      "type": "integer"
+    },
     "max_failed_login_attempts": {
       "default": 5,
       "description": "Maximum failed login attempts before account lockout",
@@ -927,6 +1053,12 @@
       "description": "Tool test timeout in milliseconds for the admin UI",
       "title": "Mcpgateway Ui Tool Test Timeout",
       "type": "integer"
+    },
+    "mcpgateway_tool_cancellation_enabled": {
+      "default": true,
+      "description": "Enable gateway-authoritative tool execution cancellation with REST API endpoints",
+      "title": "Mcpgateway Tool Cancellation Enabled",
+      "type": "boolean"
     },
     "mcpgateway_a2a_enabled": {
       "default": true,
@@ -1224,8 +1356,8 @@
     },
     "allowed_origins": {
       "default": [
-        "http://localhost",
-        "http://localhost:4444"
+        "http://localhost:4444",
+        "http://localhost"
       ],
       "items": {
         "type": "string"
@@ -1513,6 +1645,28 @@
       "title": "Log Detailed Max Body Size",
       "type": "integer"
     },
+    "log_detailed_skip_endpoints": {
+      "description": "List of path prefixes to skip when log_detailed_requests is enabled",
+      "items": {
+        "type": "string"
+      },
+      "title": "Log Detailed Skip Endpoints",
+      "type": "array"
+    },
+    "log_resolve_user_identity": {
+      "default": false,
+      "description": "If true, RequestLoggingMiddleware will attempt DB fallback to resolve user identity when needed",
+      "title": "Log Resolve User Identity",
+      "type": "boolean"
+    },
+    "log_detailed_sample_rate": {
+      "default": 1.0,
+      "description": "Fraction of requests to sample for detailed logging (0.0-1.0)",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Log Detailed Sample Rate",
+      "type": "number"
+    },
     "log_buffer_size_mb": {
       "default": 1.0,
       "title": "Log Buffer Size Mb",
@@ -1774,6 +1928,14 @@
       "description": "Automatically run the log aggregation loop on application startup",
       "title": "Metrics Aggregation Auto Start",
       "type": "boolean"
+    },
+    "yield_batch_size": {
+      "default": 1000,
+      "description": "Number of rows fetched per batch when streaming hourly metric data from the database. Used to limit memory usage during aggregation and percentile calculations. Smaller values reduce memory footprint but increase DB round-trips; larger values improve throughput at the cost of higher memory usage.",
+      "maximum": 100000,
+      "minimum": 100,
+      "title": "Yield Batch Size",
+      "type": "integer"
     },
     "db_metrics_recording_enabled": {
       "default": true,
@@ -2248,14 +2410,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "text/html",
-        "image/png",
-        "image/jpeg",
-        "application/json",
-        "application/xml",
-        "text/markdown",
         "image/gif",
-        "text/plain"
+        "application/xml",
+        "text/html",
+        "application/json",
+        "image/png",
+        "text/plain",
+        "text/markdown",
+        "image/jpeg"
       ],
       "items": {
         "type": "string"
@@ -2339,6 +2501,22 @@
       "title": "Mcp Session Pool Explicit Health Rpc",
       "type": "boolean"
     },
+    "mcp_session_pool_health_check_methods": {
+      "default": [
+        "ping",
+        "skip"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcp Session Pool Health Check Methods",
+      "type": "array"
+    },
+    "mcp_session_pool_health_check_timeout": {
+      "default": 5.0,
+      "title": "Mcp Session Pool Health Check Timeout",
+      "type": "number"
+    },
     "mcp_session_pool_identity_headers": {
       "default": [
         "authorization",
@@ -2383,11 +2561,6 @@
       "title": "Gateway Health Check Timeout",
       "type": "number"
     },
-    "auto_refresh_servers": {
-      "default": false,
-      "title": "Auto Refresh Servers",
-      "type": "boolean"
-    },
     "unhealthy_threshold": {
       "default": 3,
       "title": "Unhealthy Threshold",
@@ -2396,6 +2569,19 @@
     "max_concurrent_health_checks": {
       "default": 10,
       "title": "Max Concurrent Health Checks",
+      "type": "integer"
+    },
+    "auto_refresh_servers": {
+      "default": false,
+      "description": "Enable automatic tool/resource/prompt refresh during gateway health checks",
+      "title": "Auto Refresh Servers",
+      "type": "boolean"
+    },
+    "gateway_auto_refresh_interval": {
+      "default": 300,
+      "description": "Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)",
+      "minimum": 60,
+      "title": "Gateway Auto Refresh Interval",
       "type": "integer"
     },
     "gateway_validation_timeout": {
@@ -2448,21 +2634,24 @@
     },
     "db_max_retries": {
       "default": 30,
-      "description": "Max DB connection retries at startup. Uses exponential backoff with jitter to prevent thundering herd.",
       "title": "Db Max Retries",
       "type": "integer"
     },
     "db_retry_interval_ms": {
       "default": 2000,
-      "description": "Base retry interval in milliseconds. Doubles each attempt with ±25% jitter.",
       "title": "Db Retry Interval Ms",
       "type": "integer"
     },
     "db_max_backoff_seconds": {
       "default": 30,
-      "description": "Maximum backoff cap in seconds. Jitter (±25%) is applied after this cap.",
       "title": "Db Max Backoff Seconds",
       "type": "integer"
+    },
+    "use_postgresdb_percentiles": {
+      "default": true,
+      "description": "Use database-native percentile functions (percentile_cont) for performance metrics. When enabled, PostgreSQL uses native SQL percentile calculations (5-10x faster). When disabled or using SQLite, falls back to Python-based percentile calculations. Recommended: true for PostgreSQL, auto-detected for SQLite.",
+      "title": "Use Postgresdb Percentiles",
+      "type": "boolean"
     },
     "db_prepare_threshold": {
       "default": 5,
@@ -2534,19 +2723,16 @@
     },
     "redis_max_retries": {
       "default": 30,
-      "description": "Max Redis connection retries at startup. Uses exponential backoff with jitter to prevent thundering herd.",
       "title": "Redis Max Retries",
       "type": "integer"
     },
     "redis_retry_interval_ms": {
       "default": 2000,
-      "description": "Base retry interval in milliseconds. Doubles each attempt with ±25% jitter.",
       "title": "Redis Retry Interval Ms",
       "type": "integer"
     },
     "redis_max_backoff_seconds": {
       "default": 30,
-      "description": "Maximum backoff cap in seconds. Jitter (±25%) is applied after this cap.",
       "title": "Redis Max Backoff Seconds",
       "type": "integer"
     },
@@ -2987,6 +3173,17 @@
       },
       "title": "Default Passthrough Headers",
       "type": "array"
+    },
+    "passthrough_headers_source": {
+      "default": "db",
+      "description": "Source priority for passthrough headers: env (environment always wins), db (database wins, default), merge (combine both)",
+      "enum": [
+        "env",
+        "db",
+        "merge"
+      ],
+      "title": "Passthrough Headers Source",
+      "type": "string"
     },
     "pagination_default_page_size": {
       "default": 50,
