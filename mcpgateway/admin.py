@@ -1457,7 +1457,7 @@ async def admin_list_servers(
         >>>
         >>> # Mock dependencies
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>>
         >>> # Mock server service
         >>> from datetime import datetime, timezone
@@ -1720,7 +1720,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         >>>
         >>> # Mock dependencies
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> server_id = "test-server-1"
         >>>
         >>> # Mock server response
@@ -2086,7 +2086,7 @@ async def admin_edit_server(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> server_id = "server-to-edit"
         >>>
         >>> # Happy path: Edit server with new name
@@ -2321,7 +2321,7 @@ async def admin_set_server_state(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> server_id = "server-to-toggle"
         >>>
         >>> # Happy path: Activate server
@@ -2440,7 +2440,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> server_id = "server-to-delete"
         >>>
         >>> # Happy path: Delete server
@@ -2545,7 +2545,7 @@ async def admin_list_resources(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
@@ -2639,7 +2639,7 @@ async def admin_list_prompts(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>>
         >>> # Mock prompt data
         >>> mock_prompt = PromptRead(
@@ -2736,7 +2736,7 @@ async def admin_list_gateways(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>>
         >>> # Mock gateway data
         >>> mock_gateway = GatewayRead(
@@ -2824,7 +2824,7 @@ async def admin_set_gateway_state(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> gateway_id = "gateway-to-toggle"
         >>>
         >>> # Happy path: Activate gateway
@@ -9250,7 +9250,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> tool_id = "test-tool-id"
         >>>
         >>> # Mock tool data
@@ -9370,7 +9370,7 @@ async def admin_add_tool(
         >>> import orjson
 
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
 
         >>> # Happy path: Add a new tool successfully
         >>> form_data_success = FormData([
@@ -9602,7 +9602,7 @@ async def admin_edit_tool(
         >>> import orjson
 
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> tool_id = "tool-to-edit"
 
         >>> # Happy path: Edit tool successfully
@@ -9845,7 +9845,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> tool_id = "tool-to-delete"
         >>>
         >>> # Happy path: Delete tool
@@ -9952,7 +9952,7 @@ async def admin_set_tool_state(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> tool_id = "tool-to-toggle"
         >>>
         >>> # Happy path: Activate tool
@@ -10070,7 +10070,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> gateway_id = "test-gateway-id"
         >>>
         >>> # Mock gateway data
@@ -10164,7 +10164,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>> import orjson
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>>
         >>> # Happy path: Add a new gateway successfully with basic auth details
         >>> form_data_success = FormData([
@@ -10505,7 +10505,7 @@ async def admin_edit_gateway(
         >>> from pydantic import ValidationError
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> gateway_id = "gateway-to-edit"
         >>>
         >>> # Happy path: Edit gateway successfully
@@ -10771,7 +10771,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> gateway_id = "gateway-to-delete"
         >>>
         >>> # Happy path: Delete gateway
@@ -11065,7 +11065,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> form_data = FormData([
         ...     ("uri", "test://resource1"),
         ...     ("name", "Test Resource"),
@@ -11205,7 +11205,7 @@ async def admin_edit_resource(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> form_data = FormData([
         ...     ("name", "Updated Resource"),
         ...     ("description", "Updated description"),
@@ -11343,7 +11343,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([("is_inactive_checked", "false")])
         >>> mock_request.form = AsyncMock(return_value=form_data)
@@ -11380,7 +11380,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     error_message = None
     try:
         await resource_service.delete_resource(
-            user["db"] if isinstance(user, dict) else db,
+            db,
             resource_id,
             user_email=user_email,
             purge_metrics=purge_metrics,
@@ -11438,7 +11438,7 @@ async def admin_set_resource_state(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([
         ...     ("activate", "true"),
@@ -11555,7 +11555,7 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> prompt_name = "test-prompt"
         >>>
         >>> # Mock prompt details
@@ -11660,7 +11660,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> form_data = FormData([
         ...     ("name", "Test Prompt"),
         ...     ("description", "A test prompt"),
@@ -11780,7 +11780,7 @@ async def admin_edit_prompt(
         >>> from fastapi.responses import JSONResponse
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> prompt_name = "test-prompt"
         >>> form_data = FormData([
         ...     ("name", "Updated Prompt"),
@@ -11910,7 +11910,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([("is_inactive_checked", "false")])
         >>> mock_request.form = AsyncMock(return_value=form_data)
@@ -11999,7 +11999,7 @@ async def admin_set_prompt_state(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([
         ...     ("activate", "true"),
@@ -12114,7 +12114,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([
         ...     ("uri", "test://root1"),
@@ -12172,7 +12172,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([("is_inactive_checked", "false")])
         >>> mock_request.form = AsyncMock(return_value=form_data)
@@ -12451,7 +12451,7 @@ async def admin_test_gateway(
         >>> import httpx
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> mock_request = GatewayTestRequest(
         ...     base_url="https://api.example.com",
         ...     path="/test",
@@ -13990,7 +13990,7 @@ async def admin_get_agent(
         >>>
         >>> a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>> agent_id = "test-agent-id"
         >>>
         >>> mock_agent = A2AAgentRead(
@@ -14095,7 +14095,7 @@ async def admin_list_a2a_agents(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
         >>>
         >>> mock_agent = A2AAgentRead(
         ...     id="1",

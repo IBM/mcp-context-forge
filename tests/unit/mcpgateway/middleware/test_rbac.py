@@ -19,11 +19,13 @@ async def test_get_db_yields_and_closes():
 
 @pytest.mark.asyncio
 async def test_get_permission_service_returns_instance():
-    mock_db = MagicMock()
-    with patch("mcpgateway.middleware.rbac.PermissionService", return_value="perm_service") as mock_perm:
-        result = await rbac.get_permission_service(mock_db)
+    mock_session = MagicMock()
+    mock_cm = MagicMock(__enter__=MagicMock(return_value=mock_session), __exit__=MagicMock(return_value=False))
+    with patch("mcpgateway.middleware.rbac.PermissionService", return_value="perm_service") as mock_perm, \
+         patch("mcpgateway.middleware.rbac.fresh_db_session", return_value=mock_cm):
+        result = await rbac.get_permission_service()
         assert result == "perm_service"
-        mock_perm.assert_called_once_with(mock_db)
+        mock_perm.assert_called_once_with(mock_session)
 
 
 @pytest.mark.asyncio
@@ -79,10 +81,13 @@ async def test_require_permission_granted(monkeypatch):
         return "ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+    # Mock fresh_db_session to return a context manager with our mock_db
+    mock_cm = MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))
+    monkeypatch.setattr(rbac, "fresh_db_session", lambda: mock_cm)
 
     decorated = rbac.require_permission("tools.read")(dummy_func)
     result = await decorated(user=mock_user)
@@ -95,10 +100,13 @@ async def test_require_admin_permission_granted(monkeypatch):
         return "admin-ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_admin_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+    # Mock fresh_db_session to return a context manager with our mock_db
+    mock_cm = MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))
+    monkeypatch.setattr(rbac, "fresh_db_session", lambda: mock_cm)
 
     decorated = rbac.require_admin_permission()(dummy_func)
     result = await decorated(user=mock_user)
@@ -111,10 +119,13 @@ async def test_require_any_permission_granted(monkeypatch):
         return "any-ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.side_effect = [False, True]
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+    # Mock fresh_db_session to return a context manager with our mock_db
+    mock_cm = MagicMock(__enter__=MagicMock(return_value=mock_db), __exit__=MagicMock(return_value=False))
+    monkeypatch.setattr(rbac, "fresh_db_session", lambda: mock_cm)
 
     decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
     result = await decorated(user=mock_user)
@@ -124,7 +135,7 @@ async def test_require_any_permission_granted(monkeypatch):
 @pytest.mark.asyncio
 async def test_permission_checker_methods(monkeypatch):
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     mock_perm_service.check_admin_permission.return_value = True
@@ -165,7 +176,7 @@ async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypat
         return "ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -209,7 +220,7 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
         return "ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -259,7 +270,7 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
         return "ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-123"}
+    mock_user = {"email": "user@example.com", "team_id": "team-123"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -287,7 +298,7 @@ async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
         return "ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-A"}
+    mock_user = {"email": "user@example.com", "team_id": "team-A"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -315,7 +326,7 @@ async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(mo
         return "any-ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-456"}
+    mock_user = {"email": "user@example.com", "team_id": "team-456"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -343,7 +354,7 @@ async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
         return "any-ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-A"}
+    mock_user = {"email": "user@example.com", "team_id": "team-A"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -370,7 +381,7 @@ async def test_decorators_handle_none_user_context_team_id(monkeypatch):
         return "ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -406,7 +417,7 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
 
     mock_db = MagicMock()
     # User context with team_id from JWT token
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-from-token"}
+    mock_user = {"email": "user@example.com", "team_id": "team-from-token"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -455,7 +466,7 @@ async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch)
         return "ok"
 
     mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
