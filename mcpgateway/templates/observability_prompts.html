@@ -1,5 +1,5 @@
 <!-- htmlhint doctype-first:false, tag-pair:false -->
-<script>
+<script defer>
 window.createPromptsController = function() {
   return {
     timeRange: 24,
@@ -208,7 +208,8 @@ window.createPromptsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const prompt = data.prompts[context.dataIndex];
+                  const prompt = data.prompts?.[context?.dataIndex];
+                  if (!prompt) return 'No data';
                   return [
                     `Renders: ${prompt.count}`,
                     `Percentage: ${prompt.percentage}%`
@@ -356,7 +357,8 @@ window.createPromptsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const prompt = sortedPrompts[context.dataIndex];
+                  const prompt = sortedPrompts?.[context?.dataIndex];
+                  if (!prompt) return 'No data';
                   return [
                     `${context.dataset.label}: ${context.parsed.x} ms`,
                     `Avg: ${prompt.avg_duration_ms} ms`,
@@ -488,7 +490,8 @@ window.createPromptsController = function() {
             tooltip: {
               callbacks: {
                 label: function (context) {
-                  const prompt = sortedPrompts[context.dataIndex];
+                  const prompt = sortedPrompts?.[context?.dataIndex];
+                  if (!prompt) return 'No data';
                   return [
                     `Error Rate: ${prompt.error_rate}%`,
                     `Errors: ${prompt.error_count}`,
