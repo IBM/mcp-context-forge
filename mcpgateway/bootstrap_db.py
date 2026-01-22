@@ -124,7 +124,13 @@ def advisory_lock(conn: Connection):
     # Postgres requires a BIGINT lock ID (arbitrary hash of the string)
     pg_lock_id = 42424242424242
 
-    timeout = getattr(settings, "migration_timeout", 300)
+    # Read configured timeout but tolerate test mocks or unexpected types
+    raw_timeout = getattr(settings, "migration_timeout", None)
+    try:
+        timeout = int(raw_timeout) if raw_timeout is not None else 300
+    except Exception:
+        # Fallback to default when settings provides non-numeric (e.g., Mock in tests)
+        timeout = 300
 
     if dialect == "postgresql":
         logger.info("Acquiring Postgres advisory lock (with timeout)...")
