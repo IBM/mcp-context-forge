@@ -349,6 +349,9 @@ mcpContextForge:
     LOG_TO_FILE: "false"             # enable file logging
     LOG_REQUESTS: "false"            # enable request payload logging with sensitive data masking
     LOG_DETAILED_MAX_BODY_SIZE: "16384" # max request body size to log (bytes)
+    LOG_DETAILED_SKIP_ENDPOINTS: ""  # path prefixes to skip from detailed logging (comma-separated)
+    LOG_DETAILED_SAMPLE_RATE: "1.0"  # sampling rate for detailed logging (0.0-1.0)
+    LOG_RESOLVE_USER_IDENTITY: "false" # enable DB lookup for user identity in logs
     LOG_FILEMODE: "a+"               # file write mode (append/overwrite)
     LOG_FILE: ""                     # log filename when file logging enabled
     LOG_FOLDER: ""                   # directory for log files

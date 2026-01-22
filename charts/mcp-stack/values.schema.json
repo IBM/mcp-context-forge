@@ -747,6 +747,22 @@
               "description": "Maximum request body size to log in detailed mode (bytes)",
               "default": "16384"
             },
+            "LOG_DETAILED_SKIP_ENDPOINTS": {
+              "type": "string",
+              "description": "Path prefixes to skip from detailed request logging (comma-separated)",
+              "default": ""
+            },
+            "LOG_DETAILED_SAMPLE_RATE": {
+              "type": "string",
+              "description": "Sampling rate for detailed request logging (0.0-1.0)",
+              "default": "1.0"
+            },
+            "LOG_RESOLVE_USER_IDENTITY": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable DB lookup for user identity during request logging",
+              "default": "false"
+            },
             "TRANSPORT_TYPE": {
               "type": "string",
               "description": "Transport types (comma-separated)",

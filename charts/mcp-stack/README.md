@@ -119,6 +119,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.LOG_BACKUP_COUNT | string | `"5"` |  |
 | mcpContextForge.config.LOG_BUFFER_SIZE_MB | string | `"1.0"` |  |
 | mcpContextForge.config.LOG_DETAILED_MAX_BODY_SIZE | string | `"16384"` |  |
+| mcpContextForge.config.LOG_DETAILED_SAMPLE_RATE | string | `"1.0"` |  |
+| mcpContextForge.config.LOG_DETAILED_SKIP_ENDPOINTS | string | `""` |  |
 | mcpContextForge.config.LOG_FILE | string | `""` |  |
 | mcpContextForge.config.LOG_FILEMODE | string | `"a+"` |  |
 | mcpContextForge.config.LOG_FOLDER | string | `""` |  |
@@ -126,6 +128,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.LOG_LEVEL | string | `"INFO"` |  |
 | mcpContextForge.config.LOG_MAX_SIZE_MB | string | `"1"` |  |
 | mcpContextForge.config.LOG_REQUESTS | string | `"false"` |  |
+| mcpContextForge.config.LOG_RESOLVE_USER_IDENTITY | string | `"false"` |  |
 | mcpContextForge.config.LOG_ROTATION_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.LOG_TO_FILE | string | `"false"` |  |
 | mcpContextForge.config.MAX_PROMPT_SIZE | string | `"102400"` |  |
