@@ -3549,6 +3549,10 @@ async def toggle_tool_status(
 async def list_resource_templates(
     request: Request,
     db: Session = Depends(get_db),
+    limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
+    include_inactive: bool = False,
+    tags: Optional[str] = None,
+    visibility: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),
 ) -> ListResourceTemplatesResult:
     """
@@ -3558,11 +3562,20 @@ async def list_resource_templates(
         request (Request): The FastAPI request object for team_id retrieval.
         db (Session): Database session.
         user (str): Authenticated user.
+        limit (Optional[int]): Maximum number of resources to return.
+        include_inactive (bool): Whether to include inactive resources.
+        tags (Optional[str]): Comma-separated list of tags to filter by.
+        visibility (Optional[str]): Filter by visibility (private, team, public).
 
     Returns:
         ListResourceTemplatesResult: A paginated list of resource templates.
     """
     logger.info(f"User {user} requested resource templates")
+
+    # Parse tags parameter if provided
+    tags_list = None
+    if tags:
+        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
     # Get filtering context from token (respects token scope)
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
@@ -3577,6 +3590,9 @@ async def list_resource_templates(
         db,
         user_email=user_email,
         token_teams=token_teams,
+        include_inactive=include_inactive,
+        tags=tags_list,
+        visibility=visibility,
     )
     # For simplicity, we're not implementing real pagination here
     return ListResourceTemplatesResult(_meta={}, resource_templates=resource_templates, next_cursor=None)  # No pagination for now
