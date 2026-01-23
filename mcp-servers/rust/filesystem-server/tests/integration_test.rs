@@ -101,10 +101,10 @@ mod comprehensive_tests {
         assert!(info["permissions"].is_string());
 
         // 10. List directory to verify structure
-        let entries = list_directory(&sandbox, &archived_dir)
+        let result = list_directory(&sandbox, &archived_dir)
             .await
             .expect("list archived directory");
-        assert!(entries.iter().any(|e| e.contains("README.md")));
+        assert!(result.entries.iter().any(|e| e.contains("README.md")));
     }
 
     #[tokio::test]
@@ -249,29 +249,29 @@ mod comprehensive_tests {
         .expect("write fake image");
 
         // 3. Search for Markdown files
-        let md_files = search_files(&sandbox, &root, "*.md", vec![])
+        let result = search_files(&sandbox, &root, "*.md", vec![])
             .await
             .expect("search markdown");
-        assert!(md_files.len() >= 2);
-        assert!(md_files.iter().any(|f| f.ends_with("readme.md")));
-        assert!(md_files.iter().any(|f| f.ends_with("guide.md")));
+        assert!(result.entries.len() >= 2);
+        assert!(result.entries.iter().any(|f| f.ends_with("readme.md")));
+        assert!(result.entries.iter().any(|f| f.ends_with("guide.md")));
 
         // 4. Search excluding specific patterns
         let code_files = search_files(&sandbox, &code_dir, "*", vec!["*.txt".to_string()])
             .await
             .expect("search code files");
-        assert!(code_files.len() >= 2);
+        assert!(code_files.entries.len() >= 2);
 
         // 5. List each directory and verify content
-        let docs_entries = list_directory(&sandbox, &docs_dir)
+        let docs = list_directory(&sandbox, &docs_dir)
             .await
             .expect("list docs");
-        assert_eq!(docs_entries.len(), 2);
+        assert_eq!(docs.entries.len(), 2);
 
-        let code_entries = list_directory(&sandbox, &code_dir)
+        let code = list_directory(&sandbox, &code_dir)
             .await
             .expect("list code");
-        assert_eq!(code_entries.len(), 2);
+        assert_eq!(code.entries.len(), 2);
 
         // 6. Edit a markdown file
         let readme_path = format!("{}/readme.md", docs_dir);
@@ -313,7 +313,7 @@ mod comprehensive_tests {
         let remaining_md = search_files(&sandbox, &root, "*.md", vec![])
             .await
             .expect("search remaining markdown");
-        assert!(remaining_md.iter().any(|f| f.contains("archive")));
+        assert!(remaining_md.entries.iter().any(|f| f.contains("archive")));
 
         // 9. Get metadata on moved files
         let archived_readme = format!("{}/readme.md", archive_dir);
@@ -327,9 +327,9 @@ mod comprehensive_tests {
         let archive_entries = list_directory(&sandbox, &archive_dir)
             .await
             .expect("list archive");
-        assert_eq!(archive_entries.len(), 2);
-        assert!(archive_entries.iter().any(|e| e.contains("readme.md")));
-        assert!(archive_entries.iter().any(|e| e.contains("guide.md")));
+        assert_eq!(archive_entries.entries.len(), 2);
+        assert!(archive_entries.entries.iter().any(|e| e.contains("readme.md")));
+        assert!(archive_entries.entries.iter().any(|e| e.contains("guide.md")));
     }
 
     // ==================== SERVER TESTS ====================
@@ -428,11 +428,11 @@ mod comprehensive_tests {
         assert!(backup2_val["size"].as_u64().unwrap() > 0);
 
         // 8. List directories in both roots
-        let root1_entries = list_directory(&sandbox, &root1).await.expect("list root1");
-        assert!(root1_entries.iter().any(|e| e.ends_with("/")));
+        let result1 = list_directory(&sandbox, &root1).await.expect("list root1");
+        assert!(result1.entries.iter().any(|e| e.ends_with("/")));
 
-        let root2_entries = list_directory(&sandbox, &root2).await.expect("list root2");
-        assert!(root2_entries.iter().any(|e| e.ends_with("/")));
+        let result2 = list_directory(&sandbox, &root2).await.expect("list root2");
+        assert!(result2.entries.iter().any(|e| e.ends_with("/")));
     }
 
     #[tokio::test]
@@ -607,14 +607,14 @@ mod comprehensive_tests {
         assert_eq!(content2, "From root2");
 
         // Verify listing works on both roots
-        let entries1 = list_directory(&sandbox, root1.as_str())
+        let result = list_directory(&sandbox, root1.as_str())
             .await
             .expect("list root1");
-        assert!(entries1.iter().any(|e| e.contains("file1")));
+        assert!(result.entries.iter().any(|e| e.contains("file1")));
 
-        let entries2 = list_directory(&sandbox, root2.as_str())
+        let result2 = list_directory(&sandbox, root2.as_str())
             .await
             .expect("list root2");
-        assert!(entries2.iter().any(|e| e.contains("file2")));
+        assert!(result2.entries.iter().any(|e| e.contains("file2")));
     }
 }
