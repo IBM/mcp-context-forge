@@ -22,17 +22,17 @@
             <button onclick="Admin.editResource('{{ resource.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
             <div class="col-span-2 flex flex-col space-y-1">
               {% if resource.enabled %}
-              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'resources')">
+              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'resources')">
                 <input type="hidden" name="activate" value="false" />
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors">Deactivate</button>
               </form>
               {% else %}
-              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'resources')">
+              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'resources')">
                 <input type="hidden" name="activate" value="true" />
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors">Activate</button>
               </form>
               {% endif %}
-              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'resource', '{{ resource.name or resource.uri }}', 'resources')">
+              <form method="POST" action="{{ root_path }}/admin/resources/{{ resource.id }}/delete" class="contents" onsubmit="return Admin.handleDeleteSubmit(event, 'resource', '{{ resource.name or resource.uri }}', 'resources')">
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
               </form>
             </div>

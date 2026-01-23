@@ -36,11 +36,11 @@
 
             <!-- Row 3 & 4: Activate/Deactivate | Delete -->
             <div class="col-span-2 flex flex-col space-y-1">
-              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'prompts')">
+              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/state" class="contents" onsubmit="return Admin.handleToggleSubmit(event, 'prompts')">
                 <input type="hidden" name="activate" value="{{ 'false' if prompt.enabled else 'true' }}" />
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if prompt.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if prompt.enabled %}Deactivate{% else %}Activate{% endif %}</button>
               </form>
-              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'prompt', '{{ prompt_label }}', 'prompts')">
+              <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/delete" class="contents" onsubmit="return Admin.handleDeleteSubmit(event, 'prompt', '{{ prompt_label }}', 'prompts')">
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
               </form>
             </div>

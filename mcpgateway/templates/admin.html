@@ -2511,7 +2511,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/state"
                           class="contents"
-                          onsubmit="return handleToggleSubmit(event, 'servers')"
+                          onsubmit="return Admin.handleToggleSubmit(event, 'servers')"
                         >
                           <input type="hidden" name="activate" value="false" />
                           <button
@@ -2527,7 +2527,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/state"
                           class="contents"
-                          onsubmit="return handleToggleSubmit(event, 'servers')"
+                          onsubmit="return Admin.handleToggleSubmit(event, 'servers')"
                         >
                           <input type="hidden" name="activate" value="true" />
                           <button
@@ -2543,7 +2543,7 @@
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
                           class="contents"
-                          onsubmit="return handleDeleteSubmit(event, 'server', '{{ server.name }}', 'servers')"
+                          onsubmit="return Admin.handleDeleteSubmit(event, 'server', '{{ server.name }}', 'servers')"
                         >
                           <button
                             type="submit"
@@ -2569,7 +2569,7 @@
           <form
             method="POST"
             id="add-server-form"
-            onreset="document.getElementById('associatedTools').selectedIndex = -1;"
+            onreset="Admin.safeGetELement('associatedTools').selectedIndex = -1;"
           >
             <div class="grid grid-cols-1 gap-7">
               <div>
@@ -2978,7 +2978,7 @@
                   name="oauth_enabled"
                   id="server-oauth-enabled"
                   class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                  onchange="Admin.document.getElementById('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                  onchange="Admin.safeGetELement('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
                 />
                 <label
                   for="server-oauth-enabled"
@@ -3395,7 +3395,7 @@
                       />
                       <div
                         id="dropdown-file-drop-zone"
-                        onclick="Admin.document.getElementById('dropdown-file-input').click()"
+                        onclick="Admin.safeGetELement('dropdown-file-input').click()"
                         class="cursor-pointer"
                       >
                         <svg
@@ -5010,7 +5010,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
-                          onsubmit="return handleToggleSubmit(event, 'gateways')"
+                          onsubmit="return Admin.handleToggleSubmit(event, 'gateways')"
                         >
                           <input type="hidden" name="activate" value="false" />
                           <button
@@ -5026,7 +5026,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/state"
                           class="contents"
-                          onsubmit="return handleToggleSubmit(event, 'gateways')"
+                          onsubmit="return Admin.handleToggleSubmit(event, 'gateways')"
                         >
                           <input type="hidden" name="activate" value="true" />
                           <button
@@ -5042,7 +5042,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           method="POST"
                           action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete"
                           class="contents"
-                          onsubmit="return handleSubmitWithConfirmation(event, 'gateways')"
+                          onsubmit="return Admin.handleSubmitWithConfirmation(event, 'gateways')"
                         >
                           <button
                             type="submit"
@@ -5697,7 +5697,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div
                 id="ca-certificate-upload-drop-zone"
                 class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-gray-400 dark:hover:border-gray-500 cursor-pointer"
-                onclick="Admin.document.getElementById('upload-ca-certificate').click()"
+                onclick="Admin.safeGetElement('upload-ca-certificate').click()"
               >
                 <div class="space-y-2">
                   <svg
@@ -6513,7 +6513,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             </form>
                             {% endif %}
 
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'a2a agent', '{{ agent.name }}', 'a2a-agents')">
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return Admin.handleDeleteSubmit(event, 'a2a agent', '{{ agent.name }}', 'a2a-agents')">
                               <button
                                 type="submit"
                                 class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 transition-colors"
@@ -7573,7 +7573,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         method="POST"
                         action="{{ root_path }}/admin/roots/{{ root.uri }}/delete"
                         class="contents"
-                        onsubmit="return handleSubmitWithConfirmation(event, 'roots')"
+                        onsubmit="return Admin.handleSubmitWithConfirmation(event, 'roots')"
                       >
                         <button
                           type="submit"
@@ -7601,7 +7601,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             method="POST"
             action="{{ root_path }}/admin/roots"
             id="add-root-form"
-            onsubmit="return handleToggleSubmit(event, 'roots')"
+            onsubmit="return Admin.handleToggleSubmit(event, 'roots')"
           >
             <div class="grid grid-cols-1 gap-7">
               <div>
@@ -7980,7 +7980,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       </button>
       <button
         type="button"
-        onclick="closeModal('bulk-testcase-gen-modal');"
+        onclick="Admin.closeModal('bulk-testcase-gen-modal');"
           class="w-1/2 ml-2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
         >
           Close
@@ -10959,7 +10959,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                       name="oauth_enabled"
                       id="edit-server-oauth-enabled"
                       class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      onchange="Admin.document.getElementById('edit-server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                      onchange="Admin.safeGetElement('edit-server-oauth-config-section').classList.toggle('hidden', !this.checked)"
                     />
                     <label
                       for="edit-server-oauth-enabled"
@@ -11458,8 +11458,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function reloadAllResourceSections(teamId) {
         // delegate to the implementation in admin.js
-        if (window.reloadAllResourceSections) {
-          return window.reloadAllResourceSections(teamId);
+        if (Admin.reloadAllResourceSections) {
+          return Admin.reloadAllResourceSections(teamId);
         } else {
           console.warn('reloadAllResourceSections implementation not available.');
         }
@@ -11605,11 +11605,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         const isActiveFlag = item.isActive || item.enabled || item.is_active;
         const activeButton = isActiveFlag ?
-          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/state" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
+          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/state" class="inline mr-2" onsubmit="return Admin.handleToggleSubmit(event, '${sectionType}')">
             <input type="hidden" name="activate" value="false" />
             <button type="submit" class="text-yellow-600 hover:text-yellow-900">Deactivate</button>
           </form>` :
-          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/state" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
+          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/state" class="inline mr-2" onsubmit="return Admin.handleToggleSubmit(event, '${sectionType}')">
             <input type="hidden" name="activate" value="true" />
             <button type="submit" class="text-blue-600 hover:text-blue-900">Activate</button>
           </form>`;
@@ -12239,8 +12239,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <html><head><title>Permission Audit</title></head><body>
             ${auditHtml}
             <div style="text-align: center; margin-top: 20px;">
-              <button onclick="Admin.window.print()" style="padding: 10px 20px; background: #4F46E5; color: white; border: none; border-radius: 4px; cursor: pointer;">Print Report</button>
-              <button onclick="Admin.window.close()" style="padding: 10px 20px; background: #6B7280; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px;">Close</button>
+              <button onclick="window.print()" style="padding: 10px 20px; background: #4F46E5; color: white; border: none; border-radius: 4px; cursor: pointer;">Print Report</button>
+              <button onclick="window.close()" style="padding: 10px 20px; background: #6B7280; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px;">Close</button>
             </div>
             </body></html>
           `);
@@ -12547,7 +12547,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     )
                     .join("")}
                 </ul>
-                <button onclick="Admin.this.closest('.fixed').remove()"
+                <button onclick="this.closest('.fixed').remove()"
                         class="mt-4 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 w-full">
                   Close
                 </button>
@@ -13443,7 +13443,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <button onclick="Admin.toggleBulkImportDropdown()" class="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">
               Discard
             </button>
-            <button onclick="toggleBulkImportDropdown(); window.location.reload();" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
+            <button onclick="Admin.toggleBulkImportDropdown(); window.location.reload();" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
               🔄 Execute Import
             </button>
           </div>`;
@@ -14174,7 +14174,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="Admin.document.getElementById('team-edit-modal').classList.add('hidden')"
+          onclick="Admin.safeGetElement('team-edit-modal').classList.add('hidden')"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14199,7 +14199,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="Admin.document.getElementById('team-join-requests-modal').classList.add('hidden')"
+          onclick="Admin.safeGetElement('team-join-requests-modal').classList.add('hidden')"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14214,7 +14214,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               Team Join Requests
             </h3>
             <button
-              onclick="Admin.document.getElementById('team-join-requests-modal').classList.add('hidden')"
+              onclick="Admin.safeGetElement('team-join-requests-modal').classList.add('hidden')"
               class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
               <svg

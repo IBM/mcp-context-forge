@@ -55,7 +55,7 @@
                 method="POST"
                 action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
                 class="contents"
-                onsubmit="return handleToggleSubmit(event, 'tools')"
+                onsubmit="return Admin.handleToggleSubmit(event, 'tools')"
               >
                 <input type="hidden" name="activate" value="false" />
                 <button
@@ -71,7 +71,7 @@
                 method="POST"
                 action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
                 class="contents"
-                onsubmit="return handleToggleSubmit(event, 'tools')"
+                onsubmit="return Admin.handleToggleSubmit(event, 'tools')"
               >
                 <input type="hidden" name="activate" value="true" />
                 <button
@@ -88,7 +88,7 @@
                 method="POST"
                 action="{{ root_path }}/admin/tools/{{ tool.id }}/delete"
                 class="contents"
-                onsubmit="return handleDeleteSubmit(event, 'tool', '{{ tool.name }}', 'tools')"
+                onsubmit="return Admin.handleDeleteSubmit(event, 'tool', '{{ tool.name }}', 'tools')"
               >
                 <button
                   type="submit"
