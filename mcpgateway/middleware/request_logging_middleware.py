@@ -338,7 +338,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 # not require crypto strength, but using `secrets` keeps
                 # security scanners happy.
 
-                r = secrets.randbelow(10 ** 9) / 1e9
+                r = secrets.randbelow(10**9) / 1e9
                 if r >= self.log_detailed_sample_rate:
                     should_log_detailed = False
             except Exception as e:
