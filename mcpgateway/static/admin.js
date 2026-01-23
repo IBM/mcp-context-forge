@@ -1446,7 +1446,7 @@ Admin.showMetricsError = function (error) {
                 <p class="text-sm mb-2">${escapeHtml(errorMessage)}</p>
                 <p class="text-xs text-gray-500 mb-4">${helpText}</p>
                 <button
-                    onclick="retryLoadMetrics()"
+                    onclick="Admin.retryLoadMetrics()"
                     class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Try Again
                 </button>
@@ -1550,7 +1550,7 @@ Admin.displayMetrics = function (data, retryCount = 0) {
                 </svg>
                 <h3 class="text-lg font-medium mb-2">No Metrics Available</h3>
                 <p class="text-sm">Metrics data will appear here once tools, resources, or prompts are executed.</p>
-                <button onclick="retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
+                <button onclick="Admin.retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Refresh Metrics
                 </button>
             `;
@@ -8212,7 +8212,7 @@ Admin.addAuthHeader = function (containerId, options = {}) {
                 type="text"
                 placeholder="Header Key (e.g., X-API-Key)"
                 class="auth-header-key block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
-                oninput="updateAuthHeadersJSON('${containerId}')"
+                oninput="Admin.updateAuthHeadersJSON('${containerId}')"
             />
         </div>
         <div class="flex-1">
@@ -8223,12 +8223,12 @@ Admin.addAuthHeader = function (containerId, options = {}) {
                     placeholder="Header Value"
                     data-sensitive-label="header value"
                     class="auth-header-value block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
-                    oninput="updateAuthHeadersJSON('${containerId}')"
+                    oninput="Admin.updateAuthHeadersJSON('${containerId}')"
                 />
                 <button
                     type="button"
                     class="absolute inset-y-0 right-0 flex items-center px-2 text-xs font-medium text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-indigo-300"
-                    onclick="toggleInputMask('${valueInputId}', this)"
+                    onclick="Admin.toggleInputMask('${valueInputId}', this)"
                     aria-pressed="false"
                     aria-label="Show header value"
                 >
@@ -8238,7 +8238,7 @@ Admin.addAuthHeader = function (containerId, options = {}) {
         </div>
         <button
             type="button"
-            onclick="removeAuthHeader('${headerId}', '${containerId}')"
+            onclick="Admin.removeAuthHeader('${headerId}', '${containerId}')"
             class="inline-flex items-center px-2 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
             title="Remove header"
         >
@@ -11376,7 +11376,7 @@ Admin.handleSubmitWithConfirmation = function (event, type) {
     event.preventDefault();
 
     const confirmationMessage = `Are you sure you want to permanently delete this ${type}? (Deactivation is reversible, deletion is permanent)`;
-    const confirmation = Admin.confirm(confirmationMessage);
+    const confirmation = confirm(confirmationMessage);
     if (!confirmation) {
         return false;
     }
@@ -11389,12 +11389,12 @@ Admin.handleDeleteSubmit = function (event, type, name = "", inactiveType = "") 
 
     const targetName = name ? `${type} "${name}"` : `this ${type}`;
     const confirmationMessage = `Are you sure you want to permanently delete ${targetName}? (Deactivation is reversible, deletion is permanent)`;
-    const confirmation = Admin.confirm(confirmationMessage);
+    const confirmation = confirm(confirmationMessage);
     if (!confirmation) {
         return false;
     }
 
-    const purgeConfirmation = Admin.confirm(
+    const purgeConfirmation = confirm(
         `Also purge ALL metrics history for ${targetName}? This deletes raw metrics and hourly rollups and cannot be undone.`,
     );
     if (purgeConfirmation) {
@@ -11873,23 +11873,23 @@ Admin.loadTools = async function () {
                     </td>
                     <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
                     <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-                        <button onclick="enrichTool('${id}')"
+                        <button onclick="Admin.enrichTool('${id}')"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
                         Enrich
                         </button>
-                        <button onclick="generateToolTestCases('${id}')"
+                        <button onclick="Admin.generateToolTestCases('${id}')"
                         class="col-span-2 px-2 py-1 text-[11px] font-small rounded-md text-purple-600 hover:bg-purple-50">
                         Generate Test Cases
                         </button>
-                        <button onclick="validateTool('${id}')"
+                        <button onclick="Admin.validateTool('${id}')"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
                         Validate
                         </button>
-                        <button onclick="viewTool('${id}')"
+                        <button onclick="Admin.viewTool('${id}')"
                         class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
                         View
                         </button>
-                        <button onclick="editTool('${id}')"
+                        <button onclick="Admin.editTool('${id}')"
                         class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
                         Edit
                         </button>
@@ -16524,7 +16524,7 @@ Admin.setupTooltipsWithAlpine = function () {
                 document.body.appendChild(tooltipEl);
 
                 if (event?.clientX && event?.clientY) {
-                    Admin.moveTooltip(event);
+                    moveTooltip(event);
                     el.addEventListener("mousemove", moveTooltip);
                 } else {
                     const rect = el.getBoundingClientRect();
@@ -16539,7 +16539,7 @@ Admin.setupTooltipsWithAlpine = function () {
                     Admin.cancelAnimationFrame(animationFrameId);
                 }
 
-                animationFrameId = Admin.requestAnimationFrame(() => {
+                animationFrameId = requestAnimationFrame(() => {
                     // FIX: Check if tooltipEl still exists before accessing its style
                     if (tooltipEl) {
                         tooltipEl.style.opacity = "1";
@@ -18963,7 +18963,7 @@ Admin.updateFilterEmptyState = function (entityType, visibleCount, isFiltering) 
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
                     <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No matching ${entityType}</h3>
-                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button onclick="clearTagFilter('${entityType}')" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
+                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button onclick="Admin.clearTagFilter('${entityType}')" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
                 </div>
             `;
             tableContainer.appendChild(emptyMessage);
@@ -19570,7 +19570,7 @@ Admin.updateDropZoneStatus = function (fileName, importData) {
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                     ${totalEntities} entities • Version ${escapeHtml(importData.version || "unknown")}
                 </div>
-                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" onclick="resetImportFile()">
+                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" onclick="Admin.resetImportFile()">
                     Choose different file
                 </button>
             </div>
@@ -20927,7 +20927,7 @@ Admin.showTokenCreatedModal = function (tokenData) {
                             id="new-token-value"
                         />
                         <button
-                            onclick="copyToClipboard('new-token-value')"
+                            onclick="Admin.copyToClipboard('new-token-value')"
                             class="px-3 py-2 bg-indigo-600 text-white text-sm rounded-r-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
                             Copy
@@ -22418,7 +22418,7 @@ Admin.displayPublicTeams = function (teams) {
                     ${team.member_count} members
                 </div>
                 <button
-                    onclick="requestToJoinTeam('${escapeHtml(team.id)}')"
+                    onclick="Admin.requestToJoinTeam('${escapeHtml(team.id)}')"
                     class="px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                     Request to Join
@@ -22499,7 +22499,7 @@ Admin.leaveTeam = async function (teamId, teamName) {
     }
 
     // Show confirmation dialog
-    const confirmed = Admin.confirm(
+    const confirmed = confirm(
         `Are you sure you want to leave the team "${teamName}"? This action cannot be undone.`,
     );
     if (!confirmed) {
@@ -22609,7 +22609,7 @@ Admin.rejectJoinRequest = async function (teamId, requestId) {
         return;
     }
 
-    const confirmed = Admin.confirm(
+    const confirmed = confirm(
         "Are you sure you want to reject this join request?",
     );
     if (!confirmed) {
@@ -22833,15 +22833,15 @@ Admin.displayImportPreview = function (preview) {
         <!-- Selection Controls -->
         <div class="flex justify-between items-center mb-4">
             <div class="space-x-4">
-                <button onclick="selectAllItems()"
+                <button onclick="Admin.selectAllItems()"
                         class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline">
                     Select All
                 </button>
-                <button onclick="selectNoneItems()"
+                <button onclick="Admin.selectNoneItems()"
                         class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300 underline">
                     Select None
                 </button>
-                <button onclick="selectOnlyCustom()"
+                <button onclick="Admin.selectOnlyCustom()"
                         class="text-sm text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 underline">
                     Custom Items Only
                 </button>
@@ -22869,7 +22869,7 @@ Admin.displayImportPreview = function (preview) {
                                 <input type="checkbox"
                                        class="gateway-checkbox mt-1 mr-3"
                                        data-gateway="${gatewayName}"
-                                       onchange="updateSelectionCount()">
+                                       onchange="Admin.updateSelectionCount()">
                                 <div class="flex-1">
                                     <div class="font-medium text-gray-900 dark:text-white">
                                         ${bundle.gateway.name}
@@ -22922,7 +22922,7 @@ Admin.displayImportPreview = function (preview) {
                                            class="item-checkbox mt-1 mr-3"
                                            data-type="${entityType}"
                                            data-id="${item.id}"
-                                           onchange="updateSelectionCount()">
+                                           onchange="Admin.updateSelectionCount()">
                                     <div class="flex-1">
                                         <div class="text-sm font-medium text-gray-900 dark:text-white">
                                             ${item.name}
@@ -22977,17 +22977,17 @@ Admin.displayImportPreview = function (preview) {
 
         <!-- Action Buttons -->
         <div class="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
-            <button onclick="resetImportSelection()"
+            <button onclick="Admin.resetImportSelection()"
                     class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                 🔄 Reset Selection
             </button>
 
             <div class="space-x-3">
-                <button onclick="handleSelectiveImport(true)"
+                <button onclick="Admin.handleSelectiveImport(true)"
                         class="px-4 py-2 text-sm font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-800 rounded-md hover:bg-blue-100 dark:hover:bg-blue-800">
                     🧪 Preview Selected
                 </button>
-                <button onclick="handleSelectiveImport(false)"
+                <button onclick="Admin.handleSelectiveImport(false)"
                         class="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700">
                     ✅ Import Selected Items
                 </button>
@@ -24283,7 +24283,7 @@ Admin.loadVirtualServersForChat = async function () {
                 <div class="server-item relative p-3 border rounded-lg cursor-pointer transition-colors
                     ${llmChatState.selectedServerId === server.id ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900" : "border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600"}
                     ${!isActive ? "opacity-50" : ""}"
-                    onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
+                    onclick="Admin.selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
                     style="position: relative;">
 
                     ${
@@ -26117,7 +26117,7 @@ Admin.scrollChatToBottom = function (force = false) {
     const container = Admin.safeGetElement("chat-messages-container");
     if (container) {
         if (force || llmChatState.autoScroll) {
-            Admin.requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
                 // Use instant scroll during streaming for better UX
                 container.scrollTop = container.scrollHeight;
             });
@@ -28996,7 +28996,7 @@ Admin.displayLogResults = function (data) {
 
             return `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                onclick="showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
+                onclick="Admin.showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(log.timestamp)}
                 </td>
