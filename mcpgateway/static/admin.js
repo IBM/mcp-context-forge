@@ -4076,19 +4076,6 @@ Admin.toggleA2AAuthFields = function (authType) {
 }
 
 // -------------------- Resource Testing ------------------ //
-
-// ----- URI Template Parsing -------------- //
-Admin.parseUriTemplate = function (template) {
-    const regex = /{([^}]+)}/g;
-    const fields = [];
-    let match;
-
-    while ((match = regex.exec(template)) !== null) {
-        fields.push(match[1]); // capture inside {}
-    }
-    return fields;
-}
-
 Admin.testResource = async function (resourceId) {
     try {
         console.log(`Testing the resource: ${resourceId}`);
