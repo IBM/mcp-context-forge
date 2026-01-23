@@ -1736,8 +1736,12 @@ def get_db():
             db.commit()
     except Exception:
         try:
-            if db.is_active:
-                db.rollback()
+            # Always call rollback() in exception handler.
+            # rollback() is safe to call even when is_active=False - it succeeds and
+            # restores the session to a usable state. When is_active=False (e.g., after
+            # IntegrityError), rollback() is actually REQUIRED to clear the failed state.
+            # Skipping rollback when is_active=False would leave the session unusable.
+            db.rollback()
         except Exception:
             # Connection is broken - invalidate to remove from pool
             # This handles cases like PgBouncer query_wait_timeout where
