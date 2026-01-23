@@ -110,6 +110,51 @@ async def get_current_user_with_permissions(
             async def protected_route(user = Depends(get_current_user_with_permissions)):
                 return {"user": user["email"]}
     """
+    # Check for proxy authentication first (if MCP client auth is disabled)
+    if not settings.mcp_client_auth_enabled:
+        if settings.trust_proxy_auth:
+            # Extract user from proxy header
+            proxy_user = request.headers.get(settings.proxy_user_header)
+            if proxy_user:
+                return {
+                    "email": proxy_user,
+                    "full_name": proxy_user,
+                    "is_admin": False,  # Proxy users are not admin by default
+                    "ip_address": request.client.host if request.client else None,
+                    "user_agent": request.headers.get("user-agent"),
+                    "db": db,
+                    "auth_method": "proxy",
+                    "request_id": getattr(request.state, "request_id", None),
+                    "team_id": getattr(request.state, "team_id", None),
+                }
+            # If no proxy header but proxy auth is trusted, treat as anonymous
+            return {
+                "email": "anonymous",
+                "full_name": "Anonymous User",
+                "is_admin": False,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "db": db,
+                "auth_method": "anonymous",
+                "request_id": getattr(request.state, "request_id", None),
+                "team_id": getattr(request.state, "team_id", None),
+            }
+        else:
+            # Warning: MCP auth disabled without proxy trust - security risk!
+            # This case is already warned about in config validation
+            return {
+                "email": "anonymous",
+                "full_name": "Anonymous User",
+                "is_admin": False,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "db": db,
+                "auth_method": "anonymous",
+                "request_id": getattr(request.state, "request_id", None),
+                "team_id": getattr(request.state, "team_id", None),
+            }
+
+    # Standard JWT authentication flow
     # Try multiple sources for the token, prioritizing manual cookie reading
     token = None
 

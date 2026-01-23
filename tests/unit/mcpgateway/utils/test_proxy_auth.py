@@ -152,6 +152,109 @@ class TestProxyAuthentication:
             result = await vc.require_auth(mock_request, creds, None)
             assert result == {"sub": "proxy-user", "source": "proxy", "token": None}
 
+class TestRBACProxyAuthentication:
+    """Test cases for RBAC middleware proxy authentication functionality."""
+
+    @pytest.fixture
+    def mock_settings(self):
+        """Create mock settings for testing."""
+
+        class MockSettings:
+            jwt_secret_key = "test-secret"
+            jwt_algorithm = "HS256"
+            basic_auth_user = "admin"
+            basic_auth_password = "password"
+            auth_required = False
+            mcp_client_auth_enabled = False
+            trust_proxy_auth = True
+            proxy_user_header = "X-Authenticated-User"
+            require_token_expiration = False
+            docs_allow_basic_auth = False
+            platform_admin_email = "admin@example.com"
+            app_root_path = ""
+
+        return MockSettings()
+
+    @pytest.fixture
+    def mock_request(self):
+        """Create a mock request object."""
+        request = Mock(spec=Request)
+        request.headers = {}
+        request.cookies = {}
+        request.client = Mock()
+        request.client.host = "127.0.0.1"
+        request.state = Mock()
+        request.state.request_id = "test-request-id"
+        request.state.team_id = None
+        return request
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session."""
+        return Mock()
+
+    @pytest.mark.asyncio
+    async def test_rbac_proxy_auth_with_header(self, mock_settings, mock_request, mock_db):
+        """Test RBAC middleware accepts proxy authentication with header."""
+        # First-Party
+        from mcpgateway.middleware import rbac
+
+        mock_request.headers = {"X-Authenticated-User": "proxy-user"}
+
+        with patch.object(rbac, "settings", mock_settings):
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            assert result["email"] == "proxy-user"
+            assert result["auth_method"] == "proxy"
+            assert result["is_admin"] is False
+
+    @pytest.mark.asyncio
+    async def test_rbac_proxy_auth_without_header(self, mock_settings, mock_request, mock_db):
+        """Test RBAC middleware returns anonymous when no proxy header."""
+        # First-Party
+        from mcpgateway.middleware import rbac
+
+        mock_request.headers = {}
+
+        with patch.object(rbac, "settings", mock_settings):
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            assert result["email"] == "anonymous"
+            assert result["auth_method"] == "anonymous"
+            assert result["is_admin"] is False
+
+    @pytest.mark.asyncio
+    async def test_rbac_proxy_auth_disabled_without_trust(self, mock_settings, mock_request, mock_db):
+        """Test RBAC middleware returns anonymous when proxy auth not trusted."""
+        # First-Party
+        from mcpgateway.middleware import rbac
+
+        mock_settings.trust_proxy_auth = False
+        mock_request.headers = {"X-Authenticated-User": "proxy-user"}
+
+        with patch.object(rbac, "settings", mock_settings):
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            assert result["email"] == "anonymous"
+            assert result["auth_method"] == "anonymous"
+
+    @pytest.mark.asyncio
+    async def test_rbac_standard_jwt_when_mcp_auth_enabled(self, mock_settings, mock_request, mock_db):
+        """Test RBAC middleware uses JWT when MCP client auth is enabled."""
+        # Third-Party
+        import jwt
+
+        # First-Party
+        from mcpgateway.middleware import rbac
+
+        mock_settings.mcp_client_auth_enabled = True
+        mock_settings.auth_required = False
+        mock_request.headers = {"X-Authenticated-User": "proxy-user"}
+
+        with patch.object(rbac, "settings", mock_settings):
+            # Should ignore proxy header and use JWT flow (returns platform admin when auth not required)
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            assert result["email"] == mock_settings.platform_admin_email
+            assert result["auth_method"] == "disabled"
+
+
 
 class TestWebSocketAuthentication:
     """Test cases for WebSocket authentication."""
