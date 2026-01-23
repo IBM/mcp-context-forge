@@ -820,6 +820,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             oauth_config = getattr(gateway, "oauth_config", None)
             ca_certificate = getattr(gateway, "ca_certificate", None)
+
+            # Check if gateway is in direct_proxy mode
+            gateway_mode = getattr(gateway, "gateway_mode", "cache")
+
             if initialize_timeout is not None:
                 try:
                     capabilities, tools, resources, prompts = await asyncio.wait_for(
@@ -1083,6 +1087,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 ca_certificate=gateway.ca_certificate,
                 ca_certificate_sig=gateway.ca_certificate_sig,
                 signing_algorithm=gateway.signing_algorithm,
+                # Gateway mode configuration
+                gateway_mode=gateway_mode,
             )
 
             # Add to DB
@@ -2185,6 +2191,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Update tags if provided
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
+
+                # Update gateway_mode if provided
+                if gateway_update.gateway_mode is not None:
+                    gateway.gateway_mode = gateway_update.gateway_mode
 
                 # Update metadata fields
                 gateway.updated_at = datetime.now(timezone.utc)
