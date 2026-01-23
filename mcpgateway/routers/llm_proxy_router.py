@@ -11,12 +11,11 @@ LLM proxy service. It routes requests to configured LLM providers.
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.llm_schemas import ChatCompletionRequest, ChatCompletionResponse
 from mcpgateway.services.llm_provider_service import (
     LLMModelNotFoundError,
@@ -53,9 +52,7 @@ llm_proxy_service = LLMProxyService()
         500: {"description": "Provider error"},
     },
 )
-async def chat_completions(
-    request: ChatCompletionRequest,
-    current_user: dict = Depends(get_current_user)):
+async def chat_completions(request: ChatCompletionRequest, current_user: dict = Depends(get_current_user)):
     """Create a chat completion.
 
     This endpoint is compatible with the OpenAI Chat Completions API.
@@ -63,7 +60,6 @@ async def chat_completions(
 
     Args:
         request: Chat completion request (OpenAI-compatible).
-        db: Database session.
         current_user: Authenticated user.
 
     Returns:
@@ -133,14 +129,12 @@ async def chat_completions(
     summary="List Models",
     description="List available models from configured providers. OpenAI-compatible API.",
 )
-async def list_models(
-    current_user: dict = Depends(get_current_user)):
+async def list_models(current_user: dict = Depends(get_current_user)):
     """List available models.
 
     Returns a list of available models in OpenAI-compatible format.
 
     Args:
-        db: Database session.
         current_user: Authenticated user.
 
     Returns:

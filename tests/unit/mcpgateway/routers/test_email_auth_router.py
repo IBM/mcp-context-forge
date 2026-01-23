@@ -11,14 +11,30 @@ This module tests email authentication endpoints including login with password c
 # Standard
 import base64
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 from fastapi import status
 import pytest
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailUser
+
+
+@pytest.fixture
+def mock_db():
+    """Create a mock database session."""
+    return MagicMock(spec=Session)
+
+
+@pytest.fixture(autouse=True)
+def mock_fresh_db_session(mock_db):
+    """Mock fresh_db_session to return the mock_db."""
+    with patch("mcpgateway.routers.email_auth.fresh_db_session") as mock:
+        mock.return_value.__enter__ = Mock(return_value=mock_db)
+        mock.return_value.__exit__ = Mock(return_value=False)
+        yield mock
 
 
 class TestEmailAuthLoginPasswordChangeRequired:
@@ -72,9 +88,6 @@ class TestEmailAuthLoginPasswordChangeRequired:
         mock_request.client.host = "127.0.0.1"
         mock_request.headers = {"User-Agent": "TestAgent/1.0"}
 
-        # Create mock db session
-        mock_db = MagicMock()
-
         # Create login request
         login_request = EmailLoginRequest(email="test@example.com", password="password123")
 
@@ -83,7 +96,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
             mock_service.authenticate_user = AsyncMock(return_value=mock_user_needs_password_change)
 
             # Call the login function - user.password_change_required is True
-            response = await login(login_request, mock_request, mock_db)
+            response = await login(login_request, mock_request)
 
             # Verify response
             assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -110,9 +123,6 @@ class TestEmailAuthLoginPasswordChangeRequired:
         mock_request.client.host = "127.0.0.1"
         mock_request.headers = {"User-Agent": "TestAgent/1.0"}
 
-        # Create mock db session
-        mock_db = MagicMock()
-
         # Create login request
         login_request = EmailLoginRequest(email="test@example.com", password="password123")
 
@@ -130,7 +140,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
                     mock_settings.default_user_password.get_secret_value.return_value = "default_password"
 
                     # Call the login function
-                    response = await login(login_request, mock_request, mock_db)
+                    response = await login(login_request, mock_request)
 
                     # Verify response
                     assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -148,9 +158,6 @@ class TestEmailAuthLoginPasswordChangeRequired:
         mock_request.client = MagicMock()
         mock_request.client.host = "127.0.0.1"
         mock_request.headers = {"User-Agent": "TestAgent/1.0"}
-
-        # Create mock db session
-        mock_db = MagicMock()
 
         # Create login request
         login_request = EmailLoginRequest(email="test@example.com", password="password123")
@@ -175,7 +182,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
                         mock_create_token.return_value = ("test_token_123", 3600)
 
                         # Call the login function
-                        response = await login(login_request, mock_request, mock_db)
+                        response = await login(login_request, mock_request)
 
                         # Verify response is AuthenticationResponse (not ORJSONResponse)
                         assert isinstance(response, AuthenticationResponse)

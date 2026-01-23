@@ -52,7 +52,6 @@ import orjson
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
@@ -2087,7 +2086,6 @@ async def handle_completion(request: Request, user=Depends(get_current_user_with
 
     Args:
         request (Request): The incoming request with completion data.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2106,7 +2104,6 @@ async def handle_sampling(request: Request, user=Depends(get_current_user_with_p
 
     Args:
         request (Request): The incoming request with sampling data.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2206,7 +2203,6 @@ async def get_server(server_id: str, user=Depends(get_current_user_with_permissi
 
     Args:
         server_id (str): The ID of the server to retrieve.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2231,7 +2227,8 @@ async def create_server(
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign server to"),
     visibility: Optional[str] = Body("public", description="Server visibility: private, team, public"),
-    user=Depends(get_current_user_with_permissions)) -> ServerRead:
+    user=Depends(get_current_user_with_permissions),
+) -> ServerRead:
     """
     Creates a new server.
 
@@ -2240,7 +2237,6 @@ async def create_server(
         request (Request): The incoming request object for extracting metadata.
         team_id (Optional[str]): Team ID to assign the server to.
         visibility (str): Server visibility level (private, team, public).
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2295,11 +2291,7 @@ async def create_server(
 
 @server_router.put("/{server_id}", response_model=ServerRead)
 @require_permission("servers.update")
-async def update_server(
-    server_id: str,
-    server: ServerUpdate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def update_server(server_id: str, server: ServerUpdate, request: Request, user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Updates the information of an existing server.
 
@@ -2307,7 +2299,6 @@ async def update_server(
         server_id (str): The ID of the server to update.
         server (ServerUpdate): The updated server data.
         request (Request): The incoming request object containing metadata.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2352,17 +2343,13 @@ async def update_server(
 
 @server_router.post("/{server_id}/state", response_model=ServerRead)
 @require_permission("servers.update")
-async def set_server_state(
-    server_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def set_server_state(server_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Sets the status of a server (activate or deactivate).
 
     Args:
         server_id (str): The ID of the server to set state for.
         activate (bool): Whether to activate or deactivate the server.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2386,10 +2373,7 @@ async def set_server_state(
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead, deprecated=True)
 @require_permission("servers.update")
-async def toggle_server_status(
-    server_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def toggle_server_status(server_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """DEPRECATED: Use /state endpoint instead. This endpoint will be removed in a future release.
 
     Sets the status of a server (activate or deactivate).
@@ -2397,7 +2381,6 @@ async def toggle_server_status(
     Args:
         server_id: The server ID.
         activate: Whether to activate (True) or deactivate (False) the server.
-        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -2412,16 +2395,14 @@ async def toggle_server_status(
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
 @require_permission("servers.delete")
 async def delete_server(
-    server_id: str,
-    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this server"),
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+    server_id: str, purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this server"), user=Depends(get_current_user_with_permissions)
+) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
     Args:
         server_id (str): The ID of the server to delete.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this server.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2583,12 +2564,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
 @require_permission("servers.read")
-async def server_get_tools(
-    request: Request,
-    server_id: str,
-    include_inactive: bool = False,
-    include_metrics: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
+async def server_get_tools(request: Request, server_id: str, include_inactive: bool = False, include_metrics: bool = False, user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
     """
     List tools for the server  with an option to include inactive tools.
 
@@ -2601,7 +2577,6 @@ async def server_get_tools(
         server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive tools in the results.
         include_metrics (bool): Whether to include metrics in the tools results.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -2623,11 +2598,7 @@ async def server_get_tools(
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
 @require_permission("servers.read")
-async def server_get_resources(
-    request: Request,
-    server_id: str,
-    include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
+async def server_get_resources(request: Request, server_id: str, include_inactive: bool = False, user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
     """
     List resources for the server with an option to include inactive resources.
 
@@ -2639,7 +2610,6 @@ async def server_get_resources(
         request (Request): FastAPI request object.
         server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive resources in the results.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -2661,11 +2631,7 @@ async def server_get_resources(
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
 @require_permission("servers.read")
-async def server_get_prompts(
-    request: Request,
-    server_id: str,
-    include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
+async def server_get_prompts(request: Request, server_id: str, include_inactive: bool = False, user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
     """
     List prompts for the server with an option to include inactive prompts.
 
@@ -2677,7 +2643,6 @@ async def server_get_prompts(
         request (Request): FastAPI request object.
         server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive prompts in the results.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -2800,17 +2765,13 @@ async def list_a2a_agents(
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
 @require_permission("a2a.read")
-async def get_a2a_agent(
-    agent_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
+async def get_a2a_agent(agent_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
     """
     Retrieves an A2A agent by its ID.
 
     Args:
         agent_id (str): The ID of the agent to retrieve.
         request (Request): The FastAPI request object for team_id retrieval.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2852,7 +2813,8 @@ async def create_a2a_agent(
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign agent to"),
     visibility: Optional[str] = Body("public", description="Agent visibility: private, team, public"),
-    user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
+    user=Depends(get_current_user_with_permissions),
+) -> A2AAgentRead:
     """
     Creates a new A2A agent.
 
@@ -2861,7 +2823,6 @@ async def create_a2a_agent(
         request (Request): The FastAPI request object for metadata extraction.
         team_id (Optional[str]): Team ID to assign the agent to.
         visibility (str): Agent visibility level (private, team, public).
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2920,11 +2881,7 @@ async def create_a2a_agent(
 
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)
 @require_permission("a2a.update")
-async def update_a2a_agent(
-    agent_id: str,
-    agent: A2AAgentUpdate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
+async def update_a2a_agent(agent_id: str, agent: A2AAgentUpdate, request: Request, user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
     """
     Updates the information of an existing A2A agent.
 
@@ -2932,7 +2889,6 @@ async def update_a2a_agent(
         agent_id (str): The ID of the agent to update.
         agent (A2AAgentUpdate): The updated agent data.
         request (Request): The FastAPI request object for metadata extraction.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -2978,17 +2934,13 @@ async def update_a2a_agent(
 
 @a2a_router.post("/{agent_id}/state", response_model=A2AAgentRead)
 @require_permission("a2a.update")
-async def set_a2a_agent_state(
-    agent_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
+async def set_a2a_agent_state(agent_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
     """
     Sets the status of an A2A agent (activate or deactivate).
 
     Args:
         agent_id (str): The ID of the agent to update.
         activate (bool): Whether to activate or deactivate the agent.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -3014,10 +2966,7 @@ async def set_a2a_agent_state(
 
 @a2a_router.post("/{agent_id}/toggle", response_model=A2AAgentRead, deprecated=True)
 @require_permission("a2a.update")
-async def toggle_a2a_agent_status(
-    agent_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
+async def toggle_a2a_agent_status(agent_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
     """DEPRECATED: Use /state endpoint instead. This endpoint will be removed in a future release.
 
     Sets the status of an A2A agent (activate or deactivate).
@@ -3025,7 +2974,6 @@ async def toggle_a2a_agent_status(
     Args:
         agent_id: The A2A agent ID.
         activate: Whether to activate (True) or deactivate (False) the agent.
-        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -3040,16 +2988,14 @@ async def toggle_a2a_agent_status(
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
 @require_permission("a2a.delete")
 async def delete_a2a_agent(
-    agent_id: str,
-    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this agent"),
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+    agent_id: str, purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this agent"), user=Depends(get_current_user_with_permissions)
+) -> Dict[str, str]:
     """
     Deletes an A2A agent by its ID.
 
     Args:
         agent_id (str): The ID of the agent to delete.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this agent.
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -3080,11 +3026,8 @@ async def delete_a2a_agent(
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
-    agent_name: str,
-    request: Request,
-    parameters: Dict[str, Any] = Body(default_factory=dict),
-    interaction_type: str = Body(default="query"),
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    agent_name: str, request: Request, parameters: Dict[str, Any] = Body(default_factory=dict), interaction_type: str = Body(default="query"), user=Depends(get_current_user_with_permissions)
+) -> Dict[str, Any]:
     """
     Invokes an A2A agent with the specified parameters.
 
@@ -3093,7 +3036,6 @@ async def invoke_a2a_agent(
         request (Request): The FastAPI request object for team_id retrieval.
         parameters (Dict[str, Any]): Parameters for the agent interaction.
         interaction_type (str): Type of interaction (query, execute, etc.).
-        db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -3248,11 +3190,7 @@ async def list_tools(
 @tool_router.post("", response_model=ToolRead)
 @tool_router.post("/", response_model=ToolRead)
 @require_permission("tools.create")
-async def create_tool(
-    tool: ToolCreate,
-    request: Request,
-    team_id: Optional[str] = Body(None, description="Team ID to assign tool to"),
-    user=Depends(get_current_user_with_permissions)) -> ToolRead:
+async def create_tool(tool: ToolCreate, request: Request, team_id: Optional[str] = Body(None, description="Team ID to assign tool to"), user=Depends(get_current_user_with_permissions)) -> ToolRead:
     """
     Creates a new tool in the system with team assignment support.
 
@@ -3260,7 +3198,6 @@ async def create_tool(
         tool (ToolCreate): The data needed to create the tool.
         request (Request): The FastAPI request object for metadata extraction.
         team_id (Optional[str]): Team ID to assign the tool to.
-        db (Session): The database session dependency.
         user: The authenticated user making the request.
 
     Returns:
@@ -3326,16 +3263,12 @@ async def create_tool(
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
 @require_permission("tools.read")
-async def get_tool(
-    tool_id: str,
-    user=Depends(get_current_user_with_permissions),
-    apijsonpath: JsonPathModifier = Body(None)) -> Union[ToolRead, Dict]:
+async def get_tool(tool_id: str, user=Depends(get_current_user_with_permissions), apijsonpath: JsonPathModifier = Body(None)) -> Union[ToolRead, Dict]:
     """
     Retrieve a tool by ID, optionally applying a JSONPath post-filter.
 
     Args:
         tool_id: The numeric ID of the tool.
-        db:     Active SQLAlchemy session (dependency).
         user:   Authenticated username (dependency).
         apijsonpath: Optional JSON-Path modifier supplied in the body.
 
@@ -3362,11 +3295,7 @@ async def get_tool(
 
 @tool_router.put("/{tool_id}", response_model=ToolRead)
 @require_permission("tools.update")
-async def update_tool(
-    tool_id: str,
-    tool: ToolUpdate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> ToolRead:
+async def update_tool(tool_id: str, tool: ToolUpdate, request: Request, user=Depends(get_current_user_with_permissions)) -> ToolRead:
     """
     Updates an existing tool with new data.
 
@@ -3374,7 +3303,6 @@ async def update_tool(
         tool_id (str): The ID of the tool to update.
         tool (ToolUpdate): The updated tool information.
         request (Request): The FastAPI request object for metadata extraction.
-        db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -3423,17 +3351,13 @@ async def update_tool(
 
 @tool_router.delete("/{tool_id}")
 @require_permission("tools.delete")
-async def delete_tool(
-    tool_id: str,
-    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this tool"),
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_tool(tool_id: str, purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this tool"), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
     Args:
         tool_id (str): The ID of the tool to delete.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this tool.
-        db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -3458,17 +3382,13 @@ async def delete_tool(
 
 @tool_router.post("/{tool_id}/state")
 @require_permission("tools.update")
-async def set_tool_state(
-    tool_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def set_tool_state(tool_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Activates or deactivates a tool.
 
     Args:
         tool_id (str): The ID of the tool to update.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
-        db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
     Returns:
@@ -3497,10 +3417,7 @@ async def set_tool_state(
 
 @tool_router.post("/{tool_id}/toggle", deprecated=True)
 @require_permission("tools.update")
-async def toggle_tool_status(
-    tool_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def toggle_tool_status(tool_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """DEPRECATED: Use /state endpoint instead. This endpoint will be removed in a future release.
 
     Activates or deactivates a tool.
@@ -3508,7 +3425,6 @@ async def toggle_tool_status(
     Args:
         tool_id: The tool ID.
         activate: Whether to activate (True) or deactivate (False) the tool.
-        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -3526,15 +3442,12 @@ async def toggle_tool_status(
 # --- Resource templates endpoint - MUST come before variable paths ---
 @resource_router.get("/templates/list", response_model=ListResourceTemplatesResult)
 @require_permission("resources.read")
-async def list_resource_templates(
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> ListResourceTemplatesResult:
+async def list_resource_templates(request: Request, user=Depends(get_current_user_with_permissions)) -> ListResourceTemplatesResult:
     """
     List all available resource templates.
 
     Args:
         request (Request): The FastAPI request object for team_id retrieval.
-        db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
@@ -3563,17 +3476,13 @@ async def list_resource_templates(
 
 @resource_router.post("/{resource_id}/state")
 @require_permission("resources.update")
-async def set_resource_state(
-    resource_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def set_resource_state(resource_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Activate or deactivate a resource by its ID.
 
     Args:
         resource_id (str): The ID of the resource.
         activate (bool): True to activate, False to deactivate.
-        db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
@@ -3602,10 +3511,7 @@ async def set_resource_state(
 
 @resource_router.post("/{resource_id}/toggle", deprecated=True)
 @require_permission("resources.update")
-async def toggle_resource_status(
-    resource_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def toggle_resource_status(resource_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """DEPRECATED: Use /state endpoint instead. This endpoint will be removed in a future release.
 
     Activate or deactivate a resource by its ID.
@@ -3613,7 +3519,6 @@ async def toggle_resource_status(
     Args:
         resource_id: The resource ID.
         activate: Whether to activate (True) or deactivate (False) the resource.
-        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -3725,7 +3630,8 @@ async def create_resource(
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign resource to"),
     visibility: Optional[str] = Body("public", description="Resource visibility: private, team, public"),
-    user=Depends(get_current_user_with_permissions)) -> ResourceRead:
+    user=Depends(get_current_user_with_permissions),
+) -> ResourceRead:
     """
     Create a new resource.
 
@@ -3734,7 +3640,6 @@ async def create_resource(
         request (Request): FastAPI request object for metadata extraction.
         team_id (Optional[str]): Team ID to assign the resource to.
         visibility (str): Resource visibility level (private, team, public).
-        db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
@@ -3799,7 +3704,6 @@ async def read_resource(resource_id: str, request: Request, user=Depends(get_cur
     Args:
         resource_id (str): ID of the resource.
         request (Request): FastAPI request object for context.
-        db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
@@ -3877,10 +3781,7 @@ async def read_resource(resource_id: str, request: Request, user=Depends(get_cur
 
 @resource_router.get("/{resource_id}/info", response_model=ResourceRead)
 @require_permission("resources.read")
-async def get_resource_info(
-    resource_id: str,
-    include_inactive: bool = Query(False, description="Include inactive resources"),
-    user=Depends(get_current_user_with_permissions)) -> ResourceRead:
+async def get_resource_info(resource_id: str, include_inactive: bool = Query(False, description="Include inactive resources"), user=Depends(get_current_user_with_permissions)) -> ResourceRead:
     """
     Get resource metadata by ID.
 
@@ -3890,7 +3791,6 @@ async def get_resource_info(
     Args:
         resource_id (str): ID of the resource.
         include_inactive (bool): Whether to include inactive resources.
-        db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
@@ -3909,11 +3809,7 @@ async def get_resource_info(
 
 @resource_router.put("/{resource_id}", response_model=ResourceRead)
 @require_permission("resources.update")
-async def update_resource(
-    resource_id: str,
-    resource: ResourceUpdate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> ResourceRead:
+async def update_resource(resource_id: str, resource: ResourceUpdate, request: Request, user=Depends(get_current_user_with_permissions)) -> ResourceRead:
     """
     Update a resource identified by its ID.
 
@@ -3921,7 +3817,6 @@ async def update_resource(
         resource_id (str): ID of the resource.
         resource (ResourceUpdate): New resource data.
         request (Request): The FastAPI request object for metadata extraction.
-        db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
@@ -3966,16 +3861,14 @@ async def update_resource(
 @resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
 async def delete_resource(
-    resource_id: str,
-    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this resource"),
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+    resource_id: str, purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this resource"), user=Depends(get_current_user_with_permissions)
+) -> Dict[str, str]:
     """
     Delete a resource by its ID.
 
     Args:
         resource_id (str): ID of the resource to delete.
         purge_metrics (bool): Whether to delete raw + hourly rollup metrics for this resource.
-        db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
@@ -4020,17 +3913,13 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
 ###############
 @prompt_router.post("/{prompt_id}/state")
 @require_permission("prompts.update")
-async def set_prompt_state(
-    prompt_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def set_prompt_state(prompt_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Set the activation status of a prompt.
 
     Args:
         prompt_id: ID of the prompt to update.
         activate: True to activate, False to deactivate.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -4059,10 +3948,7 @@ async def set_prompt_state(
 
 @prompt_router.post("/{prompt_id}/toggle", deprecated=True)
 @require_permission("prompts.update")
-async def toggle_prompt_status(
-    prompt_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def toggle_prompt_status(prompt_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """DEPRECATED: Use /state endpoint instead. This endpoint will be removed in a future release.
 
     Set the activation status of a prompt.
@@ -4070,7 +3956,6 @@ async def toggle_prompt_status(
     Args:
         prompt_id: The prompt ID.
         activate: Whether to activate (True) or deactivate (False) the prompt.
-        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -4182,7 +4067,8 @@ async def create_prompt(
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign prompt to"),
     visibility: Optional[str] = Body("public", description="Prompt visibility: private, team, public"),
-    user=Depends(get_current_user_with_permissions)) -> PromptRead:
+    user=Depends(get_current_user_with_permissions),
+) -> PromptRead:
     """
     Create a new prompt.
 
@@ -4191,7 +4077,6 @@ async def create_prompt(
         request (Request): The FastAPI request object for metadata extraction.
         team_id (Optional[str]): Team ID to assign the prompt to.
         visibility (str): Prompt visibility level (private, team, public).
-        db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
     Returns:
@@ -4258,11 +4143,7 @@ async def create_prompt(
 
 @prompt_router.post("/{prompt_id}")
 @require_permission("prompts.read")
-async def get_prompt(
-    request: Request,
-    prompt_id: str,
-    args: Dict[str, str] = Body({}),
-    user=Depends(get_current_user_with_permissions)) -> Any:
+async def get_prompt(request: Request, prompt_id: str, args: Dict[str, str] = Body({}), user=Depends(get_current_user_with_permissions)) -> Any:
     """Get a prompt by prompt_id with arguments.
 
     This implements the prompts/get functionality from the MCP spec,
@@ -4273,7 +4154,6 @@ async def get_prompt(
         request: FastAPI request object.
         prompt_id: ID of the prompt.
         args: Template arguments.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -4326,10 +4206,7 @@ async def get_prompt(
 
 @prompt_router.get("/{prompt_id}")
 @require_permission("prompts.read")
-async def get_prompt_no_args(
-    request: Request,
-    prompt_id: str,
-    user=Depends(get_current_user_with_permissions)) -> Any:
+async def get_prompt_no_args(request: Request, prompt_id: str, user=Depends(get_current_user_with_permissions)) -> Any:
     """Get a prompt by ID without arguments.
 
     This endpoint is for convenience when no arguments are needed.
@@ -4337,7 +4214,6 @@ async def get_prompt_no_args(
     Args:
         request: FastAPI request object.
         prompt_id: The ID of the prompt to retrieve
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -4381,11 +4257,7 @@ async def get_prompt_no_args(
 
 @prompt_router.put("/{prompt_id}", response_model=PromptRead)
 @require_permission("prompts.update")
-async def update_prompt(
-    prompt_id: str,
-    prompt: PromptUpdate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> PromptRead:
+async def update_prompt(prompt_id: str, prompt: PromptUpdate, request: Request, user=Depends(get_current_user_with_permissions)) -> PromptRead:
     """
     Update (overwrite) an existing prompt definition.
 
@@ -4393,7 +4265,6 @@ async def update_prompt(
         prompt_id (str): Identifier of the prompt to update.
         prompt (PromptUpdate): New prompt content and metadata.
         request (Request): The FastAPI request object for metadata extraction.
-        db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
     Returns:
@@ -4445,16 +4316,14 @@ async def update_prompt(
 @prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
 async def delete_prompt(
-    prompt_id: str,
-    purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this prompt"),
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+    prompt_id: str, purge_metrics: bool = Query(False, description="Purge raw + rollup metrics for this prompt"), user=Depends(get_current_user_with_permissions)
+) -> Dict[str, str]:
     """
     Delete a prompt by ID.
 
     Args:
         prompt_id: ID of the prompt.
         purge_metrics: Whether to delete raw + hourly rollup metrics for this prompt.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -4490,17 +4359,13 @@ async def delete_prompt(
 ################
 @gateway_router.post("/{gateway_id}/state")
 @require_permission("gateways.update")
-async def set_gateway_state(
-    gateway_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def set_gateway_state(gateway_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Set the activation status of a gateway.
 
     Args:
         gateway_id (str): String ID of the gateway to update.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
-        db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
     Returns:
@@ -4534,10 +4399,7 @@ async def set_gateway_state(
 
 @gateway_router.post("/{gateway_id}/toggle", deprecated=True)
 @require_permission("gateways.update")
-async def toggle_gateway_status(
-    gateway_id: str,
-    activate: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def toggle_gateway_status(gateway_id: str, activate: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """DEPRECATED: Use /state endpoint instead. This endpoint will be removed in a future release.
 
     Set the activation status of a gateway.
@@ -4545,7 +4407,6 @@ async def toggle_gateway_status(
     Args:
         gateway_id: The gateway ID.
         activate: Whether to activate (True) or deactivate (False) the gateway.
-        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -4631,17 +4492,13 @@ async def list_gateways(
 @gateway_router.post("", response_model=GatewayRead)
 @gateway_router.post("/", response_model=GatewayRead)
 @require_permission("gateways.create")
-async def register_gateway(
-    gateway: GatewayCreate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
+async def register_gateway(gateway: GatewayCreate, request: Request, user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Register a new gateway.
 
     Args:
         gateway: Gateway creation data.
         request: The FastAPI request object for metadata extraction.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -4709,7 +4566,6 @@ async def get_gateway(gateway_id: str, user=Depends(get_current_user_with_permis
 
     Args:
         gateway_id: ID of the gateway.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -4728,11 +4584,7 @@ async def get_gateway(gateway_id: str, user=Depends(get_current_user_with_permis
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.update")
-async def update_gateway(
-    gateway_id: str,
-    gateway: GatewayUpdate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
+async def update_gateway(gateway_id: str, gateway: GatewayUpdate, request: Request, user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Update a gateway.
 
@@ -4740,7 +4592,6 @@ async def update_gateway(
         gateway_id: Gateway ID.
         gateway: Gateway update data.
         request (Request): The FastAPI request object for metadata extraction.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -4793,7 +4644,6 @@ async def delete_gateway(gateway_id: str, user=Depends(get_current_user_with_per
 
     Args:
         gateway_id: ID of the gateway.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -5764,7 +5614,6 @@ async def get_metrics(user=Depends(get_current_user_with_permissions)) -> dict:
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
     Args:
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -5802,7 +5651,6 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
     Args:
         entity: One of "tool", "resource", "server", "prompt", "a2a_agent", or None for global reset.
         entity_id: Specific entity ID to reset metrics for (optional).
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -5985,10 +5833,7 @@ async def security_health(request: Request):
 @tag_router.get("", response_model=List[TagInfo])
 @tag_router.get("/", response_model=List[TagInfo])
 @require_permission("tags.read")
-async def list_tags(
-    entity_types: Optional[str] = None,
-    include_entities: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> List[TagInfo]:
+async def list_tags(entity_types: Optional[str] = None, include_entities: bool = False, user=Depends(get_current_user_with_permissions)) -> List[TagInfo]:
     """
     Retrieve all unique tags across specified entity types.
 
@@ -5997,7 +5842,6 @@ async def list_tags(
                      (e.g., "tools,resources,prompts,servers,gateways").
                      If not provided, returns tags from all entity types.
         include_entities: Whether to include the list of entities that have each tag
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -6024,10 +5868,7 @@ async def list_tags(
 
 @tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
 @require_permission("tags.read")
-async def get_entities_by_tag(
-    tag_name: str,
-    entity_types: Optional[str] = None,
-    user=Depends(get_current_user_with_permissions)) -> List[TaggedEntity]:
+async def get_entities_by_tag(tag_name: str, entity_types: Optional[str] = None, user=Depends(get_current_user_with_permissions)) -> List[TaggedEntity]:
     """
     Get all entities that have a specific tag.
 
@@ -6036,7 +5877,6 @@ async def get_entities_by_tag(
         entity_types: Comma-separated list of entity types to filter by
                      (e.g., "tools,resources,prompts,servers,gateways").
                      If not provided, returns entities from all types.
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -6076,7 +5916,8 @@ async def export_configuration(
     tags: Optional[str] = None,
     include_inactive: bool = False,
     include_dependencies: bool = True,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
     """
     Export gateway configuration to JSON format.
 
@@ -6088,7 +5929,6 @@ async def export_configuration(
         tags: Comma-separated list of tags to filter by
         include_inactive: Whether to include inactive entities
         include_dependencies: Whether to include dependent entities
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -6149,16 +5989,13 @@ async def export_configuration(
 
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
 @require_permission("admin.export")
-async def export_selective_configuration(
-    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, user=Depends(get_current_user_with_permissions)
-) -> Dict[str, Any]:
+async def export_selective_configuration(entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Export specific entities by their IDs/names.
 
     Args:
         entity_selections: Dict mapping entity types to lists of IDs/names to export
         include_dependencies: Whether to include dependent entities
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -6210,7 +6047,8 @@ async def import_configuration(
     dry_run: bool = False,
     rekey_secret: Optional[str] = None,
     selected_entities: Optional[Dict[str, List[str]]] = None,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
     """
     Import configuration data with conflict resolution.
 
@@ -6220,7 +6058,6 @@ async def import_configuration(
         dry_run: If true, validate but don't make changes
         rekey_secret: New encryption secret for cross-environment imports
         selected_entities: Dict of entity types to specific entity names/ids to import
-        db: Database session
         user: Authenticated user
 
     Returns:

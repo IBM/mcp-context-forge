@@ -12,11 +12,10 @@ from typing import Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.db import fresh_db_session, get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.llm_schemas import (
     GatewayModelsResponse,
     LLMModelCreate,
@@ -542,15 +541,13 @@ async def set_model_state(
     summary="Get Gateway Models",
     description="Get enabled models for the LLM Chat dropdown.",
 )
-async def get_gateway_models(
-    current_user: dict = Depends(get_current_user)) -> GatewayModelsResponse:
+async def get_gateway_models(current_user: dict = Depends(get_current_user)) -> GatewayModelsResponse:
     """Get enabled models for the LLM Chat dropdown.
 
     This endpoint is used by the LLM Chat UI to populate the model selector.
     It returns only enabled chat-capable models from enabled providers.
 
     Args:
-        db: Database session.
         current_user: Authenticated user.
 
     Returns:

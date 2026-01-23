@@ -21,10 +21,9 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 import orjson
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.main import get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
@@ -71,7 +70,8 @@ async def generate_testcases_for_tool(
     number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),
     number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),
     mode: str = Query("generate", description="Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status"),
-    _user=Depends(get_current_user_with_permissions)) -> List[Dict]:
+    _user=Depends(get_current_user_with_permissions),
+) -> List[Dict]:
     """
     Generate test cases for a tool
 
@@ -84,7 +84,6 @@ async def generate_testcases_for_tool(
         number_of_test_cases: Number of test cases to generate for the given tools (optional)
         number_of_nl_variations: Number of Natural language variations(parapharses) per test case (optional)
         mode: Three supported modes - 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status
-        db: DB session to connect with database
 
     Returns:
         List: A list of test cases generated for the tool , each test case is dictionary object
@@ -119,7 +118,6 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, _user=D
         tool_nl_test_input: NL test case format input to run test cases with agent , it contains\
             - tool_id: Tool ID in context forge\
             - tool_nl_test_cases: List of natural language test cases (utteances) for testing MCP tool with the agent
-        db: DB session to connect with database
 
     Returns:
         List: A list of tool outputs after agent execution for the provided tool nl test cases
@@ -150,7 +148,6 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), _user
 
     Args:
         tool_id: Unique Tool ID MCP-CF.
-        db: The database session used to interact with the data store.
 
     Returns:
         result: A dict having the keys "tool_id", "tool_name", "original_desc" and "enriched_desc" with their corresponding values

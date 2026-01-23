@@ -26,7 +26,6 @@ from mcpgateway.config import settings
 from mcpgateway.db import (
     AuditTrail,
     fresh_db_session,
-    get_db,
     PerformanceMetric,
     SecurityEvent,
     StructuredLogEntry,
@@ -340,7 +339,6 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
     Args:
         request: Search parameters
         user: Current authenticated user
-        db: Database session
 
     Returns:
         Search results with pagination
@@ -450,7 +448,6 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
     Args:
         correlation_id: Correlation ID to trace
         user: Current authenticated user
-        db: Database session
 
     Returns:
         Complete trace of all related logs and events
@@ -566,7 +563,8 @@ async def get_security_events(
     end_time: Optional[datetime] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    user=Depends(get_current_user_with_permissions)) -> List[SecurityEventResponse]:
+    user=Depends(get_current_user_with_permissions),
+) -> List[SecurityEventResponse]:
     """Get security events with filters.
 
     Args:
@@ -578,7 +576,6 @@ async def get_security_events(
         limit: Maximum results
         offset: Result offset
         user: Current authenticated user
-        db: Database session
 
     Returns:
         List of security events
@@ -642,7 +639,8 @@ async def get_audit_trails(
     end_time: Optional[datetime] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    user=Depends(get_current_user_with_permissions)) -> List[AuditTrailResponse]:
+    user=Depends(get_current_user_with_permissions),
+) -> List[AuditTrailResponse]:
     """Get audit trails with filters.
 
     Args:
@@ -655,7 +653,6 @@ async def get_audit_trails(
         limit: Maximum results
         offset: Result offset
         user: Current authenticated user
-        db: Database session
 
     Returns:
         List of audit trail entries
@@ -718,7 +715,8 @@ async def get_performance_metrics(
     operation: Optional[str] = Query(None),
     hours: float = Query(24.0, ge=MIN_PERFORMANCE_RANGE_HOURS, le=1000.0, description="Historical window to display"),
     aggregation: str = Query(_DEFAULT_AGGREGATION_KEY, regex="^(5m|24h)$", description="Aggregation level for metrics"),
-    user=Depends(get_current_user_with_permissions)) -> List[PerformanceMetricResponse]:
+    user=Depends(get_current_user_with_permissions),
+) -> List[PerformanceMetricResponse]:
     """Get performance metrics.
 
     Args:
@@ -727,7 +725,6 @@ async def get_performance_metrics(
         aggregation: Aggregation level (5m, 1h, 1d, 7d)
         hours: Hours of history
         user: Current authenticated user
-        db: Database session
 
     Returns:
         List of performance metrics

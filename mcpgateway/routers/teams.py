@@ -24,12 +24,11 @@ from typing import Any, cast, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     CursorPaginatedTeamsResponse,
@@ -207,7 +206,6 @@ async def get_team(team_id: str, current_user: EmailUserResponse = Depends(get_c
     Args:
         team_id: Team UUID
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         TeamResponse: Team data
@@ -259,7 +257,6 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: Em
         team_id: Team UUID
         request: Team update request data
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         TeamResponse: Updated team data
@@ -314,7 +311,6 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
     Args:
         team_id: Team UUID
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         SuccessResponse: Success confirmation
@@ -355,7 +351,8 @@ async def list_team_members(
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),
     limit: Optional[int] = Query(None, ge=1, le=settings.pagination_max_page_size, description="Maximum number of members to return (default: 50)"),
     include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
-    current_user: EmailUserResponse = Depends(get_current_user)) -> Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]]:
+    current_user: EmailUserResponse = Depends(get_current_user),
+) -> Union[PaginatedTeamMembersResponse, List[TeamMemberResponse]]:
     """List team members with cursor-based pagination.
 
     Args:
@@ -364,7 +361,6 @@ async def list_team_members(
         limit: Maximum number of members to return (default: 50)
         include_pagination: Whether to include cursor pagination metadata in the response (default: false)
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         PaginatedTeamMembersResponse with members and nextCursor if include_pagination=true, or
@@ -425,9 +421,7 @@ async def list_team_members(
 
 @teams_router.put("/{team_id}/members/{user_email}", response_model=TeamMemberResponse)
 @require_permission("teams.manage_members")
-async def update_team_member(
-    team_id: str, user_email: str, request: TeamMemberUpdateRequest, current_user: EmailUserResponse = Depends(get_current_user)
-) -> TeamMemberResponse:
+async def update_team_member(team_id: str, user_email: str, request: TeamMemberUpdateRequest, current_user: EmailUserResponse = Depends(get_current_user)) -> TeamMemberResponse:
     """Update a team member's role.
 
     Args:
@@ -435,7 +429,6 @@ async def update_team_member(
         user_email: Email of the member to update
         request: Member update request data
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         TeamMemberResponse: Updated member data
@@ -477,7 +470,6 @@ async def remove_team_member(team_id: str, user_email: str, current_user: EmailU
         team_id: Team UUID
         user_email: Email of the member to remove
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         SuccessResponse: Success confirmation
@@ -520,7 +512,6 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         team_id: Team UUID
         request: Invitation request data
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         TeamInvitationResponse: Created invitation data
@@ -577,7 +568,6 @@ async def list_team_invitations(team_id: str, current_user: EmailUserResponse = 
     Args:
         team_id: Team UUID
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         List[TeamInvitationResponse]: List of team invitations
@@ -635,7 +625,6 @@ async def accept_team_invitation(token: str, current_user: EmailUserResponse = D
     Args:
         token: Invitation token
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         TeamMemberResponse: New team member data
@@ -671,7 +660,6 @@ async def cancel_team_invitation(invitation_id: str, current_user: EmailUserResp
     Args:
         invitation_id: Invitation UUID
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         SuccessResponse: Success confirmation
@@ -763,10 +751,7 @@ async def discover_public_teams(
 
 
 @teams_router.post("/{team_id}/join", response_model=TeamJoinRequestResponse)
-async def request_to_join_team(
-    team_id: str,
-    join_request: TeamJoinRequest,
-    current_user: EmailUserResponse = Depends(get_current_user)) -> TeamJoinRequestResponse:
+async def request_to_join_team(team_id: str, join_request: TeamJoinRequest, current_user: EmailUserResponse = Depends(get_current_user)) -> TeamJoinRequestResponse:
     """Request to join a public team.
 
     Allows users to request membership in public teams. The request will be
@@ -776,7 +761,6 @@ async def request_to_join_team(
         team_id: ID of the team to join
         join_request: Join request details including optional message
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         TeamJoinRequestResponse: Created join request details
@@ -822,9 +806,7 @@ async def request_to_join_team(
 
 
 @teams_router.delete("/{team_id}/leave", response_model=SuccessResponse)
-async def leave_team(
-    team_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user)) -> SuccessResponse:
+async def leave_team(team_id: str, current_user: EmailUserResponse = Depends(get_current_user)) -> SuccessResponse:
     """Leave a team.
 
     Allows users to remove themselves from a team. Cannot leave personal teams
@@ -833,7 +815,6 @@ async def leave_team(
     Args:
         team_id: ID of the team to leave
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         SuccessResponse: Confirmation of leaving the team
@@ -874,9 +855,7 @@ async def leave_team(
 
 @teams_router.get("/{team_id}/join-requests", response_model=List[TeamJoinRequestResponse])
 @require_permission("teams.manage_members")
-async def list_team_join_requests(
-    team_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user)) -> List[TeamJoinRequestResponse]:
+async def list_team_join_requests(team_id: str, current_user: EmailUserResponse = Depends(get_current_user)) -> List[TeamJoinRequestResponse]:
     """List pending join requests for a team.
 
     Only team owners can view join requests for their teams.
@@ -884,7 +863,6 @@ async def list_team_join_requests(
     Args:
         team_id: ID of the team
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         List[TeamJoinRequestResponse]: List of pending join requests
@@ -930,10 +908,7 @@ async def list_team_join_requests(
 
 @teams_router.post("/{team_id}/join-requests/{request_id}/approve", response_model=TeamMemberResponse)
 @require_permission("teams.manage_members")
-async def approve_join_request(
-    team_id: str,
-    request_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user)) -> TeamMemberResponse:
+async def approve_join_request(team_id: str, request_id: str, current_user: EmailUserResponse = Depends(get_current_user)) -> TeamMemberResponse:
     """Approve a team join request.
 
     Only team owners can approve join requests for their teams.
@@ -942,7 +917,6 @@ async def approve_join_request(
         team_id: ID of the team
         request_id: ID of the join request
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         TeamMemberResponse: New team member data
@@ -986,10 +960,7 @@ async def approve_join_request(
 
 @teams_router.delete("/{team_id}/join-requests/{request_id}", response_model=SuccessResponse)
 @require_permission("teams.manage_members")
-async def reject_join_request(
-    team_id: str,
-    request_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user)) -> SuccessResponse:
+async def reject_join_request(team_id: str, request_id: str, current_user: EmailUserResponse = Depends(get_current_user)) -> SuccessResponse:
     """Reject a team join request.
 
     Only team owners can reject join requests for their teams.
@@ -998,7 +969,6 @@ async def reject_join_request(
         team_id: ID of the team
         request_id: ID of the join request
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         SuccessResponse: Confirmation of rejection

@@ -24,12 +24,11 @@ from typing import List, Optional, Union
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, EmailUser, SessionLocal, utc_now
+from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     AuthenticationResponse,
@@ -235,7 +234,6 @@ async def login(login_request: EmailLoginRequest, request: Request):
     Args:
         login_request: Login credentials
         request: FastAPI request object
-        db: Database session
 
     Returns:
         AuthenticationResponse: Access token and user info
@@ -338,7 +336,6 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
     Args:
         registration_request: Registration information
         request: FastAPI request object
-        db: Database session
 
     Returns:
         AuthenticationResponse: Access token and user info
@@ -397,7 +394,6 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
         password_request: Old and new passwords
         request: FastAPI request object
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         SuccessResponse: Success confirmation
@@ -465,7 +461,6 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
         limit: Maximum number of events to return
         offset: Number of events to skip
         current_user: Currently authenticated user
-        db: Database session
 
     Returns:
         List[AuthEventResponse]: Authentication events

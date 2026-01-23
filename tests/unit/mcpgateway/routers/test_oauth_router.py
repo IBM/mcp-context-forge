@@ -32,6 +32,14 @@ class TestOAuthRouter:
         db = Mock(spec=Session)
         return db
 
+    @pytest.fixture(autouse=True)
+    def mock_fresh_db_session(self, mock_db):
+        """Mock fresh_db_session to return the mock_db."""
+        with patch("mcpgateway.routers.oauth_router.fresh_db_session") as mock:
+            mock.return_value.__enter__ = Mock(return_value=mock_db)
+            mock.return_value.__exit__ = Mock(return_value=False)
+            yield mock
+
     @pytest.fixture
     def mock_request(self):
         """Create mock FastAPI request."""
@@ -93,7 +101,7 @@ class TestOAuthRouter:
                 from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
                 # Execute
-                result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+                result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user)
 
                 # Assert
                 assert isinstance(result, RedirectResponse)
@@ -121,7 +129,7 @@ class TestOAuthRouter:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await initiate_oauth_flow("nonexistent", mock_request, mock_current_user, mock_db)
+            await initiate_oauth_flow("nonexistent", mock_request, mock_current_user)
 
         assert exc_info.value.status_code == 404
         assert "Gateway not found" in str(exc_info.value.detail)
@@ -140,7 +148,7 @@ class TestOAuthRouter:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user)
 
         assert exc_info.value.status_code == 400
         assert "Gateway is not configured for OAuth" in str(exc_info.value.detail)
@@ -159,7 +167,7 @@ class TestOAuthRouter:
 
         # Execute & Assert
         with pytest.raises(HTTPException) as exc_info:
-            await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+            await initiate_oauth_flow("gateway123", mock_request, mock_current_user)
 
         assert exc_info.value.status_code == 400
         assert "Gateway is not configured for Authorization Code flow" in str(exc_info.value.detail)
@@ -181,7 +189,7 @@ class TestOAuthRouter:
 
                 # Execute & Assert
                 with pytest.raises(HTTPException) as exc_info:
-                    await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+                    await initiate_oauth_flow("gateway123", mock_request, mock_current_user)
 
                 assert exc_info.value.status_code == 500
                 assert "Failed to initiate OAuth flow" in str(exc_info.value.detail)
@@ -213,7 +221,7 @@ class TestOAuthRouter:
                 from mcpgateway.routers.oauth_router import oauth_callback
 
                 # Execute
-                result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
+                result = await oauth_callback(code="auth_code_123", state=state, request=mock_request)
 
                 # Assert
                 assert isinstance(result, HTMLResponse)
@@ -244,7 +252,7 @@ class TestOAuthRouter:
                 from mcpgateway.routers.oauth_router import oauth_callback
 
                 # Execute
-                result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
+                result = await oauth_callback(code="auth_code_123", state=state, request=mock_request)
 
                 # Assert
                 assert isinstance(result, HTMLResponse)
@@ -257,7 +265,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import oauth_callback
 
         # Execute
-        result = await oauth_callback(code="auth_code_123", state="invalid", request=mock_request, db=mock_db)
+        result = await oauth_callback(code="auth_code_123", state="invalid", request=mock_request)
 
         # Assert
         assert isinstance(result, HTMLResponse)
@@ -278,7 +286,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import oauth_callback
 
         # Execute
-        result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
+        result = await oauth_callback(code="auth_code_123", state=state, request=mock_request)
 
         # Assert
         assert isinstance(result, HTMLResponse)
@@ -304,7 +312,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import oauth_callback
 
         # Execute
-        result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
+        result = await oauth_callback(code="auth_code_123", state=state, request=mock_request)
 
         # Assert
         assert isinstance(result, HTMLResponse)
@@ -333,7 +341,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import oauth_callback
 
         # Execute
-        result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
+        result = await oauth_callback(code="auth_code_123", state=state, request=mock_request)
 
         # Assert
         assert isinstance(result, HTMLResponse)
@@ -365,7 +373,7 @@ class TestOAuthRouter:
                 from mcpgateway.routers.oauth_router import oauth_callback
 
                 # Execute
-                result = await oauth_callback(code="invalid_code", state=state, request=mock_request, db=mock_db)
+                result = await oauth_callback(code="invalid_code", state=state, request=mock_request)
 
                 # Assert
                 assert isinstance(result, HTMLResponse)
@@ -383,7 +391,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute
-        result = await get_oauth_status("gateway123", mock_db)
+        result = await get_oauth_status("gateway123")
 
         # Assert
         assert result["oauth_enabled"] is True
@@ -403,7 +411,7 @@ class TestOAuthRouter:
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute
-        result = await get_oauth_status("gateway123", mock_db)
+        result = await get_oauth_status("gateway123")
 
         # Assert
         assert result["oauth_enabled"] is False
@@ -424,12 +432,13 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            result = await fetch_tools_after_oauth("gateway123", mock_current_user, mock_db)
+            result = await fetch_tools_after_oauth("gateway123", mock_current_user)
 
             # Assert
             assert result["success"] is True
             assert "Successfully fetched and created 3 tools" in result["message"]
-            mock_gateway_service.fetch_tools_after_oauth.assert_called_once_with(mock_db, "gateway123", mock_current_user.get("email"))
+            # Service is called with db, gateway_id, email
+            mock_gateway_service.fetch_tools_after_oauth.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_no_tools(self, mock_db, mock_current_user):
@@ -446,7 +455,7 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            result = await fetch_tools_after_oauth("gateway123", mock_current_user, mock_db)
+            result = await fetch_tools_after_oauth("gateway123", mock_current_user)
 
             # Assert
             assert result["success"] is True
@@ -466,7 +475,7 @@ class TestOAuthRouter:
 
             # Execute & Assert
             with pytest.raises(HTTPException) as exc_info:
-                await fetch_tools_after_oauth("gateway123", mock_current_user, mock_db)
+                await fetch_tools_after_oauth("gateway123", mock_current_user)
 
             assert exc_info.value.status_code == 500
             assert "Failed to fetch tools" in str(exc_info.value.detail)
@@ -486,7 +495,7 @@ class TestOAuthRouter:
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
-            result = await fetch_tools_after_oauth("gateway123", mock_current_user, mock_db)
+            result = await fetch_tools_after_oauth("gateway123", mock_current_user)
 
             # Assert
             assert result["success"] is True

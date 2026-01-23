@@ -18,11 +18,10 @@ from urllib.parse import urlparse, urlunparse
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Server as DbServer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.verify_credentials import require_auth
@@ -111,9 +110,7 @@ def validate_security_txt(content: str) -> Optional[str]:
 
 
 @router.get("/.well-known/oauth-protected-resource")
-async def get_oauth_protected_resource(
-    request: Request,
-    server_id: Optional[str] = None):
+async def get_oauth_protected_resource(request: Request, server_id: Optional[str] = None):
     """
     RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint.
 
@@ -123,7 +120,6 @@ async def get_oauth_protected_resource(
     Args:
         request: FastAPI request object for building resource URL.
         server_id: The ID of the server to get OAuth configuration for.
-        db: Database session dependency.
 
     Returns:
         JSONResponse with RFC 9728 Protected Resource Metadata.

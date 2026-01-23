@@ -85,7 +85,6 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
     Args:
         role_data: Role creation data
         user: Current authenticated user
-        db: Database session
 
     Returns:
         RoleResponse: Created role details
@@ -125,16 +124,14 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
 @router.get("/roles", response_model=List[RoleResponse])
 @require_permission("admin.user_management")
 async def list_roles(
-    scope: Optional[str] = Query(None, description="Filter by scope"),
-    active_only: bool = Query(True, description="Show only active roles"),
-    user=Depends(get_current_user_with_permissions)):
+    scope: Optional[str] = Query(None, description="Filter by scope"), active_only: bool = Query(True, description="Show only active roles"), user=Depends(get_current_user_with_permissions)
+):
     """List all roles.
 
     Args:
         scope: Optional scope filter
         active_only: Whether to show only active roles
         user: Current authenticated user
-        db: Database session
 
     Returns:
         List[RoleResponse]: List of roles
@@ -167,7 +164,6 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
     Args:
         role_id: Role identifier
         user: Current authenticated user
-        db: Database session
 
     Returns:
         RoleResponse: Role details
@@ -206,7 +202,6 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
         role_id: Role identifier
         role_data: Role update data
         user: Current authenticated user
-        db: Database session
 
     Returns:
         RoleResponse: Updated role details
@@ -248,7 +243,6 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
     Args:
         role_id: Role identifier
         user: Current authenticated user
-        db: Database session
 
     Returns:
         dict: Success message
@@ -291,7 +285,6 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
         user_email: User email address
         assignment_data: Role assignment data
         user: Current authenticated user
-        db: Database session
 
     Returns:
         UserRoleResponse: Created role assignment
@@ -328,7 +321,8 @@ async def get_user_roles(
     user_email: str,
     scope: Optional[str] = Query(None, description="Filter by scope"),
     active_only: bool = Query(True, description="Show only active assignments"),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Get roles assigned to a user.
 
     Args:
@@ -336,7 +330,6 @@ async def get_user_roles(
         scope: Optional scope filter
         active_only: Whether to show only active assignments
         user: Current authenticated user
-        db: Database session
 
     Returns:
         List[UserRoleResponse]: User's role assignments
@@ -368,7 +361,8 @@ async def revoke_user_role(
     role_id: str,
     scope: Optional[str] = Query(None, description="Scope filter"),
     scope_id: Optional[str] = Query(None, description="Scope ID filter"),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Revoke a role from a user.
 
     Args:
@@ -377,7 +371,6 @@ async def revoke_user_role(
         scope: Optional scope filter
         scope_id: Optional scope ID filter
         user: Current authenticated user
-        db: Database session
 
     Returns:
         dict: Success message
@@ -419,7 +412,6 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
     Args:
         check_data: Permission check request
         user: Current authenticated user
-        db: Database session
 
     Returns:
         PermissionCheckResponse: Permission check result
@@ -461,7 +453,6 @@ async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(N
         user_email: User email address
         team_id: Optional team context
         user: Current authenticated user
-        db: Database session
 
     Returns:
         List[str]: User's effective permissions
@@ -519,7 +510,6 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions)):
 
     Args:
         user: Current authenticated user
-        db: Database session
 
     Returns:
         List[UserRoleResponse]: Current user's role assignments
@@ -551,7 +541,6 @@ async def get_my_permissions(team_id: Optional[str] = Query(None, description="T
     Args:
         team_id: Optional team context
         user: Current authenticated user
-        db: Database session
 
     Returns:
         List[str]: Current user's effective permissions

@@ -91,9 +91,7 @@ async def get_permission_service() -> PermissionService:
         return PermissionService(db)
 
 
-async def get_current_user_with_permissions(
-    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(default=None)
-):
+async def get_current_user_with_permissions(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(default=None)):
     """Extract current user from JWT token and prepare for permission checking.
 
     Note: This function no longer holds a database session. Permission checks

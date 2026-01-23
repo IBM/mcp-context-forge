@@ -9,13 +9,31 @@ Tests SQL-based and Python-based computation paths for:
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
 # Local
 from tests.utils.rbac_mocks import create_mock_user_context
+
+
+@pytest.fixture(autouse=True)
+def mock_permission_service():
+    """Mock PermissionService to always grant permissions for all tests in this module."""
+    from contextlib import contextmanager
+
+    mock_service = MagicMock()
+    mock_service.check_permission = AsyncMock(return_value=True)
+    mock_service.check_admin_permission = AsyncMock(return_value=True)
+
+    @contextmanager
+    def mock_fresh_session():
+        yield MagicMock()
+
+    with patch("mcpgateway.middleware.rbac.PermissionService", return_value=mock_service), \
+         patch("mcpgateway.middleware.rbac.fresh_db_session", mock_fresh_session):
+        yield mock_service
 
 # First-Party
 from mcpgateway.admin import (

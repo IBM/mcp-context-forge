@@ -13,9 +13,8 @@ It serves as the primary entry point for authentication workflows.
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import fresh_db_session, SessionLocal
@@ -128,7 +127,6 @@ async def login(login_request: LoginRequest, request: Request):
     Args:
         login_request: Login credentials (email/username + password)
         request: FastAPI request object
-        db: Database session
 
     Returns:
         AuthenticationResponse: Session JWT token and user info

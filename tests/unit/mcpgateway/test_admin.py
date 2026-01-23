@@ -121,6 +121,18 @@ def mock_db():
     return MagicMock(spec=Session)
 
 
+@pytest.fixture(autouse=True)
+def mock_fresh_db_session(mock_db):
+    """Mock fresh_db_session to return the mock_db for all admin tests."""
+    with patch("mcpgateway.admin.fresh_db_session") as admin_mock, \
+         patch("mcpgateway.middleware.rbac.fresh_db_session") as rbac_mock:
+        admin_mock.return_value.__enter__ = MagicMock(return_value=mock_db)
+        admin_mock.return_value.__exit__ = MagicMock(return_value=False)
+        rbac_mock.return_value.__enter__ = MagicMock(return_value=mock_db)
+        rbac_mock.return_value.__exit__ = MagicMock(return_value=False)
+        yield admin_mock
+
+
 @pytest.fixture
 def mock_request():
     """Create a mock FastAPI request with comprehensive form data."""
@@ -250,7 +262,7 @@ class TestAdminServerRoutes:
         )
 
         # Test with include_inactive=False
-        result = await admin_list_servers(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_servers(page=1, per_page=50, include_inactive=False, user="test-user")
 
         assert "data" in result
         assert "pagination" in result
@@ -265,14 +277,14 @@ class TestAdminServerRoutes:
         mock_server.model_dump.return_value = {"id": 123, "name": "Numeric ID Server"}
         mock_get_server.return_value = mock_server
 
-        result = await admin_get_server(123, mock_db, "test-user")
+        result = await admin_get_server(123, "test-user")
         assert result["id"] == 123
 
         # Test with generic exception
         mock_get_server.side_effect = RuntimeError("Database connection lost")
 
         with pytest.raises(RuntimeError) as excinfo:
-            await admin_get_server("error-id", mock_db, "test-user")
+            await admin_get_server("error-id", "test-user")
         assert "Database connection lost" in str(excinfo.value)
 
     @patch.object(ServerService, "register_server")
@@ -282,7 +294,7 @@ class TestAdminServerRoutes:
         error_details = [InitErrorDetails(type="missing", loc=("name",), input={})]
         mock_register_server.side_effect = CoreValidationError.from_exception_data("ServerCreate", error_details)
 
-        result = await admin_add_server(mock_request, mock_db, "test-user")
+        result = await admin_add_server(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -293,7 +305,7 @@ class TestAdminServerRoutes:
         # Simulate database integrity error
         mock_register_server.side_effect = IntegrityError("Duplicate entry", params={}, orig=Exception("Duplicate key value"))
 
-        result = await admin_add_server(mock_request, mock_db, "test-user")
+        result = await admin_add_server(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
@@ -312,7 +324,7 @@ class TestAdminServerRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_server(mock_request, mock_db, "test-user")
+        result = await admin_add_server(mock_request, "test-user")
 
         # Should still succeed
         # assert isinstance(result, RedirectResponse)
@@ -325,7 +337,7 @@ class TestAdminServerRoutes:
         # Set custom root path
         mock_request.scope = {"root_path": "/api/v1"}
 
-        result = await admin_edit_server("server-1", mock_request, mock_db, "test-user")
+        result = await admin_edit_server("server-1", mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code in (200, 409, 422, 500)
@@ -367,7 +379,7 @@ class TestAdminServerRoutes:
         }
         mock_update_server.return_value = mock_server_read
 
-        result = await admin_edit_server(server_id, mock_request, mock_db, "test-user")
+        result = await admin_edit_server(server_id, mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -412,7 +424,7 @@ class TestAdminServerRoutes:
         }
         mock_update_server.return_value = mock_server_read
 
-        result = await admin_edit_server(server_id, mock_request, mock_db, "test-user")
+        result = await admin_edit_server(server_id, mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -456,7 +468,7 @@ class TestAdminServerRoutes:
         }
         mock_update_server.return_value = mock_server_read
 
-        result = await admin_edit_server(server_id, mock_request, mock_db, "test-user")
+        result = await admin_edit_server(server_id, mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -475,7 +487,7 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+        result = await admin_set_server_state("server-1", mock_request, "test-user")
 
         mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user")
         assert isinstance(result, RedirectResponse)
@@ -489,7 +501,7 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+        result = await admin_set_server_state("server-1", mock_request, "test-user")
 
         mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
         assert isinstance(result, RedirectResponse)
@@ -503,7 +515,7 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+        result = await admin_set_server_state("server-1", mock_request, "test-user")
 
         mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
         assert isinstance(result, RedirectResponse)
@@ -518,7 +530,7 @@ class TestAdminServerRoutes:
         mock_request.scope = {"root_path": ""}
         mock_toggle_status.side_effect = Exception("Toggle operation failed")
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+        result = await admin_set_server_state("server-1", mock_request, "test-user")
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -533,7 +545,7 @@ class TestAdminServerRoutes:
         mock_request.scope = {"root_path": ""}
         mock_set_state.side_effect = PermissionError("Only the owner can activate the Server")
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+        result = await admin_set_server_state("server-1", mock_request, "test-user")
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -547,7 +559,7 @@ class TestAdminServerRoutes:
         form_data = FakeForm({"is_inactive_checked": "TRUE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_delete_server("server-1", mock_request, mock_db, "test-user")
+        result = await admin_delete_server("server-1", mock_request, "test-user")
 
         assert "include_inactive=true" in result.headers["location"]
 
@@ -555,7 +567,7 @@ class TestAdminServerRoutes:
         form_data = FakeForm({"is_inactive_checked": "TrUe"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_delete_server("server-1", mock_request, mock_db, "test-user")
+        result = await admin_delete_server("server-1", mock_request, "test-user")
 
         assert "include_inactive=true" in result.headers["location"]
 
@@ -576,7 +588,7 @@ class TestAdminToolRoutes:
         )
 
         # Call the function with explicit pagination params
-        result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_tools(page=1, per_page=50, include_inactive=False, user="test-user")
 
         # Expect structure with 'data' key and empty list
         assert isinstance(result, dict)
@@ -587,7 +599,7 @@ class TestAdminToolRoutes:
         mock_tool_service.list_tools = AsyncMock(side_effect=RuntimeError("Service unavailable"))
 
         with pytest.raises(RuntimeError):
-            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+            await admin_list_tools(page=1, per_page=50, include_inactive=False, user="test-user")
 
     @patch.object(ToolService, "get_tool")
     async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_db):
@@ -596,14 +608,14 @@ class TestAdminToolRoutes:
         mock_get_tool.side_effect = ToolNotFoundError("Tool not found")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_tool("missing-tool", mock_db, "test-user")
+            await admin_get_tool("missing-tool", "test-user")
         assert excinfo.value.status_code == 404
 
         # Test with generic exception
         mock_get_tool.side_effect = ValueError("Invalid tool ID format")
 
         with pytest.raises(ValueError):
-            await admin_get_tool("bad-id", mock_db, "test-user")
+            await admin_get_tool("bad-id", "test-user")
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_invalid_json(self, mock_register_tool, mock_request, mock_db):
@@ -621,7 +633,7 @@ class TestAdminToolRoutes:
 
         # Should handle JSON decode error
         with pytest.raises(json.JSONDecodeError):
-            await admin_add_tool(mock_request, mock_db, "test-user")
+            await admin_add_tool(mock_request, "test-user")
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_tool_error(self, mock_register_tool, mock_request, mock_db):
@@ -639,7 +651,7 @@ class TestAdminToolRoutes:
 
         mock_request.form = AsyncMock(return_value=mock_form)
 
-        result = await admin_add_tool(mock_request, mock_db, "test-user")
+        result = await admin_add_tool(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -658,7 +670,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_tool(mock_request, mock_db, "test-user")
+        result = await admin_add_tool(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -680,19 +692,19 @@ class TestAdminToolRoutes:
             )
         )
         mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
+        result = await admin_edit_tool(tool_id, mock_request, "test-user")
 
         assert result.status_code == 409
 
         # ToolError should return 500 with JSON body
         mock_update_tool.side_effect = ToolError("Tool configuration error")
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
+        result = await admin_edit_tool(tool_id, mock_request, "test-user")
         assert result.status_code == 500
         assert b"Tool configuration error" in result.body
 
         # Generic Exception should return 500 with JSON body
         mock_update_tool.side_effect = Exception("Unexpected error")
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
+        result = await admin_edit_tool(tool_id, mock_request, "test-user")
 
         assert result.status_code == 500
         assert b"Unexpected error" in result.body
@@ -718,7 +730,7 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, "test-user")
+        result = await admin_edit_tool("tool-1", mock_request, "test-user")
 
         # Validate response type and content
         assert isinstance(result, JSONResponse)
@@ -742,21 +754,21 @@ class TestAdminToolRoutes:
         form_data = FakeForm({"activate": "false"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
+        await admin_set_tool_state(tool_id, mock_request, "test-user")
         mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
+        await admin_set_tool_state(tool_id, mock_request, "test-user")
         mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
+        await admin_set_tool_state(tool_id, mock_request, "test-user")
         mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
 
 
@@ -790,7 +802,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 200
@@ -825,7 +837,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 200
@@ -848,7 +860,7 @@ class TestAdminBulkImportRoutes:
 
         with patch.object(ToolService, "register_tool") as mock_register:
             mock_register.return_value = None
-            result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+            result = await admin_import_tools(request=mock_request, user="test-user")
             result_data = json.loads(result.body)
 
             assert result.status_code == 200
@@ -865,7 +877,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=[])
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 200
@@ -878,7 +890,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value={"name": "tool", "url": "http://example.com"})
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 422
@@ -893,7 +905,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 413
@@ -910,7 +922,7 @@ class TestAdminBulkImportRoutes:
 
         with patch.object(ToolService, "register_tool") as mock_register:
             mock_register.return_value = None
-            result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+            result = await admin_import_tools(request=mock_request, user="test-user")
             result_data = json.loads(result.body)
 
             assert result.status_code == 200
@@ -922,7 +934,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(side_effect=json.JSONDecodeError("Invalid", "", 0))
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 422
@@ -935,7 +947,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 422
@@ -948,7 +960,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 422
@@ -965,7 +977,7 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user="test-user")
+        result = await admin_import_tools(request=mock_request, user="test-user")
         result_data = json.loads(result.body)
 
         assert result.status_code == 200
@@ -1014,7 +1026,7 @@ class TestAdminResourceRoutes:
             return_value={"data": [resource_read], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_resources(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_resources(page=1, per_page=50, include_inactive=False, user="test-user")
 
         assert "data" in result
         assert len(result["data"]) == 1
@@ -1031,7 +1043,7 @@ class TestAdminResourceRoutes:
 
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
-        result = await admin_get_resource("1", mock_db, "test-user")
+        result = await admin_get_resource("1", "test-user")
 
         assert result["resource"]["id"] == 1
         mock_read_resource.assert_not_called()
@@ -1044,7 +1056,7 @@ class TestAdminResourceRoutes:
 
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_resource(mock_request, mock_db, "test-user")
+        result = await admin_add_resource(mock_request, "test-user")
         # Assert
         mock_register_resource.assert_called_once()
         assert result.status_code == 200
@@ -1060,14 +1072,14 @@ class TestAdminResourceRoutes:
         # Test IntegrityError
         mock_register_resource.side_effect = IntegrityError("URI already exists", params={}, orig=Exception("Duplicate key"))
 
-        result = await admin_add_resource(mock_request, mock_db, "test-user")
+        result = await admin_add_resource(mock_request, "test-user")
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
 
         # Test generic exception
         mock_register_resource.side_effect = Exception("Generic error")
 
-        result = await admin_add_resource(mock_request, mock_db, "test-user")
+        result = await admin_add_resource(mock_request, "test-user")
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
 
@@ -1077,7 +1089,7 @@ class TestAdminResourceRoutes:
         # URI with encoded special characters (valid)
         uri = "/test/resource%3Fparam%3Dvalue%26other%3D123"
 
-        result = await admin_edit_resource(uri, mock_request, mock_db, "test-user")
+        result = await admin_edit_resource(uri, mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         if isinstance(result, JSONResponse):
@@ -1090,11 +1102,11 @@ class TestAdminResourceRoutes:
     async def test_admin_set_resource_state_numeric_id(self, mock_toggle_status, mock_request, mock_db):
         """Test setting resource state with numeric ID."""
         # Test with integer ID
-        await admin_set_resource_state(123, mock_request, mock_db, "test-user")
+        await admin_set_resource_state(123, mock_request, "test-user")
         mock_toggle_status.assert_called_with(mock_db, 123, True, user_email="test-user")
 
         # Test with string number
-        await admin_set_resource_state("456", mock_request, mock_db, "test-user")
+        await admin_set_resource_state("456", mock_request, "test-user")
         mock_toggle_status.assert_called_with(mock_db, "456", True, user_email="test-user")
 
 
@@ -1130,7 +1142,7 @@ class TestAdminPromptRoutes:
             return_value={"data": [mock_prompt], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_prompts(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_prompts(page=1, per_page=50, include_inactive=False, user="test-user")
 
         assert "data" in result
         assert "pagination" in result
@@ -1167,7 +1179,7 @@ class TestAdminPromptRoutes:
             },
         }
 
-        result = await admin_get_prompt("test-prompt", mock_db, "test-user")
+        result = await admin_get_prompt("test-prompt", "test-user")
 
         assert result["name"] == "test-prompt"
         assert "metrics" in result
@@ -1185,7 +1197,7 @@ class TestAdminPromptRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
         mock_register_prompt.return_value = MagicMock()
-        result = await admin_add_prompt(mock_request, mock_db, "test-user")
+        result = await admin_add_prompt(mock_request, "test-user")
         # Should be a JSONResponse with 200 (success) or 422 (validation error)
         assert isinstance(result, JSONResponse)
         if result.status_code == 200:
@@ -1205,7 +1217,7 @@ class TestAdminPromptRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
         mock_register_prompt.return_value = MagicMock()
-        result = await admin_add_prompt(mock_request, mock_db, "test-user")
+        result = await admin_add_prompt(mock_request, "test-user")
         assert isinstance(result, JSONResponse)
         if result.status_code == 200:
             assert b"success" in result.body.lower() or b"prompt" in result.body.lower()
@@ -1225,7 +1237,7 @@ class TestAdminPromptRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_prompt(mock_request, mock_db, "test-user")
+        result = await admin_add_prompt(mock_request, "test-user")
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
         assert b"json" in result.body.lower() or b"decode" in result.body.lower() or b"invalid" in result.body.lower() or b"expecting value" in result.body.lower()
@@ -1243,7 +1255,7 @@ class TestAdminPromptRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_prompt("old-prompt-name", mock_request, mock_db, "test-user")
+        result = await admin_edit_prompt("old-prompt-name", mock_request, "test-user")
 
         # Accept JSONResponse with 200 (success), 409 (conflict), 422 (validation), else 500
         assert isinstance(result, JSONResponse)
@@ -1265,11 +1277,11 @@ class TestAdminPromptRoutes:
     async def test_admin_set_prompt_state_edge_cases(self, mock_toggle_status, mock_request, mock_db):
         """Test setting prompt state with edge cases."""
         # Test with string ID that looks like number
-        await admin_set_prompt_state("123", mock_request, mock_db, "test-user")
+        await admin_set_prompt_state("123", mock_request, "test-user")
         mock_toggle_status.assert_called_with(mock_db, "123", True, user_email="test-user")
 
         # Test with negative number
-        await admin_set_prompt_state(-1, mock_request, mock_db, "test-user")
+        await admin_set_prompt_state(-1, mock_request, "test-user")
         mock_toggle_status.assert_called_with(mock_db, -1, True, user_email="test-user")
 
 
@@ -1312,7 +1324,7 @@ class TestAdminGatewayRoutes:
             return_value={"data": [mock_gateway], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, user="test-user")
 
         assert "data" in result
         assert result["data"][0]["authType"] == "bearer"  # Using camelCase as per by_alias=True
@@ -1332,7 +1344,7 @@ class TestAdminGatewayRoutes:
             }
             mock_get_gateway.return_value = mock_gateway
 
-            result = await admin_get_gateway(f"gateway-{transport}", mock_db, "test-user")
+            result = await admin_get_gateway(f"gateway-{transport}", "test-user")
             assert result["transport"] == transport
 
     @patch.object(GatewayService, "register_gateway")
@@ -1369,7 +1381,7 @@ class TestAdminGatewayRoutes:
             form_data = FakeForm({"name": f"Gateway_{auth_config.get('auth_type', 'none')}", "url": "http://example.com", **auth_config})
             mock_request.form = AsyncMock(return_value=form_data)
 
-            result = await admin_add_gateway(mock_request, mock_db, "test-user")
+            result = await admin_add_gateway(mock_request, "test-user")
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -1386,7 +1398,7 @@ class TestAdminGatewayRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
 
@@ -1395,7 +1407,7 @@ class TestAdminGatewayRoutes:
         """Test adding gateway with connection error."""
         mock_register_gateway.side_effect = GatewayConnectionError("Cannot connect to gateway")
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 502
@@ -1411,7 +1423,7 @@ class TestAdminGatewayRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -1429,7 +1441,7 @@ class TestAdminGatewayRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Should handle validation in GatewayUpdate
-        result = await admin_edit_gateway("gateway-1", mock_request, mock_db, "test-user")
+        result = await admin_edit_gateway("gateway-1", mock_request, "test-user")
         body = json.loads(result.body.decode())
         assert isinstance(result, JSONResponse)
         assert result.status_code in (400, 422)
@@ -1451,11 +1463,11 @@ class TestAdminGatewayRoutes:
         mock_toggle_status.side_effect = side_effect
 
         # First call should fail
-        result1 = await admin_set_gateway_state("gateway-1", mock_request, mock_db, "test-user")
+        result1 = await admin_set_gateway_state("gateway-1", mock_request, "test-user")
         assert isinstance(result1, RedirectResponse)
 
         # Second call should succeed
-        result2 = await admin_set_gateway_state("gateway-1", mock_request, mock_db, "test-user")
+        result2 = await admin_set_gateway_state("gateway-1", mock_request, "test-user")
         assert isinstance(result2, RedirectResponse)
 
 
@@ -1551,7 +1563,7 @@ class TestAdminMetricsRoutes:
         mock_server_top.return_value = []
         mock_prompt_top.return_value = []
 
-        result = await get_aggregated_metrics(mock_db, _user={"email": "test-user@example.com", "db": mock_db})
+        result = await get_aggregated_metrics(_user={"email": "test-user@example.com"})
 
         assert result["tools"].total_executions == 0
         assert result["resources"].total_executions == 100
@@ -1576,7 +1588,7 @@ class TestAdminMetricsRoutes:
 
         # Should raise the exception
         with pytest.raises(Exception) as excinfo:
-            await admin_reset_metrics(mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_reset_metrics(user={"email": "test-user@example.com"})
 
         assert "Resource metrics locked" in str(excinfo.value)
 
@@ -1610,7 +1622,7 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
-                result = await admin_test_gateway(request, None, "test-user", mock_db)
+                result = await admin_test_gateway(request, None, "test-user")
 
                 assert result.status_code == 200
                 mock_client.request.assert_called_once()
@@ -1650,7 +1662,7 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
-                await admin_test_gateway(request, None, "test-user", mock_db)
+                await admin_test_gateway(request, None, "test-user")
 
                 call_args = mock_client.request.call_args
                 assert call_args[1]["url"] == expected_url
@@ -1677,7 +1689,7 @@ class TestAdminGatewayTestRoute:
             mock_client_class.return_value = mock_client
 
             mock_db = MagicMock()
-            result = await admin_test_gateway(request, None, "test-user", mock_db)
+            result = await admin_test_gateway(request, None, "test-user")
 
             assert result.status_code == 502
             assert "Request timed out" in str(result.body)
@@ -1715,7 +1727,7 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
-                result = await admin_test_gateway(request, None, "test-user", mock_db)
+                result = await admin_test_gateway(request, None, "test-user")
 
                 assert result.status_code == 200
                 assert result.body["details"] == response_text
@@ -1758,7 +1770,6 @@ class TestAdminUIRoute:
                 request=mock_request,
                 team_id=None,
                 include_inactive=False,
-                db=mock_db,
                 user={"email": "admin", "is_admin": True},
             )
 
@@ -1795,7 +1806,6 @@ class TestAdminUIRoute:
                 request=mock_request,
                 team_id=None,
                 include_inactive=True,
-                db=mock_db,
                 user="admin",
             )
 
@@ -1833,7 +1843,6 @@ class TestAdminUIRoute:
             request=mock_request,
             team_id=None,
             include_inactive=False,
-            db=mock_db,
             user="admin",
         )
 
@@ -1941,7 +1950,7 @@ class TestGlobalConfigurationEndpoints:
         mock_db.query.return_value.first.return_value = mock_config
 
         # First-Party
-        result = await get_global_passthrough_headers(db=mock_db, _user="test-user")
+        result = await get_global_passthrough_headers(_user="test-user")
 
         assert isinstance(result, GlobalConfigRead)
         assert result.passthrough_headers == ["X-Custom-Header", "X-Auth-Token"]
@@ -1953,7 +1962,7 @@ class TestGlobalConfigurationEndpoints:
         mock_db.query.return_value.first.return_value = None
 
         # First-Party
-        result = await get_global_passthrough_headers(db=mock_db, _user="test-user")
+        result = await get_global_passthrough_headers(_user="test-user")
 
         assert isinstance(result, GlobalConfigRead)
         assert result.passthrough_headers == []
@@ -1967,7 +1976,7 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-New-Header"])
 
         # First-Party
-        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
+        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, _user="test-user")
 
         # Should create new config
         mock_db.add.assert_called_once()
@@ -1986,7 +1995,7 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-Updated-Header"])
 
         # First-Party
-        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
+        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, _user="test-user")
 
         # Should update existing config
         assert mock_config.passthrough_headers == ["X-Updated-Header"]
@@ -2004,7 +2013,7 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
+            await update_global_passthrough_headers(request=mock_request, config_update=config_update, _user="test-user")
 
         assert excinfo.value.status_code == 409
         assert "Passthrough headers conflict" in str(excinfo.value.detail)
@@ -2020,7 +2029,7 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
+            await update_global_passthrough_headers(request=mock_request, config_update=config_update, _user="test-user")
 
         assert excinfo.value.status_code == 422
         assert "Invalid passthrough headers format" in str(excinfo.value.detail)
@@ -2036,7 +2045,7 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
+            await update_global_passthrough_headers(request=mock_request, config_update=config_update, _user="test-user")
 
         assert excinfo.value.status_code == 500
         assert "Custom error" in str(excinfo.value.detail)
@@ -2056,7 +2065,7 @@ class TestA2AAgentManagement:
         mock_agent.model_dump.return_value = {"id": "agent-1", "name": "Test Agent", "description": "Test A2A agent", "is_active": True}
         mock_list_agents.return_value = [mock_agent]
 
-        result = await admin_list_a2a_agents(False, [], mock_db, "test-user")
+        result = await admin_list_a2a_agents(False, [], "test-user")
 
         assert len(result) == 1
         assert result[0]["name"] == "Test Agent"
@@ -2068,7 +2077,7 @@ class TestA2AAgentManagement:
         """Test listing A2A agents when A2A is disabled."""
         # First-Party
 
-        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, user="test-user")
 
         assert isinstance(result, dict)
         assert "data" in result
@@ -2084,7 +2093,7 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_add_a2a_agent(mock_request, mock_db, "test-user")
+        result = await admin_add_a2a_agent(mock_request, "test-user")
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -2107,7 +2116,7 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_add_a2a_agent(mock_request, mock_db, "test-user")
+        result = await admin_add_a2a_agent(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422  # matches your ValidationError handler
@@ -2125,7 +2134,7 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_add_a2a_agent(mock_request, mock_db, "test-user")
+        result = await admin_add_a2a_agent(mock_request, "test-user")
 
         from starlette.responses import JSONResponse
 
@@ -2145,7 +2154,7 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, "test-user")
+        result = await admin_set_a2a_agent_state("agent-1", mock_request, "test-user")
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -2161,7 +2170,7 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, "test-user")
+        result = await admin_delete_a2a_agent("agent-1", mock_request, "test-user")
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -2184,7 +2193,7 @@ class TestA2AAgentManagement:
         form_data = FakeForm({"test_message": "Hello, test!"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, "test-user")
+        result = await admin_test_a2a_agent("agent-1", mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2240,7 +2249,7 @@ class TestExportImportEndpoints:
         # First-Party
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_export_logs(export_format="xml", level=None, start_time=None, end_time=None, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_export_logs(export_format="xml", level=None, start_time=None, end_time=None, user={"email": "test-user@example.com"})
 
         assert excinfo.value.status_code == 400
         assert "Invalid format: xml" in str(excinfo.value.detail)
@@ -2253,7 +2262,7 @@ class TestExportImportEndpoints:
 
         mock_export_config.return_value = {"version": "1.0", "servers": [], "tools": [], "resources": [], "prompts": []}
 
-        result = await admin_export_configuration(include_inactive=False, include_dependencies=True, types="servers,tools", exclude_types="", tags="", db=mock_db, user="test-user")
+        result = await admin_export_configuration(include_inactive=False, include_dependencies=True, types="servers,tools", exclude_types="", tags="", user="test-user")
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "application/json"
@@ -2269,7 +2278,7 @@ class TestExportImportEndpoints:
         mock_export_config.side_effect = ExportError("Export failed")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_export_configuration(include_inactive=False, include_dependencies=True, types="", exclude_types="", tags="", db=mock_db, user="test-user")
+            await admin_export_configuration(include_inactive=False, include_dependencies=True, types="", exclude_types="", tags="", user="test-user")
 
         assert excinfo.value.status_code == 500
         assert "Export failed" in str(excinfo.value.detail)
@@ -2284,7 +2293,7 @@ class TestExportImportEndpoints:
         form_data = FakeForm({"entity_selections": json.dumps({"servers": ["server-1"], "tools": ["tool-1", "tool-2"]}), "include_dependencies": "true"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_export_selective(mock_request, mock_db, "test-user")
+        result = await admin_export_selective(mock_request, "test-user")
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "application/json"
@@ -2363,7 +2372,7 @@ class TestLoggingEndpoints:
         mock_settings.log_file = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_get_log_file(filename=None, user={"email": "test-user@example.com"})
 
         assert excinfo.value.status_code == 404
         assert "File logging is not enabled" in str(excinfo.value.detail)
@@ -2392,7 +2401,7 @@ class TestOAuthFunctionality:
             mock_encryption.encrypt_secret.return_value = "encrypted-secret"
             mock_get_encryption.return_value = mock_encryption
 
-            result = await admin_add_gateway(mock_request, mock_db, "test-user")
+            result = await admin_add_gateway(mock_request, "test-user")
 
             assert isinstance(result, JSONResponse)
             body = json.loads(result.body)
@@ -2410,7 +2419,7 @@ class TestOAuthFunctionality:
         form_data = FakeForm({"name": "Invalid_OAuth_Gateway", "url": "https://example.com", "oauth_config": "invalid-json{"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         # Should still succeed but oauth_config will be None due to JSON error
@@ -2428,7 +2437,7 @@ class TestOAuthFunctionality:
         form_data = FakeForm({"name": "No_OAuth_Gateway", "url": "https://example.com", "oauth_config": "None"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2453,7 +2462,7 @@ class TestOAuthFunctionality:
             mock_encryption.encrypt_secret.return_value = "encrypted-edit-secret"
             mock_get_encryption.return_value = mock_encryption
 
-            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, "test-user")
+            result = await admin_edit_gateway("gateway-1", mock_request, "test-user")
 
             assert isinstance(result, JSONResponse)
             body = json.loads(result.body)
@@ -2481,7 +2490,7 @@ class TestOAuthFunctionality:
             mock_encryption = MagicMock()
             mock_get_encryption.return_value = mock_encryption
 
-            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, "test-user")
+            result = await admin_edit_gateway("gateway-1", mock_request, "test-user")
 
             assert isinstance(result, JSONResponse)
 
@@ -2501,7 +2510,7 @@ class TestPassthroughHeadersParsing:
         form_data = FakeForm({"name": "Gateway_With_Headers", "url": "https://example.com", "passthrough_headers": json.dumps(passthrough_headers)})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2518,7 +2527,7 @@ class TestPassthroughHeadersParsing:
         form_data = FakeForm({"name": "Gateway_With_CSV_Headers", "url": "https://example.com", "passthrough_headers": "X-Header-1, X-Header-2 , X-Header-3"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2542,7 +2551,7 @@ class TestPassthroughHeadersParsing:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2568,7 +2577,7 @@ class TestErrorHandlingPaths:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -2584,7 +2593,7 @@ class TestErrorHandlingPaths:
         form_data = FakeForm({"name": "Runtime_Error_Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -2600,7 +2609,7 @@ class TestErrorHandlingPaths:
         form_data = FakeForm({"name": "Value_Error_Gateway", "url": "invalid-url"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -2616,7 +2625,7 @@ class TestErrorHandlingPaths:
         form_data = FakeForm({"name": "Exception_Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, "test-user")
+        result = await admin_add_gateway(mock_request, "test-user")
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -2642,7 +2651,7 @@ class TestErrorHandlingPaths:
         with patch("mcpgateway.admin.GatewayCreate") as mock_gateway_create:
             mock_gateway_create.side_effect = validation_error
 
-            result = await admin_add_gateway(mock_request, mock_db, "test-user")
+            result = await admin_add_gateway(mock_request, "test-user")
 
             assert isinstance(result, JSONResponse)
             assert result.status_code == 422
@@ -2669,7 +2678,7 @@ class TestImportConfigurationEndpoints:
         request_body = {"import_data": import_data, "conflict_strategy": "update", "dry_run": False, "selected_entities": {"servers": True, "tools": True}}
         mock_request.json = AsyncMock(return_value=request_body)
 
-        result = await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+        result = await admin_import_configuration(mock_request, user={"email": "test-user@example.com"})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2686,7 +2695,7 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_import_configuration(mock_request, user={"email": "test-user@example.com"})
 
         assert excinfo.value.status_code == 500
         assert "Import failed" in str(excinfo.value.detail)
@@ -2699,7 +2708,7 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_import_configuration(mock_request, user={"email": "test-user@example.com"})
 
         assert excinfo.value.status_code == 500
         assert "Import failed" in str(excinfo.value.detail)
@@ -2715,7 +2724,7 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_import_configuration(mock_request, user={"email": "test-user@example.com"})
 
         assert excinfo.value.status_code == 400
         assert "Import validation failed" in str(excinfo.value.detail)
@@ -2733,9 +2742,9 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         # User as dict instead of string - need email and db keys for RBAC
-        user_dict = {"email": "dict-user@example.com", "db": mock_db, "username": "dict-user", "token": "jwt-token"}
+        user_dict = {"email": "dict-user@example.com", "username": "dict-user", "token": "jwt-token"}
 
-        result = await admin_import_configuration(mock_request, mock_db, user=user_dict)
+        result = await admin_import_configuration(mock_request, user=user_dict)
 
         assert isinstance(result, JSONResponse)
         # Verify the username was extracted correctly
@@ -2752,7 +2761,7 @@ class TestImportConfigurationEndpoints:
         mock_status.to_dict.return_value = {"import_id": "import-123", "status": "in_progress", "progress": {"total": 10, "completed": 5, "errors": 0}}
         mock_get_status.return_value = mock_status
 
-        result = await admin_get_import_status("import-123", user={"email": "test-user@example.com", "db": mock_db})
+        result = await admin_get_import_status("import-123", user={"email": "test-user@example.com"})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2768,7 +2777,7 @@ class TestImportConfigurationEndpoints:
         mock_get_status.return_value = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_import_status("nonexistent", user={"email": "test-user@example.com", "db": mock_db})
+            await admin_get_import_status("nonexistent", user={"email": "test-user@example.com"})
 
         assert excinfo.value.status_code == 404
         assert "Import nonexistent not found" in str(excinfo.value.detail)
@@ -2784,7 +2793,7 @@ class TestImportConfigurationEndpoints:
         mock_status2.to_dict.return_value = {"import_id": "import-2", "status": "failed"}
         mock_list_statuses.return_value = [mock_status1, mock_status2]
 
-        result = await admin_list_import_statuses(user={"email": "test-user@example.com", "db": mock_db})
+        result = await admin_list_import_statuses(user={"email": "test-user@example.com"})
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2818,7 +2827,6 @@ class TestAdminUIMainEndpoint:
             request=mock_request,
             team_id=None,
             include_inactive=False,
-            db=mock_db,
             user="admin",
         )
 
@@ -2875,7 +2883,7 @@ class TestEdgeCasesAndErrorHandling:
 
         # Test with toggle operations which use boolean parsing
         with patch.object(ServerService, "set_server_state", new_callable=AsyncMock) as mock_toggle:
-            await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
+            await admin_set_server_state("server-1", mock_request, "test-user")
 
             # Check how the value was parsed
             if form_field == "activate":
@@ -2904,7 +2912,7 @@ class TestEdgeCasesAndErrorHandling:
             mock_request.form = AsyncMock(return_value=form_data)
 
             with patch.object(ToolService, "register_tool", new_callable=AsyncMock) as mock_register:
-                result = await admin_add_tool(mock_request, mock_db, "test-user")
+                result = await admin_add_tool(mock_request, "test-user")
 
                 # Should succeed
                 assert isinstance(result, JSONResponse)
@@ -2928,7 +2936,7 @@ class TestEdgeCasesAndErrorHandling:
         mock_request.form = AsyncMock(return_value=form_data)
 
         with patch.object(ResourceService, "register_resource", new_callable=AsyncMock) as mock_register:
-            result = await admin_add_resource(mock_request, mock_db, "test-user")
+            result = await admin_add_resource(mock_request, "test-user")
 
             assert isinstance(result, JSONResponse)
 
@@ -2945,7 +2953,7 @@ class TestEdgeCasesAndErrorHandling:
             mock_update.side_effect = IntegrityError("Concurrent modification detected", params={}, orig=Exception("Version mismatch"))
 
             # Should handle gracefully
-            result = await admin_edit_server("server-1", mock_request, mock_db, "test-user")
+            result = await admin_edit_server("server-1", mock_request, "test-user")
             assert isinstance(result, JSONResponse)
             if isinstance(result, JSONResponse):
                 assert result.status_code in (200, 409, 422, 500)
@@ -2966,7 +2974,7 @@ class TestEdgeCasesAndErrorHandling:
         mock_request.form = AsyncMock(return_value=form_data)
 
         with patch.object(ToolService, "register_tool", new_callable=AsyncMock):
-            result = await admin_add_tool(mock_request, mock_db, "test-user")
+            result = await admin_add_tool(mock_request, "test-user")
             assert isinstance(result, JSONResponse)
 
     @pytest.mark.parametrize(
@@ -2986,7 +2994,7 @@ class TestEdgeCasesAndErrorHandling:
         with patch.object(ServerService, "register_server", new_callable=AsyncMock) as mock_register:
             mock_register.side_effect = exception_type
 
-            result = await admin_add_server(mock_request, mock_db, "test-user")
+            result = await admin_add_server(mock_request, "test-user")
 
             print(f"\nException: {exception_type.__name__ if hasattr(exception_type, '__name__') else exception_type}")
             print(f"Result Type: {type(result)}")
@@ -3007,21 +3015,21 @@ class TestEdgeCasesAndErrorHandling:
                 MagicMock(name="Tool1", execution_count=10),
                 MagicMock(name="Tool2", execution_count=5),
             ]
-            result = await admin_metrics_partial_html(mock_request, "tools", 1, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            result = await admin_metrics_partial_html(mock_request, "tools", 1, 10, user={"email": "test-user@example.com"})
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
 
     async def test_admin_metrics_partial_html_invalid_entity(self, mock_request, mock_db):
         """Test admin metrics partial HTML endpoint with invalid entity type."""
         with pytest.raises(HTTPException) as exc_info:
-            await admin_metrics_partial_html(mock_request, "invalid", 1, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_metrics_partial_html(mock_request, "invalid", 1, 10, user={"email": "test-user@example.com"})
         assert exc_info.value.status_code == 400
 
     async def test_admin_metrics_partial_html_resources(self, mock_request, mock_db):
         """Test admin metrics partial HTML endpoint for resources."""
         with patch("mcpgateway.services.resource_service.ResourceService.get_top_resources", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = []
-            result = await admin_metrics_partial_html(mock_request, "resources", 1, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            result = await admin_metrics_partial_html(mock_request, "resources", 1, 10, user={"email": "test-user@example.com"})
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
 
@@ -3029,6 +3037,6 @@ class TestEdgeCasesAndErrorHandling:
         """Test admin metrics partial HTML endpoint with pagination."""
         with patch("mcpgateway.services.prompt_service.PromptService.get_top_prompts", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = [MagicMock(name=f"Prompt{i}") for i in range(25)]
-            result = await admin_metrics_partial_html(mock_request, "prompts", 2, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            result = await admin_metrics_partial_html(mock_request, "prompts", 2, 10, user={"email": "test-user@example.com"})
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200

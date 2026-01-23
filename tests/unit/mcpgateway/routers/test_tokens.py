@@ -9,7 +9,7 @@ Unit tests for JWT Token Catalog API endpoints.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -41,22 +41,38 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.token_catalog_service import TokenScope
 
-# Test utilities
-from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
-
-
-@pytest.fixture(autouse=True)
-def setup_rbac_mocks():
-    """Setup and teardown RBAC mocks for each test."""
-    originals = patch_rbac_decorators()
-    yield
-    restore_rbac_decorators(originals)
 
 
 @pytest.fixture
 def mock_db():
     """Create a mock database session."""
     return MagicMock(spec=Session)
+
+
+@pytest.fixture(autouse=True)
+def mock_fresh_db_session(mock_db):
+    """Mock fresh_db_session to return the mock_db for all modules using it."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def mock_fresh_session():
+        yield mock_db
+
+    # Patch fresh_db_session in both the router and RBAC middleware
+    with patch("mcpgateway.routers.tokens.fresh_db_session", mock_fresh_session), \
+         patch("mcpgateway.middleware.rbac.fresh_db_session", mock_fresh_session):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_permission_service():
+    """Mock PermissionService to always grant permissions."""
+    mock_service = MagicMock()
+    mock_service.check_permission = AsyncMock(return_value=True)
+    mock_service.check_admin_permission = AsyncMock(return_value=True)
+
+    with patch("mcpgateway.middleware.rbac.PermissionService", return_value=mock_service):
+        yield mock_service
 
 
 @pytest.fixture
@@ -66,7 +82,7 @@ def mock_current_user(mock_db):
         "email": "test@example.com",
         "is_admin": False,
         "permissions": ["tokens.create", "tokens.read"],
-        "db": mock_db,  # Include db in user context for RBAC decorator
+         # Include db in user context for RBAC decorator
         "auth_method": "jwt",  # Required for interactive session check
     }
 
@@ -78,7 +94,7 @@ def mock_admin_user(mock_db):
         "email": "admin@example.com",
         "is_admin": True,
         "permissions": ["*"],
-        "db": mock_db,  # Include db in user context for RBAC decorator
+         # Include db in user context for RBAC decorator
         "auth_method": "jwt",  # Required for interactive session check
     }
 
@@ -149,7 +165,7 @@ class TestCreateToken:
             mock_service = mock_service_class.return_value
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "raw-token-string"))
 
-            response = await create_token(request, current_user=mock_current_user, db=mock_db)
+            response = await create_token(request, current_user=mock_current_user)
 
             assert isinstance(response, TokenCreateResponse)
             assert response.access_token == "raw-token-string"
@@ -177,7 +193,7 @@ class TestCreateToken:
             mock_service = mock_service_class.return_value
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "scoped-token"))
 
-            response = await create_token(request, current_user=mock_current_user, db=mock_db)
+            response = await create_token(request, current_user=mock_current_user)
 
             assert response.access_token == "scoped-token"
             # Verify scope was created and passed
@@ -198,7 +214,7 @@ class TestCreateToken:
             mock_service.create_token = AsyncMock(side_effect=ValueError("Token name already exists"))
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_token(request, current_user=mock_current_user, db=mock_db)
+                await create_token(request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Token name already exists" in str(exc_info.value.detail)
@@ -215,7 +231,7 @@ class TestListTokens:
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
-            response = await list_tokens(include_inactive=False, limit=50, offset=0, db=mock_db, current_user=mock_current_user)
+            response = await list_tokens(include_inactive=False, limit=50, offset=0, current_user=mock_current_user)
 
             assert isinstance(response, TokenListResponse)
             assert len(response.tokens) == 1
@@ -237,7 +253,7 @@ class TestListTokens:
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=revocation_info)
 
-            response = await list_tokens(include_inactive=True, limit=10, offset=0, db=mock_db, current_user=mock_current_user)
+            response = await list_tokens(include_inactive=True, limit=10, offset=0, current_user=mock_current_user)
 
             assert len(response.tokens) == 1
             assert response.tokens[0].is_revoked is True
@@ -252,7 +268,7 @@ class TestListTokens:
             mock_service.list_user_tokens = AsyncMock(return_value=[])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
-            response = await list_tokens(include_inactive=False, limit=20, offset=10, db=mock_db, current_user=mock_current_user)
+            response = await list_tokens(include_inactive=False, limit=20, offset=10, current_user=mock_current_user)
 
             assert response.tokens == []
             assert response.limit == 20
@@ -275,7 +291,7 @@ class TestGetToken:
             mock_service = mock_service_class.return_value
             mock_service.get_token = AsyncMock(return_value=mock_token_record)
 
-            response = await get_token(token_id="token-123", current_user=mock_current_user, db=mock_db)
+            response = await get_token(token_id="token-123", current_user=mock_current_user)
 
             assert isinstance(response, TokenResponse)
             assert response.id == "token-123"
@@ -289,7 +305,7 @@ class TestGetToken:
             mock_service.get_token = AsyncMock(return_value=None)
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_token(token_id="nonexistent", current_user=mock_current_user, db=mock_db)
+                await get_token(token_id="nonexistent", current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Token not found" in str(exc_info.value.detail)
@@ -313,7 +329,7 @@ class TestUpdateToken:
             mock_token_record.description = "Updated description"
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
 
-            response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+            response = await update_token(token_id="token-123", request=request, current_user=mock_current_user)
 
             assert response.name == "Updated Token"
             assert response.description == "Updated description"
@@ -336,7 +352,7 @@ class TestUpdateToken:
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
             mock_perms.return_value = ["tools.admin"]  # Return sufficient permissions
 
-            response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+            response = await update_token(token_id="token-123", request=request, current_user=mock_current_user)
 
             call_args = mock_service.update_token.call_args
             assert call_args[1]["scope"] is not None
@@ -352,7 +368,7 @@ class TestUpdateToken:
             mock_service.update_token = AsyncMock(return_value=None)
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_token(token_id="nonexistent", request=request, current_user=mock_current_user, db=mock_db)
+                await update_token(token_id="nonexistent", request=request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
@@ -366,7 +382,7 @@ class TestUpdateToken:
             mock_service.update_token = AsyncMock(side_effect=ValueError("Invalid token name"))
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+                await update_token(token_id="token-123", request=request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Invalid token name" in str(exc_info.value.detail)
@@ -382,7 +398,7 @@ class TestRevokeToken:
             mock_service = mock_service_class.return_value
             mock_service.revoke_token = AsyncMock(return_value=True)
 
-            await revoke_token(token_id="token-123", request=None, current_user=mock_current_user, db=mock_db)
+            await revoke_token(token_id="token-123", request=None, current_user=mock_current_user)
 
             mock_service.revoke_token.assert_called_with(
                 token_id="token-123",
@@ -400,7 +416,7 @@ class TestRevokeToken:
             mock_service = mock_service_class.return_value
             mock_service.revoke_token = AsyncMock(return_value=True)
 
-            await revoke_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+            await revoke_token(token_id="token-123", request=request, current_user=mock_current_user)
 
             mock_service.revoke_token.assert_called_with(
                 token_id="token-123",
@@ -417,7 +433,7 @@ class TestRevokeToken:
             mock_service.revoke_token = AsyncMock(return_value=False)
 
             with pytest.raises(HTTPException) as exc_info:
-                await revoke_token(token_id="nonexistent", request=None, current_user=mock_current_user, db=mock_db)
+                await revoke_token(token_id="nonexistent", request=None, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
@@ -443,7 +459,7 @@ class TestGetTokenUsageStats:
             mock_service.get_token = AsyncMock(return_value=mock_token_record)
             mock_service.get_token_usage_stats = AsyncMock(return_value=stats_data)
 
-            response = await get_token_usage_stats(token_id="token-123", days=30, current_user=mock_current_user, db=mock_db)
+            response = await get_token_usage_stats(token_id="token-123", days=30, current_user=mock_current_user)
 
             assert isinstance(response, TokenUsageStatsResponse)
             assert response.period_days == 30
@@ -461,7 +477,7 @@ class TestGetTokenUsageStats:
             mock_service.get_token = AsyncMock(return_value=None)
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_token_usage_stats(token_id="nonexistent", days=30, current_user=mock_current_user, db=mock_db)
+                await get_token_usage_stats(token_id="nonexistent", days=30, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
@@ -477,7 +493,7 @@ class TestAdminEndpoints:
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
-            response = await list_all_tokens(user_email="user@example.com", include_inactive=False, limit=100, offset=0, current_user=mock_admin_user, db=mock_db)
+            response = await list_all_tokens(user_email="user@example.com", include_inactive=False, limit=100, offset=0, current_user=mock_admin_user)
 
             assert isinstance(response, TokenListResponse)
             assert len(response.tokens) == 1
@@ -486,7 +502,7 @@ class TestAdminEndpoints:
     async def test_list_all_tokens_non_admin(self, mock_db, mock_current_user):
         """Test non-admin trying to list all tokens."""
         with pytest.raises(HTTPException) as exc_info:
-            await list_all_tokens(user_email=None, include_inactive=False, limit=100, offset=0, current_user=mock_current_user, db=mock_db)
+            await list_all_tokens(user_email=None, include_inactive=False, limit=100, offset=0, current_user=mock_current_user)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert "Admin access required" in str(exc_info.value.detail)
@@ -498,7 +514,7 @@ class TestAdminEndpoints:
             mock_service = mock_service_class.return_value
             mock_service.admin_revoke_token = AsyncMock(return_value=True)
 
-            await admin_revoke_token(token_id="token-123", request=None, current_user=mock_admin_user, db=mock_db)
+            await admin_revoke_token(token_id="token-123", request=None, current_user=mock_admin_user)
 
             mock_service.admin_revoke_token.assert_called_once()
 
@@ -509,7 +525,7 @@ class TestAdminEndpoints:
         current_user["auth_method"] = "api_token"
 
         with pytest.raises(HTTPException) as exc_info:
-            await admin_revoke_token(token_id="token-123", request=None, current_user=current_user, db=mock_db)
+            await admin_revoke_token(token_id="token-123", request=None, current_user=current_user)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
@@ -517,7 +533,7 @@ class TestAdminEndpoints:
     async def test_admin_revoke_token_non_admin(self, mock_db, mock_current_user):
         """Test non-admin trying to use admin revoke."""
         with pytest.raises(HTTPException) as exc_info:
-            await admin_revoke_token(token_id="token-123", request=None, current_user=mock_current_user, db=mock_db)
+            await admin_revoke_token(token_id="token-123", request=None, current_user=mock_current_user)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
 
@@ -529,7 +545,7 @@ class TestAdminEndpoints:
             mock_service.admin_revoke_token = AsyncMock(return_value=False)
 
             with pytest.raises(HTTPException) as exc_info:
-                await admin_revoke_token(token_id="nonexistent", request=None, current_user=mock_admin_user, db=mock_db)
+                await admin_revoke_token(token_id="nonexistent", request=None, current_user=mock_admin_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
@@ -551,7 +567,7 @@ class TestTeamTokens:
             mock_service = mock_service_class.return_value
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "team-token-raw"))
 
-            response = await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
+            response = await create_team_token(team_id="team-456", request=request, current_user=mock_current_user)
 
             assert response.access_token == "team-token-raw"
             assert response.token.team_id == "team-456"
@@ -570,7 +586,7 @@ class TestTeamTokens:
             mock_service.create_token = AsyncMock(side_effect=ValueError("User is not team owner"))
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
+                await create_team_token(team_id="team-456", request=request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "User is not team owner" in str(exc_info.value.detail)
@@ -585,7 +601,7 @@ class TestTeamTokens:
             mock_service.list_team_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
-            response = await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
+            response = await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user)
 
             assert len(response.tokens) == 1
             assert response.tokens[0].team_id == "team-456"
@@ -598,7 +614,7 @@ class TestTeamTokens:
             mock_service.list_team_tokens = AsyncMock(side_effect=ValueError("User is not team member"))
 
             with pytest.raises(HTTPException) as exc_info:
-                await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
+                await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "User is not team member" in str(exc_info.value.detail)
@@ -622,7 +638,7 @@ class TestEdgeCases:
             mock_service = mock_service_class.return_value
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "token-with-team"))
 
-            response = await create_token(request, current_user=mock_current_user, db=mock_db)
+            response = await create_token(request, current_user=mock_current_user)
 
             # Verify team_id was passed from request
             call_args = mock_service.create_token.call_args
@@ -635,7 +651,7 @@ class TestEdgeCases:
             mock_service = mock_service_class.return_value
             mock_service.list_user_tokens = AsyncMock(return_value=[])
 
-            response = await list_tokens(include_inactive=True, limit=100, offset=50, db=mock_db, current_user=mock_current_user)
+            response = await list_tokens(include_inactive=True, limit=100, offset=50, current_user=mock_current_user)
 
             assert response.tokens == []
             assert response.total == 0
@@ -648,7 +664,7 @@ class TestEdgeCases:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
 
-            response = await list_all_tokens(user_email=None, include_inactive=False, limit=100, offset=0, current_user=mock_admin_user, db=mock_db)
+            response = await list_all_tokens(user_email=None, include_inactive=False, limit=100, offset=0, current_user=mock_admin_user)
 
             # Currently returns empty list when no email provided
             assert response.tokens == []
@@ -676,7 +692,7 @@ class TestEdgeCases:
             mock_service = mock_service_class.return_value
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "complex-token"))
 
-            response = await create_token(request, current_user=mock_current_user, db=mock_db)
+            response = await create_token(request, current_user=mock_current_user)
 
             assert response.access_token == "complex-token"
 

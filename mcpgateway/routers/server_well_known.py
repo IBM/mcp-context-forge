@@ -15,13 +15,12 @@ metadata specific to individual virtual servers.
 """
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Server as DbServer
 from mcpgateway.routers.well_known import get_base_url_with_protocol, get_well_known_file_content
 from mcpgateway.services.logging_service import LoggingService
@@ -39,9 +38,7 @@ router = APIRouter(tags=["Servers"])
 
 
 @router.get("/{server_id}/.well-known/oauth-protected-resource")
-async def server_oauth_protected_resource(
-    request: Request,
-    server_id: str) -> JSONResponse:
+async def server_oauth_protected_resource(request: Request, server_id: str) -> JSONResponse:
     """
     RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint for a specific server.
 
@@ -52,7 +49,6 @@ async def server_oauth_protected_resource(
     Args:
         request: FastAPI request object for building resource URL.
         server_id: The ID of the server to get OAuth configuration for.
-        db: Database session dependency.
 
     Returns:
         JSONResponse with RFC 9728 Protected Resource Metadata.
@@ -84,9 +80,7 @@ async def server_oauth_protected_resource(
 
 
 @router.get("/{server_id}/.well-known/{filename:path}", include_in_schema=False)
-async def server_well_known_file(
-    server_id: str,
-    filename: str) -> PlainTextResponse:
+async def server_well_known_file(server_id: str, filename: str) -> PlainTextResponse:
     """
     Serve well-known URI files for a specific virtual server.
 
@@ -100,7 +94,6 @@ async def server_well_known_file(
     Args:
         server_id: The ID of the virtual server.
         filename: The well-known filename requested (e.g., "robots.txt").
-        db: Database session dependency.
 
     Returns:
         PlainTextResponse with the file content.

@@ -66,8 +66,8 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam, extract_json_field
+from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import EmailTeam, extract_json_field, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
@@ -529,7 +529,7 @@ def _get_span_entity_performance(
     """Shared helper to compute performance metrics for spans grouped by a JSON attribute.
 
     Args:
-        db: Database session.
+        db: Database session
         cutoff_time: Timezone-aware datetime for filtering spans.
         cutoff_time_naive: Naive datetime for SQLite compatibility.
         span_names: List of span names to filter (e.g., ["tool.invoke"]).
@@ -833,9 +833,7 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
 
 @admin_router.get("/overview/partial")
-async def get_overview_partial(
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def get_overview_partial(request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Render the overview dashboard partial HTML template.
 
     This endpoint returns a rendered HTML partial containing an architecture
@@ -844,7 +842,6 @@ async def get_overview_partial(
 
     Args:
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -998,12 +995,10 @@ async def get_overview_partial(
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
 @require_permission("admin.system_config")
 @rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
-async def get_global_passthrough_headers(
-    _user=Depends(get_current_user_with_permissions)) -> GlobalConfigRead:
+async def get_global_passthrough_headers(_user=Depends(get_current_user_with_permissions)) -> GlobalConfigRead:
     """Get the global passthrough headers configuration.
 
     Args:
-        db: Database session
         _user: Authenticated user
 
     Returns:
@@ -1030,15 +1025,13 @@ async def get_global_passthrough_headers(
 @require_permission("admin.system_config")
 @rate_limit(requests_per_minute=20)  # Stricter limit for config updates
 async def update_global_passthrough_headers(
-    request: Request,  # pylint: disable=unused-argument
-    config_update: GlobalConfigUpdate,
-    _user=Depends(get_current_user_with_permissions)) -> GlobalConfigRead:
+    request: Request, config_update: GlobalConfigUpdate, _user=Depends(get_current_user_with_permissions)  # pylint: disable=unused-argument
+) -> GlobalConfigRead:
     """Update the global passthrough headers configuration.
 
     Args:
         request: HTTP request object
         config_update: The new configuration
-        db: Database session
         _user: Authenticated user
 
     Raises:
@@ -1270,20 +1263,18 @@ async def get_mcp_session_pool_metrics(
 
 @admin_router.get("/config/settings")
 @require_permission("admin.system_config")
-async def get_configuration_settings(
-    _user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def get_configuration_settings(_user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get application configuration settings grouped by category.
 
     Returns configuration settings with sensitive values masked.
 
     Args:
-        _db: Database session
         _user: Authenticated user
 
     Returns:
         Dict with configuration groups and their settings
     """
-    with fresh_db_session() as db:
+    with fresh_db_session() as _:
 
         def mask_sensitive(value: Any, key: str) -> Any:
             """Mask sensitive configuration values.
@@ -1424,7 +1415,8 @@ async def admin_list_servers(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
     """
     List servers for the admin UI with pagination support.
 
@@ -1435,7 +1427,6 @@ async def admin_list_servers(
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive servers.
-        db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
     Returns:
@@ -1530,7 +1521,8 @@ async def admin_servers_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Return paginated servers HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
@@ -1547,7 +1539,6 @@ async def admin_servers_partial_html(
         include_inactive (bool): If True, include inactive servers in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -1695,7 +1686,6 @@ async def admin_get_server(server_id: str, user=Depends(get_current_user_with_pe
 
     Args:
         server_id (str): The ID of the server to retrieve.
-        db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
     Returns:
@@ -1812,7 +1802,6 @@ async def admin_add_server(request: Request, user=Depends(get_current_user_with_
 
     Args:
         request (Request): FastAPI request containing form data.
-        db (Session): Database session dependency
         user (str): Authenticated user dependency
 
     Returns:
@@ -2043,10 +2032,7 @@ async def admin_add_server(request: Request, user=Depends(get_current_user_with_
 
 
 @admin_router.post("/servers/{server_id}/edit")
-async def admin_edit_server(
-    server_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_edit_server(server_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
     Edit an existing server via the admin UI.
 
@@ -2066,7 +2052,6 @@ async def admin_edit_server(
     Args:
         server_id (str): The ID of the server to edit
         request (Request): FastAPI request containing form data
-        db (Session): Database session dependency
         user (str): Authenticated user dependency
 
     Returns:
@@ -2284,10 +2269,7 @@ async def admin_edit_server(
 
 
 @admin_router.post("/servers/{server_id}/state")
-async def admin_set_server_state(
-    server_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> Response:
+async def admin_set_server_state(server_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> Response:
     """
     Set a server's active status via the admin UI.
 
@@ -2299,7 +2281,6 @@ async def admin_set_server_state(
     Args:
         server_id (str): The ID of the server whose status to set.
         request (Request): FastAPI request containing form data with the 'activate' field.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -2419,7 +2400,6 @@ async def admin_delete_server(server_id: str, request: Request, user=Depends(get
     Args:
         server_id (str): The ID of the server to delete
         request (Request): FastAPI request object (not used but required by route signature).
-        db (Session): Database session dependency
         user (str): Authenticated user dependency
 
     Returns:
@@ -2514,7 +2494,8 @@ async def admin_list_resources(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
     """
     List resources for the admin UI with pagination support.
 
@@ -2525,7 +2506,6 @@ async def admin_list_resources(
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page. Default: 50.
         include_inactive (bool): Whether to include inactive resources in the results.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -2604,7 +2584,8 @@ async def admin_list_prompts(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
     """
     List prompts for the admin UI with pagination support.
 
@@ -2615,7 +2596,6 @@ async def admin_list_prompts(
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive prompts in the results.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -2700,7 +2680,8 @@ async def admin_list_gateways(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
     """
     List gateways for the admin UI with pagination support.
 
@@ -2711,7 +2692,6 @@ async def admin_list_gateways(
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive gateways in the results.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -2785,10 +2765,7 @@ async def admin_list_gateways(
 
 
 @admin_router.post("/gateways/{gateway_id}/state")
-async def admin_set_gateway_state(
-    gateway_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_set_gateway_state(gateway_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Set the active status of a gateway via the admin UI.
 
@@ -2799,7 +2776,6 @@ async def admin_set_gateway_state(
     Args:
         gateway_id (str): The ID of the gateway to set state for.
         request (Request): The FastAPI request object containing form data.
-        db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
     Returns:
@@ -2902,7 +2878,8 @@ async def admin_ui(
     team_id: Optional[str] = Depends(_validated_team_id_param),
     include_inactive: bool = False,
     user=Depends(get_current_user_with_permissions),
-    _jwt_token: str = Depends(get_jwt_token)) -> Any:
+    _jwt_token: str = Depends(get_jwt_token),
+) -> Any:
     """
     Render the admin dashboard HTML page.
 
@@ -2923,7 +2900,6 @@ async def admin_ui(
         request (Request): FastAPI request object.
         team_id (Optional[str]): Optional team ID to filter data by team.
         include_inactive (bool): Whether to include inactive items in all listings.
-        db (Session): Database session dependency.
         user (dict): Authenticated user context with permissions.
 
     Returns:
@@ -3561,7 +3537,6 @@ async def admin_login_handler(request: Request) -> RedirectResponse:
 
     Args:
         request (Request): FastAPI request object.
-        db (Session): Database session dependency.
 
     Returns:
         RedirectResponse: Redirect to admin panel on success or login page on failure.
@@ -3831,7 +3806,6 @@ async def change_password_required_handler(request: Request) -> RedirectResponse
 
     Args:
         request (Request): FastAPI request object.
-        db (Session): Database session dependency.
 
     Returns:
         RedirectResponse: Redirect to admin panel on success or back to form with error.
@@ -4161,14 +4135,14 @@ async def admin_get_all_team_ids(
     include_inactive: bool = False,
     visibility: Optional[str] = Query(None, description="Filter by visibility"),
     q: Optional[str] = Query(None, description="Search query"),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Return all team IDs accessible to the current user.
 
     Args:
         include_inactive (bool): Whether to include inactive teams.
         visibility (Optional[str]): Filter by team visibility.
         q (Optional[str]): Search query string.
-        db (Session): Database session dependency.
         user: Current authenticated user.
 
     Returns:
@@ -4228,7 +4202,8 @@ async def admin_search_teams(
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Max results"),
     visibility: Optional[str] = Query(None, description="Filter by visibility"),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Search teams by name/slug.
 
     Args:
@@ -4236,7 +4211,6 @@ async def admin_search_teams(
         include_inactive (bool): Whether to include inactive teams.
         limit (int): Maximum number of results to return.
         visibility (Optional[str]): Filter by team visibility.
-        db (Session): Database session dependency.
         user: Current authenticated user.
 
     Returns:
@@ -4298,7 +4272,8 @@ async def admin_teams_partial_html(
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     q: Optional[str] = Query(None, description="Search query"),
     relationship: Optional[str] = Query(None, description="Filter by relationship: owner, member, public"),
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
     """Return HTML partial for paginated teams list (HTMX).
 
     Args:
@@ -4310,7 +4285,6 @@ async def admin_teams_partial_html(
         render (Optional[str]): Render mode, e.g., 'controls' for pagination controls only.
         q (Optional[str]): Search query string.
         relationship (Optional[str]): Filter by relationship: owner, member, public.
-        db (Session): Database session dependency.
         user: Current authenticated user.
 
     Returns:
@@ -4506,7 +4480,8 @@ async def admin_list_teams(
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=100, description="Items per page"),
     q: Optional[str] = Query(None, description="Search query"),
     user=Depends(get_current_user_with_permissions),
-    unified: bool = False) -> HTMLResponse:
+    unified: bool = False,
+) -> HTMLResponse:
     """List teams for admin UI via HTMX.
 
     Args:
@@ -4514,7 +4489,6 @@ async def admin_list_teams(
         page: Page number
         per_page: Items per page
         q: Search query
-        db: Database session
         user: Authenticated admin user
         unified: If True, return unified team view with relationship badges
 
@@ -4595,14 +4569,11 @@ async def admin_list_teams(
 
 @admin_router.post("/teams")
 @require_permission("teams.create")
-async def admin_create_team(
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_create_team(request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Create team via admin UI form submission.
 
     Args:
         request: FastAPI request object
-        db: Database session
         user: Authenticated admin user
 
     Returns:
@@ -4732,7 +4703,8 @@ async def admin_view_team_members(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
     """View and manage team members via admin UI (unified view).
 
     This replaces the old separate "view members" and "add members" screens with a unified
@@ -4744,7 +4716,6 @@ async def admin_view_team_members(
         request: FastAPI request object
         page: Page number (1-indexed).
         per_page: Items per page.
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -4881,16 +4852,12 @@ async def admin_view_team_members(
 
 @admin_router.get("/teams/{team_id}/members/add")
 @require_permission("teams.manage_members")
-async def admin_add_team_members_view(
-    team_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_add_team_members_view(team_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Show add members interface with paginated user selector.
 
     Args:
         team_id: ID of the team to add members to
         request: FastAPI request object
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -5016,15 +4983,11 @@ async def admin_add_team_members_view(
 
 @admin_router.get("/teams/{team_id}/edit")
 @require_permission("teams.update")
-async def admin_get_team_edit(
-    team_id: str,
-    _request: Request,
-    _user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_get_team_edit(team_id: str, _request: Request, _user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Get team edit form via admin UI.
 
     Args:
         team_id: ID of the team to edit
-        db: Database session
 
     Returns:
         HTMLResponse: Rendered team edit form
@@ -5096,16 +5059,12 @@ async def admin_get_team_edit(
 
 @admin_router.post("/teams/{team_id}/update")
 @require_permission("teams.update")
-async def admin_update_team(
-    team_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> Response:
+async def admin_update_team(team_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> Response:
     """Update team via admin UI.
 
     Args:
         team_id: ID of the team to update
         request: FastAPI request object
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -5213,15 +5172,11 @@ async def admin_update_team(
 
 @admin_router.delete("/teams/{team_id}")
 @require_permission("teams.delete")
-async def admin_delete_team(
-    team_id: str,
-    _request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_delete_team(team_id: str, _request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Delete team via admin UI.
 
     Args:
         team_id: ID of the team to delete
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -5260,10 +5215,7 @@ async def admin_delete_team(
 
 @admin_router.post("/teams/{team_id}/add-member")
 @require_permission("teams.manage_members")
-async def admin_add_team_members(
-    team_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_add_team_members(team_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Add member(s) to team via admin UI.
 
     Supports both single user (user_email field) and multiple users (associatedUsers field).
@@ -5271,7 +5223,6 @@ async def admin_add_team_members(
     Args:
         team_id: ID of the team to add member(s) to
         request: FastAPI request object
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -5477,16 +5428,12 @@ async def admin_add_team_members(
 
 @admin_router.post("/teams/{team_id}/update-member-role")
 @require_permission("teams.manage_members")
-async def admin_update_team_member_role(
-    team_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_update_team_member_role(team_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Update team member role via admin UI.
 
     Args:
         team_id: ID of the team containing the member
         request: FastAPI request object
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -5552,16 +5499,12 @@ async def admin_update_team_member_role(
 
 @admin_router.post("/teams/{team_id}/remove-member")
 @require_permission("teams.manage_members")
-async def admin_remove_team_member(
-    team_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_remove_team_member(team_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Remove member from team via admin UI.
 
     Args:
         team_id: ID of the team to remove member from
         request: FastAPI request object
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -5628,16 +5571,12 @@ async def admin_remove_team_member(
 
 @admin_router.post("/teams/{team_id}/leave")
 @require_permission("teams.join")  # Users who can join can also leave
-async def admin_leave_team(
-    team_id: str,
-    request: Request,  # pylint: disable=unused-argument
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_leave_team(team_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
     """Leave a team via admin UI.
 
     Args:
         team_id: ID of the team to leave
         request: FastAPI request object
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -5699,16 +5638,12 @@ async def admin_leave_team(
 
 
 @admin_router.post("/teams/{team_id}/join-request")
-async def admin_create_join_request(
-    team_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_create_join_request(team_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Create a join request for a team via admin UI.
 
     Args:
         team_id: ID of the team to request to join
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -5780,16 +5715,12 @@ async def admin_create_join_request(
 
 @admin_router.delete("/teams/{team_id}/join-request/{request_id}")
 @require_permission("teams.join")
-async def admin_cancel_join_request(
-    team_id: str,
-    request_id: str,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_cancel_join_request(team_id: str, request_id: str, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Cancel a join request via admin UI.
 
     Args:
         team_id: ID of the team
         request_id: ID of the join request to cancel
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -5826,16 +5757,12 @@ async def admin_cancel_join_request(
 
 @admin_router.get("/teams/{team_id}/join-requests")
 @require_permission("teams.manage_members")
-async def admin_list_join_requests(
-    team_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_list_join_requests(team_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """List join requests for a team via admin UI.
 
     Args:
         team_id: ID of the team
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -5916,16 +5843,12 @@ async def admin_list_join_requests(
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/approve")
 @require_permission("teams.manage_members")
-async def admin_approve_join_request(
-    team_id: str,
-    request_id: str,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_approve_join_request(team_id: str, request_id: str, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Approve a join request via admin UI.
 
     Args:
         team_id: ID of the team
         request_id: ID of the join request to approve
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -5967,16 +5890,12 @@ async def admin_approve_join_request(
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/reject")
 @require_permission("teams.manage_members")
-async def admin_reject_join_request(
-    team_id: str,
-    request_id: str,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_reject_join_request(team_id: str, request_id: str, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Reject a join request via admin UI.
 
     Args:
         team_id: ID of the team
         request_id: ID of the join request to reject
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -6135,7 +6054,8 @@ async def admin_list_users(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    user=Depends(get_current_user_with_permissions)) -> Response:
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
     """
     List users for the admin UI with pagination support.
 
@@ -6147,7 +6067,6 @@ async def admin_list_users(
         request: FastAPI request object
         page: Page number (1-indexed). Default: 1.
         per_page: Items per page. Default: 50.
-        db: Database session dependency
         user: Authenticated user dependency
 
     Returns:
@@ -6199,7 +6118,8 @@ async def admin_users_partial_html(
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     render: Optional[str] = Query(None, description="Render mode: 'selector' for user selector items, 'controls' for pagination controls"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)) -> Response:
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
     """
     Return paginated users as HTML partial for HTMX requests.
 
@@ -6212,7 +6132,6 @@ async def admin_users_partial_html(
         per_page: Items per page. Default: 50.
         render: Render mode - 'selector' returns user selector items, 'controls' returns pagination controls.
         team_id: Optional team ID to pre-select members in selector mode
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -6346,7 +6265,8 @@ async def admin_team_members_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    user=Depends(get_current_user_with_permissions)) -> Response:
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
     """Return paginated team members for two-section layout (top section).
 
     Args:
@@ -6354,7 +6274,6 @@ async def admin_team_members_partial_html(
         request: FastAPI request object.
         page: Page number (1-indexed). Default: 1.
         per_page: Items per page. Default: 50.
-        db: Database session.
         user: Current authenticated user context.
 
     Returns:
@@ -6426,7 +6345,8 @@ async def admin_team_non_members_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    user=Depends(get_current_user_with_permissions)) -> Response:
+    user=Depends(get_current_user_with_permissions),
+) -> Response:
     """Return paginated non-members for two-section layout (bottom section).
 
     Args:
@@ -6434,7 +6354,6 @@ async def admin_team_non_members_partial_html(
         request: FastAPI request object.
         page: Page number (1-indexed). Default: 1.
         per_page: Items per page. Default: 50.
-        db: Database session.
         user: Current authenticated user context.
 
     Returns:
@@ -6502,7 +6421,8 @@ async def admin_team_non_members_partial_html(
 async def admin_search_users(
     q: str = Query("", description="Search query"),
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """
     Search users by email or full name.
 
@@ -6511,7 +6431,6 @@ async def admin_search_users(
     Args:
         q (str): Search query string to match against email or full name
         limit (int): Maximum number of results to return
-        db (Session): Database session dependency
         user: Current user making the request
 
     Returns:
@@ -6552,14 +6471,11 @@ async def admin_search_users(
 
 @admin_router.post("/users")
 @require_permission("admin.user_management")
-async def admin_create_user(
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_create_user(request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Create a new user via admin UI.
 
     Args:
         request: FastAPI request object
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -6587,7 +6503,9 @@ async def admin_create_user(
 
             # If the user was created with the default password, optionally force password change
             if (
-                settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value()
+                settings.password_change_enforcement_enabled
+                and getattr(settings, "require_password_change_for_default_password", True)
+                and password == settings.default_user_password.get_secret_value()
             ):  # nosec B105
                 new_user.password_change_required = True
                 db.commit()
@@ -6607,15 +6525,11 @@ async def admin_create_user(
 
 @admin_router.get("/users/{user_email}/edit")
 @require_permission("admin.user_management")
-async def admin_get_user_edit(
-    user_email: str,
-    _request: Request,
-    _user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_get_user_edit(user_email: str, _request: Request, _user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Get user edit form via admin UI.
 
     Args:
         user_email: Email of user to edit
-        db: Database session
 
     Returns:
         HTMLResponse: User edit form HTML
@@ -6763,16 +6677,12 @@ async def admin_get_user_edit(
 
 @admin_router.post("/users/{user_email}/update")
 @require_permission("admin.user_management")
-async def admin_update_user(
-    user_email: str,
-    request: Request,
-    _user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_update_user(user_email: str, request: Request, _user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Update user via admin UI.
 
     Args:
         user_email: Email of user to update
         request: FastAPI request object
-        db: Database session
 
     Returns:
         HTMLResponse: Success message or error response
@@ -6838,15 +6748,11 @@ async def admin_update_user(
 
 @admin_router.post("/users/{user_email}/activate")
 @require_permission("admin.user_management")
-async def admin_activate_user(
-    user_email: str,
-    _request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_activate_user(user_email: str, _request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Activate user via admin UI.
 
     Args:
         user_email: Email of user to activate
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -6882,15 +6788,11 @@ async def admin_activate_user(
 
 @admin_router.post("/users/{user_email}/deactivate")
 @require_permission("admin.user_management")
-async def admin_deactivate_user(
-    user_email: str,
-    _request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_deactivate_user(user_email: str, _request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Deactivate user via admin UI.
 
     Args:
         user_email: Email of user to deactivate
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -6934,16 +6836,12 @@ async def admin_deactivate_user(
 
 @admin_router.delete("/users/{user_email}")
 @require_permission("admin.user_management")
-async def admin_delete_user(
-    user_email: str,
-    _request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_delete_user(user_email: str, _request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Delete user via admin UI.
 
     Args:
         user_email: Email address of user to delete
         _request: FastAPI request object (unused)
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -6985,16 +6883,12 @@ async def admin_delete_user(
 
 @admin_router.post("/users/{user_email}/force-password-change")
 @require_permission("admin.user_management")
-async def admin_force_password_change(
-    user_email: str,
-    _request: Request,
-    user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def admin_force_password_change(user_email: str, _request: Request, user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
     """Force user to change password on next login.
 
     Args:
         user_email: Email of user to force password change
         _request: FastAPI request object
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -7064,7 +6958,8 @@ async def admin_list_tools(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
     """
     List tools for the admin UI with pagination support.
 
@@ -7075,7 +6970,6 @@ async def admin_list_tools(
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page. Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -7115,7 +7009,8 @@ async def admin_tools_partial_html(
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """
     Return HTML partial for paginated tools list (HTMX endpoint).
 
@@ -7130,7 +7025,6 @@ async def admin_tools_partial_html(
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
         render (str): Render mode - 'controls' returns only pagination controls.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -7299,7 +7193,8 @@ async def admin_tool_ops_partial(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """
     Return HTML partial for tool operations table.
 
@@ -7310,7 +7205,6 @@ async def admin_tool_ops_partial(
         include_inactive (bool): Whether to include inactive items. Defaults to False.
         gateway_id (Optional[str]): The gateway ID to filter by. Defaults to None.
         team_id (Optional[str]): The team ID to filter by. Defaults to None.
-        db (Session): The database session. Defaults to Depends(get_db).
         user (Any): The current user. Defaults to Depends(get_current_user_with_permissions).
 
     Returns:
@@ -7400,7 +7294,8 @@ async def admin_get_all_tool_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """
     Return all tool IDs accessible to the current user.
 
@@ -7410,7 +7305,6 @@ async def admin_get_all_tool_ids(
         include_inactive (bool): Whether to include inactive tools in the results
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local tools).
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session dependency
         user: Current user making the request
 
     Returns:
@@ -7483,7 +7377,8 @@ async def admin_search_tools(
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """
     Search tools by name, ID, or description.
 
@@ -7496,7 +7391,6 @@ async def admin_search_tools(
         limit (int): Maximum number of results to return.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session.
         user: Current user with permissions.
 
     Returns:
@@ -7604,7 +7498,8 @@ async def admin_prompts_partial_html(
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Return paginated prompts HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
@@ -7622,7 +7517,6 @@ async def admin_prompts_partial_html(
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -7795,7 +7689,8 @@ async def admin_gateways_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Return paginated gateways HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
@@ -7812,7 +7707,6 @@ async def admin_gateways_partial_html(
         include_inactive (bool): If True, include inactive gateways in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -7942,10 +7836,7 @@ async def admin_gateways_partial_html(
 
 
 @admin_router.get("/gateways/ids", response_class=JSONResponse)
-async def admin_get_all_gateways_ids(
-    include_inactive: bool = False,
-    team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+async def admin_get_all_gateways_ids(include_inactive: bool = False, team_id: Optional[str] = Depends(_validated_team_id_param), user=Depends(get_current_user_with_permissions)):
     """Return all gateway IDs accessible to the current user (select-all helper).
 
     This endpoint is used by UI "Select All" helpers to fetch only the IDs
@@ -7954,7 +7845,6 @@ async def admin_get_all_gateways_ids(
     Args:
         include_inactive (bool): When True include prompts that are inactive.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8007,7 +7897,8 @@ async def admin_search_gateways(
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Search gateways by name or description for selector search.
 
     Performs a case-insensitive search over prompt names and descriptions
@@ -8019,7 +7910,6 @@ async def admin_search_gateways(
         include_inactive (bool): When True include gateways that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8098,10 +7988,7 @@ async def admin_search_gateways(
 
 
 @admin_router.get("/servers/ids", response_class=JSONResponse)
-async def admin_get_all_server_ids(
-    include_inactive: bool = False,
-    team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+async def admin_get_all_server_ids(include_inactive: bool = False, team_id: Optional[str] = Depends(_validated_team_id_param), user=Depends(get_current_user_with_permissions)):
     """Return all server IDs accessible to the current user (select-all helper).
 
     This endpoint is used by UI "Select All" helpers to fetch only the IDs
@@ -8110,7 +7997,6 @@ async def admin_get_all_server_ids(
     Args:
         include_inactive (bool): When True include servers that are inactive.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8165,7 +8051,8 @@ async def admin_search_servers(
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Search servers by name or description for selector search.
 
     Performs a case-insensitive search over prompt names and descriptions
@@ -8177,7 +8064,6 @@ async def admin_search_servers(
         include_inactive (bool): When True include servers that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8263,7 +8149,8 @@ async def admin_resources_partial_html(
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Return HTML partial for paginated resources list (HTMX endpoint).
 
     This endpoint mirrors the behavior of the tools and prompts partial
@@ -8280,7 +8167,6 @@ async def admin_resources_partial_html(
             items used by infinite scroll selectors.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8452,7 +8338,8 @@ async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Return all prompt IDs accessible to the current user (select-all helper).
 
     This endpoint is used by UI "Select All" helpers to fetch only the IDs
@@ -8462,7 +8349,6 @@ async def admin_get_all_prompt_ids(
         include_inactive (bool): When True include prompts that are inactive.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local prompts).
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8532,7 +8418,8 @@ async def admin_get_all_resource_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Return all resource IDs accessible to the current user (select-all helper).
 
     This endpoint is used by UI "Select All" helpers to fetch only the IDs
@@ -8542,7 +8429,6 @@ async def admin_get_all_resource_ids(
         include_inactive (bool): Whether to include inactive resources in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local resources).
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session dependency.
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8614,7 +8500,8 @@ async def admin_search_resources(
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Search resources by name or description for selector search.
 
     Performs a case-insensitive search over resource names and descriptions
@@ -8627,7 +8514,6 @@ async def admin_search_resources(
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8718,7 +8604,8 @@ async def admin_search_prompts(
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Search prompts by name or description for selector search.
 
     Performs a case-insensitive search over prompt names and descriptions
@@ -8731,7 +8618,6 @@ async def admin_search_prompts(
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -8837,7 +8723,8 @@ async def admin_a2a_partial_html(
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Return paginated a2a agents HTML partials for the admin UI.
 
     This HTMX endpoint returns only the partial HTML used by the admin UI for
@@ -8855,7 +8742,6 @@ async def admin_a2a_partial_html(
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -9007,10 +8893,7 @@ async def admin_a2a_partial_html(
 
 
 @admin_router.get("/a2a/ids", response_class=JSONResponse)
-async def admin_get_all_agent_ids(
-    include_inactive: bool = False,
-    team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+async def admin_get_all_agent_ids(include_inactive: bool = False, team_id: Optional[str] = Depends(_validated_team_id_param), user=Depends(get_current_user_with_permissions)):
     """Return all agent IDs accessible to the current user (select-all helper).
 
     This endpoint is used by UI "Select All" helpers to fetch only the IDs
@@ -9019,7 +8902,6 @@ async def admin_get_all_agent_ids(
     Args:
         include_inactive (bool): When True include a2a agents that are inactive.
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -9072,7 +8954,8 @@ async def admin_search_a2a_agents(
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """Search a2a agents by name or description for selector search.
 
     Performs a case-insensitive search over prompt names and descriptions
@@ -9084,7 +8967,6 @@ async def admin_search_a2a_agents(
         include_inactive (bool): When True include a2a agents that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         team_id (Optional[str]): Filter by team ID.
-        db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
     Returns:
@@ -9173,7 +9055,6 @@ async def admin_get_tool(tool_id: str, user=Depends(get_current_user_with_permis
 
     Args:
         tool_id (str): The ID of the tool to retrieve.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -9266,9 +9147,7 @@ async def admin_get_tool(tool_id: str, user=Depends(get_current_user_with_permis
 
 @admin_router.post("/tools/")
 @admin_router.post("/tools")
-async def admin_add_tool(
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_tool(request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
     Add a tool via the admin UI with error handling.
 
@@ -9293,7 +9172,6 @@ async def admin_add_tool(
 
     Args:
         request (Request): the FastAPI request object containing the form data.
-        db (Session): the SQLAlchemy database session.
         user (str): identifier of the authenticated user.
 
     Returns:
@@ -9490,10 +9368,7 @@ async def admin_add_tool(
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
 @admin_router.post("/tools/{tool_id}/edit", response_model=None)
-async def admin_edit_tool(
-    tool_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> Response:
+async def admin_edit_tool(tool_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> Response:
     """
     Edit a tool via the admin UI.
 
@@ -9521,7 +9396,6 @@ async def admin_edit_tool(
     Args:
         tool_id (str): The ID of the tool to edit.
         request (Request): FastAPI request containing form data.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -9771,7 +9645,6 @@ async def admin_delete_tool(tool_id: str, request: Request, user=Depends(get_cur
     Args:
         tool_id (str): The ID of the tool to delete.
         request (Request): FastAPI request object (not used directly, but required by route signature).
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -9862,10 +9735,7 @@ async def admin_delete_tool(tool_id: str, request: Request, user=Depends(get_cur
 
 
 @admin_router.post("/tools/{tool_id}/state")
-async def admin_set_tool_state(
-    tool_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_set_tool_state(tool_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Toggle a tool's active status via the admin UI.
 
@@ -9877,7 +9747,6 @@ async def admin_set_tool_state(
     Args:
         tool_id (str): The ID of the tool whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -9992,7 +9861,6 @@ async def admin_get_gateway(gateway_id: str, user=Depends(get_current_user_with_
 
     Args:
         gateway_id: Gateway ID.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -10087,7 +9955,6 @@ async def admin_add_gateway(request: Request, user: dict[str, Any] = Depends(get
 
     Args:
         request: FastAPI request containing form data.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -10416,10 +10283,7 @@ async def admin_add_gateway(request: Request, user: dict[str, Any] = Depends(get
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
 @admin_router.post("/gateways/{gateway_id}/edit")
-async def admin_edit_gateway(
-    gateway_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_edit_gateway(gateway_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Edit a gateway via the admin UI.
 
     Expects form fields:
@@ -10431,7 +10295,6 @@ async def admin_edit_gateway(
     Args:
         gateway_id: Gateway ID.
         request: FastAPI request containing form data.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -10698,7 +10561,6 @@ async def admin_delete_gateway(gateway_id: str, request: Request, user=Depends(g
     Args:
         gateway_id (str): The ID of the gateway to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -10794,7 +10656,6 @@ async def admin_test_resource(resource_uri: str, user=Depends(get_current_user_w
 
     Args:
         resource_uri: The full resource URI (may include encoded characters).
-        db: Database session dependency.
         user: Authenticated user with proper permissions.
 
     Returns:
@@ -10888,7 +10749,6 @@ async def admin_get_resource(resource_id: str, user=Depends(get_current_user_wit
 
     Args:
         resource_id: Resource ID.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -10996,7 +10856,6 @@ async def admin_add_resource(request: Request, user=Depends(get_current_user_wit
 
     Args:
         request: FastAPI request containing form data.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -11119,10 +10978,7 @@ async def admin_add_resource(request: Request, user=Depends(get_current_user_wit
 
 
 @admin_router.post("/resources/{resource_id}/edit")
-async def admin_edit_resource(
-    resource_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_edit_resource(resource_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
     Edit a resource via the admin UI.
 
@@ -11135,7 +10991,6 @@ async def admin_edit_resource(
     Args:
         resource_id: Resource ID.
         request: FastAPI request containing form data.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -11273,7 +11128,6 @@ async def admin_delete_resource(resource_id: str, request: Request, user=Depends
     Args:
         resource_id (str): The ID of the resource to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -11352,10 +11206,7 @@ async def admin_delete_resource(resource_id: str, request: Request, user=Depends
 
 
 @admin_router.post("/resources/{resource_id}/state")
-async def admin_set_resource_state(
-    resource_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_set_resource_state(resource_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Toggle a resource's active status via the admin UI.
 
@@ -11367,7 +11218,6 @@ async def admin_set_resource_state(
     Args:
         resource_id (str): The ID of the resource whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -11481,7 +11331,6 @@ async def admin_get_prompt(prompt_id: str, user=Depends(get_current_user_with_pe
 
     Args:
         prompt_id: Prompt ID.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -11592,7 +11441,6 @@ async def admin_add_prompt(request: Request, user=Depends(get_current_user_with_
 
     Args:
         request: FastAPI request containing form data.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -11696,10 +11544,7 @@ async def admin_add_prompt(request: Request, user=Depends(get_current_user_with_
 
 
 @admin_router.post("/prompts/{prompt_id}/edit")
-async def admin_edit_prompt(
-    prompt_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_edit_prompt(prompt_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Edit a prompt via the admin UI.
 
     Expects form fields:
@@ -11711,7 +11556,6 @@ async def admin_edit_prompt(
     Args:
         prompt_id: Prompt ID.
         request: FastAPI request containing form data.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -11841,7 +11685,6 @@ async def admin_delete_prompt(prompt_id: str, request: Request, user=Depends(get
     Args:
         prompt_id (str): The ID of the prompt to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -11914,10 +11757,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, user=Depends(get
 
 
 @admin_router.post("/prompts/{prompt_id}/state")
-async def admin_set_prompt_state(
-    prompt_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_set_prompt_state(prompt_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Toggle a prompt's active status via the admin UI.
 
@@ -11929,7 +11769,6 @@ async def admin_set_prompt_state(
     Args:
         prompt_id (str): The ID of the prompt whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -12200,8 +12039,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 
 @admin_router.get("/metrics")
 @require_permission("admin.system_config")
-async def get_aggregated_metrics(
-    _user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def get_aggregated_metrics(_user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Retrieve aggregated metrics and top performers for all entity types.
 
     This endpoint collects usage metrics and top-performing entities for tools,
@@ -12209,7 +12047,6 @@ async def get_aggregated_metrics(
     The results are compiled into a dictionary for administrative monitoring.
 
     Args:
-        db (Session): Database session dependency for querying metrics.
 
     Returns:
         Dict[str, Any]: A dictionary containing aggregated metrics and top performers
@@ -12244,7 +12081,8 @@ async def admin_metrics_partial_html(
     entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(10, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """
     Return HTML partial for paginated top performers (HTMX endpoint).
 
@@ -12255,7 +12093,6 @@ async def admin_metrics_partial_html(
         entity_type: Entity type (tools, resources, prompts, servers)
         page: Page number (1-indexed)
         per_page: Items per page
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -12326,7 +12163,6 @@ async def admin_reset_metrics(user=Depends(get_current_user_with_permissions)) -
     Each service must implement its own reset_metrics method.
 
     Args:
-        db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
@@ -12372,9 +12208,7 @@ async def admin_reset_metrics(user=Depends(get_current_user_with_permissions)) -
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-async def admin_test_gateway(
-    request: GatewayTestRequest, team_id: Optional[str] = Depends(_validated_team_id_param), user=Depends(get_current_user_with_permissions)
-) -> GatewayTestResponse:
+async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str] = Depends(_validated_team_id_param), user=Depends(get_current_user_with_permissions)) -> GatewayTestResponse:
     """
     Test a gateway by sending a request to its URL.
     This endpoint allows administrators to test the connectivity and response
@@ -12383,7 +12217,6 @@ async def admin_test_gateway(
         request (GatewayTestRequest): The request object containing the gateway URL and request details.
         team_id (Optional[str]): Optional team ID for team-specific gateways.
         user (str): Authenticated user dependency.
-        db (Session): Database session dependency.
 
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body
@@ -12545,7 +12378,9 @@ async def admin_test_gateway(
                         if not user_email:
                             latency_ms = int((time.monotonic() - start_time) * 1000)
                             return GatewayTestResponse(
-                                status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."}
+                                status_code=401,
+                                latency_ms=latency_ms,
+                                body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."},
                             )
 
                         access_token: str = await token_storage.get_user_token(gateway.id, user_email)
@@ -12900,10 +12735,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
 
 @admin_router.get("/tags", response_model=PaginatedResponse)
-async def admin_list_tags(
-    entity_types: Optional[str] = None,
-    include_entities: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
+async def admin_list_tags(entity_types: Optional[str] = None, include_entities: bool = False, user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
     """
     List all unique tags with statistics for the admin UI.
 
@@ -12912,7 +12744,6 @@ async def admin_list_tags(
                      (e.g., "tools,resources,prompts,servers,gateways").
                      If not provided, returns tags from all entity types.
         include_entities: Whether to include the list of entities that have each tag
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -12998,9 +12829,7 @@ async def _read_request_json(request: Request) -> Any:
 @admin_router.post("/tools/import/")
 @admin_router.post("/tools/import")
 @rate_limit(requests_per_minute=settings.mcpgateway_bulk_import_rate_limit)
-async def admin_import_tools(
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_import_tools(request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Bulk import multiple tools in a single request.
 
     Accepts a JSON array of tool definitions and registers them individually.
@@ -13008,7 +12837,6 @@ async def admin_import_tools(
 
     Args:
         request: FastAPI Request containing the tools data
-        db: Database session
         user: Authenticated username
 
     Returns:
@@ -13597,7 +13425,8 @@ async def admin_export_configuration(
     tags: Optional[str] = None,
     include_inactive: bool = False,
     include_dependencies: bool = True,
-    user=Depends(get_current_user_with_permissions)):
+    user=Depends(get_current_user_with_permissions),
+):
     """
     Export gateway configuration via Admin UI.
 
@@ -13608,7 +13437,6 @@ async def admin_export_configuration(
         tags: Comma-separated tags to filter by
         include_inactive: Include inactive entities
         include_dependencies: Include dependent entities
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -13682,7 +13510,6 @@ async def admin_export_selective(request: Request, user=Depends(get_current_user
 
     Args:
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -13747,7 +13574,6 @@ async def admin_import_preview(request: Request, user=Depends(get_current_user_w
 
     Args:
         request: FastAPI request object with import file data
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -13802,7 +13628,6 @@ async def admin_import_configuration(request: Request, user=Depends(get_current_
 
     Args:
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -13906,14 +13731,11 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 
 
 @admin_router.get("/a2a/{agent_id}", response_model=A2AAgentRead)
-async def admin_get_agent(
-    agent_id: str,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_agent(agent_id: str, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get A2A agent details for the admin UI.
 
     Args:
         agent_id: Agent ID.
-        db: Database session.
         user: Authenticated user.
 
     Returns:
@@ -14007,7 +13829,8 @@ async def admin_list_a2a_agents(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
     """
     List A2A Agents for the admin UI with pagination support.
 
@@ -14019,7 +13842,6 @@ async def admin_list_a2a_agents(
         page (int): Page number (1-indexed) for offset pagination.
         per_page (int): Number of items per page.
         include_inactive (bool): Whether to include inactive agents in the results.
-        db (Session): Database session dependency.
         user (dict): Authenticated user dependency.
 
     Returns:
@@ -14122,14 +13944,11 @@ async def admin_list_a2a_agents(
 
 
 @admin_router.post("/a2a")
-async def admin_add_a2a_agent(
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_a2a_agent(request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a new A2A agent via admin UI.
 
     Args:
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14331,10 +14150,7 @@ async def admin_add_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/edit")
-async def admin_edit_a2a_agent(
-    agent_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_edit_a2a_agent(agent_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
     Edit an existing A2A agent via the admin UI.
 
@@ -14360,7 +14176,6 @@ async def admin_edit_a2a_agent(
     Args:
         agent_id (str): The ID of the agent being edited.
         request (Request): The incoming FastAPI request containing form data.
-        db (Session): Active database session.
         user: The authenticated admin user performing the edit.
 
     Returns:
@@ -14626,7 +14441,6 @@ async def admin_set_a2a_agent_state(
     Args:
         agent_id: Agent ID
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14685,7 +14499,6 @@ async def admin_delete_a2a_agent(
     Args:
         agent_id: Agent ID
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14726,16 +14539,12 @@ async def admin_delete_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/test")
-async def admin_test_a2a_agent(
-    agent_id: str,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_test_a2a_agent(agent_id: str, request: Request, user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Test A2A agent via admin UI.
 
     Args:
         agent_id: Agent ID
         request: FastAPI request object containing optional 'query' field
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14794,16 +14603,12 @@ async def admin_test_a2a_agent(
 
 
 @admin_router.get("/grpc", response_model=PaginatedResponse)
-async def admin_list_grpc_services(
-    include_inactive: bool = False,
-    team_id: Optional[str] = Depends(_validated_team_id_param),
-    user=Depends(get_current_user_with_permissions)):
+async def admin_list_grpc_services(include_inactive: bool = False, team_id: Optional[str] = Depends(_validated_team_id_param), user=Depends(get_current_user_with_permissions)):
     """List all gRPC services.
 
     Args:
         include_inactive: Include disabled services
         team_id: Filter by team ID
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14821,16 +14626,12 @@ async def admin_list_grpc_services(
 
 
 @admin_router.post("/grpc")
-async def admin_create_grpc_service(
-    service: GrpcServiceCreate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)):
+async def admin_create_grpc_service(service: GrpcServiceCreate, request: Request, user=Depends(get_current_user_with_permissions)):
     """Create a new gRPC service.
 
     Args:
         service: gRPC service creation data
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14856,14 +14657,11 @@ async def admin_create_grpc_service(
 
 
 @admin_router.get("/grpc/{service_id}", response_model=GrpcServiceRead)
-async def admin_get_grpc_service(
-    service_id: str,
-    user=Depends(get_current_user_with_permissions)):
+async def admin_get_grpc_service(service_id: str, user=Depends(get_current_user_with_permissions)):
     """Get a specific gRPC service.
 
     Args:
         service_id: Service ID
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14884,18 +14682,13 @@ async def admin_get_grpc_service(
 
 
 @admin_router.put("/grpc/{service_id}")
-async def admin_update_grpc_service(
-    service_id: str,
-    service: GrpcServiceUpdate,
-    request: Request,
-    user=Depends(get_current_user_with_permissions)):
+async def admin_update_grpc_service(service_id: str, service: GrpcServiceUpdate, request: Request, user=Depends(get_current_user_with_permissions)):
     """Update a gRPC service.
 
     Args:
         service_id: Service ID
         service: Update data
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14933,7 +14726,6 @@ async def admin_set_grpc_service_state(
     Args:
         service_id: Service ID
         activate: If provided, sets enabled to this value. If None, inverts current state (legacy behavior).
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14966,7 +14758,6 @@ async def admin_delete_grpc_service(
 
     Args:
         service_id: Service ID
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -14995,7 +14786,6 @@ async def admin_reflect_grpc_service(
 
     Args:
         service_id: Service ID
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -15027,7 +14817,6 @@ async def admin_get_grpc_methods(
 
     Args:
         service_id: Service ID
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -15049,14 +14838,11 @@ async def admin_get_grpc_methods(
 
 @admin_router.get("/sections/resources")
 @require_permission("admin")
-async def get_resources_section(
-    team_id: Optional[str] = None,
-    user=Depends(get_current_user_with_permissions)):
+async def get_resources_section(team_id: Optional[str] = None, user=Depends(get_current_user_with_permissions)):
     """Get resources data filtered by team.
 
     Args:
         team_id: Optional team ID to filter by
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -15103,14 +14889,11 @@ async def get_resources_section(
 
 @admin_router.get("/sections/prompts")
 @require_permission("admin")
-async def get_prompts_section(
-    team_id: Optional[str] = None,
-    user=Depends(get_current_user_with_permissions)):
+async def get_prompts_section(team_id: Optional[str] = None, user=Depends(get_current_user_with_permissions)):
     """Get prompts data filtered by team.
 
     Args:
         team_id: Optional team ID to filter by
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -15158,16 +14941,12 @@ async def get_prompts_section(
 
 @admin_router.get("/sections/servers")
 @require_permission("admin")
-async def get_servers_section(
-    team_id: Optional[str] = None,
-    include_inactive: bool = False,
-    user=Depends(get_current_user_with_permissions)):
+async def get_servers_section(team_id: Optional[str] = None, include_inactive: bool = False, user=Depends(get_current_user_with_permissions)):
     """Get servers data filtered by team.
 
     Args:
         team_id: Optional team ID to filter by
         include_inactive: Whether to include inactive servers
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -15213,14 +14992,11 @@ async def get_servers_section(
 
 @admin_router.get("/sections/gateways")
 @require_permission("admin")
-async def get_gateways_section(
-    team_id: Optional[str] = None,
-    user=Depends(get_current_user_with_permissions)):
+async def get_gateways_section(team_id: Optional[str] = None, user=Depends(get_current_user_with_permissions)):
     """Get gateways data filtered by team.
 
     Args:
         team_id: Optional team ID to filter by
-        db: Database session
         user: Current authenticated user context
 
     Returns:
@@ -15286,13 +15062,12 @@ async def get_plugins_partial(request: Request, user=Depends(get_current_user_wi
 
     Args:
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
         HTMLResponse with rendered plugins partial template
     """
-    with fresh_db_session() as db:
+    with fresh_db_session() as _:
         LOGGER.debug(f"User {get_user_email(user)} requested plugins partial")
 
         try:
@@ -15333,7 +15108,8 @@ async def list_plugins(
     mode: Optional[str] = None,
     hook: Optional[str] = None,
     tag: Optional[str] = None,  # pylint: disable=unused-argument
-    user=Depends(get_current_user_with_permissions)) -> PluginListResponse:
+    user=Depends(get_current_user_with_permissions),
+) -> PluginListResponse:
     """Get list of all plugins with optional filtering.
 
     Args:
@@ -15342,7 +15118,6 @@ async def list_plugins(
         mode: Optional filter by mode (enforce/permissive/disabled)
         hook: Optional filter by hook type
         tag: Optional filter by tag
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -15412,7 +15187,6 @@ async def get_plugin_stats(request: Request, user=Depends(get_current_user_with_
 
     Args:
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -15474,7 +15248,6 @@ async def get_plugin_details(name: str, request: Request, user=Depends(get_curre
     Args:
         name: Plugin name
         request: FastAPI request object
-        db: Database session
         user: Authenticated user
 
     Returns:
@@ -15568,7 +15341,8 @@ async def list_catalog_servers(
     show_available_only: bool = True,
     limit: int = 100,
     offset: int = 0,
-    _user=Depends(get_current_user_with_permissions)) -> CatalogListResponse:
+    _user=Depends(get_current_user_with_permissions),
+) -> CatalogListResponse:
     """Get list of catalog servers with filtering.
 
     Args:
@@ -15582,7 +15356,6 @@ async def list_catalog_servers(
         show_available_only: Show only available servers
         limit: Maximum results
         offset: Pagination offset
-        db: Database session
         _user: Authenticated user
 
     Returns:
@@ -15613,17 +15386,14 @@ async def list_catalog_servers(
 @admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
 @require_permission("servers.create")
 async def register_catalog_server(
-    server_id: str,
-    http_request: Request,
-    request: Optional[CatalogServerRegisterRequest] = None,
-    _user=Depends(get_current_user_with_permissions)) -> Union[CatalogServerRegisterResponse, HTMLResponse]:
+    server_id: str, http_request: Request, request: Optional[CatalogServerRegisterRequest] = None, _user=Depends(get_current_user_with_permissions)
+) -> Union[CatalogServerRegisterResponse, HTMLResponse]:
     """Register a catalog server.
 
     Args:
         server_id: Catalog server ID to register
         http_request: FastAPI request object (for HTMX detection)
         request: Optional registration parameters
-        db: Database session
         _user: Authenticated user
 
     Returns:
@@ -15711,14 +15481,11 @@ async def register_catalog_server(
 
 
 @admin_router.get("/mcp-registry/{server_id}/status", response_model=CatalogServerStatusResponse)
-async def check_catalog_server_status(
-    server_id: str,
-    _user=Depends(get_current_user_with_permissions)) -> CatalogServerStatusResponse:
+async def check_catalog_server_status(server_id: str, _user=Depends(get_current_user_with_permissions)) -> CatalogServerStatusResponse:
     """Check catalog server availability.
 
     Args:
         server_id: Catalog server ID to check
-        _db: Database session
         _user: Authenticated user
 
     Returns:
@@ -15727,7 +15494,7 @@ async def check_catalog_server_status(
     Raises:
         HTTPException: If the catalog feature is disabled.
     """
-    with fresh_db_session() as db:
+    with fresh_db_session() as _:
         if not settings.mcpgateway_catalog_enabled:
             raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
@@ -15736,14 +15503,11 @@ async def check_catalog_server_status(
 
 @admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
 @require_permission("servers.create")
-async def bulk_register_catalog_servers(
-    request: CatalogBulkRegisterRequest,
-    _user=Depends(get_current_user_with_permissions)) -> CatalogBulkRegisterResponse:
+async def bulk_register_catalog_servers(request: CatalogBulkRegisterRequest, _user=Depends(get_current_user_with_permissions)) -> CatalogBulkRegisterResponse:
     """Register multiple catalog servers at once.
 
     Args:
         request: Bulk registration request with server IDs
-        db: Database session
         _user: Authenticated user
 
     Returns:
@@ -15761,12 +15525,8 @@ async def bulk_register_catalog_servers(
 
 @admin_router.get("/mcp-registry/partial")
 async def catalog_partial(
-    request: Request,
-    category: Optional[str] = None,
-    auth_type: Optional[str] = None,
-    search: Optional[str] = None,
-    page: int = 1,
-    _user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+    request: Request, category: Optional[str] = None, auth_type: Optional[str] = None, search: Optional[str] = None, page: int = 1, _user=Depends(get_current_user_with_permissions)
+) -> HTMLResponse:
     """Get HTML partial for catalog servers (used by HTMX).
 
     Args:
@@ -15775,7 +15535,6 @@ async def catalog_partial(
         auth_type: Filter by authentication type
         search: Search term
         page: Page number (1-indexed)
-        db: Database session
         _user: Authenticated user
 
     Returns:
@@ -15856,9 +15615,7 @@ async def catalog_partial(
 
 @admin_router.get("/system/stats")
 @require_permission("admin.system_config")
-async def get_system_stats(
-    request: Request,
-    user=Depends(get_current_user_with_permissions)):
+async def get_system_stats(request: Request, user=Depends(get_current_user_with_permissions)):
     """Get comprehensive system metrics for administrators.
 
     Returns detailed counts across all entity types including users, teams,
@@ -15870,7 +15627,6 @@ async def get_system_stats(
 
     Args:
         request: FastAPI request object
-        db: Database session dependency
         user: Authenticated user from dependency (must have admin access)
 
     Returns:
@@ -18027,9 +17783,7 @@ async def get_resources_partial(
 
 @admin_router.get("/performance/stats", response_class=HTMLResponse)
 @require_permission("admin.system_config")
-async def get_performance_stats(
-    request: Request,
-    _user=Depends(get_current_user_with_permissions)):
+async def get_performance_stats(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Get comprehensive performance metrics for the dashboard.
 
     Returns either an HTML partial for HTMX requests or JSON for API requests.
@@ -18037,7 +17791,6 @@ async def get_performance_stats(
 
     Args:
         request: FastAPI request object
-        db: Database session dependency
         _user: Authenticated user (required by dependency)
 
     Returns:
@@ -18088,12 +17841,10 @@ async def get_performance_stats(
 
 @admin_router.get("/performance/system")
 @require_permission("admin.system_config")
-async def get_performance_system(
-    _user=Depends(get_current_user_with_permissions)):
+async def get_performance_system(_user=Depends(get_current_user_with_permissions)):
     """Get current system resource metrics.
 
     Args:
-        db: Database session dependency
         _user: Authenticated user (required by dependency)
 
     Returns:
@@ -18113,12 +17864,10 @@ async def get_performance_system(
 
 @admin_router.get("/performance/workers")
 @require_permission("admin.system_config")
-async def get_performance_workers(
-    _user=Depends(get_current_user_with_permissions)):
+async def get_performance_workers(_user=Depends(get_current_user_with_permissions)):
     """Get metrics for all worker processes.
 
     Args:
-        db: Database session dependency
         _user: Authenticated user (required by dependency)
 
     Returns:
@@ -18138,12 +17887,10 @@ async def get_performance_workers(
 
 @admin_router.get("/performance/requests")
 @require_permission("admin.system_config")
-async def get_performance_requests(
-    _user=Depends(get_current_user_with_permissions)):
+async def get_performance_requests(_user=Depends(get_current_user_with_permissions)):
     """Get HTTP request performance metrics.
 
     Args:
-        db: Database session dependency
         _user: Authenticated user (required by dependency)
 
     Returns:
@@ -18163,12 +17910,10 @@ async def get_performance_requests(
 
 @admin_router.get("/performance/cache")
 @require_permission("admin.system_config")
-async def get_performance_cache(
-    _user=Depends(get_current_user_with_permissions)):
+async def get_performance_cache(_user=Depends(get_current_user_with_permissions)):
     """Get Redis cache metrics.
 
     Args:
-        db: Database session dependency
         _user: Authenticated user (required by dependency)
 
     Returns:
@@ -18191,13 +17936,13 @@ async def get_performance_cache(
 async def get_performance_history(
     period_type: str = Query("hourly", description="Aggregation period: hourly or daily"),
     hours: int = Query(24, ge=1, le=168, description="Number of hours to look back"),
-    _user=Depends(get_current_user_with_permissions)):
+    _user=Depends(get_current_user_with_permissions),
+):
     """Get historical performance aggregates.
 
     Args:
         period_type: Aggregation type (hourly, daily)
         hours: Hours of history to retrieve
-        db: Database session dependency
         _user: Authenticated user (required by dependency)
 
     Returns:

@@ -14,11 +14,10 @@ from typing import Dict, List, Optional
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.sso_service import SSOService
 
@@ -93,12 +92,10 @@ class SSOCallbackResponse(BaseModel):
 
 
 @sso_router.get("/providers", response_model=List[SSOProviderResponse])
-async def list_sso_providers(
-    ) -> List[SSOProviderResponse]:
+async def list_sso_providers() -> List[SSOProviderResponse]:
     """List available SSO providers for login.
 
     Args:
-        db: Database session
 
     Returns:
         List of enabled SSO providers with basic information.
@@ -123,16 +120,14 @@ async def list_sso_providers(
 
 @sso_router.get("/login/{provider_id}", response_model=SSOLoginResponse)
 async def initiate_sso_login(
-    provider_id: str,
-    redirect_uri: str = Query(..., description="Callback URI after authentication"),
-    scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes")) -> SSOLoginResponse:
+    provider_id: str, redirect_uri: str = Query(..., description="Callback URI after authentication"), scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes")
+) -> SSOLoginResponse:
     """Initiate SSO authentication flow.
 
     Args:
         provider_id: SSO provider identifier (e.g., 'github', 'google')
         redirect_uri: Callback URI after successful authentication
         scopes: Optional custom OAuth scopes (space-separated)
-        db: Database session
 
     Returns:
         Authorization URL and state parameter for redirect.
@@ -173,7 +168,8 @@ async def handle_sso_callback(
     code: str = Query(..., description="Authorization code from SSO provider"),
     state: str = Query(..., description="CSRF state parameter"),
     request: Request = None,
-    response: Response = None):
+    response: Response = None,
+):
     """Handle SSO authentication callback.
 
     Args:
@@ -182,7 +178,6 @@ async def handle_sso_callback(
         state: CSRF state parameter for validation
         request: FastAPI request object
         response: FastAPI response object
-        db: Database session
 
     Returns:
         JWT access token and user information.
@@ -240,14 +235,11 @@ async def handle_sso_callback(
 # Admin endpoints for SSO provider management
 @sso_router.post("/admin/providers", response_model=Dict)
 @require_permission("admin.sso_providers:create")
-async def create_sso_provider(
-    provider_data: SSOProviderCreateRequest,
-    user=Depends(get_current_user_with_permissions)) -> Dict:
+async def create_sso_provider(provider_data: SSOProviderCreateRequest, user=Depends(get_current_user_with_permissions)) -> Dict:
     """Create new SSO provider configuration (Admin only).
 
     Args:
         provider_data: SSO provider configuration
-        db: Database session
         user: Current authenticated user
 
     Returns:
@@ -278,12 +270,10 @@ async def create_sso_provider(
 
 @sso_router.get("/admin/providers", response_model=List[Dict])
 @require_permission("admin.sso_providers:read")
-async def list_all_sso_providers(
-    user=Depends(get_current_user_with_permissions)) -> List[Dict]:
+async def list_all_sso_providers(user=Depends(get_current_user_with_permissions)) -> List[Dict]:
     """List all SSO providers including disabled ones (Admin only).
 
     Args:
-        db: Database session
         user: Current authenticated user
 
     Returns:
@@ -318,14 +308,11 @@ async def list_all_sso_providers(
 
 @sso_router.get("/admin/providers/{provider_id}", response_model=Dict)
 @require_permission("admin.sso_providers:read")
-async def get_sso_provider(
-    provider_id: str,
-    user=Depends(get_current_user_with_permissions)) -> Dict:
+async def get_sso_provider(provider_id: str, user=Depends(get_current_user_with_permissions)) -> Dict:
     """Get SSO provider details (Admin only).
 
     Args:
         provider_id: Provider identifier
-        db: Database session
         user: Current authenticated user
 
     Returns:
@@ -363,16 +350,12 @@ async def get_sso_provider(
 
 @sso_router.put("/admin/providers/{provider_id}", response_model=Dict)
 @require_permission("admin.sso_providers:update")
-async def update_sso_provider(
-    provider_id: str,
-    provider_data: SSOProviderUpdateRequest,
-    user=Depends(get_current_user_with_permissions)) -> Dict:
+async def update_sso_provider(provider_id: str, provider_data: SSOProviderUpdateRequest, user=Depends(get_current_user_with_permissions)) -> Dict:
     """Update SSO provider configuration (Admin only).
 
     Args:
         provider_id: Provider identifier
         provider_data: Updated provider configuration
-        db: Database session
         user: Current authenticated user
 
     Returns:
@@ -405,14 +388,11 @@ async def update_sso_provider(
 
 @sso_router.delete("/admin/providers/{provider_id}")
 @require_permission("admin.sso_providers:delete")
-async def delete_sso_provider(
-    provider_id: str,
-    user=Depends(get_current_user_with_permissions)) -> Dict:
+async def delete_sso_provider(provider_id: str, user=Depends(get_current_user_with_permissions)) -> Dict:
     """Delete SSO provider configuration (Admin only).
 
     Args:
         provider_id: Provider identifier
-        db: Database session
         user: Current authenticated user
 
     Returns:
@@ -459,13 +439,12 @@ class ApprovalActionRequest(BaseModel):
 @sso_router.get("/pending-approvals", response_model=List[PendingUserApprovalResponse])
 @require_permission("admin.user_management")
 async def list_pending_approvals(
-    include_expired: bool = Query(False, description="Include expired approval requests"),
-    user=Depends(get_current_user_with_permissions)) -> List[PendingUserApprovalResponse]:
+    include_expired: bool = Query(False, description="Include expired approval requests"), user=Depends(get_current_user_with_permissions)
+) -> List[PendingUserApprovalResponse]:
     """List pending SSO user approval requests (Admin only).
 
     Args:
         include_expired: Whether to include expired requests
-        db: Database session
         user: Current authenticated admin user
 
     Returns:
@@ -510,16 +489,12 @@ async def list_pending_approvals(
 
 @sso_router.post("/pending-approvals/{approval_id}/action")
 @require_permission("admin.user_management")
-async def handle_approval_request(
-    approval_id: str,
-    request: ApprovalActionRequest,
-    user=Depends(get_current_user_with_permissions)) -> Dict:
+async def handle_approval_request(approval_id: str, request: ApprovalActionRequest, user=Depends(get_current_user_with_permissions)) -> Dict:
     """Approve or reject a pending SSO user registration (Admin only).
 
     Args:
         approval_id: ID of the approval request
         request: Approval action (approve/reject) with optional reason/notes
-        db: Database session
         user: Current authenticated admin user
 
     Returns:

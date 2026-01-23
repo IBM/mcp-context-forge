@@ -70,7 +70,8 @@ async def list_traces(
     attribute_search: Optional[str] = Query(None, description="Free-text search within trace attributes"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
-    _user=Depends(get_current_user_with_permissions)):
+    _user=Depends(get_current_user_with_permissions),
+):
     """List traces with optional filtering.
 
     Query traces with various filters including time range, duration, status, HTTP method,
@@ -91,7 +92,6 @@ async def list_traces(
         attribute_search: Free-text search across all trace attributes
         limit: Maximum results
         offset: Result offset
-        db: Database session
 
     Returns:
         List[ObservabilityTraceRead]: List of traces matching filters
@@ -146,7 +146,8 @@ async def list_traces(
 async def query_traces_advanced(
     # Third-Party
     request_body: dict,
-    _user=Depends(get_current_user_with_permissions)):
+    _user=Depends(get_current_user_with_permissions),
+):
     """Advanced trace querying with attribute filtering.
 
     POST endpoint that accepts a JSON body with complex filtering criteria,
@@ -173,7 +174,6 @@ async def query_traces_advanced(
 
     Args:
         request_body: JSON request body with filter criteria
-        db: Database session
 
     Returns:
         List[ObservabilityTraceRead]: List of traces matching filters
@@ -264,7 +264,6 @@ async def get_trace(trace_id: str, _user=Depends(get_current_user_with_permissio
 
     Args:
         trace_id: UUID of the trace to retrieve
-        db: Database session
 
     Returns:
         ObservabilityTraceWithSpans: Complete trace with all spans and events
@@ -315,7 +314,8 @@ async def list_spans(
     end_time: Optional[datetime] = Query(None, description="Filter spans before this time"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Result offset"),
-    _user=Depends(get_current_user_with_permissions)):
+    _user=Depends(get_current_user_with_permissions),
+):
     """List spans with optional filtering.
 
     Query spans by trace ID, resource type, resource name, or time range.
@@ -329,7 +329,6 @@ async def list_spans(
         end_time: Filter spans before this time
         limit: Maximum results
         offset: Result offset
-        db: Database session
 
     Returns:
         List[ObservabilitySpanRead]: List of spans matching filters
@@ -370,9 +369,7 @@ async def list_spans(
 
 @router.delete("/traces/cleanup")
 @require_permission("admin.system_config")
-async def cleanup_old_traces(
-    days: int = Query(7, ge=1, description="Delete traces older than this many days"),
-    _user=Depends(get_current_user_with_permissions)):
+async def cleanup_old_traces(days: int = Query(7, ge=1, description="Delete traces older than this many days"), _user=Depends(get_current_user_with_permissions)):
     """Delete traces older than a specified number of days.
 
     Cleans up old trace data to manage storage. Cascading deletes will
@@ -380,7 +377,6 @@ async def cleanup_old_traces(
 
     Args:
         days: Delete traces older than this many days
-        db: Database session
 
     Returns:
         dict: Number of deleted traces and cutoff time
@@ -408,9 +404,7 @@ async def cleanup_old_traces(
 
 @router.get("/stats")
 @require_permission("admin.system_config")
-async def get_stats(
-    hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
-    _user=Depends(get_current_user_with_permissions)):
+async def get_stats(hours: int = Query(24, ge=1, le=168, description="Time window in hours"), _user=Depends(get_current_user_with_permissions)):
     """Get observability statistics.
 
     Returns summary statistics including:
@@ -421,7 +415,6 @@ async def get_stats(
 
     Args:
         hours: Time window in hours
-        db: Database session
 
     Returns:
         dict: Statistics including counts, error rate, and slowest endpoints
@@ -468,10 +461,7 @@ async def get_stats(
 
 @router.post("/traces/export")
 @require_permission("admin.system_config")
-async def export_traces(
-    request_body: dict,
-    format: str = Query("json", description="Export format (json, csv, ndjson)"),
-    _user=Depends(get_current_user_with_permissions)):
+async def export_traces(request_body: dict, format: str = Query("json", description="Export format (json, csv, ndjson)"), _user=Depends(get_current_user_with_permissions)):
     """Export traces in various formats.
 
     POST endpoint that accepts filter criteria (same as /traces/query) and exports
@@ -485,7 +475,6 @@ async def export_traces(
     Args:
         request_body: JSON request body with filter criteria (same as /traces/query)
         format: Export format (json, csv, ndjson)
-        db: Database session
 
     Returns:
         StreamingResponse or JSONResponse with exported data
@@ -646,9 +635,7 @@ async def export_traces(
 
 @router.get("/analytics/query-performance")
 @require_permission("admin.system_config")
-async def get_query_performance(
-    hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
-    _user=Depends(get_current_user_with_permissions)):
+async def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time window in hours"), _user=Depends(get_current_user_with_permissions)):
     """Get query performance analytics.
 
     Returns performance metrics about trace queries including:
@@ -658,7 +645,6 @@ async def get_query_performance(
 
     Args:
         hours: Time window in hours
-        db: Database session
 
     Returns:
         dict: Performance analytics

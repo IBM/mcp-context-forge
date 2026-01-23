@@ -10,7 +10,7 @@ member management, invitations, and join requests.
 """
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -29,44 +29,84 @@ from mcpgateway.schemas import (
 from mcpgateway.services.team_invitation_service import TeamInvitationService
 from mcpgateway.services.team_management_service import TeamManagementService
 
-from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
 
 class TestTeamsRouter:
     """Comprehensive test suite for teams router endpoints."""
-
-    @pytest.fixture(autouse=True)
-    def setup_rbac_mocks(self):
-        """Setup and teardown RBAC mocks for each test."""
-        originals = patch_rbac_decorators()
-        yield
-        restore_rbac_decorators(originals)
 
     @pytest.fixture
     def mock_db(self):
         """Create mock database session."""
         return MagicMock(spec=Session)
 
-    @pytest.fixture
-    def mock_current_user(self):
-        """Create mock current user."""
-        user = EmailUserResponse(
-            email="test@example.com", full_name="Test User", is_admin=False, is_active=True, auth_provider="basic", created_at=datetime.now(timezone.utc), last_login=datetime.now(timezone.utc)
-        )
-        return user
+    @pytest.fixture(autouse=True)
+    def mock_fresh_db_session(self, mock_db):
+        """Mock fresh_db_session in both router and RBAC middleware."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def mock_fresh_session():
+            yield mock_db
+
+        with patch("mcpgateway.routers.teams.fresh_db_session", mock_fresh_session), \
+             patch("mcpgateway.middleware.rbac.fresh_db_session", mock_fresh_session):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def mock_permission_service(self):
+        """Mock PermissionService to always grant permissions."""
+        mock_service = MagicMock()
+        mock_service.check_permission = AsyncMock(return_value=True)
+        mock_service.check_admin_permission = AsyncMock(return_value=True)
+
+        with patch("mcpgateway.middleware.rbac.PermissionService", return_value=mock_service):
+            yield mock_service
 
     @pytest.fixture
-    def mock_admin_user(self):
-        """Create mock admin user."""
-        user = EmailUserResponse(
-            email="admin@example.com", full_name="Admin User", is_admin=True, is_active=True, auth_provider="basic", created_at=datetime.now(timezone.utc), last_login=datetime.now(timezone.utc)
+    def mock_current_user(self, mock_db):
+        """Create mock current user that works with both RBAC decorator (expects dict) and router (expects EmailUserResponse)."""
+        # Create a dict subclass that also has attribute access for compatibility
+        class UserContextDict(dict):
+            def __getattr__(self, name):
+                try:
+                    return self[name]
+                except KeyError:
+                    raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        return UserContextDict(
+            email="test@example.com",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            auth_provider="basic",
+            permissions=["teams.create", "teams.read", "teams.update", "teams.delete"],
+            db=mock_db,
         )
-        return user
+
+    @pytest.fixture
+    def mock_admin_user(self, mock_db):
+        """Create mock admin user that works with both RBAC decorator (expects dict) and router (expects EmailUserResponse)."""
+        class UserContextDict(dict):
+            def __getattr__(self, name):
+                try:
+                    return self[name]
+                except KeyError:
+                    raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        return UserContextDict(
+            email="admin@example.com",
+            full_name="Admin User",
+            is_admin=True,
+            is_active=True,
+            auth_provider="basic",
+            permissions=["*"],
+            db=mock_db,
+        )
 
     @pytest.fixture
     def mock_user_context(self, mock_db):
         """Create mock user context with permissions."""
-        return {"email": "test@example.com", "full_name": "Test User", "is_admin": False, "db": mock_db, "permissions": ["teams.create", "teams.read", "teams.update", "teams.delete"]}
+        return {"email": "test@example.com", "full_name": "Test User", "is_admin": False, "permissions": ["teams.create", "teams.read", "teams.update", "teams.delete"], "db": mock_db}
 
     @pytest.fixture
     def mock_admin_context(self, mock_db):
@@ -75,8 +115,8 @@ class TestTeamsRouter:
             "email": "admin@example.com",
             "full_name": "Admin User",
             "is_admin": True,
-            "db": mock_db,
             "permissions": ["*"],  # Admin has all permissions
+            "db": mock_db,
         }
 
     @pytest.fixture
@@ -405,7 +445,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import get_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_team(team_id, current_user=mock_current_user, db=mock_db)
+                await get_team(team_id, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
@@ -424,7 +464,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import get_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_team(team_id, current_user=mock_current_user, db=mock_db)
+                await get_team(team_id, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Access denied to team" in str(exc_info.value.detail)
@@ -443,7 +483,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import update_team
 
-            result = await update_team(team_id, request, current_user=mock_current_user, db=mock_db)
+            result = await update_team(team_id, request, current_user=mock_current_user)
 
             assert result.id == mock_team.id
             mock_service.update_team.assert_called_once_with(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
@@ -462,7 +502,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team(team_id, request, current_user=mock_current_user, db=mock_db)
+                await update_team(team_id, request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Insufficient permissions" in str(exc_info.value.detail)
@@ -482,7 +522,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team(team_id, request, current_user=mock_current_user, db=mock_db)
+                await update_team(team_id, request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
@@ -500,7 +540,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import delete_team
 
-            result = await delete_team(team_id, current_user=mock_current_user, db=mock_db)
+            result = await delete_team(team_id, current_user=mock_current_user)
 
             assert result.message == "Team deleted successfully"
             mock_service.delete_team.assert_called_once_with(team_id, mock_current_user.email)
@@ -518,7 +558,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import delete_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await delete_team(team_id, current_user=mock_current_user, db=mock_db)
+                await delete_team(team_id, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Only team owners can delete teams" in str(exc_info.value.detail)
@@ -537,7 +577,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import delete_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await delete_team(team_id, current_user=mock_current_user, db=mock_db)
+                await delete_team(team_id, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
@@ -573,7 +613,6 @@ class TestTeamsRouter:
                 limit=None,
                 include_pagination=False,
                 current_user=mock_current_user,
-                db=mock_db
             )
 
             assert isinstance(result, list)
@@ -594,7 +633,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_team_members
 
             with pytest.raises(HTTPException) as exc_info:
-                await list_team_members(team_id, current_user=mock_current_user, db=mock_db)
+                await list_team_members(team_id, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Access denied to team" in str(exc_info.value.detail)
@@ -638,7 +677,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team_member(team_id, user_email, request, current_user=mock_current_user, db=mock_db)
+                await update_team_member(team_id, user_email, request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Insufficient permissions" in str(exc_info.value.detail)
@@ -660,7 +699,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team_member(team_id, user_email, request, current_user=mock_current_user, db=mock_db)
+                await update_team_member(team_id, user_email, request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team member not found" in str(exc_info.value.detail)
@@ -679,7 +718,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import remove_team_member
 
-            result = await remove_team_member(team_id, user_email, current_user=mock_current_user, db=mock_db)
+            result = await remove_team_member(team_id, user_email, current_user=mock_current_user)
 
             assert result.message == "Team member removed successfully"
             mock_service.remove_member_from_team.assert_called_once_with(team_id, user_email)
@@ -698,7 +737,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import remove_team_member
 
-            result = await remove_team_member(team_id, user_email, current_user=mock_current_user, db=mock_db)
+            result = await remove_team_member(team_id, user_email, current_user=mock_current_user)
 
             assert result.message == "Team member removed successfully"
 
@@ -716,7 +755,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import remove_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await remove_team_member(team_id, user_email, current_user=mock_current_user, db=mock_db)
+                await remove_team_member(team_id, user_email, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Insufficient permissions" in str(exc_info.value.detail)
@@ -743,7 +782,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import invite_team_member
 
-            result = await invite_team_member(team_id, request, current_user=mock_current_user, db=mock_db)
+            result = await invite_team_member(team_id, request, current_user=mock_current_user)
 
             assert result.id == mock_invitation.id
             assert result.email == mock_invitation.email
@@ -764,7 +803,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import invite_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await invite_team_member(team_id, request, current_user=mock_current_user, db=mock_db)
+                await invite_team_member(team_id, request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Insufficient permissions" in str(exc_info.value.detail)
@@ -787,7 +826,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_team_invitations
 
-            result = await list_team_invitations(team_id, current_user=mock_current_user, db=mock_db)
+            result = await list_team_invitations(team_id, current_user=mock_current_user)
 
             assert len(result) == 1
             assert result[0].email == mock_invitation.email
@@ -805,7 +844,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import accept_team_invitation
 
-            result = await accept_team_invitation(token, current_user=mock_current_user, db=mock_db)
+            result = await accept_team_invitation(token, current_user=mock_current_user)
 
             assert result.id == mock_team_member.id
             assert result.user_email == mock_team_member.user_email
@@ -824,7 +863,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import accept_team_invitation
 
             with pytest.raises(HTTPException) as exc_info:
-                await accept_team_invitation(token, current_user=mock_current_user, db=mock_db)
+                await accept_team_invitation(token, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Invalid or expired invitation" in str(exc_info.value.detail)
@@ -852,7 +891,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import cancel_team_invitation
 
-            result = await cancel_team_invitation(invitation_id, current_user=mock_current_user, db=mock_db)
+            result = await cancel_team_invitation(invitation_id, current_user=mock_current_user)
 
             assert result.message == "Team invitation cancelled successfully"
 
@@ -895,7 +934,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import request_to_join_team
 
-            result = await request_to_join_team(team_id, join_request, current_user=mock_current_user, db=mock_db)
+            result = await request_to_join_team(team_id, join_request, current_user=mock_current_user)
 
             assert result.id == mock_join_request.id
             assert result.team_name == mock_public_team.name
@@ -915,7 +954,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import request_to_join_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await request_to_join_team(team_id, join_request, current_user=mock_current_user, db=mock_db)
+                await request_to_join_team(team_id, join_request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Can only request to join public teams" in str(exc_info.value.detail)
@@ -935,7 +974,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import request_to_join_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await request_to_join_team(team_id, join_request, current_user=mock_current_user, db=mock_db)
+                await request_to_join_team(team_id, join_request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "User is already a member of this team" in str(exc_info.value.detail)
@@ -954,7 +993,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import leave_team
 
-            result = await leave_team(team_id, current_user=mock_current_user, db=mock_db)
+            result = await leave_team(team_id, current_user=mock_current_user)
 
             assert result.message == "Successfully left the team"
 
@@ -973,7 +1012,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import leave_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await leave_team(personal_team.id, current_user=mock_current_user, db=mock_db)
+                await leave_team(personal_team.id, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Cannot leave personal team" in str(exc_info.value.detail)
@@ -993,7 +1032,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_team_join_requests
 
-            result = await list_team_join_requests(team_id, current_user=mock_current_user, db=mock_db)
+            result = await list_team_join_requests(team_id, current_user=mock_current_user)
 
             assert len(result) == 1
             assert result[0].user_email == mock_join_request.user_email
@@ -1014,7 +1053,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import approve_join_request
 
-            result = await approve_join_request(team_id, request_id, current_user=mock_current_user, db=mock_db)
+            result = await approve_join_request(team_id, request_id, current_user=mock_current_user)
 
             assert result.id == mock_team_member.id
             mock_service.approve_join_request.assert_called_once_with(request_id, approved_by=mock_current_user.email)
@@ -1034,7 +1073,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import reject_join_request
 
-            result = await reject_join_request(team_id, request_id, current_user=mock_current_user, db=mock_db)
+            result = await reject_join_request(team_id, request_id, current_user=mock_current_user)
 
             assert result.message == "Join request rejected successfully"
 
@@ -1053,7 +1092,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import reject_join_request
 
             with pytest.raises(HTTPException) as exc_info:
-                await reject_join_request(team_id, request_id, current_user=mock_current_user, db=mock_db)
+                await reject_join_request(team_id, request_id, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Only team owners can reject join requests" in str(exc_info.value.detail)
@@ -1075,7 +1114,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import get_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_team(team_id, current_user=mock_current_user, db=mock_db)
+                await get_team(team_id, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to get team" in str(exc_info.value.detail)
@@ -1102,7 +1141,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import invite_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await invite_team_member(team_id, request, current_user=mock_current_user, db=mock_db)
+                await invite_team_member(team_id, request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Invalid email format" in str(exc_info.value.detail)
@@ -1124,7 +1163,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team_member(team_id, user_email, request, current_user=mock_current_user, db=mock_db)
+                await update_team_member(team_id, user_email, request, current_user=mock_current_user)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Invalid role" in str(exc_info.value.detail)

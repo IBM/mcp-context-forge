@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import fresh_db_session, get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
 from mcpgateway.services.permission_service import PermissionService
@@ -99,15 +99,12 @@ async def _get_caller_permissions(
 
 @router.post("", response_model=TokenCreateResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("tokens.create")
-async def create_token(
-    request: TokenCreateRequest,
-    current_user=Depends(get_current_user_with_permissions)) -> TokenCreateResponse:
+async def create_token(request: TokenCreateRequest, current_user=Depends(get_current_user_with_permissions)) -> TokenCreateResponse:
     """Create a new API token for the current user.
 
     Args:
         request: Token creation request with name, description, scoping, etc.
         current_user: Authenticated user from JWT
-        db: Database session
 
     Returns:
         TokenCreateResponse: Created token details with raw token
@@ -182,11 +179,7 @@ async def create_token(
 
 @router.get("", response_model=TokenListResponse)
 @require_permission("tokens.read")
-async def list_tokens(
-    include_inactive: bool = False,
-    limit: int = 50,
-    offset: int = 0,
-    current_user=Depends(get_current_user_with_permissions)) -> TokenListResponse:
+async def list_tokens(include_inactive: bool = False, limit: int = 50, offset: int = 0, current_user=Depends(get_current_user_with_permissions)) -> TokenListResponse:
     """List API tokens for the current user.
 
     Args:
@@ -194,7 +187,6 @@ async def list_tokens(
         limit: Maximum number of tokens to return (default 50)
         offset: Number of tokens to skip for pagination
         current_user: Authenticated user from JWT
-        db: Database session
 
     Returns:
         TokenListResponse: List of user's API tokens
@@ -249,15 +241,12 @@ async def list_tokens(
 
 @router.get("/{token_id}", response_model=TokenResponse)
 @require_permission("tokens.read")
-async def get_token(
-    token_id: str,
-    current_user=Depends(get_current_user_with_permissions)) -> TokenResponse:
+async def get_token(token_id: str, current_user=Depends(get_current_user_with_permissions)) -> TokenResponse:
     """Get details of a specific token.
 
     Args:
         token_id: Token ID to retrieve
         current_user: Authenticated user from JWT
-        db: Database session
 
     Returns:
         TokenResponse: Token details
@@ -300,17 +289,13 @@ async def get_token(
 
 @router.put("/{token_id}", response_model=TokenResponse)
 @require_permission("tokens.update")
-async def update_token(
-    token_id: str,
-    request: TokenUpdateRequest,
-    current_user=Depends(get_current_user_with_permissions)) -> TokenResponse:
+async def update_token(token_id: str, request: TokenUpdateRequest, current_user=Depends(get_current_user_with_permissions)) -> TokenResponse:
     """Update an existing token.
 
     Args:
         token_id: Token ID to update
         request: Token update request
         current_user: Authenticated user from JWT
-        db: Database session
 
     Returns:
         TokenResponse: Updated token details
@@ -381,17 +366,13 @@ async def update_token(
 
 @router.delete("/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
 @require_permission("tokens.revoke")
-async def revoke_token(
-    token_id: str,
-    request: Optional[TokenRevokeRequest] = None,
-    current_user=Depends(get_current_user_with_permissions)) -> None:
+async def revoke_token(token_id: str, request: Optional[TokenRevokeRequest] = None, current_user=Depends(get_current_user_with_permissions)) -> None:
     """Revoke (delete) a token.
 
     Args:
         token_id: Token ID to revoke
         request: Optional revocation request with reason
         current_user: Authenticated user from JWT
-        db: Database session
 
     Raises:
         HTTPException: If token not found
@@ -416,17 +397,13 @@ async def revoke_token(
 
 @router.get("/{token_id}/usage", response_model=TokenUsageStatsResponse)
 @require_permission("tokens.read")
-async def get_token_usage_stats(
-    token_id: str,
-    days: int = 30,
-    current_user=Depends(get_current_user_with_permissions)) -> TokenUsageStatsResponse:
+async def get_token_usage_stats(token_id: str, days: int = 30, current_user=Depends(get_current_user_with_permissions)) -> TokenUsageStatsResponse:
     """Get usage statistics for a specific token.
 
     Args:
         token_id: Token ID to get stats for
         days: Number of days to analyze (default 30)
         current_user: Authenticated user from JWT
-        db: Database session
 
     Returns:
         TokenUsageStatsResponse: Token usage statistics
@@ -452,11 +429,8 @@ async def get_token_usage_stats(
 # Admin endpoints for token oversight
 @router.get("/admin/all", response_model=TokenListResponse, tags=["admin"])
 async def list_all_tokens(
-    user_email: Optional[str] = None,
-    include_inactive: bool = False,
-    limit: int = 100,
-    offset: int = 0,
-    current_user=Depends(get_current_user_with_permissions)) -> TokenListResponse:
+    user_email: Optional[str] = None, include_inactive: bool = False, limit: int = 100, offset: int = 0, current_user=Depends(get_current_user_with_permissions)
+) -> TokenListResponse:
     """Admin endpoint to list all tokens or tokens for a specific user.
 
     Args:
@@ -465,7 +439,6 @@ async def list_all_tokens(
         limit: Maximum number of tokens to return
         offset: Number of tokens to skip
         current_user: Authenticated admin user
-        db: Database session
 
     Returns:
         TokenListResponse: List of tokens
@@ -527,17 +500,13 @@ async def list_all_tokens(
 
 
 @router.delete("/admin/{token_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["admin"])
-async def admin_revoke_token(
-    token_id: str,
-    request: Optional[TokenRevokeRequest] = None,
-    current_user=Depends(get_current_user_with_permissions)) -> None:
+async def admin_revoke_token(token_id: str, request: Optional[TokenRevokeRequest] = None, current_user=Depends(get_current_user_with_permissions)) -> None:
     """Admin endpoint to revoke any token.
 
     Args:
         token_id: Token ID to revoke
         request: Optional revocation request with reason
         current_user: Authenticated admin user
-        db: Database session
 
     Raises:
         HTTPException: If user is not admin or token not found
@@ -566,17 +535,13 @@ async def admin_revoke_token(
 # Team-based token endpoints
 @router.post("/teams/{team_id}", response_model=TokenCreateResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("tokens.create")
-async def create_team_token(
-    team_id: str,
-    request: TokenCreateRequest,
-    current_user=Depends(get_current_user_with_permissions)) -> TokenCreateResponse:
+async def create_team_token(team_id: str, request: TokenCreateRequest, current_user=Depends(get_current_user_with_permissions)) -> TokenCreateResponse:
     """Create a new API token for a team (only team owners can do this).
 
     Args:
         team_id: Team ID to create token for
         request: Token creation request with name, description, scoping, etc.
         current_user: Authenticated user (must be team owner)
-        db: Database session
 
     Returns:
         TokenCreateResponse: Created token details with raw token
@@ -646,12 +611,7 @@ async def create_team_token(
 
 @router.get("/teams/{team_id}", response_model=TokenListResponse)
 @require_permission("tokens.read")
-async def list_team_tokens(
-    team_id: str,
-    include_inactive: bool = False,
-    limit: int = 50,
-    offset: int = 0,
-    current_user=Depends(get_current_user_with_permissions)) -> TokenListResponse:
+async def list_team_tokens(team_id: str, include_inactive: bool = False, limit: int = 50, offset: int = 0, current_user=Depends(get_current_user_with_permissions)) -> TokenListResponse:
     """List API tokens for a team (only team owners can do this).
 
     Args:
@@ -660,7 +620,6 @@ async def list_team_tokens(
         limit: Maximum number of tokens to return (default 50)
         offset: Number of tokens to skip for pagination
         current_user: Authenticated user (must be team owner)
-        db: Database session
 
     Returns:
         TokenListResponse: List of teams API tokens

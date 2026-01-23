@@ -164,7 +164,7 @@ class TestMultiAuthHeaders:
         mock_request.form = AsyncMock(return_value=form_data)
 
         with patch("mcpgateway.admin.gateway_service.register_gateway", AsyncMock()):
-            response = await admin_add_gateway(mock_request, mock_db, mock_user)
+            response = await admin_add_gateway(mock_request, mock_user)
             # Should handle invalid JSON gracefully
             assert response.status_code in [200, 422]
 

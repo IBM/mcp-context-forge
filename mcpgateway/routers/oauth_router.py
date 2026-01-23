@@ -21,11 +21,10 @@ from urllib.parse import urlparse, urlunparse
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, Gateway, get_db
+from mcpgateway.db import fresh_db_session, Gateway
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
@@ -70,9 +69,7 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(
-    gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions)
-) -> RedirectResponse:  # noqa: ARG001
+async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions)) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -88,7 +85,6 @@ async def initiate_oauth_flow(
         gateway_id: The unique identifier of the gateway to authorize.
         request: The FastAPI request object.
         current_user: The authenticated user initiating the OAuth flow.
-        db: The database session dependency.
 
     Returns:
         A redirect response to the OAuth provider's authorization URL.
@@ -232,7 +228,8 @@ async def oauth_callback(
     code: str = Query(..., description="Authorization code from OAuth provider"),
     state: str = Query(..., description="State parameter for CSRF protection"),
     # Remove the gateway_id parameter requirement
-    request: Request = None) -> HTMLResponse:
+    request: Request = None,
+) -> HTMLResponse:
     """Handle the OAuth callback and complete the authorization process.
 
     This endpoint is called by the OAuth provider after the user authorizes access.
@@ -243,7 +240,6 @@ async def oauth_callback(
         code (str): The authorization code returned by the OAuth provider.
         state (str): The state parameter for CSRF protection, which encodes the gateway ID.
         request (Request): The incoming HTTP request object.
-        db (Session): The database session dependency.
 
     Returns:
         HTMLResponse: An HTML response indicating the result of the OAuth authorization process.
@@ -525,7 +521,6 @@ async def get_oauth_status(gateway_id: str) -> dict:
 
     Args:
         gateway_id: ID of the gateway
-        db: Database session
 
     Returns:
         OAuth status information
@@ -583,7 +578,6 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
     Args:
         gateway_id: ID of the gateway to fetch tools for
         current_user: The authenticated user fetching tools
-        db: Database session
 
     Returns:
         Dict containing success status and message with number of tools fetched
@@ -621,7 +615,6 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
 
     Args:
         current_user: The authenticated user (admin access required)
-        db: Database session
 
     Returns:
         Dict containing list of registered OAuth clients with metadata
@@ -673,7 +666,6 @@ async def get_registered_client_for_gateway(
     Args:
         gateway_id: The gateway ID to lookup
         current_user: The authenticated user
-        db: Database session
 
     Returns:
         Dict containing registered client information
@@ -725,7 +717,6 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
     Args:
         client_id: The registered client ID to delete
         current_user: The authenticated user (admin access required)
-        db: Database session
 
     Returns:
         Dict containing success message
