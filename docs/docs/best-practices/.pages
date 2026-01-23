@@ -1,3 +1,5 @@
 nav:
+  - "📐 MCP Architecture Patterns": mcp-architecture-patterns.md
   - "⭐ Best Practices Guide": mcp-best-practices.md
+  - "🔒 Input Validation": input-validation.md
   - "🛠️ Write an MCP Server in Python": developing-your-mcp-server-python.md

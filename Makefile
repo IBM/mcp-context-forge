@@ -832,7 +832,7 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 
 monitoring-down:                           ## Stop monitoring stack
 	@echo "📊 Stopping monitoring stack..."
-	$(COMPOSE_CMD_MONITOR) --profile monitoring down
+	$(COMPOSE_CMD_MONITOR) --profile monitoring down --remove-orphans
 	@echo "✅ Monitoring stack stopped."
 
 monitoring-status:                         ## Show status of monitoring services
@@ -846,7 +846,7 @@ monitoring-logs:                           ## Show monitoring stack logs
 
 monitoring-clean:                          ## Stop and remove all monitoring data (volumes)
 	@echo "📊 Stopping and cleaning monitoring stack..."
-	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v
+	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v --remove-orphans
 	@echo "✅ Monitoring stack stopped and volumes removed."
 
 # =============================================================================
@@ -874,7 +874,7 @@ testing-up:                                ## Start testing stack (fast_test_ser
 
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing down
+	$(COMPOSE_CMD_MONITOR) --profile testing down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 testing-status:                            ## Show status of testing services
@@ -1016,12 +1016,12 @@ benchmark-up:                              ## Start benchmark stack (MCP servers
 
 benchmark-down:                            ## Stop benchmark stack
 	@echo "🎯 Stopping benchmark stack..."
-	$(COMPOSE_CMD_MONITOR) --profile benchmark down
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down --remove-orphans
 	@echo "✅ Benchmark stack stopped."
 
 benchmark-clean:                           ## Stop and remove all benchmark data (volumes)
 	@echo "🎯 Stopping and cleaning benchmark stack..."
-	$(COMPOSE_CMD_MONITOR) --profile benchmark down -v
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down -v --remove-orphans
 	@echo "✅ Benchmark stack stopped and volumes removed."
 
 benchmark-status:                          ## Show status of benchmark services
@@ -1090,7 +1090,7 @@ performance-up:                            ## Start performance stack (7 gateway
 
 performance-down:                          ## Stop performance stack
 	@echo "🚀 Stopping performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down
+	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down --remove-orphans
 	@echo "✅ Performance stack stopped."
 
 performance-logs:                          ## Show performance stack logs
@@ -3756,7 +3756,7 @@ compose-stop:
 	$(COMPOSE) stop
 
 compose-down:
-	$(COMPOSE) down
+	$(COMPOSE) down --remove-orphans
 
 compose-rm:
 	$(COMPOSE) rm -f
