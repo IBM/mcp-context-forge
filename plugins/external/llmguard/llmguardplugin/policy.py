@@ -43,25 +43,76 @@ class GuardrailPolicy:
         try:
             # Parse the policy expression into an abstract syntax tree
             tree = ast.parse(policy, mode="eval")
-            # Check if the tree only contains allowed operations
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)):
-                    continue
-                elif isinstance(node, (ast.Num, ast.UnaryOp)):
-                    continue
-                elif isinstance(node, (ast.Expression)):
-                    continue
-                elif isinstance(node, (ast.BoolOp, ast.Or, ast.And)):
-                    continue
-                elif isinstance(node, (ast.Name, ast.Eq, ast.Compare, ast.Load)):
-                    continue
-                else:
-                    raise ValueError("Invalid operation")
-
-            # Evaluate the expression
-            return eval(compile(tree, "<string>", "eval"), {}, policy_variables)
+            return self._safe_eval(tree.body, policy_variables)
         except (ValueError, SyntaxError, Exception):
             return "Invalid expression"
+
+    def _safe_eval(self, node, variables):
+        """Recursively evaluates an AST node safely."""
+        if isinstance(node, ast.Expression):
+            return self._safe_eval(node.body, variables)
+        elif isinstance(node, ast.Constant):
+            return node.value
+        elif isinstance(node, ast.Name):
+            if node.id in variables:
+                return variables[node.id]
+            raise ValueError(f"Unknown variable: {node.id}")
+        elif isinstance(node, ast.BinOp):
+            left = self._safe_eval(node.left, variables)
+            right = self._safe_eval(node.right, variables)
+            operators = {
+                ast.Add: lambda a, b: a + b,
+                ast.Sub: lambda a, b: a - b,
+                ast.Mult: lambda a, b: a * b,
+                ast.Div: lambda a, b: a / b,
+                ast.FloorDiv: lambda a, b: a // b,
+                ast.Mod: lambda a, b: a % b,
+                ast.Pow: lambda a, b: a**b,
+            }
+            if type(node.op) in operators:
+                return operators[type(node.op)](left, right)
+        elif isinstance(node, ast.UnaryOp):
+            operand = self._safe_eval(node.operand, variables)
+            operators = {
+                ast.UAdd: lambda a: +a,
+                ast.USub: lambda a: -a,
+                ast.Not: lambda a: not a,
+            }
+            if type(node.op) in operators:
+                return operators[type(node.op)](operand)
+        elif isinstance(node, ast.BoolOp):
+            # Use lazy evaluation to preserve short-circuit semantics
+            if isinstance(node.op, ast.And):
+                for v in node.values:
+                    if not self._safe_eval(v, variables):
+                        return False
+                return True
+            elif isinstance(node.op, ast.Or):
+                for v in node.values:
+                    if self._safe_eval(v, variables):
+                        return True
+                return False
+        elif isinstance(node, ast.Compare):
+            left = self._safe_eval(node.left, variables)
+            for op, right_node in zip(node.ops, node.comparators):
+                right = self._safe_eval(right_node, variables)
+                operators = {
+                    ast.Eq: lambda a, b: a == b,
+                    ast.NotEq: lambda a, b: a != b,
+                    ast.Lt: lambda a, b: a < b,
+                    ast.LtE: lambda a, b: a <= b,
+                    ast.Gt: lambda a, b: a > b,
+                    ast.GtE: lambda a, b: a >= b,
+                }
+                if type(op) in operators:
+                    if not operators[type(op)](left, right):
+                        return False
+                    left = right
+                else:
+                    raise ValueError("Unsupported comparison")
+            return True
+
+        raise ValueError("Unsupported operation")
 
 
 def word_wise_levenshtein_distance(sentence1, sentence2):
