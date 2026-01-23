@@ -47,6 +47,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import get_for_update
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceMetricsHourly
 from mcpgateway.db import ResourceSubscription as DbSubscription
@@ -56,6 +57,7 @@ from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, Re
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, TransportType
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -821,6 +823,7 @@ class ResourceService:
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Union[tuple[List[ResourceRead], Optional[str]], Dict[str, Any]]:
         """
         Retrieve a list of registered resources from the database with pagination support.
@@ -843,6 +846,8 @@ class ResourceService:
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
             team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
             visibility (Optional[str]): Filter by visibility (private, team, public).
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API token access
+                where the token scope should be respected instead of the user's full team memberships.
 
         Returns:
             If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
@@ -892,12 +897,20 @@ class ResourceService:
 
         # Apply team-based access control if user_email is provided
         if user_email:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                # First-Party
+                from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
 
             if team_id:
                 # User requesting specific team - verify access
@@ -906,15 +919,19 @@ class ResourceService:
 
                 access_conditions = [
                     and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
-                    and_(DbResource.team_id == team_id, DbResource.owner_email == user_email),
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
                 query = query.where(or_(*access_conditions))
             else:
-                # General access: user's resources + public resources + team resources
+                # General access: public resources + team resources (+ owner resources if not public-only token)
                 access_conditions = [
-                    DbResource.owner_email == user_email,
                     DbResource.visibility == "public",
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(DbResource.owner_email == user_email)
                 if team_ids:
                     access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
 
@@ -1102,7 +1119,14 @@ class ResourceService:
             result.append(self.convert_resource_to_read(t, include_metrics=False))
         return result
 
-    async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
+    async def list_server_resources(
+        self,
+        db: Session,
+        server_id: str,
+        include_inactive: bool = False,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
 
@@ -1116,6 +1140,9 @@ class ResourceService:
             server_id (str): Server ID
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
+            user_email (Optional[str]): User email for visibility filtering. If None, no filtering applied.
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API
+                token access where the token scope should be respected.
 
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
@@ -1146,6 +1173,34 @@ class ResourceService:
         )
         if not include_inactive:
             query = query.where(DbResource.enabled)
+
+        # Add visibility filtering if user context provided
+        if user_email:
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                # First-Party
+                from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
+            access_conditions = [
+                DbResource.visibility == "public",
+            ]
+            # Only include owner access for non-public-only tokens
+            if not is_public_only_token:
+                access_conditions.append(DbResource.owner_email == user_email)
+            if team_ids:
+                access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+            query = query.where(or_(*access_conditions))
+
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
 
@@ -1223,7 +1278,7 @@ class ResourceService:
         ctx.load_verify_locations(cadata=ca_certificate)
         return ctx
 
-    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None) -> Any:
+    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None, user_identity: Optional[Union[str, Dict[str, Any]]] = None) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
 
@@ -1248,6 +1303,11 @@ class ResourceService:
                 Direct resource URI configured for the resource.
             resource_template_uri (Optional[str]):
                 URI from the template. Overrides `resource_uri` when provided.
+            user_identity (Optional[Union[str, Dict[str, Any]]]):
+                Identity of the user making the request, used for session pool isolation.
+                Can be a string (email) or a dict with an 'email' key.
+                Defaults to "anonymous" for pool isolation if not provided.
+                OAuth token lookup always uses platform_admin_email (service account).
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` if the
@@ -1328,7 +1388,18 @@ class ResourceService:
         gateway_id = None
         resource_info = None
         resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
-        user_email = settings.platform_admin_email
+
+        # Normalize user_identity to string for session pool isolation
+        # Use authenticated user for pool isolation, but keep platform_admin for OAuth token lookup
+        if isinstance(user_identity, dict):
+            pool_user_identity = user_identity.get("email") or "anonymous"
+        elif isinstance(user_identity, str):
+            pool_user_identity = user_identity
+        else:
+            pool_user_identity = "anonymous"
+
+        # OAuth token lookup uses platform admin (service account) - not changed
+        oauth_user_email = settings.platform_admin_email
 
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
@@ -1439,7 +1510,7 @@ class ResourceService:
                                     #         span.set_attribute("error.message", "User email required for OAuth token")
                                     #     await self._handle_gateway_failure(gateway)
 
-                                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+                                    access_token: str = await token_storage.get_user_token(gateway.id, oauth_user_email)
 
                                     if access_token:
                                         headers["Authorization"] = f"Bearer {access_token}"
@@ -1528,15 +1599,38 @@ class ResourceService:
                             if authentication is None:
                                 authentication = {}
                             try:
-                                async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
-                                    read_stream,
-                                    write_stream,
-                                    _get_session_id,
-                                ):
-                                    async with ClientSession(read_stream, write_stream) as session:
-                                        _ = await session.initialize()
-                                        resource_response = await session.read_resource(uri=uri)
+                                # Use session pool if enabled for 10-20x latency improvement
+                                use_pool = False
+                                pool = None
+                                if settings.mcp_session_pool_enabled:
+                                    try:
+                                        pool = get_mcp_session_pool()
+                                        use_pool = True
+                                    except RuntimeError:
+                                        # Pool not initialized (e.g., in tests), fall back to per-call sessions
+                                        pass
+
+                                if use_pool and pool is not None:
+                                    async with pool.session(
+                                        url=server_url,
+                                        headers=authentication,
+                                        transport_type=TransportType.SSE,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                        user_identity=pool_user_identity,
+                                    ) as pooled:
+                                        resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
+                                else:
+                                    # Fallback to per-call sessions when pool disabled or not initialized
+                                    async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                        read_stream,
+                                        write_stream,
+                                        _get_session_id,
+                                    ):
+                                        async with ClientSession(read_stream, write_stream) as session:
+                                            _ = await session.initialize()
+                                            resource_response = await session.read_resource(uri=uri)
+                                            return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 logger.debug(f"Exception while connecting to sse gateway: {e}")
                                 return None
@@ -1578,15 +1672,38 @@ class ResourceService:
                             if authentication is None:
                                 authentication = {}
                             try:
-                                async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
-                                    read_stream,
-                                    write_stream,
-                                    _get_session_id,
-                                ):
-                                    async with ClientSession(read_stream, write_stream) as session:
-                                        _ = await session.initialize()
-                                        resource_response = await session.read_resource(uri=uri)
+                                # Use session pool if enabled for 10-20x latency improvement
+                                use_pool = False
+                                pool = None
+                                if settings.mcp_session_pool_enabled:
+                                    try:
+                                        pool = get_mcp_session_pool()
+                                        use_pool = True
+                                    except RuntimeError:
+                                        # Pool not initialized (e.g., in tests), fall back to per-call sessions
+                                        pass
+
+                                if use_pool and pool is not None:
+                                    async with pool.session(
+                                        url=server_url,
+                                        headers=authentication,
+                                        transport_type=TransportType.STREAMABLE_HTTP,
+                                        httpx_client_factory=_get_httpx_client_factory,
+                                        user_identity=pool_user_identity,
+                                    ) as pooled:
+                                        resource_response = await pooled.session.read_resource(uri=uri)
                                         return getattr(getattr(resource_response, "contents")[0], "text")
+                                else:
+                                    # Fallback to per-call sessions when pool disabled or not initialized
+                                    async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                        read_stream,
+                                        write_stream,
+                                        _get_session_id,
+                                    ):
+                                        async with ClientSession(read_stream, write_stream) as session:
+                                            _ = await session.initialize()
+                                            resource_response = await session.read_resource(uri=uri)
+                                            return getattr(getattr(resource_response, "contents")[0], "text")
                             except Exception as e:
                                 logger.debug(f"Exception while connecting to streamablehttp gateway: {e}")
                                 return None
@@ -1913,7 +2030,7 @@ class ResourceService:
                 # If content is already a Pydantic content model, return as-is
                 if isinstance(content, (ResourceContent, TextContent)):
                     resource_response = await self.invoke_resource(
-                        db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None
+                        db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None, user_identity=user
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
@@ -1922,12 +2039,12 @@ class ResourceService:
                 if hasattr(content, "text") or hasattr(content, "blob"):
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
-                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "blob") or None
+                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "blob") or None, user_identity=user
                         )
                         setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
-                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None
+                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None, user_identity=user
                         )
                         setattr(content, "text", resource_response)
                     return content
@@ -2011,7 +2128,7 @@ class ResourceService:
             'resource_read'
         """
         try:
-            resource = db.get(DbResource, resource_id)
+            resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
@@ -2132,17 +2249,14 @@ class ResourceService:
             >>> asyncio.run(service.subscribe_resource(db, subscription))
         """
         try:
-            # Verify resource exists
-            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(DbResource.enabled)).scalar_one_or_none()
+            # Verify resource exists (single query to avoid TOCTOU between active/inactive checks)
+            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri)).scalar_one_or_none()
 
             if not resource:
-                # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(not_(DbResource.enabled))).scalar_one_or_none()
-
-                if inactive_resource:
-                    raise ResourceNotFoundError(f"Resource '{subscription.uri}' exists but is inactive")
-
                 raise ResourceNotFoundError(f"Resource not found: {subscription.uri}")
+
+            if not resource.enabled:
+                raise ResourceNotFoundError(f"Resource '{subscription.uri}' exists but is inactive")
 
             # Create subscription
             db_sub = DbSubscription(resource_id=resource.id, subscriber_id=subscription.subscriber_id)
@@ -2245,7 +2359,7 @@ class ResourceService:
         """
         try:
             logger.info(f"Updating resource: {resource_id}")
-            resource = db.get(DbResource, resource_id)
+            resource = get_for_update(db, DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
@@ -2255,12 +2369,14 @@ class ResourceService:
                 team_id = resource_update.team_id or resource.team_id
                 if visibility.lower() == "public":
                     # Check for existing public resources with the same uri
-                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                    existing_resource = get_for_update(db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "public", DbResource.id != resource_id))
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team resource with the same uri
-                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                    existing_resource = get_for_update(
+                        db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.id != resource_id)
+                    )
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 

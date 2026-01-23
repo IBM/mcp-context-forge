@@ -8,6 +8,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ## [1.0.0-BETA-2] - TBD
 
+### Added
+
+#### **🔐 ServiceAccount Support** ([#1718](https://github.com/IBM/mcp-context-forge/pull/1718))
+* Optional ServiceAccount configuration for cloud IAM integration (AWS IRSA, GCP Workload Identity)
+* `serviceAccount.create` - Create a dedicated ServiceAccount for all pods (default: `false`)
+* `serviceAccount.name` - Custom ServiceAccount name (uses release fullname if empty)
+* `serviceAccount.annotations` - IAM role annotations for cloud provider integration
+* `serviceAccount.automountServiceAccountToken` - Control token mounting (default: `true`)
+* Applied to all Deployments and Jobs in the chart
+* Disabled by default to maintain backward compatibility
+
+#### **🔧 Extra Environment Variables Support** ([#2047](https://github.com/IBM/mcp-context-forge/issues/2047))
+* `extraEnv` - Inject additional environment variables directly into the gateway container
+* `extraEnvFrom` - Mount environment variables from existing Secrets or ConfigMaps
+* Enables injection of sensitive credentials (SSO secrets, external DB URLs) without modifying templates
+* Placed after derived URLs so user values can override `DATABASE_URL`/`REDIS_URL` if needed
+* Schema validation catches common mistakes (missing `name`, invalid `secretKeyRef` shape)
+
+### Fixed
+
+* **PgBouncer ServiceAccount** ([#1718](https://github.com/IBM/mcp-context-forge/pull/1718)) - Added missing `serviceAccountName` to pgbouncer deployment for consistency with other components
+
 ### Changed
 
 #### **⚡ Metrics Performance Defaults** ([#1799](https://github.com/IBM/mcp-context-forge/issues/1799))

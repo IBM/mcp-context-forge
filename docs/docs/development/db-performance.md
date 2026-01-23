@@ -57,7 +57,7 @@ For quick debugging, log all queries to stdout:
 make dev-echo
 
 # Or manually
-SQLALCHEMY_ECHO=true make dev
+LOG_LEVEL=INFO SQLALCHEMY_ECHO=true make dev
 ```
 
 ### Run Performance Tests
@@ -545,8 +545,8 @@ def setup_query_tracking(engine):
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `OBSERVABILITY_ENABLED` | `false` | Enable query span tracking |
-| `LOG_LEVEL` | `ERROR` | Set to `DEBUG` for verbose query logs |
-| `SQLALCHEMY_ECHO` | `false` | Print all SQL to stdout (development) |
+| `LOG_LEVEL` | `ERROR` | Set to `INFO` or `DEBUG` to see SQLAlchemy echo logs |
+| `SQLALCHEMY_ECHO` | `false` | Print all SQL to stdout (requires `LOG_LEVEL=INFO` or `DEBUG`) |
 | `DB_POOL_CLASS` | `auto` | Pool class: `auto`, `null` (PgBouncer), `queue` |
 | `DB_POOL_SIZE` | `200` | Connection pool size (QueuePool only) |
 | `DB_POOL_PRE_PING` | `auto` | Validate connections: `auto`, `true`, `false` |
@@ -562,7 +562,7 @@ def setup_query_tracking(engine):
 make dev-echo
 
 # Or manually:
-SQLALCHEMY_ECHO=true make dev
+LOG_LEVEL=INFO SQLALCHEMY_ECHO=true make dev
 ```
 
 ### 2. Run Database Performance Tests

@@ -9,12 +9,17 @@ This module loads configurations for plugins and applies hooks on pre/post reque
 """
 
 # Standard
+import asyncio
+import logging
+import random
+import re
+
 from enum import Enum
 from typing import Any, TypeAlias
 from urllib.parse import urlparse
 
 # Third-Party
-import requests
+import httpx
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -41,12 +46,10 @@ from mcpgateway.plugins.framework import (
     ToolHookType,
 )
 from mcpgateway.plugins.framework.models import AppliedTo
-from mcpgateway.services.logging_service import LoggingService
 from opapluginfilter.schema import BaseOPAInputKeys, OPAConfig, OPAInput
 
 # Initialize logging service first
-logging_service = LoggingService()
-logger = logging_service.get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class OPAPluginCodes(str, Enum):
@@ -93,8 +96,36 @@ class OPAPluginFilter(Plugin):
         """
         super().__init__(config)
         self.opa_config = OPAConfig.model_validate(self._config.config)
-        self.opa_context_key = "opa_policy_context"
-        logger.info(f"OPAPluginFilter initialised with configuraiton {self.opa_config}")
+        self._opa_context_key = "opa_policy_context"
+        self._opa_client_timeout_seconds = 30.0
+        self._opa_client_ka_exp = 5.0
+        self._opa_client_max_conn = self.opa_config.opa_client_max_connections
+        self._opa_client_max_ka = self.opa_config.opa_client_max_keepalive
+        self._opa_client_max_retries = self.opa_config.opa_client_retries
+        self._timeout_pattern = re.compile(r"(\d+)s")
+
+        if self.opa_config.opa_client_timeout:
+            match = self._timeout_pattern.match(self.opa_config.opa_client_timeout.strip())
+            if match:
+                self._opa_client_timeout_seconds = float(match.group(1))
+        if self.opa_config.opa_client_keepalive_expiry:
+            match = self._timeout_pattern.match(self.opa_config.opa_client_keepalive_expiry.strip())
+            if match:
+                self._opa_client_ka_exp = float(match.group(1))
+        self.__initialize_opa_client()
+        logger.info(f"OPAPluginFilter initialised with configuration {self.opa_config}")
+
+    def __initialize_opa_client(self) -> None:
+        """Initialize opa client to connect to OPA server for policy evaluations"""
+        self._opa_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self._opa_client_timeout_seconds),
+            limits=httpx.Limits(max_keepalive_connections=self._opa_client_max_ka, max_connections=self._opa_client_max_conn, keepalive_expiry=self._opa_client_ka_exp),
+            http2=True,
+        )
+
+    async def shutdown(self) -> None:
+        """Shutdown and cleanup OPA HTTP client when plugin shuts down."""
+        await self._opa_http_client.aclose()
 
     def _get_nested_value(self, data, key_string, default=None):
         """
@@ -118,7 +149,34 @@ class OPAPluginFilter(Plugin):
                 return default  # Key not found at this level
         return current_data
 
-    def _evaluate_opa_policy(self, url: str, input: OPAInput, policy_input_data_map: dict) -> tuple[bool, Any]:
+    async def _post_with_retry(self, url: str, payload: dict) -> httpx.Response:
+        """Function to asynchronously communicate with OPA Server for policy evaluation and enforcement
+
+        Args:
+            url: The url to call opa server
+            payload: The actual payload dictionary to sent to the server
+
+        Returns:
+            response: Returns a response that's recieved from the OPA server. Raises error in cases the communication is not successful.
+
+        """
+        for attempt in range(self._opa_client_max_retries):
+            try:
+                response = await self._opa_http_client.post(url, json=payload, timeout=self._opa_client_timeout_seconds)
+                response.raise_for_status()
+                logger.info(f"OPA POST succeeded on attempt {attempt + 1}")
+                return response
+            except (httpx.TimeoutException, httpx.RequestError, httpx.ConnectError):
+                logger.warning(f"Retry attempt to connect to OPA server {attempt + 1}")
+                if attempt == self._opa_client_max_retries - 1:
+                    raise
+                delay = min(2**attempt, 10) + random.uniform(0, 1)
+                await asyncio.sleep(delay)
+            except httpx.HTTPStatusError as e:
+                logger.error(f"OPA POST HTTP error (attempt {attempt + 1}, status {e.response.status_code}): {e.response.text[:200]}")
+                raise
+
+    async def _evaluate_opa_policy(self, url: str, input: OPAInput, policy_input_data_map: dict) -> tuple[bool, Any]:
         """Function to evaluate OPA policy. Makes a request to opa server with url and input.
 
         Args:
@@ -148,30 +206,29 @@ class OPAPluginFilter(Plugin):
 
         payload = {"input": {m: self._get_nested_value(input.model_dump()["input"], _key(k, m)) for k, m in policy_input_data_map.items()}} if policy_input_data_map else input.model_dump()
         logger.info(f"OPA url {url}, OPA payload {payload}")
+        rsp = None
         try:
-            rsp = requests.post(url, json=payload)
+            rsp = await self._post_with_retry(url=url, payload=payload)
             logger.info(f"OPA connection response '{rsp}'")
+            if rsp.status_code == 200:
+                json_response = rsp.json()
+                decision = json_response.get("result", None)
+                logger.info(f"OPA server response '{json_response}'")
+                if isinstance(decision, bool):
+                    logger.debug(f"OPA decision {decision}")
+                    return decision, json_response
+                elif isinstance(decision, dict) and "allow" in decision:
+                    allow = decision["allow"]
+                    logger.debug(f"OPA decision {allow}")
+                    return allow, json_response
+                else:
+                    logger.error(f"{OPAPluginErrorCodes.OPA_SERVER_NONE_RESPONSE.value} : {json_response}")
+                    raise PluginError(PluginErrorModel(message=OPAPluginErrorCodes.OPA_SERVER_NONE_RESPONSE.value, plugin_name="OPAPluginFilter", details={"reason": json_response}))
+        except PluginError:
+            raise  # Re-raise PluginError as-is
         except Exception as e:
             logger.error(f"{OPAPluginErrorCodes.OPA_SERVER_ERROR.value}")
             raise PluginError(PluginErrorModel(message=OPAPluginErrorCodes.OPA_SERVER_ERROR.value, plugin_name="OPAPluginFilter", details={"reason": str(e)}))
-        if rsp.status_code == 200:
-            json_response = rsp.json()
-            decision = json_response.get("result", None)
-            logger.info(f"OPA server response '{json_response}'")
-            if isinstance(decision, bool):
-                logger.debug(f"OPA decision {decision}")
-                return decision, json_response
-            elif isinstance(decision, dict) and "allow" in decision:
-                allow = decision["allow"]
-                logger.debug(f"OPA decision {allow}")
-                return allow, json_response
-            else:
-                logger.error(f"{OPAPluginErrorCodes.OPA_SERVER_NONE_RESPONSE.value} : {json_response}")
-                raise PluginError(PluginErrorModel(message=OPAPluginErrorCodes.OPA_SERVER_NONE_RESPONSE.value, plugin_name="OPAPluginFilter", details={"reason": json_response}))
-
-        else:
-            logger.error(f"{OPAPluginErrorCodes.OPA_SERVER_ERROR.value}: {rsp}")
-            raise PluginError(PluginErrorModel(message=OPAPluginErrorCodes.OPA_SERVER_ERROR.value, plugin_name="OPAPluginFilter", details={"reason": rsp}))
 
     def _preprocess_opa(self, policy_apply_config: AppliedTo = None, payload: HookPayload = None, context: PluginContext = None, hook_type: str = None) -> dict:
         """Function to preprocess input for OPA server based on the type of hook it's invoked on.
@@ -229,8 +286,8 @@ class OPAPluginFilter(Plugin):
                     policy_apply = True
                     if hook.context:
                         input_context = [ctx.rsplit(".", 1)[-1] for ctx in hook.context]
-                    if self.opa_context_key in context.global_context.state:
-                        policy_context = {k: context.global_context.state[self.opa_context_key][k] for k in input_context}
+                    if self._opa_context_key in context.global_context.state:
+                        policy_context = {k: context.global_context.state[self._opa_context_key][k] for k in input_context}
                     if hook.extensions:
                         policy = hook.extensions.get("policy", None)
                         if not policy:
@@ -320,7 +377,7 @@ class OPAPluginFilter(Plugin):
             opa_pre_prompt_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
             if opa_pre_prompt_input["policy_apply"]:
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=payload.model_dump(), context=opa_pre_prompt_input["policy_context"], request_ip="none", headers={}, mode="input")
-                decision, decision_context = self._evaluate_opa_policy(
+                decision, decision_context = await self._evaluate_opa_policy(
                     url=opa_pre_prompt_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_prompt_input["policy_input_data_map"]
                 )
                 if not decision:
@@ -365,7 +422,7 @@ class OPAPluginFilter(Plugin):
                                 self._extract_payload_key(message.content, key, result)
 
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_prompt_input["policy_context"], request_ip="none", headers={}, mode="output")
-                decision, decision_context = self._evaluate_opa_policy(
+                decision, decision_context = await self._evaluate_opa_policy(
                     url=opa_post_prompt_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_prompt_input["policy_input_data_map"]
                 )
                 if not decision:
@@ -403,7 +460,7 @@ class OPAPluginFilter(Plugin):
             opa_pre_tool_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
             if opa_pre_tool_input["policy_apply"]:
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=payload.model_dump(), context=opa_pre_tool_input["policy_context"], request_ip="none", headers={}, mode="input")
-                decision, decision_context = self._evaluate_opa_policy(
+                decision, decision_context = await self._evaluate_opa_policy(
                     url=opa_pre_tool_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_tool_input["policy_input_data_map"]
                 )
                 if not decision:
@@ -447,7 +504,7 @@ class OPAPluginFilter(Plugin):
                         self._extract_payload_key(content, key, result)
 
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_tool_input["policy_context"], request_ip="none", headers={}, mode="output")
-                decision, decision_context = self._evaluate_opa_policy(
+                decision, decision_context = await self._evaluate_opa_policy(
                     url=opa_post_tool_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_tool_input["policy_input_data_map"]
                 )
                 if not decision:
@@ -495,7 +552,7 @@ class OPAPluginFilter(Plugin):
             opa_pre_resource_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
             if opa_pre_resource_input["policy_apply"]:
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=payload.model_dump(), context=opa_pre_resource_input["policy_context"], request_ip="none", headers={}, mode="input")
-                decision, decision_context = self._evaluate_opa_policy(
+                decision, decision_context = await self._evaluate_opa_policy(
                     url=opa_pre_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_resource_input["policy_input_data_map"]
                 )
                 if not decision:
@@ -537,7 +594,7 @@ class OPAPluginFilter(Plugin):
                         self._extract_payload_key(payload.content, key, result)
 
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_resource_input["policy_context"], request_ip="none", headers={}, mode="output")
-                decision, decision_context = self._evaluate_opa_policy(
+                decision, decision_context = await self._evaluate_opa_policy(
                     url=opa_post_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_resource_input["policy_input_data_map"]
                 )
                 if not decision:

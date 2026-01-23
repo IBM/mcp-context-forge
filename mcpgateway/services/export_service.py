@@ -22,7 +22,7 @@ from typing import Any, cast, Dict, List, Optional, TypedDict
 
 # Third-Party
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.config import settings
@@ -479,7 +479,6 @@ class ExportService:
                 "capabilities": gateway.capabilities or {},
                 "health_check": {"url": f"{gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
                 "is_active": gateway.enabled,
-                "federation_enabled": True,
                 "tags": gateway.tags or [],
                 "passthrough_headers": gateway.passthrough_headers or [],
             }
@@ -847,7 +846,6 @@ class ExportService:
                 "capabilities": db_gateway.capabilities or {},
                 "health_check": {"url": f"{db_gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
                 "is_active": db_gateway.is_active,
-                "federation_enabled": True,
                 "tags": db_gateway.tags or [],
                 "passthrough_headers": db_gateway.passthrough_headers or [],
             }
@@ -877,12 +875,12 @@ class ExportService:
         if not server_ids:
             return []
 
-        # Batch query for selected servers only
-        db_servers = db.execute(select(DbServer).where(DbServer.id.in_(server_ids))).scalars().all()
+        # Batch query for selected servers with eager loading to avoid N+1 queries
+        db_servers = db.execute(select(DbServer).options(selectinload(DbServer.tools)).where(DbServer.id.in_(server_ids))).scalars().all()
 
         exported_servers = []
         for db_server in db_servers:
-            # Get associated tool IDs
+            # Get associated tool IDs (tools are eagerly loaded)
             tool_ids = [str(tool.id) for tool in db_server.tools] if db_server.tools else []
 
             server_data = {

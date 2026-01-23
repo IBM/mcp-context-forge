@@ -54,7 +54,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import importlib.util
-import json
 import os
 import platform
 import socket
@@ -66,6 +65,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
+import orjson
 from sqlalchemy import text
 
 # First-Party
@@ -83,7 +83,16 @@ try:
 except ImportError:
     psutil = None  # type: ignore
 
-REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None
+try:
+    REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None
+except (ModuleNotFoundError, AttributeError) as e:
+    # ModuleNotFoundError: redis package not installed
+    # AttributeError: 'redis' exists but isn't a proper package (e.g., shadowed by a file)
+    # Standard
+    import logging
+
+    logging.getLogger(__name__).warning(f"Redis module check failed ({type(e).__name__}: {e}), Redis support disabled")
+    REDIS_AVAILABLE = False
 
 # Globals
 
@@ -582,14 +591,14 @@ def _html_table(obj: Dict[str, Any]) -> str:
         True
         >>> '<th>active</th><td>true</td>' in html
         True
-        >>> '<th>items</th><td>["a", "b"]</td>' in html
+        >>> '<th>items</th><td>["a","b"]</td>' in html
         True
 
         >>> # Empty dict
         >>> _html_table({})
         '<table></table>'
     """
-    rows = "".join(f"<tr><th>{k}</th><td>{json.dumps(v, default=str) if not isinstance(v, str) else v}</td></tr>" for k, v in obj.items())
+    rows = "".join(f"<tr><th>{k}</th><td>{orjson.dumps(v, default=str).decode() if not isinstance(v, str) else v}</td></tr>" for k, v in obj.items())
     return f"<table>{rows}</table>"
 
 
@@ -832,7 +841,7 @@ async def version_endpoint(
     payload = _build_payload(redis_version, redis_ok)
     if partial:
         # Return partial HTML fragment for HTMX embedding
-        templates = Jinja2Templates(directory=str(settings.templates_dir))
+        templates = Jinja2Templates(directory=str(settings.templates_dir), auto_reload=settings.templates_auto_reload)
         return templates.TemplateResponse(request, "version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
     if wants_html:

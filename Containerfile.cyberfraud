@@ -1,0 +1,15 @@
+FROM BASE_IMAGE_REPO
+
+USER root 
+# Install missing psycopg2 dependency for postgres support
+RUN microdnf install -y python3-devel gcc postgresql-devel 
+RUN /app/.venv/bin/python3 -m ensurepip && \
+    /app/.venv/bin/python3 -m pip install 'psycopg2'
+RUN microdnf remove -y python3-devel gcc postgresql-devel
+# alembic new version pickup
+COPY alembic/versions/  /app/mcpgateway/alembic/versions
+# update the user permissions
+RUN chown -R 1001:0 /app && \
+    chmod -R g=u /app
+# Set the runtime user
+USER 1001

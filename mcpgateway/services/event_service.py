@@ -65,7 +65,16 @@ from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.redis_client import get_redis_client
 
-REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None
+try:
+    REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None
+except (ModuleNotFoundError, AttributeError) as e:
+    # ModuleNotFoundError: redis package not installed
+    # AttributeError: 'redis' exists but isn't a proper package (e.g., shadowed by a file)
+    # Standard
+    import logging
+
+    logging.getLogger(__name__).warning(f"Redis module check failed ({type(e).__name__}: {e}), Redis support disabled")
+    REDIS_AVAILABLE = False
 
 # Initialize logging
 logging_service = LoggingService()

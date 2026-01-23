@@ -8,8 +8,10 @@ A configurable MCP (Model Context Protocol) server written in Go for benchmarkin
 
 - **Configurable Scale**: Generate from 1 to 10,000+ tools, resources, and prompts
 - **Multiple Transports**: Supports stdio, SSE, and HTTP transports
+- **Multi-Server Mode**: Spawn multiple server instances on sequential ports for pagination testing
 - **Adjustable Payloads**: Configure response payload sizes for different test scenarios
 - **Authentication**: Optional Bearer token authentication for SSE/HTTP
+- **Graceful Shutdown**: Proper signal handling (Ctrl+C) with connection draining
 - **Fast Performance**: Written in Go for minimal overhead and maximum throughput
 - **Standards Compliant**: Fully implements MCP 1.0 specification
 
@@ -51,13 +53,15 @@ make run
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-transport` | `stdio` | Transport type: `stdio`, `sse`, or `http` |
+| `-server-count` | `1` | Number of servers to spawn (for multi-server testing) |
+| `-start-port` | `8080` | Starting port for multi-server mode |
 | `-tools` | `100` | Number of tools to generate |
 | `-resources` | `100` | Number of resources to generate |
 | `-prompts` | `100` | Number of prompts to generate |
 | `-tool-size` | `1000` | Size of tool response payload in bytes |
 | `-resource-size` | `1000` | Size of resource response payload in bytes |
 | `-prompt-size` | `1000` | Size of prompt response payload in bytes |
-| `-port` | `8080` | TCP port for SSE/HTTP transport |
+| `-port` | `8080` | TCP port for SSE/HTTP transport (single server mode) |
 | `-listen` | `0.0.0.0` | Listen interface for SSE/HTTP |
 | `-addr` | - | Full listen address (overrides `-listen`/`-port`) |
 | `-public-url` | - | External base URL for SSE clients |
@@ -95,6 +99,31 @@ make run
 ./dist/benchmark-server -transport=sse -listen=0.0.0.0 -port=8080 \
   -public-url=https://benchmark.example.com
 ```
+
+### Multi-Server Mode (Pagination Testing)
+
+```bash
+# Spawn 10 identical SSE servers on ports 8080-8089
+./dist/benchmark-server -transport=sse -server-count=10 -start-port=8080 -tools=100
+
+# Spawn 5 HTTP servers on ports 9000-9004
+./dist/benchmark-server -transport=http -server-count=5 -start-port=9000
+
+# Large scale: 20 servers with 1000 tools each
+./dist/benchmark-server -transport=sse -server-count=20 -start-port=8080 \
+  -tools=1000 -resources=500 -prompts=200
+
+# Shutdown all servers gracefully with Ctrl+C
+# Each server will complete in-flight requests before stopping
+```
+
+**Use Cases:**
+- Test MCP gateway pagination when listing servers
+- Simulate federated MCP deployments
+- Load balancing across multiple backend servers
+- High availability testing
+
+**Note:** Multi-server mode is only available for `sse` and `http` transports. The `stdio` transport does not support multi-server mode.
 
 ### HTTP Transport (REST-like)
 

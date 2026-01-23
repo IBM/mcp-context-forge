@@ -38,7 +38,6 @@ Examples:
 
 # Standard
 import base64
-import json
 import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -46,6 +45,7 @@ from urllib.parse import urlencode
 
 # Third-Party
 from fastapi import Request
+import orjson
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select
@@ -91,8 +91,8 @@ def encode_cursor(data: Dict[str, Any]) -> str:
         >>> len(numeric_cursor) > 0
         True
     """
-    json_str = json.dumps(data, default=str)
-    return base64.urlsafe_b64encode(json_str.encode()).decode()
+    json_bytes = orjson.dumps(data, default=str, option=orjson.OPT_SORT_KEYS)
+    return base64.urlsafe_b64encode(json_bytes).decode()
 
 
 def decode_cursor(cursor: str) -> Dict[str, Any]:
@@ -145,9 +145,9 @@ def decode_cursor(cursor: str) -> Dict[str, Any]:
         True
     """
     try:
-        json_str = base64.urlsafe_b64decode(cursor.encode()).decode()
-        return json.loads(json_str)
-    except (ValueError, json.JSONDecodeError) as e:
+        json_bytes = base64.urlsafe_b64decode(cursor.encode())
+        return orjson.loads(json_bytes)
+    except (ValueError, orjson.JSONDecodeError) as e:
         raise ValueError(f"Invalid cursor: {e}")
 
 

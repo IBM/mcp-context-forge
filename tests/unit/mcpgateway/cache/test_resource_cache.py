@@ -8,7 +8,6 @@ Unit tests for ResourceCache.
 """
 
 # Standard
-import asyncio
 import time
 
 # Third-Party
@@ -102,19 +101,112 @@ async def test_initialize_and_shutdown_logs(monkeypatch):
     assert len(cache) == 0
 
 
-@pytest.mark.asyncio
-async def test_cleanup_loop_removes_expired(monkeypatch):
-    """Test that the cleanup loop removes expired entries."""
+def test_cleanup_once_removes_expired():
+    """Test that _cleanup_once removes expired entries via heap-based cleanup."""
     cache = ResourceCache(max_size=2, ttl=0.1)
     cache.set("foo", "bar")
-    await asyncio.sleep(0.15)
-    # Manually trigger cleanup for test speed
-    async with cache._lock:
-        now = time.time()
-        expired = [key for key, entry in cache._cache.items() if now > entry.expires_at]
-        for key in expired:
-            del cache._cache[key]
+    cache.set("baz", "qux")
+
+    # Verify entries exist before expiration
+    assert len(cache) == 2
+    assert cache.get("foo") == "bar"
+
+    # Wait for TTL expiration
+    time.sleep(0.15)
+
+    # Entries still in cache (not yet cleaned)
+    assert len(cache._cache) == 2
+
+    # Trigger heap-based cleanup
+    cache._cleanup_once()
+
+    # Entries should be removed by cleanup
+    assert len(cache) == 0
     assert cache.get("foo") is None
+    assert cache.get("baz") is None
+
+
+def test_cleanup_once_ignores_updated_entries():
+    """Test that _cleanup_once skips entries that were updated after heap entry was created."""
+    cache = ResourceCache(max_size=2, ttl=0.1)
+    cache.set("foo", "bar")
+
+    # Wait for original expiry
+    time.sleep(0.15)
+
+    # Update the entry with a new value (creates new heap entry with new expiry)
+    cache.set("foo", "updated")
+
+    # Cleanup should ignore the stale heap entry since timestamps don't match
+    cache._cleanup_once()
+
+    # Entry should still exist (was updated)
+    assert cache.get("foo") == "updated"
+
+
+def test_cleanup_once_ignores_deleted_entries():
+    """Test that _cleanup_once handles entries deleted before cleanup runs."""
+    cache = ResourceCache(max_size=2, ttl=0.1)
+    cache.set("foo", "bar")
+
+    # Delete entry before expiry
+    cache.delete("foo")
+
+    # Wait for original expiry time
+    time.sleep(0.15)
+
+    # Cleanup should handle missing entry gracefully
+    cache._cleanup_once()  # Should not raise
+
+    assert cache.get("foo") is None
+
+
+def test_heap_compaction_bounds_memory():
+    """Test that heap compaction triggers when heap grows too large."""
+    cache = ResourceCache(max_size=3, ttl=60)
+
+    # Repeatedly update the same key to create stale heap entries
+    for i in range(10):
+        cache.set("key1", i)
+
+    # Heap should have 10 entries (one per set call), but cache has 1 entry
+    assert len(cache._expiry_heap) == 10
+    assert len(cache) == 1
+
+    # Heap exceeds 2 * max_size (6), so compaction triggers
+    cache._cleanup_once()
+
+    # After compaction, heap should equal cache size
+    assert len(cache._expiry_heap) == 1
+
+
+def test_heap_compaction_preserves_valid_entries():
+    """Test that heap compaction preserves all valid cache entries."""
+    cache = ResourceCache(max_size=5, ttl=60)
+
+    # Add entries and create stale heap entries via updates
+    cache.set("a", 1)
+    cache.set("b", 2)
+    cache.set("c", 3)
+
+    # Update same keys multiple times to bloat heap beyond 2 * max_size (10)
+    for _ in range(4):
+        cache.set("a", 1)
+        cache.set("b", 2)
+        cache.set("c", 3)
+
+    # Heap has 15 entries (3 initial + 12 updates), exceeds 2 * 5 = 10
+    assert len(cache._expiry_heap) == 15
+    assert len(cache) == 3
+
+    # Trigger compaction
+    cache._cleanup_once()
+
+    # After compaction, heap should only have 3 valid entries
+    assert len(cache._expiry_heap) == 3
+    assert cache.get("a") == 1
+    assert cache.get("b") == 2
+    assert cache.get("c") == 3
 
 
 class DummyLogger:

@@ -19,7 +19,6 @@ Security Features:
 """
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -31,6 +30,7 @@ from typing import Any
 from uuid import uuid4
 
 import numpy as np
+import orjson
 import pandas as pd
 import requests
 from fastmcp import FastMCP
@@ -351,7 +351,7 @@ def execute_user_code():
             if content.endswith("```"):
                 content = content[:-3]
 
-            return json.loads(content)
+            return orjson.loads(content)
 
         except ImportError:
             raise ValueError("OpenAI package not installed. Install with: pip install openai")

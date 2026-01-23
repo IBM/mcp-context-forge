@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 import feedparser
 import httpx
+import orjson
 from fastmcp import FastMCP
 from pydantic import Field
 
@@ -34,6 +35,11 @@ logger = logging.getLogger(__name__)
 
 # Create FastMCP server instance
 mcp = FastMCP(name="mcp-rss-search", version="1.0.0")
+
+
+def _dump_json(payload: Any) -> str:
+    """Serialize payload as pretty JSON for MCP responses."""
+    return orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode()
 
 
 class RSSParser:
@@ -1958,10 +1964,8 @@ async def get_model_info() -> str:
         >>> info = await get_model_info()
         >>> # Returns: {"available": true, "configured_model": "all-MiniLM-L6-v2", ...}
     """
-    import json
-
     info = similarity_engine.get_model_info()
-    return json.dumps(info, indent=2)
+    return _dump_json(info)
 
 
 @mcp.tool()
@@ -1989,15 +1993,12 @@ async def configure_model(model_name: str) -> str:
         >>> result = await configure_model("all-mpnet-base-v2")
         >>> # Changes model to higher quality version
     """
-    import json
-
     if not similarity_engine.available:
-        return json.dumps(
+        return _dump_json(
             {
                 "success": False,
                 "error": "Similarity search not available. Install with: pip install sentence-transformers",
-            },
-            indent=2,
+            }
         )
 
     try:
@@ -2008,17 +2009,16 @@ async def configure_model(model_name: str) -> str:
         # Get new model info (will trigger load on next use)
         info = similarity_engine.get_model_info()
 
-        return json.dumps(
+        return _dump_json(
             {
                 "success": True,
                 "message": f"Model configured to: {model_name}",
                 "model_info": info,
                 "note": "Model will be loaded on first use",
-            },
-            indent=2,
+            }
         )
     except Exception as e:
-        return json.dumps({"success": False, "error": f"Failed to configure model: {str(e)}"}, indent=2)
+        return _dump_json({"success": False, "error": f"Failed to configure model: {str(e)}"})
 
 
 @mcp.tool()
@@ -2062,48 +2062,44 @@ async def hybrid_search(
         ...     top_k=5
         ... )
     """
-    import json
-
     if not hybrid_engine.semantic_engine.available:
-        return json.dumps(
+        return _dump_json(
             {
                 "success": False,
                 "error": "Hybrid search requires similarity features. Install with: pip install 'mcp-rss-search[similarity]'",
-            },
-            indent=2,
+            }
         )
 
     if not hybrid_engine.bm25_available:
-        return json.dumps(
+        return _dump_json(
             {
                 "success": False,
                 "error": "Hybrid search requires BM25. Install with: pip install rank-bm25",
-            },
-            indent=2,
+            }
         )
 
     # Validate weights
     if semantic_weight < 0 or semantic_weight > 1:
-        return json.dumps({"success": False, "error": "semantic_weight must be between 0 and 1"}, indent=2)
+        return _dump_json({"success": False, "error": "semantic_weight must be between 0 and 1"})
 
     if bm25_weight < 0 or bm25_weight > 1:
-        return json.dumps({"success": False, "error": "bm25_weight must be between 0 and 1"}, indent=2)
+        return _dump_json({"success": False, "error": "bm25_weight must be between 0 and 1"})
 
     # Validate top_k
     if top_k < 1 or top_k > 100:
-        return json.dumps({"success": False, "error": "top_k must be between 1 and 100"}, indent=2)
+        return _dump_json({"success": False, "error": "top_k must be between 1 and 100"})
 
     try:
         # Fetch feed
         feed_data = await rss_parser.fetch_feed(url, use_cache=use_cache)
 
         if not feed_data.get("success"):
-            return json.dumps(feed_data, indent=2)
+            return _dump_json(feed_data)
 
         entries = feed_data.get("entries", [])
 
         if not entries:
-            return json.dumps({"success": True, "matches": [], "match_count": 0, "query": query}, indent=2)
+            return _dump_json({"success": True, "matches": [], "match_count": 0, "query": query})
 
         # Perform hybrid search
         results = hybrid_engine.hybrid_search(
@@ -2116,7 +2112,7 @@ async def hybrid_search(
             threshold=threshold,
         )
 
-        return json.dumps(
+        return _dump_json(
             {
                 "success": True,
                 "query": query,
@@ -2126,13 +2122,12 @@ async def hybrid_search(
                 "threshold": threshold,
                 "match_count": len(results),
                 "matches": results,
-            },
-            indent=2,
+            }
         )
 
     except Exception as e:
         logger.error(f"Error in hybrid_search: {e}", exc_info=True)
-        return json.dumps({"success": False, "error": str(e)}, indent=2)
+        return _dump_json({"success": False, "error": str(e)})
 
 
 @mcp.tool()
@@ -2172,42 +2167,38 @@ async def document_search(
         ... )
         >>> # Searches: title, subtitle, summary, description, author
     """
-    import json
-
     # Check requirements based on what's enabled
     if use_semantic and not hybrid_engine.semantic_engine.available:
-        return json.dumps(
+        return _dump_json(
             {
                 "success": False,
                 "error": "Semantic search requires similarity features. Install with: pip install 'mcp-rss-search[similarity]'",
-            },
-            indent=2,
+            }
         )
 
     if use_bm25 and not hybrid_engine.bm25_available:
-        return json.dumps(
+        return _dump_json(
             {
                 "success": False,
                 "error": "BM25 search requires rank-bm25. Install with: pip install rank-bm25",
-            },
-            indent=2,
+            }
         )
 
     # Validate top_k
     if top_k < 1 or top_k > 100:
-        return json.dumps({"success": False, "error": "top_k must be between 1 and 100"}, indent=2)
+        return _dump_json({"success": False, "error": "top_k must be between 1 and 100"})
 
     try:
         # Fetch feed
         feed_data = await rss_parser.fetch_feed(url, use_cache=use_cache)
 
         if not feed_data.get("success"):
-            return json.dumps(feed_data, indent=2)
+            return _dump_json(feed_data)
 
         entries = feed_data.get("entries", [])
 
         if not entries:
-            return json.dumps({"success": True, "matches": [], "match_count": 0, "query": query}, indent=2)
+            return _dump_json({"success": True, "matches": [], "match_count": 0, "query": query})
 
         # Perform document-wide search
         result = hybrid_engine.document_search(
@@ -2218,11 +2209,11 @@ async def document_search(
             use_bm25=use_bm25,
         )
 
-        return json.dumps(result, indent=2)
+        return _dump_json(result)
 
     except Exception as e:
         logger.error(f"Error in document_search: {e}", exc_info=True)
-        return json.dumps({"success": False, "error": str(e)}, indent=2)
+        return _dump_json({"success": False, "error": str(e)})
 
 
 def main():

@@ -27,44 +27,6 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 
 ---
 
-## 🌍 Federation & Discovery
-
-??? summary "Features"
-
-    * **Auto-discovery** - DNS-SD (`_mcp._tcp.local.`) or static peer list
-    * **Health checks** - fail-over + removal of unhealthy gateways
-    * **Capability sync** - merges remote tool catalogs into the local DB
-    * **Request forwarding** - automatic routing to the correct gateway
-
-??? diagram "Architecture"
-
-    ```mermaid
-    graph TD
-      subgraph Local_Gateway
-        A[MCP Gateway Core]
-      end
-      subgraph Remote_Gateway_1
-        B[Peer 1]
-      end
-      subgraph Remote_Gateway_2
-        C[Peer 2]
-      end
-      A <-- ping / register --> B
-      A <-- ping / register --> C
-    ```
-
-??? note "Configuration"
-
-    Enable or tweak discovery via `.env`:
-
-    ```env
-    FEDERATION_ENABLED=true
-    FEDERATION_DISCOVERY=true
-    FEDERATION_PEERS=https://remote.example.com
-    HEALTH_CHECK_INTERVAL=30
-    ```
-
----
 
 ## 🔐 Security
 

@@ -19,9 +19,9 @@ from mcpgateway.middleware.observability_middleware import ObservabilityMiddlewa
 def mock_request():
     request = MagicMock(spec=Request)
     request.method = "GET"
-    request.url.path = "/api/test"
+    request.url.path = "/rpc"
     request.url.query = "param=value"
-    request.url.__str__.return_value = "http://testserver/api/test?param=value"
+    request.url.__str__.return_value = "http://testserver/rpc?param=value"
     request.client = MagicMock()
     request.client.host = "127.0.0.1"
     request.headers = {"user-agent": "pytest", "traceparent": "00-abc123-def456-01"}

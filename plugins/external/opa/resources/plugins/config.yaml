@@ -44,6 +44,11 @@ plugins:
     config:
       # Plugin config dict passed to the plugin constructor
       opa_base_url: "http://127.0.0.1:8181/v1/data/"
+      opa_client_retries: 3
+      opa_client_timeout: 30s
+      opa_client_max_keepalive: 20
+      opa_client_max_connections: 100
+      opa_client_keepalive_expiry: 5s
 
 # Plugin directories to scan
 plugin_dirs:

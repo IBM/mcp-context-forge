@@ -112,7 +112,7 @@ endef
 # help: update               - Update all installed deps inside the venv
 .PHONY: uv
 uv:
-	@if ! type uv >/dev/null 2>&1; then \
+	@if ! type uv >/dev/null 2>&1 && ! test -x "$(HOME)/.local/bin/uv"; then \
 		echo "🔧 'uv' not found - installing..."; \
 		if type brew >/dev/null 2>&1; then \
 			echo "🍺 Installing 'uv' via Homebrew..."; \
@@ -120,15 +120,17 @@ uv:
 		else \
 			echo "🐍 Installing 'uv' via local install script..."; \
 			curl -LsSf https://astral.sh/uv/install.sh | sh ; \
-			echo "💡  Make sure to add 'uv' to your PATH if not done automatically."; \
 		fi; \
 	fi
+
+# UV_BIN: prefer uv in PATH, fallback to ~/.local/bin/uv
+UV_BIN := $(shell type -p uv 2>/dev/null || echo "$(HOME)/.local/bin/uv")
 
 .PHONY: venv
 venv: uv
 	@rm -Rf "$(VENV_DIR)"
 	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
-	@uv venv "$(VENV_DIR)"
+	@$(UV_BIN) venv "$(VENV_DIR)"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
 .PHONY: activate
@@ -217,12 +219,12 @@ serve-granian-http2: certs       ## Run Granian with HTTP/2 and TLS
 	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev:
-	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 dev-echo:                        ## Run dev server with SQL query logging enabled
 	@echo "🔍 Starting dev server with SQL query logging (N+1 detection)"
 	@echo "   Docs: docs/docs/development/db-performance.md"
-	@SQLALCHEMY_ECHO=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@SQLALCHEMY_ECHO=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
@@ -521,7 +523,9 @@ test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
 
 test-altk:
 	@echo "🧪 Running tests with ALTK (agent-lifecycle-toolkit)..."
@@ -531,7 +535,9 @@ test-altk:
 		uv pip install -q '.[altk]' && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -539,7 +545,9 @@ test-profile:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run --active pytest -n auto --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		uv run --active pytest -n 16 --durations=20 --durations-min=1.0 --disable-warnings -v --ignore=tests/fuzz"
 
 coverage:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -593,14 +601,14 @@ doctest:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export JWT_SECRET_KEY=secret && \
-		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n auto"
+		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4"
 
 doctest-verbose:
 	@echo "🧪 Running doctest with verbose output..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export JWT_SECRET_KEY=secret && \
-		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n auto"
+		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4"
 
 doctest-coverage:
 	@echo "📊 Generating doctest coverage report..."
@@ -646,7 +654,7 @@ dev-query-log:                   ## Run dev server with query logging to file
 	@echo "   Use 'make query-log-tail' in another terminal to watch queries"
 	@echo "   Docs: docs/docs/development/db-performance.md"
 	@mkdir -p logs
-	@DB_QUERY_LOG_ENABLED=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+	@DB_QUERY_LOG_ENABLED=true TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
 
 query-log-tail:                  ## Tail the database query log file
 	@echo "📊 Tailing logs/db-queries.log (Ctrl+C to stop)"
@@ -778,6 +786,24 @@ COMPOSE_CMD_MONITOR := $(shell \
 
 monitoring-up:                             ## Start monitoring stack (Prometheus, Grafana, exporters)
 	@echo "📊 Starting monitoring stack..."
+	@echo "🔎 Preflight: checking host port 8080 (nginx)"
+	@if command -v ss >/dev/null 2>&1; then \
+		if ss -H -ltn 'sport = :8080' | grep -q .; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			ss -ltnp 'sport = :8080' || ss -ltn 'sport = :8080'; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	elif command -v lsof >/dev/null 2>&1; then \
+		if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			lsof -nP -iTCP:8080 -sTCP:LISTEN || true; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
+	fi
 	$(COMPOSE_CMD_MONITOR) --profile monitoring up -d
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
@@ -824,10 +850,193 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 	@echo "✅ Monitoring stack stopped and volumes removed."
 
 # =============================================================================
+# help: 🧪 TESTING STACK (Rust fast-test-server)
+# help: testing-up            - Start testing stack (fast_test_server + auto-registration)
+# help: testing-down          - Stop testing stack
+# help: testing-status        - Show status of testing services
+# help: testing-logs          - Show testing stack logs
+
+testing-up:                                ## Start testing stack (fast_test_server + registration)
+	@echo "🧪 Starting testing stack (fast_test_server)..."
+	$(COMPOSE_CMD_MONITOR) --profile testing up -d
+	@echo ""
+	@echo "✅ Testing stack started!"
+	@echo ""
+	@echo "   🦀 Fast Test Server: http://localhost:9080"
+	@echo "      • MCP endpoint:  http://localhost:9080/mcp"
+	@echo "      • REST echo:     http://localhost:9080/api/echo"
+	@echo "      • REST time:     http://localhost:9080/api/time"
+	@echo "      • Health:        http://localhost:9080/health"
+	@echo ""
+	@echo "   📝 Registered as 'fast_test' gateway in MCP Gateway"
+	@echo ""
+	@echo "   Run load test: cd mcp-servers/rust/fast-test-server && make locust-mcp"
+
+testing-down:                              ## Stop testing stack
+	@echo "🧪 Stopping testing stack..."
+	$(COMPOSE_CMD_MONITOR) --profile testing down
+	@echo "✅ Testing stack stopped."
+
+testing-status:                            ## Show status of testing services
+	@echo "🧪 Testing stack status:"
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test)" || \
+		echo "   No testing services running. Start with 'make testing-up'"
+
+testing-logs:                              ## Show testing stack logs
+	$(COMPOSE_CMD_MONITOR) --profile testing logs -f --tail=100
+
+# =============================================================================
+# help: 🤖 A2A DEMO AGENTS (Issue #2002 Authentication Testing)
+# help: demo-a2a-up           - Start all 3 A2A demo agents (basic, bearer, apikey) with auto-registration
+# help: demo-a2a-down         - Stop all A2A demo agents
+# help: demo-a2a-status       - Show status of A2A demo agents
+# help: demo-a2a-basic        - Start only Basic Auth demo agent (port 9001)
+# help: demo-a2a-bearer       - Start only Bearer Token demo agent (port 9002)
+# help: demo-a2a-apikey       - Start only X-API-Key demo agent (port 9003)
+
+# A2A Demo Agent configuration
+DEMO_A2A_BASIC_PORT ?= 9001
+DEMO_A2A_BEARER_PORT ?= 9002
+DEMO_A2A_APIKEY_PORT ?= 9003
+DEMO_A2A_BASIC_PID := /tmp/demo-a2a-basic.pid
+DEMO_A2A_BEARER_PID := /tmp/demo-a2a-bearer.pid
+DEMO_A2A_APIKEY_PID := /tmp/demo-a2a-apikey.pid
+
+.PHONY: demo-a2a-up demo-a2a-down demo-a2a-status demo-a2a-basic demo-a2a-bearer demo-a2a-apikey
+
+demo-a2a-up:                               ## Start all 3 A2A demo agents with auto-registration
+	@echo "🤖 Starting A2A demo agents for authentication testing (Issue #2002)..."
+	@echo ""
+	@# Start Basic Auth agent (PYTHONUNBUFFERED=1 ensures print output is captured immediately)
+	@echo "Starting Basic Auth agent on port $(DEMO_A2A_BASIC_PORT)..."
+	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+		--auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register > /tmp/demo-a2a-basic.log 2>&1 & echo $$! > $(DEMO_A2A_BASIC_PID)
+	@sleep 1
+	@# Start Bearer Token agent
+	@echo "Starting Bearer Token agent on port $(DEMO_A2A_BEARER_PORT)..."
+	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+		--auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register > /tmp/demo-a2a-bearer.log 2>&1 & echo $$! > $(DEMO_A2A_BEARER_PID)
+	@sleep 1
+	@# Start X-API-Key agent
+	@echo "Starting X-API-Key agent on port $(DEMO_A2A_APIKEY_PORT)..."
+	@PYTHONUNBUFFERED=1 uv run python scripts/demo_a2a_agent_auth.py \
+		--auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register > /tmp/demo-a2a-apikey.log 2>&1 & echo $$! > $(DEMO_A2A_APIKEY_PID)
+	@sleep 2
+	@echo ""
+	@echo "✅ A2A demo agents started!"
+	@echo ""
+	@echo "   🔐 Basic Auth:    http://localhost:$(DEMO_A2A_BASIC_PORT)  (log: /tmp/demo-a2a-basic.log)"
+	@echo "   🎫 Bearer Token:  http://localhost:$(DEMO_A2A_BEARER_PORT)  (log: /tmp/demo-a2a-bearer.log)"
+	@echo "   🔑 X-API-Key:     http://localhost:$(DEMO_A2A_APIKEY_PORT)  (log: /tmp/demo-a2a-apikey.log)"
+	@echo ""
+	@echo "   View credentials: cat /tmp/demo-a2a-*.log | grep -A5 'Configuration:'"
+	@echo "   Stop agents:      make demo-a2a-down"
+	@echo ""
+
+demo-a2a-down:                             ## Stop all A2A demo agents
+	@echo "🤖 Stopping A2A demo agents..."
+	@# Send SIGTERM first to allow graceful unregistration
+	@-if [ -f $(DEMO_A2A_BASIC_PID) ]; then kill -15 $$(cat $(DEMO_A2A_BASIC_PID)) 2>/dev/null || true; fi
+	@-if [ -f $(DEMO_A2A_BEARER_PID) ]; then kill -15 $$(cat $(DEMO_A2A_BEARER_PID)) 2>/dev/null || true; fi
+	@-if [ -f $(DEMO_A2A_APIKEY_PID) ]; then kill -15 $$(cat $(DEMO_A2A_APIKEY_PID)) 2>/dev/null || true; fi
+	@sleep 2
+	@# Force kill any remaining processes
+	@-if [ -f $(DEMO_A2A_BASIC_PID) ]; then kill -9 $$(cat $(DEMO_A2A_BASIC_PID)) 2>/dev/null || true; rm -f $(DEMO_A2A_BASIC_PID); fi
+	@-if [ -f $(DEMO_A2A_BEARER_PID) ]; then kill -9 $$(cat $(DEMO_A2A_BEARER_PID)) 2>/dev/null || true; rm -f $(DEMO_A2A_BEARER_PID); fi
+	@-if [ -f $(DEMO_A2A_APIKEY_PID) ]; then kill -9 $$(cat $(DEMO_A2A_APIKEY_PID)) 2>/dev/null || true; rm -f $(DEMO_A2A_APIKEY_PID); fi
+	@echo "✅ A2A demo agents stopped."
+
+demo-a2a-status:                           ## Show status of A2A demo agents
+	@echo "🤖 A2A demo agent status:"
+	@echo ""
+	@if [ -f $(DEMO_A2A_BASIC_PID) ] && kill -0 $$(cat $(DEMO_A2A_BASIC_PID)) 2>/dev/null; then \
+		echo "   ✅ Basic Auth (port $(DEMO_A2A_BASIC_PORT)):   running (PID $$(cat $(DEMO_A2A_BASIC_PID)))"; \
+	else \
+		echo "   ❌ Basic Auth (port $(DEMO_A2A_BASIC_PORT)):   stopped"; \
+		rm -f $(DEMO_A2A_BASIC_PID) 2>/dev/null || true; \
+	fi
+	@if [ -f $(DEMO_A2A_BEARER_PID) ] && kill -0 $$(cat $(DEMO_A2A_BEARER_PID)) 2>/dev/null; then \
+		echo "   ✅ Bearer Token (port $(DEMO_A2A_BEARER_PORT)): running (PID $$(cat $(DEMO_A2A_BEARER_PID)))"; \
+	else \
+		echo "   ❌ Bearer Token (port $(DEMO_A2A_BEARER_PORT)): stopped"; \
+		rm -f $(DEMO_A2A_BEARER_PID) 2>/dev/null || true; \
+	fi
+	@if [ -f $(DEMO_A2A_APIKEY_PID) ] && kill -0 $$(cat $(DEMO_A2A_APIKEY_PID)) 2>/dev/null; then \
+		echo "   ✅ X-API-Key (port $(DEMO_A2A_APIKEY_PORT)):    running (PID $$(cat $(DEMO_A2A_APIKEY_PID)))"; \
+	else \
+		echo "   ❌ X-API-Key (port $(DEMO_A2A_APIKEY_PORT)):    stopped"; \
+		rm -f $(DEMO_A2A_APIKEY_PID) 2>/dev/null || true; \
+	fi
+	@echo ""
+
+demo-a2a-basic:                            ## Start only Basic Auth demo agent
+	@echo "🔐 Starting Basic Auth demo agent on port $(DEMO_A2A_BASIC_PORT)..."
+	uv run python scripts/demo_a2a_agent_auth.py --auth-type basic --port $(DEMO_A2A_BASIC_PORT) --auto-register
+
+demo-a2a-bearer:                           ## Start only Bearer Token demo agent
+	@echo "🎫 Starting Bearer Token demo agent on port $(DEMO_A2A_BEARER_PORT)..."
+	uv run python scripts/demo_a2a_agent_auth.py --auth-type bearer --port $(DEMO_A2A_BEARER_PORT) --auto-register
+
+demo-a2a-apikey:                           ## Start only X-API-Key demo agent
+	@echo "🔑 Starting X-API-Key demo agent on port $(DEMO_A2A_APIKEY_PORT)..."
+	uv run python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
+
+# =============================================================================
+# help: 🎯 BENCHMARK STACK (Go benchmark-server)
+# help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
+# help: benchmark-down         - Stop benchmark stack
+# help: benchmark-clean        - Stop and remove all benchmark data (volumes)
+# help: benchmark-status       - Show status of benchmark services
+# help: benchmark-logs         - Show benchmark stack logs
+# help:
+# help: Environment variables:
+# help:   BENCHMARK_SERVER_COUNT  - Number of MCP servers to spawn (default: 10)
+
+# Benchmark configuration (override via environment)
+BENCHMARK_SERVER_COUNT ?= 10
+BENCHMARK_START_PORT ?= 9000
+
+benchmark-up:                              ## Start benchmark stack (MCP servers + registration)
+	@echo "🎯 Starting benchmark stack ($(BENCHMARK_SERVER_COUNT) MCP servers on ports $(BENCHMARK_START_PORT)-$$(($(BENCHMARK_START_PORT) + $(BENCHMARK_SERVER_COUNT) - 1)))..."
+	BENCHMARK_SERVER_COUNT=$(BENCHMARK_SERVER_COUNT) BENCHMARK_START_PORT=$(BENCHMARK_START_PORT) \
+		$(COMPOSE_CMD_MONITOR) --profile benchmark up -d
+	@echo ""
+	@echo "✅ Benchmark stack started!"
+	@echo ""
+	@echo "   🚀 Benchmark Servers: http://localhost:$(BENCHMARK_START_PORT)-$$(($(BENCHMARK_START_PORT) + $(BENCHMARK_SERVER_COUNT) - 1))"
+	@echo "      • MCP endpoint:  http://localhost:<port>/mcp"
+	@echo "      • Health:        http://localhost:<port>/health"
+	@echo "      • Version:       http://localhost:<port>/version"
+	@echo ""
+	@echo "   📝 Registered as 'benchmark-$(BENCHMARK_START_PORT)' through 'benchmark-$$(($(BENCHMARK_START_PORT) + $(BENCHMARK_SERVER_COUNT) - 1))' gateways"
+	@echo ""
+	@echo "   Run load test: make load-test-ui"
+	@echo ""
+	@echo "   💡 Configure server count: BENCHMARK_SERVER_COUNT=50 make benchmark-up"
+
+benchmark-down:                            ## Stop benchmark stack
+	@echo "🎯 Stopping benchmark stack..."
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down
+	@echo "✅ Benchmark stack stopped."
+
+benchmark-clean:                           ## Stop and remove all benchmark data (volumes)
+	@echo "🎯 Stopping and cleaning benchmark stack..."
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down -v
+	@echo "✅ Benchmark stack stopped and volumes removed."
+
+benchmark-status:                          ## Show status of benchmark services
+	@echo "🎯 Benchmark stack status:"
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(benchmark)" || \
+		echo "   No benchmark services running. Start with 'make benchmark-up'"
+
+benchmark-logs:                            ## Show benchmark stack logs
+	$(COMPOSE_CMD_MONITOR) --profile benchmark logs -f --tail=100
+
+# =============================================================================
 # 🚀 PERFORMANCE TESTING STACK - High-capacity configuration
 # =============================================================================
 # help: 🚀 PERFORMANCE TESTING STACK
-# help: performance-up         - Start performance stack (5 gateways, PostgreSQL replica, monitoring)
+# help: performance-up         - Start performance stack (7 gateways, PostgreSQL replica, monitoring)
 # help: performance-down       - Stop performance stack
 # help: performance-clean      - Stop and remove all performance data (volumes)
 # help: performance-logs       - Show performance stack logs
@@ -842,9 +1051,9 @@ COMPOSE_CMD_PERF := $(shell \
 		echo "docker-compose -f docker-compose-performance.yml"; \
 	fi)
 
-performance-up:                            ## Start performance stack (5 gateways, PostgreSQL replica, monitoring)
+performance-up:                            ## Start performance stack (7 gateways, PostgreSQL replica, monitoring)
 	@echo "🚀 Starting performance testing stack..."
-	@echo "   • 5 gateway replicas"
+	@echo "   • 7 gateway replicas"
 	@echo "   • PostgreSQL primary + read replica (streaming replication)"
 	@echo "   • PgBouncer with load balancing"
 	@echo "   • Full monitoring stack"
@@ -873,7 +1082,7 @@ performance-up:                            ## Start performance stack (5 gateway
 	@echo "      • PgBouncer - connection pool stats"
 	@echo ""
 	@echo "   🏋️ Configuration:"
-	@echo "      • 5 gateway replicas (vs 3 in standard)"
+	@echo "      • 7 gateway replicas (vs 3 in standard)"
 	@echo "      • PostgreSQL read replica for read scaling"
 	@echo "      • PgBouncer round-robin across primary + replica"
 	@echo ""
@@ -896,8 +1105,8 @@ performance-clean:                         ## Stop and remove all performance da
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
-# help: load-test             - Run HTTP load test (50 users, 60s, headless)
-# help: load-test-ui          - Start Locust web UI (distributed, auto-detect CPUs)
+# help: load-test             - Run HTTP load test (4000 users, 5m, headless)
+# help: load-test-ui          - Start Locust web UI (4000 users, 200 spawn/s)
 # help: load-test-light       - Light load test (10 users, 30s)
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
@@ -909,33 +1118,52 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-1000        - High-load test (1000 users, 120s)
 # help: load-test-summary     - Parse CSV reports and show summary statistics
 
-# Default load test configuration
+# Default load test configuration (optimized for 4000+ users)
 LOADTEST_HOST ?= http://localhost:8080
-LOADTEST_USERS ?= 1000
-LOADTEST_SPAWN_RATE ?= 100
+LOADTEST_USERS ?= 4000
+LOADTEST_SPAWN_RATE ?= 200
 LOADTEST_RUN_TIME ?= 5m
+LOADTEST_PROCESSES ?= -1
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
+# Auto-detect c-ares resolver availability (empty string if unavailable)
+LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
-load-test:                                 ## Run HTTP load test (50 users, 60s, headless)
+load-test:                                 ## Run HTTP load test (4000 users, 5m, headless)
 	@echo "🔥 Running HTTP load test with Locust..."
 	@echo "   Host: $(LOADTEST_HOST)"
 	@echo "   Users: $(LOADTEST_USERS)"
 	@echo "   Spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   Duration: $(LOADTEST_RUN_TIME)"
+	@echo "   Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
 	@echo ""
+	@# Check ulimits and warn if below threshold
+	@NOFILE=$$(ulimit -n 2>/dev/null || echo 0); \
+	NPROC=$$(ulimit -u 2>/dev/null || echo 0); \
+	if [ "$$NOFILE" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -n ($$NOFILE) is below 10000 - may cause connection failures"; \
+		echo "   💡 Fix: Add to /etc/security/limits.conf and restart shell"; \
+		echo ""; \
+	fi; \
+	if [ "$$NPROC" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -u ($$NPROC) is below 10000 - may limit worker processes"; \
+		echo ""; \
+	fi
 	@echo "   💡 Tip: Start server first with 'make dev' in another terminal"
-	@echo "   💡 Tip: Enable performance tab: MCPGATEWAY_PERFORMANCE_TRACKING=true"
+	@echo "   💡 Tip: For best results, run: sudo scripts/tune-loadtest.sh"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p reports
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
 		locust -f $(LOADTEST_LOCUSTFILE) \
 			--host=$(LOADTEST_HOST) \
 			--users=$(LOADTEST_USERS) \
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
+			--processes=$(LOADTEST_PROCESSES) \
 			--headless \
 			--html=$(LOADTEST_HTML_REPORT) \
 			--csv=$(LOADTEST_CSV_PREFIX) \
@@ -946,24 +1174,41 @@ load-test:                                 ## Run HTTP load test (50 users, 60s,
 	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
 
 load-test-ui:                              ## Start Locust web UI at http://localhost:8089
-	@echo "🔥 Starting Locust Web UI (distributed, auto-detect CPUs)..."
+	@echo "🔥 Starting Locust Web UI (optimized for 4000+ users)..."
 	@echo "   🌐 Open http://localhost:8089 in your browser"
 	@echo "   🎯 Default host: $(LOADTEST_HOST)"
 	@echo "   👥 Default users: $(LOADTEST_USERS), spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   ⏱️  Default run time: $(LOADTEST_RUN_TIME)"
-	@echo "   🚀 Workers: auto-detect (1 per CPU core)"
+	@echo "   🚀 Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
 	@echo ""
+	@# Check ulimits and warn if below threshold
+	@NOFILE=$$(ulimit -n 2>/dev/null || echo 0); \
+	NPROC=$$(ulimit -u 2>/dev/null || echo 0); \
+	if [ "$$NOFILE" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -n ($$NOFILE) is below 10000 - may cause connection failures"; \
+		echo "   💡 Fix: Add to /etc/security/limits.conf and restart shell:"; \
+		echo "      *  soft  nofile  65536"; \
+		echo "      *  hard  nofile  65536"; \
+		echo ""; \
+	fi; \
+	if [ "$$NPROC" -lt 10000 ]; then \
+		echo "   ⚠️  WARNING: ulimit -u ($$NPROC) is below 10000 - may limit worker processes"; \
+		echo ""; \
+	fi
+	@echo "   💡 For best results, run: sudo scripts/tune-loadtest.sh"
 	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
-	@echo "   💡 Start server first with 'make dev' or 'docker compose up'"
+	@echo "   💡 Start benchmark servers first: make benchmark-up"
 	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
 		locust -f $(LOADTEST_LOCUSTFILE) \
 			--host=$(LOADTEST_HOST) \
 			--users=$(LOADTEST_USERS) \
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
-			--processes=-1 \
+			--processes=$(LOADTEST_PROCESSES) \
 			--class-picker"
 
 load-test-light:                           ## Light load test (10 users, 30s)
@@ -1667,9 +1912,9 @@ mypy:                               ## 🏷️  mypy type-checking
 bandit:                             ## 🛡️  bandit security scan
 	@echo "🛡️ bandit $(TARGET)..."
 	@if [ -d "$(TARGET)" ]; then \
-		$(VENV_DIR)/bin/bandit -r $(TARGET); \
+		$(VENV_DIR)/bin/bandit -c pyproject.toml -r $(TARGET); \
 	else \
-		$(VENV_DIR)/bin/bandit $(TARGET); \
+		$(VENV_DIR)/bin/bandit -c pyproject.toml $(TARGET); \
 	fi
 
 pydocstyle:                         ## 📚  Docstring style
@@ -2281,43 +2526,29 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 # 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS
 # =============================================================================
 # help: 🕸️  WEBPAGE LINTERS & STATIC ANALYSIS (HTML/CSS/JS lint + security scans + formatting)
-# help: install-web-linters  - Install HTMLHint, Stylelint, ESLint, Retire.js, Prettier, JSHint, jscpd & markuplint via npm
 # help: nodejsscan           - Run nodejsscan for JS security vulnerabilities
 # help: lint-web             - Run HTMLHint, Stylelint, ESLint, Retire.js, nodejsscan and npm audit
+# help: eslint               - Run ESLint for JavaScript standard style and prettifying
 # help: jshint               - Run JSHint for additional JavaScript analysis
 # help: jscpd                - Detect copy-pasted code in JS/HTML/CSS files
 # help: markuplint           - Modern HTML linting with markuplint
 # help: format-web           - Format HTML, CSS & JS files with Prettier
-.PHONY: install-web-linters nodejsscan lint-web jshint jscpd markuplint format-web
-
-install-web-linters:
-	@echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."
-	@if [ ! -f package.json ]; then \
-	  echo "📦 Initializing npm project..."; \
-	  npm init -y >/dev/null; \
-	fi
-	@npm install --no-save \
-		htmlhint \
-		stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
-		eslint eslint-config-standard eslint-plugin-import eslint-plugin-n eslint-plugin-promise \
-		eslint-plugin-prettier eslint-config-prettier \
-		retire \
-		prettier \
-		jshint \
-		jscpd \
-		markuplint
+.PHONY: nodejsscan eslint lint-web jshint jscpd markuplint format-web
 
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
 	@uvx nodejsscan --directory ./mcpgateway/static --directory ./mcpgateway/templates || true
 
-lint-web: install-web-linters nodejsscan
+eslint:
+	@echo "🔍 Linting JS files..."
+	@npm install --no-save
+	@find mcpgateway/static -name "*.js" -print0 | { xargs -0 npx eslint || true; }
+
+lint-web: eslint nodejsscan
 	@echo "🔍 Linting HTML files..."
 	@find mcpgateway/templates -name "*.html" -exec npx htmlhint {} + 2>/dev/null || true
 	@echo "🔍 Linting CSS files..."
 	@find mcpgateway/static -name "*.css" -exec npx stylelint {} + 2>/dev/null || true
-	@echo "🔍 Linting JS files..."
-	@find mcpgateway/static -name "*.js" -exec npx eslint {} + 2>/dev/null || true
 	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js..."
 	@cd mcpgateway/static && npx retire . 2>/dev/null || true
 	@if [ -f package.json ]; then \
@@ -2327,27 +2558,27 @@ lint-web: install-web-linters nodejsscan
 	  echo "⚠️  Skipping npm audit: no package.json found"; \
 	fi
 
-jshint: install-web-linters
+jshint:
 	@echo "🔍 Running JSHint for JavaScript analysis..."
 	@if [ -f .jshintrc ]; then \
 	  echo "📋 Using .jshintrc configuration"; \
-	  npx jshint --config .jshintrc mcpgateway/static/*.js || true; \
+	  npx --yes jshint --config .jshintrc mcpgateway/static/*.js || true; \
 	else \
 	  echo "📋 No .jshintrc found, using defaults with ES11"; \
-	  npx jshint --esversion=11 mcpgateway/static/*.js || true; \
+	  npx --yes jshint --esversion=11 mcpgateway/static/*.js || true; \
 	fi
 
-jscpd: install-web-linters
+jscpd:
 	@echo "🔍 Detecting copy-pasted code with jscpd..."
-	@npx jscpd "mcpgateway/static/" "mcpgateway/templates/" || true
+	@npx --yes jscpd "mcpgateway/static/" "mcpgateway/templates/" || true
 
-markuplint: install-web-linters
+markuplint:
 	@echo "🔍 Running markuplint for modern HTML validation..."
-	@npx markuplint mcpgateway/templates/* || true
+	@npx --yes markuplint mcpgateway/templates/* || true
 
-format-web: install-web-linters
+format-web:
 	@echo "🎨 Formatting HTML, CSS & JS with Prettier..."
-	@npx prettier --write "mcpgateway/templates/**/*.html" \
+	@npx --yes prettier --write "mcpgateway/templates/**/*.html" \
 	                 "mcpgateway/static/**/*.css" \
 	                 "mcpgateway/static/**/*.js"
 
@@ -3217,6 +3448,7 @@ container-dev: container-check-image container-validate
 		--env-file=.env \
 		-e DEBUG=true \
 		-e LOG_LEVEL=DEBUG \
+		-e TEMPLATES_AUTO_RELOAD=true \
 		-v $(PWD)/mcpgateway:/app/mcpgateway:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,) \
 		-p 8000:8000 \
 		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \

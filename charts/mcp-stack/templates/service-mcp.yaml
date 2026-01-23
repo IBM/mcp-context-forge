@@ -4,6 +4,10 @@ metadata:
   name: {{ include "mcp-stack.fullname" . }}-mcpgateway
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
+  {{- with .Values.mcpContextForge.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ .Values.mcpContextForge.service.type }}
   selector:

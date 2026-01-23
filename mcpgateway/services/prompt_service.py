@@ -32,7 +32,7 @@ from sqlalchemy.orm import joinedload, Session
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span
@@ -917,6 +917,7 @@ class PromptService:
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Union[tuple[List[PromptRead], Optional[str]], Dict[str, Any]]:
         """
         Retrieve a list of prompt templates from the database with pagination support.
@@ -939,6 +940,8 @@ class PromptService:
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
             team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
             visibility (Optional[str]): Filter by visibility (private, team, public).
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API token access
+                where the token scope should be respected instead of the user's full team memberships.
 
         Returns:
             If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
@@ -976,9 +979,17 @@ class PromptService:
 
         # Apply team-based access control if user_email is provided
         if user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
 
             if team_id:
                 # User requesting specific team - verify access
@@ -986,15 +997,19 @@ class PromptService:
                     return ([], None)
                 access_conditions = [
                     and_(DbPrompt.team_id == team_id, DbPrompt.visibility.in_(["team", "public"])),
-                    and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email),
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email))
                 query = query.where(or_(*access_conditions))
             else:
-                # General access: user's prompts + public prompts + team prompts
+                # General access: public prompts + team prompts (+ owner prompts if not public-only token)
                 access_conditions = [
-                    DbPrompt.owner_email == user_email,
                     DbPrompt.visibility == "public",
                 ]
+                # Only include owner access for non-public-only tokens
+                if not is_public_only_token:
+                    access_conditions.append(DbPrompt.owner_email == user_email)
                 if team_ids:
                     access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
                 query = query.where(or_(*access_conditions))
@@ -1147,7 +1162,15 @@ class PromptService:
             result.append(self.convert_prompt_to_read(t, include_metrics=False))
         return result
 
-    async def list_server_prompts(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None) -> List[PromptRead]:
+    async def list_server_prompts(
+        self,
+        db: Session,
+        server_id: str,
+        include_inactive: bool = False,
+        cursor: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> List[PromptRead]:
         """
         Retrieve a list of prompt templates from the database.
 
@@ -1163,6 +1186,9 @@ class PromptService:
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
+            user_email (Optional[str]): User email for visibility filtering. If None, no filtering applied.
+            token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API
+                token access where the token scope should be respected.
 
         Returns:
             List[PromptRead]: A list of prompt templates represented as PromptRead objects.
@@ -1190,6 +1216,31 @@ class PromptService:
         )
         if not include_inactive:
             query = query.where(DbPrompt.enabled)
+
+        # Add visibility filtering if user context provided
+        if user_email:
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            if token_teams is not None:
+                team_ids = token_teams
+            else:
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                team_ids = [team.id for team in user_teams]
+
+            # Check if this is a public-only token (empty teams array)
+            # Public-only tokens can ONLY see public resources - no owner access
+            is_public_only_token = token_teams is not None and len(token_teams) == 0
+
+            access_conditions = [
+                DbPrompt.visibility == "public",
+            ]
+            # Only include owner access for non-public-only tokens
+            if not is_public_only_token:
+                access_conditions.append(DbPrompt.owner_email == user_email)
+            if team_ids:
+                access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+            query = query.where(or_(*access_conditions))
+
         # Cursor-based pagination logic can be implemented here in the future.
         logger.debug(cursor)
         prompts = db.execute(query).scalars().all()
@@ -1545,7 +1596,10 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = db.get(DbPrompt, prompt_id)
+            # Acquire a row-level lock for the prompt being updated to make
+            # name-checks and the subsequent update atomic in PostgreSQL.
+            # For SQLite `get_for_update` falls back to a regular get.
+            prompt = get_for_update(db, DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
@@ -1563,20 +1617,19 @@ class PromptService:
             computed_name = self._compute_prompt_name(candidate_custom_name, prompt.gateway)
             if computed_name != prompt.name:
                 if visibility.lower() == "public":
-                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id)).scalar_one_or_none()
+                    # Lock any conflicting row so concurrent updates cannot race.
+                    existing_prompt = get_for_update(db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.id != prompt.id))
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "team" and team_id:
-                    existing_prompt = db.execute(
-                        select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id)
-                    ).scalar_one_or_none()
+                    existing_prompt = get_for_update(db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.id != prompt.id))
                     logger.info(f"Existing prompt check result: {existing_prompt}")
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "private":
-                    existing_prompt = db.execute(
-                        select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id)
-                    ).scalar_one_or_none()
+                    existing_prompt = get_for_update(
+                        db, DbPrompt, where=and_(DbPrompt.name == computed_name, DbPrompt.visibility == "private", DbPrompt.owner_email == owner_email, DbPrompt.id != prompt.id)
+                    )
                     if existing_prompt:
                         raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
@@ -1807,7 +1860,7 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = db.get(DbPrompt, prompt_id)
+            prompt = get_for_update(db, DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 

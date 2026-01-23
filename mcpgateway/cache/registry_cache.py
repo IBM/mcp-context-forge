@@ -23,6 +23,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from dataclasses import dataclass
 import hashlib
 import logging
@@ -513,3 +514,235 @@ def get_registry_cache() -> RegistryCache:
 
 # Convenience alias for direct import
 registry_cache = get_registry_cache()
+
+
+class CacheInvalidationSubscriber:
+    """Redis pubsub subscriber for cross-worker cache invalidation.
+
+    This class subscribes to the 'mcpgw:cache:invalidate' Redis channel
+    and processes invalidation messages from other workers, ensuring
+    local in-memory caches stay synchronized in multi-worker deployments.
+
+    Message formats handled:
+        - registry:{cache_type} - Invalidate registry cache (tools, prompts, etc.)
+        - tool_lookup:{name} - Invalidate specific tool lookup
+        - tool_lookup:gateway:{gateway_id} - Invalidate all tools for a gateway
+        - admin:{prefix} - Invalidate admin stats cache
+
+    Examples:
+        >>> subscriber = CacheInvalidationSubscriber()
+        >>> # Start listening in background task:
+        >>> # await subscriber.start()
+        >>> # Stop when shutting down:
+        >>> # await subscriber.stop()
+    """
+
+    def __init__(self) -> None:
+        """Initialize the cache invalidation subscriber."""
+        self._task: Optional[asyncio.Task[None]] = None
+        self._stop_event: Optional[asyncio.Event] = None
+        self._pubsub: Optional[Any] = None
+        self._channel = "mcpgw:cache:invalidate"
+        self._started = False
+
+    async def start(self) -> None:
+        """Start listening for cache invalidation messages.
+
+        This creates a background task that subscribes to the Redis
+        channel and processes invalidation messages.
+
+        Examples:
+            >>> import asyncio
+            >>> subscriber = CacheInvalidationSubscriber()
+            >>> # asyncio.run(subscriber.start())
+        """
+        if self._started:
+            logger.debug("CacheInvalidationSubscriber already started")
+            return
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if not redis:
+                logger.info("CacheInvalidationSubscriber: Redis unavailable, skipping cross-worker invalidation")
+                return
+
+            self._stop_event = asyncio.Event()
+            self._pubsub = redis.pubsub()
+            await self._pubsub.subscribe(self._channel)  # pyright: ignore[reportOptionalMemberAccess]
+
+            self._task = asyncio.create_task(self._listen_loop())
+            self._started = True
+            logger.info("CacheInvalidationSubscriber started on channel '%s'", self._channel)
+
+        except Exception as e:
+            logger.warning("CacheInvalidationSubscriber failed to start: %s", e)
+            # Clean up partially created pubsub to prevent leaks
+            if self._pubsub is not None:
+                try:
+                    try:
+                        await self._pubsub.aclose()
+                    except AttributeError:
+                        await self._pubsub.close()
+                except Exception as cleanup_err:
+                    logger.debug("Error during pubsub cleanup: %s", cleanup_err)
+                self._pubsub = None
+
+    async def stop(self) -> None:
+        """Stop listening for cache invalidation messages.
+
+        This cancels the background task and cleans up resources.
+
+        Examples:
+            >>> import asyncio
+            >>> subscriber = CacheInvalidationSubscriber()
+            >>> # asyncio.run(subscriber.stop())
+        """
+        if not self._started:
+            return
+
+        self._started = False
+
+        if self._stop_event:
+            self._stop_event.set()
+
+        if self._task:
+            self._task.cancel()
+            try:
+                await asyncio.wait_for(self._task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            self._task = None
+
+        if self._pubsub:
+            try:
+                await self._pubsub.unsubscribe(self._channel)
+                try:
+                    await self._pubsub.aclose()
+                except AttributeError:
+                    await self._pubsub.close()
+            except Exception as e:
+                logger.debug("Error closing pubsub: %s", e)
+            self._pubsub = None
+
+        logger.info("CacheInvalidationSubscriber stopped")
+
+    async def _listen_loop(self) -> None:
+        """Background loop that listens for and processes invalidation messages."""
+        logger.debug("CacheInvalidationSubscriber listen loop started")
+        try:
+            while self._started and not (self._stop_event and self._stop_event.is_set()):
+                if self._pubsub is None:
+                    break
+                try:
+                    message = await asyncio.wait_for(
+                        self._pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
+                        timeout=2.0,
+                    )
+                    if message and message.get("type") == "message":
+                        data = message.get("data")
+                        if isinstance(data, bytes):
+                            data = data.decode("utf-8")
+                        if data:
+                            await self._process_invalidation(data)
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:  # pylint: disable=broad-exception-caught
+                    logger.debug("CacheInvalidationSubscriber message error: %s", e)
+                    await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            logger.debug("CacheInvalidationSubscriber listen loop cancelled")
+        finally:
+            logger.debug("CacheInvalidationSubscriber listen loop exited")
+
+    async def _process_invalidation(self, message: str) -> None:  # pylint: disable=too-many-branches
+        """Process a cache invalidation message.
+
+        Args:
+            message: The invalidation message in format 'type:identifier'
+        """
+        logger.debug("CacheInvalidationSubscriber received: %s", message)
+
+        # pylint: disable=protected-access
+        # pyright: ignore[reportPrivateUsage]
+        # We intentionally access protected members to clear local in-memory caches
+        # without triggering another round of Redis pubsub invalidation messages
+        try:
+            if message.startswith("registry:"):
+                # Handle registry cache invalidation (tools, prompts, resources, etc.)
+                cache_type = message[len("registry:") :]
+                cache = get_registry_cache()
+                # Only clear local in-memory cache to avoid infinite loops
+                prefix = cache._get_redis_key(cache_type)  # pyright: ignore[reportPrivateUsage]
+                with cache._lock:  # pyright: ignore[reportPrivateUsage]
+                    keys_to_remove = [k for k in cache._cache if k.startswith(prefix)]  # pyright: ignore[reportPrivateUsage]
+                    for key in keys_to_remove:
+                        cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
+                logger.debug("CacheInvalidationSubscriber: Cleared local registry:%s cache (%d keys)", cache_type, len(keys_to_remove))
+
+            elif message.startswith("tool_lookup:gateway:"):
+                # Handle gateway-wide tool lookup invalidation
+                gateway_id = message[len("tool_lookup:gateway:") :]
+                # First-Party
+                from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+                # Only clear local L1 cache
+                with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                    to_remove = [name for name, entry in tool_lookup_cache._cache.items() if entry.value.get("tool", {}).get("gateway_id") == gateway_id]  # pyright: ignore[reportPrivateUsage]
+                    for name in to_remove:
+                        tool_lookup_cache._cache.pop(name, None)  # pyright: ignore[reportPrivateUsage]
+                logger.debug("CacheInvalidationSubscriber: Cleared local tool_lookup for gateway %s (%d keys)", gateway_id, len(to_remove))
+
+            elif message.startswith("tool_lookup:"):
+                # Handle specific tool lookup invalidation
+                tool_name = message[len("tool_lookup:") :]
+                # First-Party
+                from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+                # Only clear local L1 cache
+                with tool_lookup_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                    tool_lookup_cache._cache.pop(tool_name, None)  # pyright: ignore[reportPrivateUsage]
+                logger.debug("CacheInvalidationSubscriber: Cleared local tool_lookup:%s", tool_name)
+
+            elif message.startswith("admin:"):
+                # Handle admin stats cache invalidation
+                prefix = message[len("admin:") :]
+                # First-Party
+                from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+                # Only clear local in-memory cache
+                full_prefix = admin_stats_cache._get_redis_key(prefix)  # pyright: ignore[reportPrivateUsage]
+                with admin_stats_cache._lock:  # pyright: ignore[reportPrivateUsage]
+                    keys_to_remove = [k for k in admin_stats_cache._cache if k.startswith(full_prefix)]  # pyright: ignore[reportPrivateUsage]
+                    for key in keys_to_remove:
+                        admin_stats_cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
+                logger.debug("CacheInvalidationSubscriber: Cleared local admin:%s cache (%d keys)", prefix, len(keys_to_remove))
+
+            else:
+                logger.debug("CacheInvalidationSubscriber: Unknown message format: %s", message)
+
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("CacheInvalidationSubscriber: Error processing '%s': %s", message, e)
+
+
+# Global singleton for cache invalidation subscriber
+_cache_invalidation_subscriber: Optional[CacheInvalidationSubscriber] = None
+
+
+def get_cache_invalidation_subscriber() -> CacheInvalidationSubscriber:
+    """Get or create the singleton CacheInvalidationSubscriber instance.
+
+    Returns:
+        CacheInvalidationSubscriber: The singleton instance
+
+    Examples:
+        >>> subscriber = get_cache_invalidation_subscriber()
+        >>> isinstance(subscriber, CacheInvalidationSubscriber)
+        True
+    """
+    global _cache_invalidation_subscriber  # pylint: disable=global-statement
+    if _cache_invalidation_subscriber is None:
+        _cache_invalidation_subscriber = CacheInvalidationSubscriber()
+    return _cache_invalidation_subscriber

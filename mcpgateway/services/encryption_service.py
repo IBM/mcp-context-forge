@@ -12,7 +12,6 @@ using the AUTH_ENCRYPTION_SECRET from configuration.
 
 # Standard
 import base64
-import json
 import logging
 import os
 from typing import Optional, Union
@@ -20,6 +19,7 @@ from typing import Optional, Union
 # Third-Party
 from argon2.low_level import hash_secret_raw, Type
 from cryptography.fernet import Fernet
+import orjson
 from pydantic import SecretStr
 
 # First-Party
@@ -111,7 +111,7 @@ class EncryptionService:
             key = self.derive_key_argon2id(self.encryption_secret, salt, self.time_cost, self.memory_cost, self.parallelism)
             fernet = Fernet(key)
             encrypted = fernet.encrypt(plaintext.encode())
-            return json.dumps(
+            return orjson.dumps(
                 {
                     "kdf": "argon2id",
                     "t": self.time_cost,
@@ -120,7 +120,7 @@ class EncryptionService:
                     "salt": base64.b64encode(salt).decode(),
                     "token": encrypted.decode(),
                 }
-            )
+            ).decode()
         except Exception as e:
             logger.error(f"Failed to encrypt secret: {e}")
             raise
@@ -135,7 +135,7 @@ class EncryptionService:
             Decrypted secret string, or None if decryption fails
         """
         try:
-            b = json.loads(bundle_json)
+            b = orjson.loads(bundle_json)
             salt = base64.b64decode(b["salt"])
             key = self.derive_key_argon2id(self.encryption_secret, salt, time_cost=b["t"], memory_cost=b["m"], parallelism=b["p"])
             fernet = Fernet(key)
@@ -165,10 +165,10 @@ class EncryptionService:
         # Check for new Argon2id JSON bundle format
         if text.startswith("{"):
             try:
-                obj = json.loads(text)
+                obj = orjson.loads(text)
                 if isinstance(obj, dict) and obj.get("kdf") == "argon2id":
                     return True
-            except (json.JSONDecodeError, ValueError, KeyError):
+            except (orjson.JSONDecodeError, ValueError, KeyError):
                 # Not valid JSON or missing expected structure - continue to legacy check
                 pass
 

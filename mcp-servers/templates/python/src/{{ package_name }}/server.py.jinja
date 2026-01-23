@@ -1,5 +1,5 @@
 import asyncio
-import json
+import orjson
 import logging
 import sys
 from mcp.server import Server
@@ -36,8 +36,8 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     if name == "echo":
-        return [TextContent(type="text", text=json.dumps({"ok": True, "echo": arguments["text"]}))]
-    return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown tool: {name}"}))]
+        return [TextContent(type="text", text=orjson.dumps({"ok": True, "echo": arguments["text"]}).decode())]
+    return [TextContent(type="text", text=orjson.dumps({"ok": False, "error": f"unknown tool: {name}"}).decode())]
 
 
 async def main() -> None:
@@ -58,4 +58,3 @@ async def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     asyncio.run(main())
-

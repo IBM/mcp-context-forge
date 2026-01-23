@@ -29,6 +29,10 @@ else
   IMAGE_PREFIX="Dev"
 fi
 
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/go_utils.sh
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/github_utils.sh
+source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/logger.sh
+
 IMAGE_NAME="$(get_env app-name)"
 # If it's CI build then the image tag eg: Dev_<COMMIT>_<DATE>
 # If it's PR build then the image tag eg: Ft_<COMMIT>_<DATE>
@@ -38,14 +42,36 @@ IMAGE_TAG=${IMAGE_TAG////_}
 IMAGE_BASE="${REGISTRY_URL}/${IMAGE_NAME}"
 IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
 
-make container-build
+IMAGE_BASE="mcpgateway/mcpgateway"
+BASE_IMAGE_TAG="${IMAGE_TAG}_base"
+DOCKER_REGISTRY=$(get_env artifactory-docker-full-url "docker-na.artifactory.swg-devops.com/sec-isc-team-isc-icp-docker-local")
 
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/go_utils.sh
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/github_utils.sh
-source $WORKSPACE/$PIPELINE_CONFIG_REPO_PATH/scripts/utilities/logger.sh
 
-docker tag mcpgateway/mcpgateway:latest "${IMAGE}"
-docker push "${IMAGE}"
+MULTI_ARCH_BUILD=$(get_env multi-arch-build "1")
+if [ $MULTI_ARCH_BUILD == "1" ]; then
+   echo "Building multi architecture image"
+   BASE_IMAGE_REPO="${DOCKER_REGISTRY}/${IMAGE_BASE}:${BASE_IMAGE_TAG}"
+   sed -i "s%BASE_IMAGE_REPO%${BASE_IMAGE_REPO}%g" Containerfile.cyberfraud
+   make REGISTRY="${DOCKER_REGISTRY}" IMAGE_BASE="$IMAGE_BASE" IMAGE_TAG="$BASE_IMAGE_TAG" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.lite  container-build-multi && \
+   make REGISTRY="${DOCKER_REGISTRY}" IMAGE_BASE="${IMAGE_NAME}" IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud  container-build-multi;
+else
+   echo "Building single architecture image"
+   BASE_IMAGE_REPO="${IMAGE_BASE}:${BASE_IMAGE_TAG}"
+   sed -i "s%BASE_IMAGE_REPO%${BASE_IMAGE_REPO}%g" Containerfile.cyberfraud
+   make IMAGE_BASE="$IMAGE_BASE" IMAGE_TAG="$BASE_IMAGE_TAG" docker-prod && \
+   make IMAGE_BASE="$IMAGE_NAME" IMAGE_TAG="${IMAGE_TAG}" CONTAINER_RUNTIME=docker CONTAINER_FILE=./Containerfile.cyberfraud container-build && \
+   docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE}" && \
+   docker push "${IMAGE}"
+fi
+
+
+MCP_GATEWAY_IMAGE_TAG="${IMAGE_TAG}"
+RUN_SMOKE_TESTS=$(get_env run-smoke-tests "1")
+if [ $RUN_SMOKE_TESTS == "1" ]; then
+   source ./.sps/run_smoke_test.sh
+else
+   echo "run-smoke-tests set to 0; Skipping smoke tests"
+fi
 
 DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}" | awk -F@ '{print $2}')"
 

@@ -16,11 +16,11 @@ from __future__ import annotations
 # Standard
 from dataclasses import dataclass
 import hashlib
-import json
 import time
 from typing import Any, Dict, List, Optional
 
 # Third-Party
+import orjson
 from pydantic import BaseModel, Field
 
 # First-Party
@@ -82,8 +82,8 @@ def _make_key(tool: str, args: dict | None, fields: Optional[List[str]]) -> str:
             base["args"] = {k: args.get(k) for k in fields}
         else:
             base["args"] = args
-    raw = json.dumps(base, sort_keys=True, default=str)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    raw = orjson.dumps(base, default=str, option=orjson.OPT_SORT_KEYS)
+    return hashlib.sha256(raw).hexdigest()
 
 
 class CachedToolResultPlugin(Plugin):

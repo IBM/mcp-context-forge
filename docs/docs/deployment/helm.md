@@ -529,6 +529,8 @@ flowchart TD
 
           Check logs for configuration or secret injection issues.
 
+        - **Startup Resilience**: If the pod is restarting due to database/Redis unavailability, the Gateway uses exponential backoff with jitter (default 30 retries ≈ 5 minutes). Configure via `DB_MAX_RETRIES` and `REDIS_MAX_RETRIES`. See [Startup Resilience](../architecture/performance-architecture.md#startup-resilience).
+
     === "`Env vars missing` (e.g., BASIC_AUTH_USER)"
 
         - **Cause**: Secret or ConfigMap not mounted
