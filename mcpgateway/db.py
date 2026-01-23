@@ -5231,17 +5231,33 @@ def validate_tool_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
-    Raises:
-        ValueError: If the tool input schema is invalid.
     """
     # You can use mapper and connection later, if required.
     _ = mapper
     _ = connection
+
+    allowed_validator_names = {
+        "Draft4Validator",
+        "Draft6Validator",
+        "Draft7Validator",
+        "Draft201909Validator",
+        "Draft202012Validator",
+    }
+
     if hasattr(target, "input_schema"):
+        schema = target.input_schema
+        if schema is None:
+            return
+
         try:
-            jsonschema.Draft7Validator.check_schema(target.input_schema)
+            validator = jsonschema.validators.validator_for(schema)
+
+            if validator.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+
+            validator.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid tool input schema: {str(e)}") from e
+            logger.warning(f"Invalid tool input schema: {str(e)}")
 
 
 def validate_tool_name(mapper, connection, target):
@@ -5275,17 +5291,33 @@ def validate_prompt_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
-    Raises:
-        ValueError: If the prompt argument schema is invalid.
     """
     # You can use mapper and connection later, if required.
     _ = mapper
     _ = connection
+
+    allowed_validator_names = {
+        "Draft4Validator",
+        "Draft6Validator",
+        "Draft7Validator",
+        "Draft201909Validator",
+        "Draft202012Validator",
+    }
+
     if hasattr(target, "argument_schema"):
+        schema = target.argument_schema
+        if schema is None:
+            return
+
         try:
-            jsonschema.Draft7Validator.check_schema(target.argument_schema)
+            validator = jsonschema.validators.validator_for(schema)
+
+            if validator.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+
+            validator.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid prompt argument schema: {str(e)}") from e
+            logger.warning(f"Invalid prompt argument schema: {str(e)}")
 
 
 # Register validation listeners

@@ -438,10 +438,16 @@ def get_user_email_from_context() -> str:
     return str(user) if user else "unknown"
 
 
-@mcp_app.call_tool()
+@mcp_app.call_tool(validate_input=False)
 async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]]:
     """
     Handles tool invocation via the MCP Server.
+
+    Note: validate_input=False disables the MCP SDK's built-in JSON Schema validation.
+    This is necessary because the SDK uses jsonschema.validate() which internally calls
+    check_schema() with the default validator. Schemas using older draft features
+    (e.g., Draft 4 style exclusiveMinimum: true) fail this validation. The gateway
+    handles schema validation separately in tool_service.py with multi-draft support.
 
     This function supports the MCP protocol's tool calling with structured content validation.
     It can return either unstructured content only, or both unstructured and structured content

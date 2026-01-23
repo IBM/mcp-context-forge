@@ -32,7 +32,7 @@ import uuid
 import httpx
 import jq
 import jsonschema
-from jsonschema import validators
+from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -164,6 +164,10 @@ def _get_validator_class_and_check(schema_json: str) -> Tuple[type, dict]:
     2. Selecting the appropriate validator class based on $schema
     3. Checking the schema is valid
 
+    Supports multiple JSON Schema drafts by using fallback validators when the
+    auto-detected validator fails. This handles schemas using older draft features
+    (e.g., Draft 4 style exclusiveMinimum: true) that are invalid in newer drafts.
+
     Args:
         schema_json: Canonical JSON string of the schema (used as cache key).
 
@@ -171,7 +175,26 @@ def _get_validator_class_and_check(schema_json: str) -> Tuple[type, dict]:
         Tuple of (validator_class, schema_dict) ready for instantiation.
     """
     schema = orjson.loads(schema_json)
+
+    # First try auto-detection based on $schema
     validator_cls = validators.validator_for(schema)
+    try:
+        validator_cls.check_schema(schema)
+        return validator_cls, schema
+    except jsonschema.exceptions.SchemaError:
+        pass
+
+    # Fallback: try older drafts that may accept schemas with legacy features
+    # (e.g., Draft 4/6 style boolean exclusiveMinimum/exclusiveMaximum)
+    for fallback_cls in [Draft7Validator, Draft6Validator, Draft4Validator]:
+        try:
+            fallback_cls.check_schema(schema)
+            return fallback_cls, schema
+        except jsonschema.exceptions.SchemaError:
+            continue
+
+    # If no validator accepts the schema, use the original and let it fail
+    # with a clear error message during validation
     validator_cls.check_schema(schema)
     return validator_cls, schema
 

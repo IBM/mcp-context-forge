@@ -7,6 +7,7 @@ Authors: Mihai Criveti
 
 # Standard
 from datetime import datetime, timedelta, timezone
+import logging
 from unittest.mock import MagicMock
 
 # Third-Party
@@ -546,12 +547,16 @@ def test_validate_tool_schema_valid():
     db.validate_tool_schema(None, None, Target())
 
 
-def test_validate_tool_schema_invalid():
+def test_validate_tool_schema_invalid(caplog):
     class Target:
-        input_schema = {"type": "invalid"}
+        input_schema = {"type": "invalid"}  # invalid JSON Schema
 
-    with pytest.raises(ValueError):
+    # Capture warnings
+    with caplog.at_level(logging.WARNING):
         db.validate_tool_schema(None, None, Target())
+
+    # Check that a warning about invalid schema was logged
+    assert any("Invalid tool input schema" in record.message for record in caplog.records)
 
 
 def test_validate_tool_name_valid():
@@ -576,19 +581,76 @@ def test_validate_prompt_schema_valid():
     db.validate_prompt_schema(None, None, Target())
 
 
-def test_validate_prompt_schema_invalid():
+def test_validate_prompt_schema_invalid(caplog):
     class Target:
-        argument_schema = {"type": "invalid"}
+        argument_schema = {"type": "invalid"}  # invalid JSON Schema
 
-    with pytest.raises(ValueError):
+    # Capture warnings
+    with caplog.at_level(logging.WARNING):
         db.validate_prompt_schema(None, None, Target())
 
+    # Check that a warning about invalid schema was logged
+    assert any("Invalid prompt argument schema" in record.message for record in caplog.records)
 
-def test_validate_tool_schema_missing():
+
+def test_validate_tool_schema_missing(caplog):
     class Target:
-        pass
+        pass  # No input_schema
 
-    db.validate_tool_schema(None, None, Target())  # Should not raise
+    # Should not log any warnings or raise
+    with caplog.at_level(logging.WARNING):
+        db.validate_tool_schema(None, None, Target())
+
+    # There should be no warnings
+    assert len(caplog.records) == 0
+
+
+def test_validate_tool_schema_none(caplog):
+    class Target:
+        input_schema = None  # Explicitly None
+
+    # Should not log any warnings or raise
+    with caplog.at_level(logging.WARNING):
+        db.validate_tool_schema(None, None, Target())
+
+    # There should be no warnings
+    assert len(caplog.records) == 0
+
+
+def test_validate_tool_schema_draft4(caplog):
+    """Test schema validation with Draft 4 style exclusiveMinimum."""
+
+    class Target:
+        input_schema = {
+            "$schema": "http://json-schema.org/draft-04/schema#",
+            "type": "object",
+            "properties": {"price": {"type": "number", "minimum": 0, "exclusiveMinimum": True}},
+        }
+
+    with caplog.at_level(logging.WARNING):
+        db.validate_tool_schema(None, None, Target())
+
+    # Valid Draft 4 schema should not log warnings
+    assert not any("Invalid tool input schema" in record.message for record in caplog.records)
+
+
+def test_validate_tool_schema_draft2020_12(caplog):
+    """Test schema validation with Draft 2020-12 style schema."""
+
+    class Target:
+        input_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+        }
+
+    with caplog.at_level(logging.WARNING):
+        db.validate_tool_schema(None, None, Target())
+
+    # Valid Draft 2020-12 schema should not log warnings
+    assert not any("Invalid tool input schema" in record.message for record in caplog.records)
 
 
 def test_validate_tool_name_missing():
@@ -598,11 +660,64 @@ def test_validate_tool_name_missing():
     db.validate_tool_name(None, None, Target())  # Should not raise
 
 
-def test_validate_prompt_schema_missing():
+def test_validate_prompt_schema_missing(caplog):
     class Target:
-        pass
+        pass  # No argument_schema
 
-    db.validate_prompt_schema(None, None, Target())  # Should not raise
+    # Should not log any warnings or raise
+    with caplog.at_level(logging.WARNING):
+        db.validate_prompt_schema(None, None, Target())
+
+    # There should be no warnings
+    assert len(caplog.records) == 0
+
+
+def test_validate_prompt_schema_none(caplog):
+    class Target:
+        argument_schema = None  # Explicitly None
+
+    # Should not log any warnings or raise
+    with caplog.at_level(logging.WARNING):
+        db.validate_prompt_schema(None, None, Target())
+
+    # There should be no warnings
+    assert len(caplog.records) == 0
+
+
+def test_validate_prompt_schema_draft4(caplog):
+    """Test prompt schema validation with Draft 4 style exclusiveMinimum."""
+
+    class Target:
+        argument_schema = {
+            "$schema": "http://json-schema.org/draft-04/schema#",
+            "type": "object",
+            "properties": {"count": {"type": "integer", "minimum": 0, "exclusiveMinimum": True}},
+        }
+
+    with caplog.at_level(logging.WARNING):
+        db.validate_prompt_schema(None, None, Target())
+
+    # Valid Draft 4 schema should not log warnings
+    assert not any("Invalid prompt argument schema" in record.message for record in caplog.records)
+
+
+def test_validate_prompt_schema_draft2020_12(caplog):
+    """Test prompt schema validation with Draft 2020-12 style schema."""
+
+    class Target:
+        argument_schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+        }
+
+    with caplog.at_level(logging.WARNING):
+        db.validate_prompt_schema(None, None, Target())
+
+    # Valid Draft 2020-12 schema should not log warnings
+    assert not any("Invalid prompt argument schema" in record.message for record in caplog.records)
 
 
 # --- get_db generator ---
