@@ -139,20 +139,19 @@ async def get_current_user_with_permissions(
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
             }
-        else:
-            # Warning: MCP auth disabled without proxy trust - security risk!
-            # This case is already warned about in config validation
-            return {
-                "email": "anonymous",
-                "full_name": "Anonymous User",
-                "is_admin": False,
-                "ip_address": request.client.host if request.client else None,
-                "user_agent": request.headers.get("user-agent"),
-                "db": db,
-                "auth_method": "anonymous",
-                "request_id": getattr(request.state, "request_id", None),
-                "team_id": getattr(request.state, "team_id", None),
-            }
+        # Warning: MCP auth disabled without proxy trust - security risk!
+        # This case is already warned about in config validation
+        return {
+            "email": "anonymous",
+            "full_name": "Anonymous User",
+            "is_admin": False,
+            "ip_address": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+            "db": db,
+            "auth_method": "anonymous",
+            "request_id": getattr(request.state, "request_id", None),
+            "team_id": getattr(request.state, "team_id", None),
+        }
 
     # Standard JWT authentication flow
     # Try multiple sources for the token, prioritizing manual cookie reading
