@@ -1729,9 +1729,18 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
-        db.commit()
+        # Only commit if the transaction is still active.
+        # The transaction can become inactive if an exception occurred during
+        # async context manager cleanup (e.g., CancelledError during MCP session teardown).
+        if db.is_active:
+            db.commit()
     except Exception:
         try:
+            # Always call rollback() in exception handler.
+            # rollback() is safe to call even when is_active=False - it succeeds and
+            # restores the session to a usable state. When is_active=False (e.g., after
+            # IntegrityError), rollback() is actually REQUIRED to clear the failed state.
+            # Skipping rollback when is_active=False would leave the session unusable.
             db.rollback()
         except Exception:
             # Connection is broken - invalidate to remove from pool

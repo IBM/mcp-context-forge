@@ -868,58 +868,171 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 for tool in tools
             ]
 
-            # Create resource DB models
-            db_resources = [
-                DbResource(
-                    uri=r.uri,
-                    name=r.name,
-                    description=r.description,
-                    mime_type=(mime_type := (mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream"))),
-                    uri_template=r.uri_template or None,
-                    text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
-                    binary_content=(
-                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
-                    ),
-                    size=len(r.content) if r.content else 0,
-                    tags=getattr(r, "tags", []) or [],
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",
-                    created_user_agent=created_user_agent,
-                    import_batch_id=None,
-                    federation_source=gateway.name,
-                    version=1,
-                    team_id=getattr(r, "team_id", None) or team_id,
-                    owner_email=getattr(r, "owner_email", None) or owner_email or created_by,
-                    visibility=getattr(r, "visibility", None) or visibility,
-                )
-                for r in resources
-            ]
+            # Create resource DB models with upsert logic for ORPHANED resources only
+            # Query for existing ORPHANED resources (gateway_id IS NULL or points to non-existent gateway)
+            # with same (team_id, owner_email, uri) to handle resources left behind from incomplete
+            # gateway deletions (e.g., issue #2341 crash scenarios).
+            # We only update orphaned resources - resources belonging to active gateways are not touched.
+            resource_uris = [r.uri for r in resources]
+            effective_owner = owner_email or created_by
 
-            # Create prompt DB models
-            db_prompts = [
-                DbPrompt(
-                    name=prompt.name,
-                    original_name=prompt.name,
-                    custom_name=prompt.name,
-                    display_name=prompt.name,
-                    description=prompt.description,
-                    template=prompt.template if hasattr(prompt, "template") else "",
-                    argument_schema={},  # Use argument_schema instead of arguments
-                    # Federation metadata
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",  # These are federated prompts
-                    created_user_agent=created_user_agent,
-                    federation_source=gateway.name,
-                    version=1,
-                    # Inherit team assignment from gateway
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
-                )
-                for prompt in prompts
-            ]
+            # Build lookup map: (team_id, owner_email, uri) -> orphaned DbResource
+            # We query all resources matching our URIs, then filter to orphaned ones in Python
+            # to handle per-resource team/owner overrides correctly
+            orphaned_resources_map: Dict[tuple, DbResource] = {}
+            if resource_uris:
+                try:
+                    # Get valid gateway IDs to identify orphaned resources
+                    valid_gateway_ids = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
+                    candidate_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
+                    for res in candidate_resources:
+                        # Only consider orphaned resources (no gateway or gateway doesn't exist)
+                        is_orphaned = res.gateway_id is None or res.gateway_id not in valid_gateway_ids
+                        if is_orphaned:
+                            key = (res.team_id, res.owner_email, res.uri)
+                            orphaned_resources_map[key] = res
+                    if orphaned_resources_map:
+                        logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {gateway.name}")
+                except Exception as e:
+                    # If orphan detection fails (e.g., in mocked tests), skip upsert and create new resources
+                    # This is conservative - we won't accidentally reassign resources from active gateways
+                    logger.debug(f"Orphan resource detection skipped: {e}")
+
+            db_resources = []
+            for r in resources:
+                mime_type = mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
+                r_team_id = getattr(r, "team_id", None) or team_id
+                r_owner_email = getattr(r, "owner_email", None) or effective_owner
+                r_visibility = getattr(r, "visibility", None) or visibility
+
+                # Check if there's an orphaned resource with matching unique key
+                lookup_key = (r_team_id, r_owner_email, r.uri)
+                if lookup_key in orphaned_resources_map:
+                    # Update orphaned resource - reassign to new gateway
+                    existing = orphaned_resources_map[lookup_key]
+                    existing.name = r.name
+                    existing.description = r.description
+                    existing.mime_type = mime_type
+                    existing.uri_template = r.uri_template or None
+                    existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
+                    existing.binary_content = (
+                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
+                    )
+                    existing.size = len(r.content) if r.content else 0
+                    existing.tags = getattr(r, "tags", []) or []
+                    existing.federation_source = gateway.name
+                    existing.modified_by = created_by
+                    existing.modified_from_ip = created_from_ip
+                    existing.modified_via = "federation"
+                    existing.modified_user_agent = created_user_agent
+                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.visibility = r_visibility
+                    # Note: gateway_id will be set when gateway is created (relationship)
+                    db_resources.append(existing)
+                else:
+                    # Create new resource
+                    db_resources.append(
+                        DbResource(
+                            uri=r.uri,
+                            name=r.name,
+                            description=r.description,
+                            mime_type=mime_type,
+                            uri_template=r.uri_template or None,
+                            text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
+                            binary_content=(
+                                r.content.encode()
+                                if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
+                                else r.content if isinstance(r.content, bytes) else None
+                            ),
+                            size=len(r.content) if r.content else 0,
+                            tags=getattr(r, "tags", []) or [],
+                            created_by=created_by or "system",
+                            created_from_ip=created_from_ip,
+                            created_via="federation",
+                            created_user_agent=created_user_agent,
+                            import_batch_id=None,
+                            federation_source=gateway.name,
+                            version=1,
+                            team_id=r_team_id,
+                            owner_email=r_owner_email,
+                            visibility=r_visibility,
+                        )
+                    )
+
+            # Create prompt DB models with upsert logic for ORPHANED prompts only
+            # Query for existing ORPHANED prompts (gateway_id IS NULL or points to non-existent gateway)
+            # with same (team_id, owner_email, name) to handle prompts left behind from incomplete
+            # gateway deletions. We only update orphaned prompts - prompts belonging to active gateways are not touched.
+            prompt_names = [p.name for p in prompts]
+
+            # Build lookup map: (team_id, owner_email, name) -> orphaned DbPrompt
+            orphaned_prompts_map: Dict[tuple, DbPrompt] = {}
+            if prompt_names:
+                try:
+                    # Get valid gateway IDs to identify orphaned prompts
+                    valid_gateway_ids_for_prompts = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
+                    candidate_prompts = db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names))).scalars().all()
+                    for pmt in candidate_prompts:
+                        # Only consider orphaned prompts (no gateway or gateway doesn't exist)
+                        is_orphaned = pmt.gateway_id is None or pmt.gateway_id not in valid_gateway_ids_for_prompts
+                        if is_orphaned:
+                            key = (pmt.team_id, pmt.owner_email, pmt.name)
+                            orphaned_prompts_map[key] = pmt
+                    if orphaned_prompts_map:
+                        logger.info(f"Found {len(orphaned_prompts_map)} orphaned prompts to reassign for gateway {gateway.name}")
+                except Exception as e:
+                    # If orphan detection fails (e.g., in mocked tests), skip upsert and create new prompts
+                    logger.debug(f"Orphan prompt detection skipped: {e}")
+
+            db_prompts = []
+            for prompt in prompts:
+                # Prompts inherit team/owner from gateway (no per-prompt overrides)
+                p_team_id = team_id
+                p_owner_email = owner_email or effective_owner
+
+                # Check if there's an orphaned prompt with matching unique key
+                lookup_key = (p_team_id, p_owner_email, prompt.name)
+                if lookup_key in orphaned_prompts_map:
+                    # Update orphaned prompt - reassign to new gateway
+                    existing = orphaned_prompts_map[lookup_key]
+                    existing.original_name = prompt.name
+                    existing.custom_name = prompt.name
+                    existing.display_name = prompt.name
+                    existing.description = prompt.description
+                    existing.template = prompt.template if hasattr(prompt, "template") else ""
+                    existing.federation_source = gateway.name
+                    existing.modified_by = created_by
+                    existing.modified_from_ip = created_from_ip
+                    existing.modified_via = "federation"
+                    existing.modified_user_agent = created_user_agent
+                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.visibility = visibility
+                    # Note: gateway_id will be set when gateway is created (relationship)
+                    db_prompts.append(existing)
+                else:
+                    # Create new prompt
+                    db_prompts.append(
+                        DbPrompt(
+                            name=prompt.name,
+                            original_name=prompt.name,
+                            custom_name=prompt.name,
+                            display_name=prompt.name,
+                            description=prompt.description,
+                            template=prompt.template if hasattr(prompt, "template") else "",
+                            argument_schema={},  # Use argument_schema instead of arguments
+                            # Federation metadata
+                            created_by=created_by or "system",
+                            created_from_ip=created_from_ip,
+                            created_via="federation",  # These are federated prompts
+                            created_user_agent=created_user_agent,
+                            federation_source=gateway.name,
+                            version=1,
+                            # Inherit team assignment from gateway
+                            team_id=team_id,
+                            owner_email=owner_email,
+                            visibility=visibility,
+                        )
+                    )
 
             # Create DB model
             db_gateway = DbGateway(
