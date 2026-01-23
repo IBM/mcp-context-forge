@@ -868,58 +868,151 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 for tool in tools
             ]
 
-            # Create resource DB models
-            db_resources = [
-                DbResource(
-                    uri=r.uri,
-                    name=r.name,
-                    description=r.description,
-                    mime_type=(mime_type := (mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream"))),
-                    uri_template=r.uri_template or None,
-                    text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
-                    binary_content=(
-                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
-                    ),
-                    size=len(r.content) if r.content else 0,
-                    tags=getattr(r, "tags", []) or [],
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",
-                    created_user_agent=created_user_agent,
-                    import_batch_id=None,
-                    federation_source=gateway.name,
-                    version=1,
-                    team_id=getattr(r, "team_id", None) or team_id,
-                    owner_email=getattr(r, "owner_email", None) or owner_email or created_by,
-                    visibility=getattr(r, "visibility", None) or visibility,
+            # Create resource DB models with upsert logic
+            # Query for existing resources with same (team_id, owner_email, uri) to handle
+            # orphaned resources from previous registrations (e.g., issue #2341 crash scenarios)
+            resource_uris = [r.uri for r in resources]
+            effective_owner = owner_email or created_by
+            existing_resources_map: Dict[str, DbResource] = {}
+            if resource_uris and team_id and effective_owner:
+                existing_resources = (
+                    db.execute(
+                        select(DbResource).where(
+                            DbResource.team_id == team_id,
+                            DbResource.owner_email == effective_owner,
+                            DbResource.uri.in_(resource_uris),
+                        )
+                    )
+                    .scalars()
+                    .all()
                 )
-                for r in resources
-            ]
+                existing_resources_map = {r.uri: r for r in existing_resources}
+                if existing_resources_map:
+                    logger.info(f"Found {len(existing_resources_map)} existing resources to update for gateway {gateway.name}")
 
-            # Create prompt DB models
-            db_prompts = [
-                DbPrompt(
-                    name=prompt.name,
-                    original_name=prompt.name,
-                    custom_name=prompt.name,
-                    display_name=prompt.name,
-                    description=prompt.description,
-                    template=prompt.template if hasattr(prompt, "template") else "",
-                    argument_schema={},  # Use argument_schema instead of arguments
-                    # Federation metadata
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",  # These are federated prompts
-                    created_user_agent=created_user_agent,
-                    federation_source=gateway.name,
-                    version=1,
-                    # Inherit team assignment from gateway
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
+            db_resources = []
+            for r in resources:
+                mime_type = mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
+                r_team_id = getattr(r, "team_id", None) or team_id
+                r_owner_email = getattr(r, "owner_email", None) or effective_owner
+                r_visibility = getattr(r, "visibility", None) or visibility
+
+                if r.uri in existing_resources_map:
+                    # Update existing resource (upsert) - reassign to new gateway
+                    existing = existing_resources_map[r.uri]
+                    existing.name = r.name
+                    existing.description = r.description
+                    existing.mime_type = mime_type
+                    existing.uri_template = r.uri_template or None
+                    existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
+                    existing.binary_content = (
+                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
+                    )
+                    existing.size = len(r.content) if r.content else 0
+                    existing.tags = getattr(r, "tags", []) or []
+                    existing.federation_source = gateway.name
+                    existing.modified_by = created_by
+                    existing.modified_from_ip = created_from_ip
+                    existing.modified_via = "federation"
+                    existing.modified_user_agent = created_user_agent
+                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.visibility = r_visibility
+                    # Note: gateway_id will be set when gateway is created (relationship)
+                    db_resources.append(existing)
+                else:
+                    # Create new resource
+                    db_resources.append(
+                        DbResource(
+                            uri=r.uri,
+                            name=r.name,
+                            description=r.description,
+                            mime_type=mime_type,
+                            uri_template=r.uri_template or None,
+                            text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
+                            binary_content=(
+                                r.content.encode()
+                                if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
+                                else r.content if isinstance(r.content, bytes) else None
+                            ),
+                            size=len(r.content) if r.content else 0,
+                            tags=getattr(r, "tags", []) or [],
+                            created_by=created_by or "system",
+                            created_from_ip=created_from_ip,
+                            created_via="federation",
+                            created_user_agent=created_user_agent,
+                            import_batch_id=None,
+                            federation_source=gateway.name,
+                            version=1,
+                            team_id=r_team_id,
+                            owner_email=r_owner_email,
+                            visibility=r_visibility,
+                        )
+                    )
+
+            # Create prompt DB models with upsert logic
+            # Query for existing prompts with same (team_id, owner_email, name) to handle
+            # orphaned prompts from previous registrations
+            prompt_names = [p.name for p in prompts]
+            existing_prompts_map: Dict[str, DbPrompt] = {}
+            if prompt_names and team_id and effective_owner:
+                existing_prompts = (
+                    db.execute(
+                        select(DbPrompt).where(
+                            DbPrompt.team_id == team_id,
+                            DbPrompt.owner_email == effective_owner,
+                            DbPrompt.name.in_(prompt_names),
+                        )
+                    )
+                    .scalars()
+                    .all()
                 )
-                for prompt in prompts
-            ]
+                existing_prompts_map = {p.name: p for p in existing_prompts}
+                if existing_prompts_map:
+                    logger.info(f"Found {len(existing_prompts_map)} existing prompts to update for gateway {gateway.name}")
+
+            db_prompts = []
+            for prompt in prompts:
+                if prompt.name in existing_prompts_map:
+                    # Update existing prompt (upsert) - reassign to new gateway
+                    existing = existing_prompts_map[prompt.name]
+                    existing.original_name = prompt.name
+                    existing.custom_name = prompt.name
+                    existing.display_name = prompt.name
+                    existing.description = prompt.description
+                    existing.template = prompt.template if hasattr(prompt, "template") else ""
+                    existing.federation_source = gateway.name
+                    existing.modified_by = created_by
+                    existing.modified_from_ip = created_from_ip
+                    existing.modified_via = "federation"
+                    existing.modified_user_agent = created_user_agent
+                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.visibility = visibility
+                    # Note: gateway_id will be set when gateway is created (relationship)
+                    db_prompts.append(existing)
+                else:
+                    # Create new prompt
+                    db_prompts.append(
+                        DbPrompt(
+                            name=prompt.name,
+                            original_name=prompt.name,
+                            custom_name=prompt.name,
+                            display_name=prompt.name,
+                            description=prompt.description,
+                            template=prompt.template if hasattr(prompt, "template") else "",
+                            argument_schema={},  # Use argument_schema instead of arguments
+                            # Federation metadata
+                            created_by=created_by or "system",
+                            created_from_ip=created_from_ip,
+                            created_via="federation",  # These are federated prompts
+                            created_user_agent=created_user_agent,
+                            federation_source=gateway.name,
+                            version=1,
+                            # Inherit team assignment from gateway
+                            team_id=team_id,
+                            owner_email=owner_email,
+                            visibility=visibility,
+                        )
+                    )
 
             # Create DB model
             db_gateway = DbGateway(
