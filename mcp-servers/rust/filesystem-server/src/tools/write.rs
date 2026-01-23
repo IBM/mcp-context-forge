@@ -39,8 +39,10 @@ pub async fn write_file(sandbox: &Sandbox, path: &str, content: String) -> Resul
     Ok(())
 }
 
-pub async fn create_directory(sandbox: &Sandbox, path: &str) -> Result<String> {
-    tracing::info!("Running create_directory '{}'", path);
+pub async fn create_directory(sandbox: &Sandbox, path: &str) -> Result<WriteResult> {
+    tracing::info!(path = %path, "Running create_directory");
+
+    let canon_path = sandbox.resolve_path(path).await?;
 
     if !Path::new(&path).exists() && sandbox.check_new_folders(path).await? {
         fs::create_dir_all(path)
