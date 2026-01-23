@@ -9,6 +9,7 @@ Tests for ResourceService plugin integration.
 
 # Standard
 import os
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -26,10 +27,28 @@ from mcpgateway.services.resource_service import ResourceNotFoundError, Resource
 from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError
 from mcpgateway.admin import admin_add_resource
 
+
 @pytest.fixture
 def mock_db():
     """Create a mock database session."""
     return MagicMock(spec=Session)
+
+
+@pytest.fixture(autouse=True)
+def mock_fresh_db_session_and_rbac(mock_db):
+    """Mock fresh_db_session in admin module and RBAC PermissionService for all tests."""
+    mock_perm_service = MagicMock()
+    mock_perm_service.check_permission = AsyncMock(return_value=True)
+    mock_perm_service.check_admin_permission = AsyncMock(return_value=True)
+
+    @contextmanager
+    def mock_fresh_session():
+        yield mock_db
+
+    with patch("mcpgateway.admin.fresh_db_session", mock_fresh_session), \
+         patch("mcpgateway.middleware.rbac.fresh_db_session", mock_fresh_session), \
+         patch("mcpgateway.middleware.rbac.PermissionService", return_value=mock_perm_service):
+        yield
 
 class FakeForm(dict):
     """Enhanced fake form with better list handling."""
@@ -146,7 +165,7 @@ class TestResourceServicePluginIntegration:
 
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_resource(mock_request, mock_db, "test-user")
+        result = await admin_add_resource(mock_request, "test-user")
         # Assert
         mock_register_resource.assert_called_once()
         assert result.status_code == 200

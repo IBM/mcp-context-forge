@@ -6,16 +6,32 @@ Tests SQL-based and Python-based computation paths for query performance metrics
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 # Third-Party
 import pytest
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.routers.observability import (
     _get_query_performance_postgresql,
     _get_query_performance_python,
 )
+
+
+@pytest.fixture
+def mock_db():
+    """Create a mock database session."""
+    return MagicMock(spec=Session)
+
+
+@pytest.fixture(autouse=True)
+def mock_fresh_db_session(mock_db):
+    """Mock fresh_db_session to return the mock_db."""
+    with patch("mcpgateway.routers.observability.fresh_db_session") as mock:
+        mock.return_value.__enter__ = Mock(return_value=mock_db)
+        mock.return_value.__exit__ = Mock(return_value=False)
+        yield mock
 
 
 class TestQueryPerformancePostgresql:
@@ -130,12 +146,10 @@ class TestQueryPerformanceRouting:
     """Tests for routing between PostgreSQL and Python paths."""
 
     @pytest.mark.asyncio
-    async def test_routes_to_postgresql(self):
+    async def test_routes_to_postgresql(self, mock_db):
         """Test that PostgreSQL path is selected for PostgreSQL dialect."""
         # First-Party
         from mcpgateway.config import settings
-
-        mock_db = MagicMock()
 
         # Mock the session's bind dialect
         mock_bind = MagicMock()
@@ -150,8 +164,7 @@ class TestQueryPerformanceRouting:
 
                 result = await get_query_performance(
                     hours=1,
-                    db=mock_db,
-                    _user={"email": settings.platform_admin_email, "db": mock_db},
+                    _user={"email": settings.platform_admin_email},
                 )
 
                 # Verify PostgreSQL path was called
@@ -160,12 +173,10 @@ class TestQueryPerformanceRouting:
                 assert result["total_traces"] == 100
 
     @pytest.mark.asyncio
-    async def test_routes_to_python(self):
+    async def test_routes_to_python(self, mock_db):
         """Test that Python path is selected for SQLite dialect."""
         # First-Party
         from mcpgateway.config import settings
-
-        mock_db = MagicMock()
 
         # Mock the session's bind dialect
         mock_bind = MagicMock()
@@ -180,8 +191,7 @@ class TestQueryPerformanceRouting:
 
                 result = await get_query_performance(
                     hours=1,
-                    db=mock_db,
-                    _user={"email": settings.platform_admin_email, "db": mock_db},
+                    _user={"email": settings.platform_admin_email},
                 )
 
                 # Verify Python path was called

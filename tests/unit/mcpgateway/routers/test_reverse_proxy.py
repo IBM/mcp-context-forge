@@ -12,7 +12,7 @@ session management, and HTTP endpoints.
 # Standard
 import asyncio
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import orjson
@@ -21,6 +21,7 @@ import orjson
 from fastapi import WebSocket
 from fastapi.testclient import TestClient
 import pytest
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.routers.reverse_proxy import (
@@ -30,6 +31,21 @@ from mcpgateway.routers.reverse_proxy import (
     router,
 )
 from mcpgateway.utils.verify_credentials import require_auth
+
+
+@pytest.fixture
+def mock_db():
+    """Create a mock database session."""
+    return MagicMock(spec=Session)
+
+
+@pytest.fixture(autouse=True)
+def mock_fresh_db_session(mock_db):
+    """Mock fresh_db_session to return the mock_db."""
+    with patch("mcpgateway.routers.reverse_proxy.fresh_db_session") as mock:
+        mock.return_value.__enter__ = Mock(return_value=mock_db)
+        mock.return_value.__exit__ = Mock(return_value=False)
+        yield mock
 
 # --------------------------------------------------------------------------- #
 # Test Fixtures                                                              #
@@ -273,13 +289,10 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        try:
+            await websocket_endpoint(mock_websocket)
+        except asyncio.CancelledError:
+            pass
 
         mock_websocket.accept.assert_called_once()
 
@@ -292,12 +305,11 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, patch("mcpgateway.routers.reverse_proxy.uuid.uuid4") as mock_uuid:
-            mock_get_db.return_value = Mock()
+        with patch("mcpgateway.routers.reverse_proxy.uuid.uuid4") as mock_uuid:
             mock_uuid.return_value.hex = "generated-session-id"
 
             try:
-                await websocket_endpoint(mock_websocket, Mock())
+                await websocket_endpoint(mock_websocket)
             except asyncio.CancelledError:
                 pass
 
@@ -313,13 +325,10 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        try:
+            await websocket_endpoint(mock_websocket)
+        except asyncio.CancelledError:
+            pass
 
         # Should send register acknowledgment
         mock_websocket.send_text.assert_called()
@@ -337,10 +346,7 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            await websocket_endpoint(mock_websocket, Mock())
+        await websocket_endpoint(mock_websocket)
 
     @pytest.mark.asyncio
     async def test_websocket_heartbeat_message(self, mock_websocket):
@@ -352,13 +358,10 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        try:
+            await websocket_endpoint(mock_websocket)
+        except asyncio.CancelledError:
+            pass
 
         # Should send heartbeat response
         mock_websocket.send_text.assert_called()
@@ -376,13 +379,10 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        try:
+            await websocket_endpoint(mock_websocket)
+        except asyncio.CancelledError:
+            pass
 
     @pytest.mark.asyncio
     async def test_websocket_notification_message(self, mock_websocket):
@@ -394,13 +394,10 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        try:
+            await websocket_endpoint(mock_websocket)
+        except asyncio.CancelledError:
+            pass
 
     @pytest.mark.asyncio
     async def test_websocket_unknown_message_type(self, mock_websocket):
@@ -412,13 +409,10 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        try:
+            await websocket_endpoint(mock_websocket)
+        except asyncio.CancelledError:
+            pass
 
     @pytest.mark.asyncio
     async def test_websocket_invalid_json(self, mock_websocket):
@@ -429,13 +423,10 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        try:
+            await websocket_endpoint(mock_websocket)
+        except asyncio.CancelledError:
+            pass
 
         # Should send error message
         mock_websocket.send_text.assert_called()
@@ -453,13 +444,10 @@ class TestWebSocketEndpoint:
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        try:
+            await websocket_endpoint(mock_websocket)
+        except asyncio.CancelledError:
+            pass
 
         # Should send register ack and error message
         assert mock_websocket.send_text.call_count >= 2

@@ -21,10 +21,9 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 import orjson
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.main import get_db
+from mcpgateway.db import fresh_db_session
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
@@ -71,7 +70,6 @@ async def generate_testcases_for_tool(
     number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),
     number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),
     mode: str = Query("generate", description="Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status"),
-    db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ) -> List[Dict]:
     """
@@ -86,7 +84,6 @@ async def generate_testcases_for_tool(
         number_of_test_cases: Number of test cases to generate for the given tools (optional)
         number_of_nl_variations: Number of Natural language variations(parapharses) per test case (optional)
         mode: Three supported modes - 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status
-        db: DB session to connect with database
 
     Returns:
         List: A list of test cases generated for the tool , each test case is dictionary object
@@ -94,21 +91,22 @@ async def generate_testcases_for_tool(
     Raises:
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
-    try:
-        # logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        test_cases = await validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
-        return test_cases
+    with fresh_db_session() as db:
+        try:
+            # logger.debug(f"Authenticated user {user} is initializing the protocol.")
+            test_cases = await validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
+            return test_cases
 
-    except orjson.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON in request body",
-        )
+        except orjson.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON in request body",
+            )
 
 
 @toolops_router.post("/validation/execute_tool_nl_testcases")
 @require_permission("admin.system_config")
-async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)) -> List:
+async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, _user=Depends(get_current_user_with_permissions)) -> List:
     """
     Execute test cases for a tool
 
@@ -120,7 +118,6 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
         tool_nl_test_input: NL test case format input to run test cases with agent , it contains\
             - tool_id: Tool ID in context forge\
             - tool_nl_test_cases: List of natural language test cases (utteances) for testing MCP tool with the agent
-        db: DB session to connect with database
 
     Returns:
         List: A list of tool outputs after agent execution for the provided tool nl test cases
@@ -128,29 +125,29 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
     Raises:
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
-    try:
-        # logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        tool_id = tool_nl_test_input.tool_id
-        tool_nl_test_cases = tool_nl_test_input.tool_nl_test_cases
-        tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db)
-        return tool_nl_test_cases_output
+    with fresh_db_session() as db:
+        try:
+            # logger.debug(f"Authenticated user {user} is initializing the protocol.")
+            tool_id = tool_nl_test_input.tool_id
+            tool_nl_test_cases = tool_nl_test_input.tool_nl_test_cases
+            tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db)
+            return tool_nl_test_cases_output
 
-    except orjson.JSONDecodeError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON in request body",
-        )
+        except orjson.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON in request body",
+            )
 
 
 @toolops_router.post("/enrichment/enrich_tool")
 @require_permission("admin.system_config")
-async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)) -> dict[str, Any]:
+async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), _user=Depends(get_current_user_with_permissions)) -> dict[str, Any]:
     """
     Enriches an input tool
 
     Args:
         tool_id: Unique Tool ID MCP-CF.
-        db: The database session used to interact with the data store.
 
     Returns:
         result: A dict having the keys "tool_id", "tool_name", "original_desc" and "enriched_desc" with their corresponding values
@@ -158,20 +155,21 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
     Raises:
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
-    try:
-        logger.info("Running tool enrichment for Tool - " + tool_id)
-        enriched_tool_description, tool_schema = await enrich_tool(tool_id, tool_service, db)
-        result: dict[str, Any] = {}
-        result["tool_id"] = tool_id
-        result["tool_name"] = tool_schema.name
-        result["original_desc"] = tool_schema.description
-        result["enriched_desc"] = enriched_tool_description
-        # logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
-        return result
+    with fresh_db_session() as db:
+        try:
+            logger.info("Running tool enrichment for Tool - " + tool_id)
+            enriched_tool_description, tool_schema = await enrich_tool(tool_id, tool_service, db)
+            result: dict[str, Any] = {}
+            result["tool_id"] = tool_id
+            result["tool_name"] = tool_schema.name
+            result["original_desc"] = tool_schema.description
+            result["enriched_desc"] = enriched_tool_description
+            # logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
+            return result
 
-    except Exception as e:
-        logger.info("Error in tool enrichment for Tool - " + str(e))
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON in request body" + str(e),
-        ) from e
+        except Exception as e:
+            logger.info("Error in tool enrichment for Tool - " + str(e))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid JSON in request body" + str(e),
+            ) from e

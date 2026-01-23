@@ -368,10 +368,10 @@ class TestOAuthProtectedResourceEndpoint:
     def mock_db_with_server(self):
         """Create a mock database with a test server."""
         # Standard
+        from contextlib import contextmanager
         from unittest.mock import MagicMock
 
-        # First-Party
-        from mcpgateway.db import get_db
+        patches = []
 
         def _create_mock(server_data):
             mock_db = MagicMock()
@@ -382,11 +382,19 @@ class TestOAuthProtectedResourceEndpoint:
                 for key, value in server_data.items():
                     setattr(mock_server, key, value)
                 mock_db.get.return_value = mock_server
-            app.dependency_overrides[get_db] = lambda: mock_db
+
+            @contextmanager
+            def mock_fresh_db_session():
+                yield mock_db
+
+            patcher = patch("mcpgateway.routers.well_known.fresh_db_session", mock_fresh_db_session)
+            patches.append(patcher)
+            patcher.start()
             return mock_db
 
         yield _create_mock
-        app.dependency_overrides.pop(get_db, None)
+        for p in patches:
+            p.stop()
 
     def test_oauth_protected_resource_no_server_id(self, client):
         """Test that OAuth protected resource returns 404 when server_id is not provided."""
@@ -574,12 +582,10 @@ class TestServerRouterOAuthProtectedResource:
     def mock_db_with_server(self):
         """Create a mock database with a test server."""
         # Standard
+        from contextlib import contextmanager
         from unittest.mock import MagicMock
 
-        # First-Party
-        # main.py defines its own get_db locally, not imported from mcpgateway.db
-        from mcpgateway.db import get_db as db_get_db
-        from mcpgateway.main import get_db
+        patches = []
 
         def _create_mock(server_data):
             mock_db = MagicMock()
@@ -590,13 +596,20 @@ class TestServerRouterOAuthProtectedResource:
                 for key, value in server_data.items():
                     setattr(mock_server, key, value)
                 mock_db.get.return_value = mock_server
-            app.dependency_overrides[get_db] = lambda: mock_db
-            app.dependency_overrides[db_get_db] = lambda: mock_db  # Also override db module's get_db
+
+            @contextmanager
+            def mock_fresh_db_session():
+                yield mock_db
+
+            # Patch fresh_db_session in server_well_known.py
+            patcher = patch("mcpgateway.routers.server_well_known.fresh_db_session", mock_fresh_db_session)
+            patches.append(patcher)
+            patcher.start()
             return mock_db
 
         yield _create_mock
-        app.dependency_overrides.pop(get_db, None)
-        app.dependency_overrides.pop(db_get_db, None)
+        for p in patches:
+            p.stop()
 
     def test_server_oauth_protected_resource_not_found(self, client, mock_db_with_server):
         """Test server OAuth protected resource returns 404 for non-existent server."""

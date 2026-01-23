@@ -113,6 +113,9 @@ def app():
     mp.setattr(db_mod, "engine", engine, raising=False)
     mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
 
+    # Override fresh_db_session() to use test database (Issue #2323 fix uses this)
+    db_mod.set_fresh_session_factory(TestSessionLocal)
+
     # 4) patch the already‑imported main module **without reloading**
     # First-Party
     import mcpgateway.main as main_mod
@@ -143,6 +146,7 @@ def app():
 
     # 6) teardown
     mp.undo()
+    db_mod.reset_fresh_session_factory()  # Reset fresh_db_session() to use production database
     engine.dispose()
     os.close(fd)
     os.unlink(path)
@@ -187,6 +191,9 @@ def app_with_temp_db():
     mp.setattr(db_mod, "engine", engine, raising=False)
     mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
 
+    # Override fresh_db_session() to use test database (Issue #2323 fix uses this)
+    db_mod.set_fresh_session_factory(TestSessionLocal)
+
     # 4) patch the already‑imported main module **without reloading**
     # First-Party
     import mcpgateway.main as main_mod
@@ -225,6 +232,7 @@ def app_with_temp_db():
 
     # 6) teardown
     mp.undo()
+    db_mod.reset_fresh_session_factory()  # Reset fresh_db_session() to use production database
     engine.dispose()
     os.close(fd)
     os.unlink(path)

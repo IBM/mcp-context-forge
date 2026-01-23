@@ -21,7 +21,7 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer
 
 # First-Party
-from mcpgateway.db import Permissions
+from mcpgateway.db import fresh_db_session, Permissions
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
@@ -425,17 +425,20 @@ class TokenScopingMiddleware:
         from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
-        # Track if we own the session (and thus must clean it up)
-        owns_session = db is None
-        if owns_session:
-            db = next(get_db())
+        def _do_membership_check(session) -> bool:
+            """Execute the membership check query.
 
-        try:
+            Args:
+                session: SQLAlchemy database session.
+
+            Returns:
+                True if user is member of all required teams, False otherwise.
+            """
             # Single query for all teams (fixes N+1 pattern)
             memberships = (
-                db.execute(
+                session.execute(
                     select(EmailTeamMember.team_id).where(
                         EmailTeamMember.team_id.in_(team_ids),
                         EmailTeamMember.user_email == user_email,
@@ -459,13 +462,13 @@ class TokenScopingMiddleware:
             # Cache positive result
             auth_cache.set_team_membership_valid_sync(user_email, team_ids, True)
             return True
-        finally:
-            # Only commit/close if we created the session
-            if owns_session:
-                try:
-                    db.commit()  # Commit read-only transaction to avoid implicit rollback
-                finally:
-                    db.close()
+
+        # Use provided session or create a fresh short-lived one
+        if db is not None:
+            return _do_membership_check(db)
+        # Use fresh_db_session for immediate connection release (Issue #2330)
+        with fresh_db_session() as session:
+            return _do_membership_check(session)
 
     def _check_resource_team_ownership(self, request_path: str, token_teams: list, db=None, _user_email: str = None) -> bool:  # pylint: disable=too-many-return-statements
         """
@@ -537,211 +540,215 @@ class TokenScopingMiddleware:
         from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
 
-        # Track if we own the session (and thus must clean it up)
-        owns_session = db is None
-        if owns_session:
-            db = next(get_db())
+        def _do_ownership_check(session) -> bool:  # pylint: disable=too-many-return-statements
+            """Execute the resource ownership check query.
 
-        try:
-            # Check Virtual Servers
-            if resource_type == "server":
-                server = db.execute(select(Server).where(Server.id == resource_id)).scalar_one_or_none()
+            Args:
+                session: SQLAlchemy database session.
 
-                if not server:
-                    logger.warning(f"Server {resource_id} not found in database")
-                    return True
+            Returns:
+                True if resource is accessible by the token, False otherwise.
+            """
+            try:
+                # Check Virtual Servers
+                if resource_type == "server":
+                    server = session.execute(select(Server).where(Server.id == resource_id)).scalar_one_or_none()
 
-                # Get server visibility (default to 'team' if field doesn't exist)
-                server_visibility = getattr(server, "visibility", "team")
-
-                # PUBLIC SERVERS: Accessible by everyone (including public-only tokens)
-                if server_visibility == "public":
-                    logger.debug(f"Access granted: Server {resource_id} is PUBLIC")
-                    return True
-
-                # PUBLIC-ONLY TOKEN: Can ONLY access public servers (strict public-only policy)
-                # No owner access - if user needs own resources, use a personal team-scoped token
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {server_visibility} server {resource_id}")
-                    return False
-
-                # TEAM-SCOPED SERVERS: Check if server belongs to token's teams
-                if server_visibility == "team":
-                    if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team server {resource_id} belongs to token's team {server.team_id}")
+                    if not server:
+                        logger.warning(f"Server {resource_id} not found in database")
                         return True
 
-                    logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', token is scoped to teams {token_team_ids}")
-                    return False
+                    # Get server visibility (default to 'team' if field doesn't exist)
+                    server_visibility = getattr(server, "visibility", "team")
 
-                # PRIVATE SERVERS: Check if server belongs to token's teams
-                if server_visibility == "private":
-                    if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private server {resource_id} in token's team {server.team_id}")
+                    # PUBLIC SERVERS: Accessible by everyone (including public-only tokens)
+                    if server_visibility == "public":
+                        logger.debug(f"Access granted: Server {resource_id} is PUBLIC")
                         return True
 
-                    logger.warning(f"Access denied: Server {resource_id} is private to team '{server.team_id}'")
+                    # PUBLIC-ONLY TOKEN: Can ONLY access public servers (strict public-only policy)
+                    # No owner access - if user needs own resources, use a personal team-scoped token
+                    if is_public_token:
+                        logger.warning(f"Access denied: Public-only token cannot access {server_visibility} server {resource_id}")
+                        return False
+
+                    # TEAM-SCOPED SERVERS: Check if server belongs to token's teams
+                    if server_visibility == "team":
+                        if server.team_id in token_team_ids:
+                            logger.debug(f"Access granted: Team server {resource_id} belongs to token's team {server.team_id}")
+                            return True
+
+                        logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', token is scoped to teams {token_team_ids}")
+                        return False
+
+                    # PRIVATE SERVERS: Check if server belongs to token's teams
+                    if server_visibility == "private":
+                        if server.team_id in token_team_ids:
+                            logger.debug(f"Access granted: Private server {resource_id} in token's team {server.team_id}")
+                            return True
+
+                        logger.warning(f"Access denied: Server {resource_id} is private to team '{server.team_id}'")
+                        return False
+
+                    # Unknown visibility - deny by default
+                    logger.warning(f"Access denied: Server {resource_id} has unknown visibility: {server_visibility}")
                     return False
 
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Server {resource_id} has unknown visibility: {server_visibility}")
+                # CHECK TOOLS
+                if resource_type == "tool":
+                    tool = session.execute(select(Tool).where(Tool.id == resource_id)).scalar_one_or_none()
+
+                    if not tool:
+                        logger.warning(f"Tool {resource_id} not found in database")
+                        return True
+
+                    # Get tool visibility (default to 'team' if field doesn't exist)
+                    tool_visibility = getattr(tool, "visibility", "team")
+
+                    # PUBLIC TOOLS: Accessible by everyone (including public-only tokens)
+                    if tool_visibility == "public":
+                        logger.debug(f"Access granted: Tool {resource_id} is PUBLIC")
+                        return True
+
+                    # PUBLIC-ONLY TOKEN: Can ONLY access public tools (strict public-only policy)
+                    # No owner access - if user needs own resources, use a personal team-scoped token
+                    if is_public_token:
+                        logger.warning(f"Access denied: Public-only token cannot access {tool_visibility} tool {resource_id}")
+                        return False
+
+                    # TEAM TOOLS: Check if tool's team matches token's teams
+                    if tool_visibility == "team":
+                        tool_team_id = getattr(tool, "team_id", None)
+                        if tool_team_id and tool_team_id in token_team_ids:
+                            logger.debug(f"Access granted: Team tool {resource_id} belongs to token's team {tool_team_id}")
+                            return True
+
+                        logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', token is scoped to teams {token_team_ids}")
+                        return False
+
+                    # PRIVATE TOOLS: Check if tool is in token's team context
+                    if tool_visibility in ["private", "user"]:
+                        tool_team_id = getattr(tool, "team_id", None)
+                        if tool_team_id and tool_team_id in token_team_ids:
+                            logger.debug(f"Access granted: Private tool {resource_id} in token's team {tool_team_id}")
+                            return True
+
+                        logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility} and not in token's teams")
+                        return False
+
+                    # Unknown visibility - deny by default
+                    logger.warning(f"Access denied: Tool {resource_id} has unknown visibility: {tool_visibility}")
+                    return False
+
+                # CHECK RESOURCES
+                if resource_type == "resource":
+                    resource = session.execute(select(Resource).where(Resource.id == resource_id)).scalar_one_or_none()
+
+                    if not resource:
+                        logger.warning(f"Resource {resource_id} not found in database")
+                        return True
+
+                    # Get resource visibility (default to 'team' if field doesn't exist)
+                    resource_visibility = getattr(resource, "visibility", "team")
+
+                    # PUBLIC RESOURCES: Accessible by everyone (including public-only tokens)
+                    if resource_visibility == "public":
+                        logger.debug(f"Access granted: Resource {resource_id} is PUBLIC")
+                        return True
+
+                    # PUBLIC-ONLY TOKEN: Can ONLY access public resources (strict public-only policy)
+                    # No owner access - if user needs own resources, use a personal team-scoped token
+                    if is_public_token:
+                        logger.warning(f"Access denied: Public-only token cannot access {resource_visibility} resource {resource_id}")
+                        return False
+
+                    # TEAM RESOURCES: Check if resource's team matches token's teams
+                    if resource_visibility == "team":
+                        resource_team_id = getattr(resource, "team_id", None)
+                        if resource_team_id and resource_team_id in token_team_ids:
+                            logger.debug(f"Access granted: Team resource {resource_id} belongs to token's team {resource_team_id}")
+                            return True
+
+                        logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', token is scoped to teams {token_team_ids}")
+                        return False
+
+                    # PRIVATE RESOURCES: Check if resource is in token's team context
+                    if resource_visibility in ["private", "user"]:
+                        resource_team_id = getattr(resource, "team_id", None)
+                        if resource_team_id and resource_team_id in token_team_ids:
+                            logger.debug(f"Access granted: Private resource {resource_id} in token's team {resource_team_id}")
+                            return True
+
+                        logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility} and not in token's teams")
+                        return False
+
+                    # Unknown visibility - deny by default
+                    logger.warning(f"Access denied: Resource {resource_id} has unknown visibility: {resource_visibility}")
+                    return False
+
+                # CHECK PROMPTS
+                if resource_type == "prompt":
+                    prompt = session.execute(select(Prompt).where(Prompt.id == resource_id)).scalar_one_or_none()
+
+                    if not prompt:
+                        logger.warning(f"Prompt {resource_id} not found in database")
+                        return True
+
+                    # Get prompt visibility (default to 'team' if field doesn't exist)
+                    prompt_visibility = getattr(prompt, "visibility", "team")
+
+                    # PUBLIC PROMPTS: Accessible by everyone (including public-only tokens)
+                    if prompt_visibility == "public":
+                        logger.debug(f"Access granted: Prompt {resource_id} is PUBLIC")
+                        return True
+
+                    # PUBLIC-ONLY TOKEN: Can ONLY access public prompts (strict public-only policy)
+                    # No owner access - if user needs own resources, use a personal team-scoped token
+                    if is_public_token:
+                        logger.warning(f"Access denied: Public-only token cannot access {prompt_visibility} prompt {resource_id}")
+                        return False
+
+                    # TEAM PROMPTS: Check if prompt's team matches token's teams
+                    if prompt_visibility == "team":
+                        prompt_team_id = getattr(prompt, "team_id", None)
+                        if prompt_team_id and prompt_team_id in token_team_ids:
+                            logger.debug(f"Access granted: Team prompt {resource_id} belongs to token's team {prompt_team_id}")
+                            return True
+
+                        logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', token is scoped to teams {token_team_ids}")
+                        return False
+
+                    # PRIVATE PROMPTS: Check if prompt is in token's team context
+                    if prompt_visibility in ["private", "user"]:
+                        prompt_team_id = getattr(prompt, "team_id", None)
+                        if prompt_team_id and prompt_team_id in token_team_ids:
+                            logger.debug(f"Access granted: Private prompt {resource_id} in token's team {prompt_team_id}")
+                            return True
+
+                        logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility} and not in token's teams")
+                        return False
+
+                    # Unknown visibility - deny by default
+                    logger.warning(f"Access denied: Prompt {resource_id} has unknown visibility: {prompt_visibility}")
+                    return False
+
+                # UNKNOWN RESOURCE TYPE
+                logger.warning(f"Unknown resource type '{resource_type}' for path: {request_path}")
                 return False
 
-            # CHECK TOOLS
-            if resource_type == "tool":
-                tool = db.execute(select(Tool).where(Tool.id == resource_id)).scalar_one_or_none()
-
-                if not tool:
-                    logger.warning(f"Tool {resource_id} not found in database")
-                    return True
-
-                # Get tool visibility (default to 'team' if field doesn't exist)
-                tool_visibility = getattr(tool, "visibility", "team")
-
-                # PUBLIC TOOLS: Accessible by everyone (including public-only tokens)
-                if tool_visibility == "public":
-                    logger.debug(f"Access granted: Tool {resource_id} is PUBLIC")
-                    return True
-
-                # PUBLIC-ONLY TOKEN: Can ONLY access public tools (strict public-only policy)
-                # No owner access - if user needs own resources, use a personal team-scoped token
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {tool_visibility} tool {resource_id}")
-                    return False
-
-                # TEAM TOOLS: Check if tool's team matches token's teams
-                if tool_visibility == "team":
-                    tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team tool {resource_id} belongs to token's team {tool_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', token is scoped to teams {token_team_ids}")
-                    return False
-
-                # PRIVATE TOOLS: Check if tool is in token's team context
-                if tool_visibility in ["private", "user"]:
-                    tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private tool {resource_id} in token's team {tool_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility} and not in token's teams")
-                    return False
-
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Tool {resource_id} has unknown visibility: {tool_visibility}")
+            except Exception as e:
+                logger.error(f"Error checking resource team ownership for {request_path}: {e}", exc_info=True)
+                # Fail securely - deny access on error
                 return False
 
-            # CHECK RESOURCES
-            if resource_type == "resource":
-                resource = db.execute(select(Resource).where(Resource.id == resource_id)).scalar_one_or_none()
-
-                if not resource:
-                    logger.warning(f"Resource {resource_id} not found in database")
-                    return True
-
-                # Get resource visibility (default to 'team' if field doesn't exist)
-                resource_visibility = getattr(resource, "visibility", "team")
-
-                # PUBLIC RESOURCES: Accessible by everyone (including public-only tokens)
-                if resource_visibility == "public":
-                    logger.debug(f"Access granted: Resource {resource_id} is PUBLIC")
-                    return True
-
-                # PUBLIC-ONLY TOKEN: Can ONLY access public resources (strict public-only policy)
-                # No owner access - if user needs own resources, use a personal team-scoped token
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {resource_visibility} resource {resource_id}")
-                    return False
-
-                # TEAM RESOURCES: Check if resource's team matches token's teams
-                if resource_visibility == "team":
-                    resource_team_id = getattr(resource, "team_id", None)
-                    if resource_team_id and resource_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team resource {resource_id} belongs to token's team {resource_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', token is scoped to teams {token_team_ids}")
-                    return False
-
-                # PRIVATE RESOURCES: Check if resource is in token's team context
-                if resource_visibility in ["private", "user"]:
-                    resource_team_id = getattr(resource, "team_id", None)
-                    if resource_team_id and resource_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private resource {resource_id} in token's team {resource_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility} and not in token's teams")
-                    return False
-
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Resource {resource_id} has unknown visibility: {resource_visibility}")
-                return False
-
-            # CHECK PROMPTS
-            if resource_type == "prompt":
-                prompt = db.execute(select(Prompt).where(Prompt.id == resource_id)).scalar_one_or_none()
-
-                if not prompt:
-                    logger.warning(f"Prompt {resource_id} not found in database")
-                    return True
-
-                # Get prompt visibility (default to 'team' if field doesn't exist)
-                prompt_visibility = getattr(prompt, "visibility", "team")
-
-                # PUBLIC PROMPTS: Accessible by everyone (including public-only tokens)
-                if prompt_visibility == "public":
-                    logger.debug(f"Access granted: Prompt {resource_id} is PUBLIC")
-                    return True
-
-                # PUBLIC-ONLY TOKEN: Can ONLY access public prompts (strict public-only policy)
-                # No owner access - if user needs own resources, use a personal team-scoped token
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {prompt_visibility} prompt {resource_id}")
-                    return False
-
-                # TEAM PROMPTS: Check if prompt's team matches token's teams
-                if prompt_visibility == "team":
-                    prompt_team_id = getattr(prompt, "team_id", None)
-                    if prompt_team_id and prompt_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team prompt {resource_id} belongs to token's team {prompt_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', token is scoped to teams {token_team_ids}")
-                    return False
-
-                # PRIVATE PROMPTS: Check if prompt is in token's team context
-                if prompt_visibility in ["private", "user"]:
-                    prompt_team_id = getattr(prompt, "team_id", None)
-                    if prompt_team_id and prompt_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private prompt {resource_id} in token's team {prompt_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility} and not in token's teams")
-                    return False
-
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Prompt {resource_id} has unknown visibility: {prompt_visibility}")
-                return False
-
-            # UNKNOWN RESOURCE TYPE
-            logger.warning(f"Unknown resource type '{resource_type}' for path: {request_path}")
-            return False
-
-        except Exception as e:
-            logger.error(f"Error checking resource team ownership for {request_path}: {e}", exc_info=True)
-            # Fail securely - deny access on error
-            return False
-        finally:
-            # Only commit/close if we created the session
-            if owns_session:
-                try:
-                    db.commit()  # Commit read-only transaction to avoid implicit rollback
-                finally:
-                    db.close()
+        # Use provided session or create a fresh short-lived one
+        if db is not None:
+            return _do_ownership_check(db)
+        # Use fresh_db_session for immediate connection release (Issue #2330)
+        with fresh_db_session() as session:
+            return _do_ownership_check(session)
 
     async def __call__(self, request: Request, call_next):
         """Middleware function to check token scoping including team-level validation.
@@ -821,11 +828,9 @@ class TokenScopingMiddleware:
                 logger.debug(f"Admin bypass: skipping team validation for {user_email}")
                 # Skip to other checks (server_id, IP, etc.)
             elif token_teams:
-                # First-Party
-                from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
-
-                db = next(get_db())
-                try:
+                # Use fresh_db_session for immediate connection release (Issue #2330)
+                # Connection is released as soon as checks complete, BEFORE call_next()
+                with fresh_db_session() as db:
                     # Check team membership with shared session
                     if not self._check_team_membership(payload, db=db):
                         logger.warning("Token rejected: User no longer member of associated team(s)")
@@ -835,14 +840,9 @@ class TokenScopingMiddleware:
                     if not self._check_resource_team_ownership(request.url.path, token_teams, db=db, _user_email=user_email):
                         logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
                         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
-                finally:
-                    # Ensure session cleanup even if checks raise exceptions
-                    try:
-                        db.commit()
-                    finally:
-                        db.close()
+                # Connection released here, before call_next()
             else:
-                # Public-only token: no team membership check needed, but still check resource ownership
+                # Public-only token: helper methods will use fresh_db_session internally if needed
                 if not self._check_team_membership(payload):
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
