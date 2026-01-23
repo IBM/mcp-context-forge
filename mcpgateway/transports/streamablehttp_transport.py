@@ -37,7 +37,7 @@ from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Tuple, Union
 from uuid import uuid4
 
 # Third-Party
@@ -458,8 +458,250 @@ def get_user_email_from_context() -> str:
     return str(user) if user else "unknown"
 
 
+async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:
+    """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - _meta comes from MCP SDK)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of Tool objects from remote server
+    """
+    try:
+        # Third-Party
+        import httpx
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.types import PaginatedRequestParams
+
+        # First-Party
+        from mcpgateway.utils.services_auth import decode_auth
+
+        # Prepare headers with gateway auth
+        headers = {}
+
+        # Handle different auth types
+        if gateway.auth_type == "bearer" and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
+                headers["Authorization"] = f"Bearer {token}"
+            elif isinstance(gateway.auth_value, str):
+                decoded = decode_auth(gateway.auth_value)
+                token = decoded.get("Authorization", "").replace("Bearer ", "")
+                headers["Authorization"] = f"Bearer {token}"
+        elif gateway.auth_type == "basic" and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                auth_header = gateway.auth_value.get("Authorization", "")
+                headers["Authorization"] = auth_header
+            elif isinstance(gateway.auth_value, str):
+                decoded = decode_auth(gateway.auth_value)
+                headers["Authorization"] = decoded.get("Authorization", "")
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        # Use MCP SDK to connect and list tools
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                # Skip initialize() for stateless MCP servers
+
+                # Prepare params with _meta if provided
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+                    logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+                # List tools with _meta forwarded
+                result = await session.list_tools(params=params)
+                return result.tools
+
+    except Exception as e:
+        logger.exception(f"Error proxying tools/list to gateway {gateway.id}: {e}")
+        return []
+
+
+async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Resource]:
+    """Proxy resources/list request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - _meta comes from MCP SDK)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of Resource objects from remote server
+    """
+    try:
+        # Third-Party
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        # First-Party
+        from mcpgateway.utils.services_auth import decode_auth
+
+        # Prepare headers with gateway auth
+        headers = {}
+
+        # Handle different auth types
+        if gateway.auth_type == "bearer" and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
+                headers["Authorization"] = f"Bearer {token}"
+            elif isinstance(gateway.auth_value, str):
+                decoded = decode_auth(gateway.auth_value)
+                token = decoded.get("Authorization", "").replace("Bearer ", "")
+                headers["Authorization"] = f"Bearer {token}"
+        elif gateway.auth_type == "basic" and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                auth_header = gateway.auth_value.get("Authorization", "")
+                headers["Authorization"] = auth_header
+            elif isinstance(gateway.auth_value, str):
+                decoded = decode_auth(gateway.auth_value)
+                headers["Authorization"] = decoded.get("Authorization", "")
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying resources/list to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        # Use MCP SDK to connect and list resources
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                # Skip initialize() for stateless MCP servers
+
+                # Prepare params with _meta if provided
+                params = None
+                if meta:
+                    # Third-Party
+                    from mcp.types import PaginatedRequestParams
+                    params = PaginatedRequestParams(_meta=meta)
+                    logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+                # List resources with _meta forwarded
+                result = await session.list_resources(params=params)
+
+                logger.info(f"Received {len(result.resources)} resources from gateway {gateway.id}")
+                return result.resources
+
+    except Exception as e:
+        logger.exception(f"Error proxying resources/list to gateway {gateway.id}: {e}")
+        return []
+
+async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:
+    """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        resource_uri: URI of the resource to read
+        user_context: User context (not used - auth comes from gateway config)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of content objects (TextResourceContents or BlobResourceContents) from remote server
+    """
+    try:
+        # Third-Party
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        # First-Party
+        from mcpgateway.utils.services_auth import decode_auth
+
+        # Prepare headers with gateway auth
+        headers = {}
+
+        # Handle different auth types
+        if gateway.auth_type == "bearer" and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
+                headers["Authorization"] = f"Bearer {token}"
+            elif isinstance(gateway.auth_value, str):
+                decoded = decode_auth(gateway.auth_value)
+                token = decoded.get("Authorization", "").replace("Bearer ", "")
+                headers["Authorization"] = f"Bearer {token}"
+        elif gateway.auth_type == "basic" and gateway.auth_value:
+            if isinstance(gateway.auth_value, dict):
+                auth_header = gateway.auth_value.get("Authorization", "")
+                headers["Authorization"] = auth_header
+            elif isinstance(gateway.auth_value, str):
+                decoded = decode_auth(gateway.auth_value)
+                headers["Authorization"] = decoded.get("Authorization", "")
+
+        # Get request headers
+        request_headers = request_headers_var.get()
+
+        # Forward X-Context-Forge-Gateway-Id header
+        if request_headers:
+            for header_name, header_value in request_headers.items():
+                if header_name.lower() == 'x-context-forge-gateway-id':
+                    headers['X-Context-Forge-Gateway-Id'] = header_value
+                    break
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying resources/read for {resource_uri} to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        # Use MCP SDK to connect and read resource
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                # Initialize session
+                await session.initialize()
+
+                # Prepare request params with _meta if provided
+                if meta:
+                    # Third-Party
+                    from mcp.types import ReadResourceRequest, ReadResourceRequestParams
+
+                    # Create params and inject _meta
+                    request_params = ReadResourceRequestParams(uri=resource_uri)
+                    request_params_dict = request_params.model_dump()
+                    request_params_dict['_meta'] = meta
+
+                    # Send request with _meta
+                    result = await session.send_request(
+                        types.ClientRequest(
+                            ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))
+                        ),
+                        types.ReadResourceResult,
+                    )
+                else:
+                    # No _meta, use simple read_resource
+                    result = await session.read_resource(uri=resource_uri)
+
+                logger.info(f"Received {len(result.contents)} content items from gateway {gateway.id} for resource {resource_uri}")
+                return result.contents
+
+    except Exception as e:
+        logger.exception(f"Error proxying resources/read to gateway {gateway.id} for resource {resource_uri}: {e}")
+        return []
+
+
+
+
+
 @mcp_app.call_tool(validate_input=False)
-async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]]:
+async def call_tool(name: str, arguments: dict) -> Union[types.CallToolResult, List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]]]:
     """
     Handles tool invocation via the MCP Server.
 
@@ -470,23 +712,15 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     handles schema validation separately in tool_service.py with multi-draft support.
 
     This function supports the MCP protocol's tool calling with structured content validation.
-    It can return either unstructured content only, or both unstructured and structured content
-    when the tool defines an outputSchema.
+    In direct_proxy mode, returns the raw CallToolResult from the remote server.
+    In normal mode, converts ToolResult to CallToolResult with content normalization.
 
     Args:
         name (str): The name of the tool to invoke.
         arguments (dict): A dictionary of arguments to pass to the tool.
 
     Returns:
-        Union[List[ContentBlock], Tuple[List[ContentBlock], Dict[str, Any]]]:
-            - If structured content is not present: Returns a list of content blocks
-              (TextContent, ImageContent, or EmbeddedResource)
-            - If structured content is present: Returns a tuple of (unstructured_content, structured_content)
-              where structured_content is a dictionary that will be validated against the tool's outputSchema
-
-        The MCP SDK's call_tool decorator automatically handles both return types:
-        - List return → CallToolResult with content only
-        - Tuple return → CallToolResult with both content and structuredContent fields
+        types.CallToolResult: MCP SDK CallToolResult with content and optional structuredContent.
 
     Raises:
         Exception: Re-raised after logging to allow MCP SDK to convert to JSON-RPC error response.
@@ -504,8 +738,6 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         <class 'str'>
         >>> sig.parameters['arguments'].annotation
         <class 'dict'>
-        >>> sig.return_annotation
-        typing.List[typing.Union[mcp.types.TextContent, mcp.types.ImageContent, mcp.types.AudioContent, mcp.types.ResourceLink, mcp.types.EmbeddedResource]]
     """
     request_headers = request_headers_var.get()
     server_id = server_id_var.get()
@@ -534,6 +766,43 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
+    gateway_id_from_header = None
+    if request_headers:
+        for header_name, header_value in request_headers.items():
+            if header_name.lower() == 'x-context-forge-gateway-id':
+                gateway_id_from_header = header_value
+                break
+
+    # If X-Context-Forge-Gateway-Id header is present, use direct proxy mode
+    if gateway_id_from_header:
+        try:
+            # Check if this gateway is in direct_proxy mode
+            async with get_db() as check_db:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                gateway = check_db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
+                if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy":
+                    logger.info(f"Using direct_proxy mode for tool '{name}' via gateway {gateway_id_from_header}")
+
+                    # Use direct proxy method - returns raw CallToolResult from remote server
+                    # Return it directly without any normalization
+                    return await tool_service.invoke_tool_direct(
+                        gateway_id=gateway_id_from_header,
+                        name=name,
+                        arguments=arguments,
+                        request_headers=request_headers,
+                        meta_data=meta_data,
+                    )
+        except Exception as e:
+            logger.error(f"Direct proxy mode failed for gateway {gateway_id_from_header}: {e}")
+            # Fall through to normal mode on error
+
+    # Normal mode: use standard tool invocation with normalization
     app_user_email = get_user_email_from_context()  # Keep for OAuth token selection
 
     # Multi-worker session affinity: check if we should forward to another worker
@@ -624,6 +893,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
 
     try:
         async with get_db() as db:
+            # Use tool service for all tool invocations (handles direct_proxy internally)
             result = await tool_service.invoke_tool(
                 db=db,
                 name=name,
@@ -760,6 +1030,10 @@ async def list_tools() -> List[types.Tool]:
     """
     Lists all tools available to the MCP Server.
 
+    Supports two modes based on gateway's refresh_strategy:
+    - 'cache': Returns tools from database (default behavior)
+    - 'direct_proxy': Proxies the request directly to the remote MCP server
+
     Returns:
         A list of Tool objects containing metadata such as name, description, and input schema.
         Logs and returns an empty list on failure.
@@ -794,10 +1068,58 @@ async def list_tools() -> List[types.Tool]:
     if server_id:
         try:
             async with get_db() as db:
+                # Check for X-Context-Forge-Gateway-Id header first - if present, try direct proxy mode
+                # Check for X-Context-Forge-Gateway-Id header (case-insensitive)
+                gateway_id = None
+                if request_headers:
+                    for header_name, header_value in request_headers.items():
+                        if header_name.lower() == 'x-context-forge-gateway-id':
+                            gateway_id = header_value
+                            break
+
+                # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy":
+                        # Direct proxy mode: forward request to remote MCP server
+                        # Get _meta from request context if available
+                        meta = None
+                        try:
+                            request_ctx = mcp_app.request_context
+                            meta = request_ctx.meta
+                            logger.info(f"[LIST TOOLS] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta is not None}")
+                        except (LookupError, AttributeError) as e:
+                            logger.debug(f"No request context available for _meta extraction: {e}")
+
+                        return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta)
+                    elif gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")
+
+                # Check if server exists for cache mode
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+                server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+                if not server:
+                    logger.warning(f"Server {server_id} not found in database")
+                    return []
+
+                # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
-            logger.exception(f"Error listing tools:{e}")
+            logger.error(f"Error listing tools:{e}")
             return []
     else:
         try:
@@ -971,6 +1293,44 @@ async def list_resources() -> List[types.Resource]:
     if server_id:
         try:
             async with get_db() as db:
+                # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
+                request_headers = request_headers_var.get()
+
+                # Check for X-Context-Forge-Gateway-Id header (case-insensitive)
+                gateway_id = None
+                if request_headers:
+                    for header_name, header_value in request_headers.items():
+                        if header_name.lower() == 'x-context-forge-gateway-id':
+                            gateway_id = header_value
+                            break
+
+                # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and gateway.gateway_mode == "direct_proxy":
+                        # Direct proxy mode: forward request to remote MCP server
+                        # Get _meta from request context if available
+                        meta = None
+                        try:
+                            request_ctx = mcp_app.request_context
+                            meta = request_ctx.meta
+                            logger.info(f"[LIST RESOURCES] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta is not None}")
+                        except (LookupError, AttributeError) as e:
+                            logger.debug(f"No request context available for _meta extraction: {e}")
+
+                        return await _proxy_list_resources_to_gateway(gateway, request_headers, user_context, meta)
+                    elif gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")
+
+                # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
@@ -1035,6 +1395,52 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
 
     try:
         async with get_db() as db:
+            # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
+            request_headers = request_headers_var.get()
+
+            # Check for X-Context-Forge-Gateway-Id header (case-insensitive)
+            gateway_id = None
+            if request_headers:
+                for header_name, header_value in request_headers.items():
+                    if header_name.lower() == 'x-context-forge-gateway-id':
+                        gateway_id = header_value
+                        break
+
+            # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+            if gateway_id:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                if gateway and gateway.gateway_mode == "direct_proxy":
+                    # Direct proxy mode: forward request to remote MCP server
+                    # Get _meta from request context if available
+                    meta = None
+                    try:
+                        request_ctx = mcp_app.request_context
+                        meta = request_ctx.meta
+                        logger.info(f"Using direct_proxy mode for resources/read {resource_uri}, server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header), forwarding _meta: {meta}")
+                    except (LookupError, AttributeError) as e:
+                        logger.debug(f"No request context available for _meta extraction: {e}")
+
+                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
+                    if contents:
+                        # Return first content (text or blob)
+                        first_content = contents[0]
+                        if hasattr(first_content, 'text'):
+                            return first_content.text
+                        elif hasattr(first_content, 'blob'):
+                            return first_content.blob
+                    return ""
+                elif gateway:
+                    logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
+                else:
+                    logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")
+
+            # Default cache mode: use database
             try:
                 result = await resource_service.read_resource(
                     db=db,
@@ -1796,6 +2202,9 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             # Skip for: public-only tokens ([]), admin unrestricted tokens (None)
             if final_teams and len(final_teams) > 0 and user_email:
                 # Import lazily to avoid circular imports
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
                 # First-Party
                 from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
                 from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
@@ -1815,9 +2224,6 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
                 if cached_result is None:
                     # Cache miss - query database
-                    # Third-Party
-                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
                     db = SessionLocal()
                     try:
                         memberships = (

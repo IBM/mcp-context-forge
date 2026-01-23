@@ -44,7 +44,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
@@ -1967,7 +1967,7 @@ class ResourceService:
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
-    ) -> ResourceContent:
+    ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
         Args:
@@ -2163,6 +2163,9 @@ class ResourceService:
 
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
+
+                # Check if resource's gateway is in direct_proxy mode
+                # First, try to find the resource to get its gateway
                 # Check for template
 
                 if resource_db is None and uri is not None:  # and "{" in uri and "}" in uri:
@@ -2173,8 +2176,84 @@ class ResourceService:
                     if include_inactive:
                         query = select(DbResource).where(DbResource.uri == str(uri))
                     resource_db = db.execute(query).scalar_one_or_none()
-                    if resource_db:
-                        # resource_id = resource_db.id
+
+                    # Check for direct_proxy mode
+                    if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy":
+                        logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
+
+                        try:
+                            # Third-Party
+                            from mcp import ClientSession  # pylint: disable=import-outside-toplevel
+                            from mcp.client.streamable_http import streamablehttp_client  # pylint: disable=import-outside-toplevel
+
+                            # First-Party
+                            from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
+
+                            gateway = resource_db.gateway
+
+                            # Prepare headers with gateway auth
+                            headers = {}
+                            if gateway.auth_type == "bearer" and gateway.auth_value:
+                                if isinstance(gateway.auth_value, dict):
+                                    token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
+                                    headers["Authorization"] = f"Bearer {token}"
+                                elif isinstance(gateway.auth_value, str):
+                                    decoded = decode_auth(gateway.auth_value)
+                                    token = decoded.get("Authorization", "").replace("Bearer ", "")
+                                    headers["Authorization"] = f"Bearer {token}"
+                            elif gateway.auth_type == "basic" and gateway.auth_value:
+                                if isinstance(gateway.auth_value, dict):
+                                    auth_header = gateway.auth_value.get("Authorization", "")
+                                    headers["Authorization"] = auth_header
+                                elif isinstance(gateway.auth_value, str):
+                                    decoded = decode_auth(gateway.auth_value)
+                                    headers["Authorization"] = decoded.get("Authorization", "")
+
+                            # Use MCP SDK to connect and read resource
+                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    # Skip session initialize for stateless servers
+                                    #await session.initialize()
+
+                                    # Read resource with _meta if provided
+                                    read_params = {"uri": uri}
+                                    if meta_data:
+                                        read_params["_meta"] = meta_data
+                                        logger.debug(f"Forwarding _meta to remote gateway: {meta_data}")
+
+                                    result = await session.read_resource(**read_params)
+
+                                    # Convert MCP result to MCP-compliant content models
+                                    # result.contents is a list of TextResourceContents or BlobResourceContents
+                                    if result.contents:
+                                        first_content = result.contents[0]
+                                        if hasattr(first_content, 'text'):
+                                            content = TextResourceContents(
+                                                uri=uri,
+                                                mimeType=first_content.mimeType if hasattr(first_content, 'mimeType') else "text/plain",
+                                                text=first_content.text
+                                            )
+                                        elif hasattr(first_content, 'blob'):
+                                            content = BlobResourceContents(
+                                                uri=uri,
+                                                mimeType=first_content.mimeType if hasattr(first_content, 'mimeType') else "application/octet-stream",
+                                                blob=first_content.blob
+                                            )
+                                        else:
+                                            content = TextResourceContents(uri=uri, text="")
+                                    else:
+                                        content = TextResourceContents(uri=uri, text="")
+
+                                    success = True
+                                    logger.info(f"[READ RESOURCE] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
+                                    # Skip the rest of the DB lookup logic
+
+                        except Exception as e:
+                            logger.exception(f"Error in direct_proxy mode for resource '{uri}': {e}")
+                            raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
+
+                    elif resource_db:
+                        # Normal cache mode - resource found in DB
                         content = resource_db.content
                     else:
                         # Check the inactivity first
@@ -2265,7 +2344,12 @@ class ResourceService:
                 # ═══════════════════════════════════════════════════════════════════════════
                 # If content is a Pydantic content model, invoke gateway
 
-                if isinstance(content, (ResourceContent, TextContent)):
+                # ResourceContents covers TextResourceContents and BlobResourceContents (MCP-compliant)
+                # ResourceContent is the legacy model for backwards compatibility
+                # First-Party
+                from mcpgateway.common.models import ResourceContents  # pylint: disable=import-outside-toplevel
+
+                if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     resource_response = await self.invoke_resource(
                         db=db,
                         resource_id=getattr(content, "id"),
