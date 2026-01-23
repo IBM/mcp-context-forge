@@ -1729,10 +1729,15 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
-        db.commit()
+        # Only commit if the transaction is still active.
+        # The transaction can become inactive if an exception occurred during
+        # async context manager cleanup (e.g., CancelledError during MCP session teardown).
+        if db.is_active:
+            db.commit()
     except Exception:
         try:
-            db.rollback()
+            if db.is_active:
+                db.rollback()
         except Exception:
             # Connection is broken - invalidate to remove from pool
             # This handles cases like PgBouncer query_wait_timeout where
