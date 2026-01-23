@@ -3549,7 +3549,6 @@ async def toggle_tool_status(
 async def list_resource_templates(
     request: Request,
     db: Session = Depends(get_db),
-    limit: Optional[int] = Query(None, ge=0, description="Maximum number of resources to return"),
     include_inactive: bool = False,
     tags: Optional[str] = None,
     visibility: Optional[str] = None,
@@ -3562,7 +3561,6 @@ async def list_resource_templates(
         request (Request): The FastAPI request object for team_id retrieval.
         db (Session): Database session.
         user (str): Authenticated user.
-        limit (Optional[int]): Maximum number of resources to return.
         include_inactive (bool): Whether to include inactive resources.
         tags (Optional[str]): Comma-separated list of tags to filter by.
         visibility (Optional[str]): Filter by visibility (private, team, public).

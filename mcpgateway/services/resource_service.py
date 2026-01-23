@@ -3350,8 +3350,6 @@ class ResourceService:
         token_teams: Optional[List[str]] = None,
         tags: Optional[List[str]] = None,
         visibility: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
     ) -> List[ResourceTemplate]:
         """
         List resource templates with visibility-based access control.
@@ -3363,11 +3361,7 @@ class ResourceService:
             token_teams: Teams from JWT. None = admin (no filtering),
                          [] = public-only (no owner access), [...] = team-scoped
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
-            page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             visibility (Optional[str]): Filter by visibility (private, team, public).
-            limit (Optional[int]): Maximum number of resources to return. Use 0 for all resources (no limit).
-                If not specified, uses pagination_default_page_size.
-
 
         Returns:
             List of ResourceTemplate objects the user has access to
