@@ -7,9 +7,4 @@
     */
     Admin.HEADER_NAME_REGEX = /^[A-Za-z0-9-]+$/;
     Admin.MAX_HEADER_VALUE_LENGTH = 4096;
-
-    /**
-    * Global counter for unique header IDs
-    */
-    Admin.headerCounter = 0;
 })(window.Admin)
