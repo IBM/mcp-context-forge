@@ -109,13 +109,13 @@ impl FilesystemServer {
         &self,
         Parameters(ReadFolderParameters { path }): Parameters<ReadFolderParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let dir_entries = search::list_directory(&self.ctx.sandbox, &path)
+        let result = search::list_directory(&self.ctx.sandbox, &path)
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Error listing directory '{}': {}", path, e), None)
             })?;
 
-        let content = Content::json(&dir_entries).map_err(|e| {
+        let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting directory listing to JSON: {}", e),
                 None,
@@ -134,7 +134,7 @@ impl FilesystemServer {
             exclude_pattern,
         }): Parameters<SearchFolderParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let files_found = search::search_files(&self.ctx.sandbox, &path, &pattern, exclude_pattern)
+        let result = search::search_files(&self.ctx.sandbox, &path, &pattern, exclude_pattern)
             .await
             .map_err(|e| {
                 McpError::internal_error(
@@ -143,7 +143,7 @@ impl FilesystemServer {
                 )
             })?;
 
-        let content = Content::json(&files_found).map_err(|e| {
+        let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting search results to JSON: {}", e),
                 None,
@@ -158,13 +158,13 @@ impl FilesystemServer {
         &self,
         Parameters(ReadFileParameters { path }): Parameters<ReadFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let file_content = read::read_file(&self.ctx.sandbox, &path)
+        let result = read::read_file(&self.ctx.sandbox, &path)
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Error reading file '{}': {}", path, e), None)
             })?;
 
-        let content = Content::json(&file_content).map_err(|e| {
+        let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file content to JSON: {}", e),
                 None,
@@ -179,13 +179,13 @@ impl FilesystemServer {
         &self,
         Parameters(CreateFileParameters { path, content }): Parameters<CreateFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        write::write_file(&self.ctx.sandbox, &path, content)
+        let result = write::write_file(&self.ctx.sandbox, &path, content)
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Error writing file '{}': {}", path, e), None)
             })?;
 
-        let content = Content::json(()).map_err(|e| {
+        let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file content to JSON: {}", e),
                 None,
@@ -228,7 +228,7 @@ impl FilesystemServer {
             destination,
         }): Parameters<MoveFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        edit::move_file(&self.ctx.sandbox, &source, &destination)
+        let result = edit::move_file(&self.ctx.sandbox, &source, &destination)
             .await
             .map_err(|e| {
                 McpError::internal_error(
@@ -240,7 +240,7 @@ impl FilesystemServer {
                 )
             })?;
 
-        let content = Content::json(()).map_err(|e| {
+        let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file content to JSON: {}", e),
                 None,
@@ -279,13 +279,13 @@ impl FilesystemServer {
         &self,
         Parameters(ReadMultipleFileParameters { paths }): Parameters<ReadMultipleFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let files_content = read::read_multiple_files(&self.ctx.sandbox, paths)
+        let result = read::read_multiple_files(&self.ctx.sandbox, paths)
             .await
             .map_err(|e| {
                 McpError::internal_error(format!("Error reading multiple files: {}", e), None)
             })?;
 
-        let content = Content::json(&files_content).map_err(|e| {
+        let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting multiple file contents to JSON: {}", e),
                 None,
@@ -302,7 +302,7 @@ impl FilesystemServer {
         &self,
         Parameters(GetFileInfoParameters { path }): Parameters<GetFileInfoParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let file_info = info::get_file_info(&self.ctx.sandbox, &path)
+        let result = info::get_file_info(&self.ctx.sandbox, &path)
             .await
             .map_err(|e| {
                 McpError::internal_error(
@@ -311,7 +311,7 @@ impl FilesystemServer {
                 )
             })?;
 
-        let content = Content::json(&file_info).map_err(|e| {
+        let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file metadata to JSON: {}", e),
                 None,
