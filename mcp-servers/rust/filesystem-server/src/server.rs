@@ -180,11 +180,16 @@ impl FilesystemServer {
         &self,
         Parameters(CreateFileParameters { path, content }): Parameters<CreateFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = write::write_file(&self.ctx.sandbox, &path, content)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(format!("Error writing file '{}': {}", path, e), None)
-            })?;
+        let result: WriteResult = match write::write_file(&self.ctx.sandbox, &path, content).await {
+            Ok(message) => WriteResult {
+                message: message,
+                success: true,
+            },
+            Err(message) => WriteResult {
+                message: format!("Error writing file: {}", message),
+                success: false,
+            },
+        };
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
