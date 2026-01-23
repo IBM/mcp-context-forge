@@ -9,10 +9,9 @@ use uuid::Uuid;
 pub struct WriteResult {
     pub message: String,
     pub success: bool,
-    pub error: Option<String>,
 }
 
-pub async fn write_file(sandbox: &Sandbox, path: &str, content: String) -> Result<WriteResult> {
+pub async fn write_file(sandbox: &Sandbox, path: &str, content: String) -> Result<String> {
     tracing::info!("Running write_file {}", path);
     let pathname = Path::new(path);
     let filename = pathname
@@ -37,33 +36,37 @@ pub async fn write_file(sandbox: &Sandbox, path: &str, content: String) -> Resul
         anyhow::bail!("Failed to rename temp file: {}", e);
     }
     tracing::info!("Successfully wrote file: {}", &canon_filepath.display());
-    Ok(WriteResult {
-        message: format!("Successfully wrote file to {}", &canon_filepath.display()),
-        success: true,
-        error: None,
-    })
+    Ok(format!(
+        "Successfully wrote file to {}",
+        &canon_filepath.display()
+    ))
 }
 
-pub async fn create_directory(sandbox: &Sandbox, path: &str) -> Result<WriteResult> {
+pub async fn create_directory(sandbox: &Sandbox, path: &str) -> Result<String> {
     tracing::info!("Running create_directory '{}'", path);
 
-    if !Path::new(&path).exists() && sandbox.check_new_folders(path).await? {
+    match fs::metadata(path).await {
+        Ok(metadata) if metadata.is_file() => {
+            tracing::warn!("Path '{}' is a file", path);
+            anyhow::bail!("Path '{}' is a file", path);
+        }
+        _ => {}
+    }
+
+    if sandbox.resolve_path(path).await.is_ok() {
+        tracing::warn!("Path '{}' already exists", path);
+        anyhow::bail!("Path '{}' already exists", path);
+    }
+
+    if sandbox.check_new_folders(path).await? {
         fs::create_dir_all(path)
             .await
             .with_context(|| format!("Could not create dir {}", path))?;
     } else {
-        tracing::warn!("Path '{}' already exists", path);
-        return Ok(WriteResult {
-            message: format!("Path '{}' already exists", path),
-            success: false,
-            error: Some("Could not create path".to_string()),
-        });
+        tracing::warn!("Not authorized, path '{}' outside roots", path);
+        anyhow::bail!("Not authorized, path '{}' outside roots", path);
     }
-    Ok(WriteResult {
-        message: format!("Path '{}' created.", path),
-        success: true,
-        error: None,
-    })
+    Ok(format!("Path '{}' created.", path))
 }
 
 #[cfg(test)]
@@ -188,21 +191,21 @@ mod tests {
         assert_eq!(content, "content");
     }
 
+    // Create directory tests
+
     #[tokio::test]
     async fn test_create_directory_success() {
         let temp_dir = TempDir::new().unwrap();
         let sandbox = setup_sandbox(&temp_dir).await;
 
         let path = temp_dir.path().join("newdir");
-        let result = create_directory(&sandbox, path.to_str().unwrap())
-            .await
-            .unwrap();
+        let result = create_directory(&sandbox, path.to_str().unwrap()).await;
 
+        assert!(result.is_ok());
         assert_eq!(
-            result.message,
+            result.unwrap(),
             format!("Path '{}' created.", path.display())
         );
-        assert!(path.exists());
     }
 
     #[tokio::test]
@@ -211,11 +214,12 @@ mod tests {
         let sandbox = setup_sandbox(&temp_dir).await;
 
         let path = temp_dir.path().join("a/b/c");
-        create_directory(&sandbox, path.to_str().unwrap())
-            .await
-            .unwrap();
+        let result = create_directory(&sandbox, &path.to_str().unwrap()).await;
 
-        assert!(path.exists());
+        assert_eq!(
+            result.unwrap().to_string(),
+            format!("Path '{}' created.", path.display())
+        );
     }
 
     #[tokio::test]
@@ -226,10 +230,9 @@ mod tests {
         let path = temp_dir.path().join("existing");
         fs::create_dir(&path).await.unwrap();
 
-        let result = create_directory(&sandbox, path.to_str().unwrap())
-            .await
-            .unwrap();
-        assert!(result.message.contains("already exists"));
+        let result = create_directory(&sandbox, path.to_str().unwrap()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already exists"));
         assert!(path.exists());
     }
 
@@ -241,10 +244,9 @@ mod tests {
         let path = temp_dir.path().join("file.txt");
         fs::write(&path, "data").await.unwrap();
 
-        let result = create_directory(&sandbox, path.to_str().unwrap())
-            .await
-            .unwrap();
-        assert!(result.message.contains("already exists"));
+        let result = create_directory(&sandbox, path.to_str().unwrap()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("is a file"));
     }
 
     #[tokio::test]
@@ -253,9 +255,10 @@ mod tests {
         let sandbox = setup_sandbox(&temp_dir).await;
 
         let path = format!("{}/trailing/", temp_dir.path().to_string_lossy());
-        create_directory(&sandbox, &path).await.unwrap();
+        let result = create_directory(&sandbox, &path).await.unwrap();
 
         let check_path = temp_dir.path().join("trailing");
         assert!(check_path.exists());
+        assert_eq!(result, format!("Path '{}' created.", path));
     }
 }

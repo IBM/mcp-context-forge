@@ -1,6 +1,7 @@
 use crate::APP_NAME;
 use crate::sandbox::Sandbox;
 use crate::tools::edit::Edit;
+use crate::tools::write::WriteResult;
 use crate::tools::{edit, info, read, search, write};
 use rmcp::ErrorData as McpError;
 use rmcp::{
@@ -255,14 +256,16 @@ impl FilesystemServer {
         &self,
         Parameters(CreateDirectoryParameter { path }): Parameters<CreateDirectoryParameter>,
     ) -> Result<CallToolResult, McpError> {
-        let result = write::create_directory(&self.ctx.sandbox, &path)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("Error creating directory '{}': {}", path, e),
-                    None,
-                )
-            })?;
+        let result: WriteResult = match write::create_directory(&self.ctx.sandbox, &path).await {
+            Ok(message) => WriteResult {
+                message: message,
+                success: true,
+            },
+            Err(message) => WriteResult {
+                message: format!("Error creating path: {}", message),
+                success: false,
+            },
+        };
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
