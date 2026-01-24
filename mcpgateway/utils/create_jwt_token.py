@@ -79,8 +79,8 @@ DEFAULT_USERNAME: str = settings.basic_auth_user
 def _create_jwt_token(
     data: Dict[str, Any],
     expires_in_minutes: int = DEFAULT_EXP_MINUTES,
-    secret: str = "",  # nosec B107 - Legacy parameter, not used for authentication
-    algorithm: str = DEFAULT_ALGO,
+    secret: str = "",  # nosec B107 - Optional override; uses config if empty
+    algorithm: str = "",  # Optional override; uses config if empty
     user_data: Optional[Dict[str, Any]] = None,
     teams: Optional[List[str]] = None,
     namespaces: Optional[List[str]] = None,
@@ -100,8 +100,8 @@ def _create_jwt_token(
     Args:
         data: Dictionary containing payload data to encode in the token.
         expires_in_minutes: Token expiration time in minutes. Set to 0 to disable expiration.
-        secret: Legacy parameter (ignored - uses configuration-based key selection).
-        algorithm: Legacy parameter (ignored - uses configured JWT_ALGORITHM).
+        secret: Optional secret key for signing. If empty, uses JWT_SECRET_KEY from config.
+        algorithm: Optional signing algorithm. If empty, uses JWT_ALGORITHM from config.
         user_data: Optional user information dict with keys: email, full_name, is_admin, auth_provider.
         teams: Optional list of team IDs the token is scoped to.
         namespaces: Optional list of namespaces for access control. Auto-generated from teams if not provided.
@@ -116,17 +116,18 @@ def _create_jwt_token(
 
     Note:
         This is an internal function. Use create_jwt_token() for the async interface.
-        The function automatically determines the signing key and algorithm from
-        configuration settings, ignoring the legacy secret and algorithm parameters.
+        When secret/algorithm are provided, they override the configuration values.
+        When not provided (empty), configuration values are used as defaults.
     """
-    # Validate JWT configuration before creating token
     # First-Party
     from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret, validate_jwt_algo_and_keys
 
-    validate_jwt_algo_and_keys()
-    secret = get_jwt_private_key_or_secret()
-    # Use the configured algorithm, not the passed parameter
-    algorithm = settings.jwt_algorithm
+    # Use provided secret/algorithm or fall back to configuration
+    if not secret:
+        validate_jwt_algo_and_keys()
+        secret = get_jwt_private_key_or_secret()
+    if not algorithm:
+        algorithm = settings.jwt_algorithm
 
     payload = data.copy()
     now = _dt.datetime.now(_dt.timezone.utc)
@@ -204,8 +205,8 @@ async def create_jwt_token(
         data: Dictionary containing payload data to encode in the token.
         expires_in_minutes: Token expiration time in minutes. Default is 7 days.
             Set to 0 to disable expiration.
-        secret: Secret key used for signing the token (deprecated, will use configuration-based keys).
-        algorithm: Signing algorithm to use (deprecated, will use configured algorithm).
+        secret: Optional secret key for signing. If None/empty, uses JWT_SECRET_KEY from config.
+        algorithm: Optional signing algorithm. If None/empty, uses JWT_ALGORITHM from config.
         user_data: Optional user information dict with keys: email, full_name, is_admin, auth_provider.
         teams: Optional list of team IDs the token is scoped to.
         namespaces: Optional list of namespaces for access control.
@@ -226,8 +227,8 @@ async def create_jwt_token(
     >>> jwt.decode(t, jwt_util.settings.jwt_secret_key, algorithms=[jwt_util.settings.jwt_algorithm], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'bob'
     True
     """
-    # Use configured values instead of parameters for consistency - secret is retrieved at runtime
-    return _create_jwt_token(data, expires_in_minutes, "", DEFAULT_ALGO, user_data, teams, namespaces, scopes)
+    # Pass through secret/algorithm; _create_jwt_token will use config as fallback
+    return _create_jwt_token(data, expires_in_minutes, secret or "", algorithm or "", user_data, teams, namespaces, scopes)
 
 
 async def get_jwt_token() -> str:
@@ -331,8 +332,8 @@ def _parse_args():
         default=DEFAULT_EXP_MINUTES,
         help="Expiration in minutes (0 disables the exp claim).",
     )
-    p.add_argument("-s", "--secret", default="", help="[DEPRECATED - ignored] Secret key. Always uses JWT_SECRET_KEY from configuration.")
-    p.add_argument("--algo", default=DEFAULT_ALGO, help="[DEPRECATED - ignored] Algorithm. Always uses JWT_ALGORITHM from configuration.")
+    p.add_argument("-s", "--secret", default="", help="Secret key for signing. If not provided, uses JWT_SECRET_KEY from config.")
+    p.add_argument("--algo", default="", help="Signing algorithm (e.g., HS256, RS256). If not provided, uses JWT_ALGORITHM from config.")
     p.add_argument("--pretty", action="store_true", help="Pretty-print payload before encoding.")
 
     # Rich token creation arguments (requires JWT_SECRET_KEY)
