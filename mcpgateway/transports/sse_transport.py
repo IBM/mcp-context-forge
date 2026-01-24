@@ -11,7 +11,9 @@ providing server-to-client streaming with proper session management.
 
 # Standard
 import asyncio
+from collections import deque
 import logging
+import time
 from typing import Any, AsyncGenerator, Dict, Optional
 import uuid
 
@@ -386,11 +388,11 @@ class SSETransport(Transport):
         """
         return self._connected
 
-    async def create_sse_response(self, _request: Request) -> EventSourceResponse:
+    async def create_sse_response(self, request: Request) -> EventSourceResponse:
         """Create SSE response for streaming.
 
         Args:
-            _request: FastAPI request
+            request: FastAPI request (used for disconnection detection)
 
         Returns:
             SSE response object
@@ -418,8 +420,60 @@ class SSETransport(Transport):
             if settings.sse_keepalive_enabled:
                 yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
 
+            consecutive_errors = 0
+            max_consecutive_errors = 3  # Exit after 3 consecutive errors (likely client disconnected)
+
+            # Rapid yield detection: If we're yielding faster than expected, client is likely disconnected
+            # but ASGI server isn't properly signaling it. Track yield timestamps in a sliding window.
+            yield_timestamps: deque = deque(maxlen=settings.sse_rapid_yield_max + 1) if settings.sse_rapid_yield_max > 0 else None
+            rapid_yield_window_sec = settings.sse_rapid_yield_window_ms / 1000.0
+            last_yield_time = time.monotonic()
+            consecutive_rapid_yields = 0  # Track consecutive fast yields for simpler detection
+
+            def check_rapid_yield() -> bool:
+                """Check if yields are happening too fast.
+
+                Returns:
+                    True if spin loop detected and should disconnect, False otherwise.
+                """
+                nonlocal last_yield_time, consecutive_rapid_yields
+                now = time.monotonic()
+                time_since_last = now - last_yield_time
+                last_yield_time = now
+
+                # Track consecutive rapid yields (< 100ms apart)
+                # This catches spin loops even without full deque analysis
+                if time_since_last < 0.1:
+                    consecutive_rapid_yields += 1
+                    if consecutive_rapid_yields >= 10:  # 10 consecutive fast yields = definite spin
+                        logger.error("SSE spin loop detected (%d consecutive rapid yields, last interval %.3fs), client disconnected: %s", consecutive_rapid_yields, time_since_last, self._session_id)
+                        return True
+                else:
+                    consecutive_rapid_yields = 0  # Reset on normal-speed yield
+
+                # Also use deque-based detection for more nuanced analysis
+                if yield_timestamps is None:
+                    return False
+                yield_timestamps.append(now)
+                if time_since_last < 0.01:  # Less than 10ms between yields is very fast
+                    if len(yield_timestamps) > settings.sse_rapid_yield_max:
+                        oldest = yield_timestamps[0]
+                        elapsed = now - oldest
+                        if elapsed < rapid_yield_window_sec:
+                            logger.error(
+                                "SSE rapid yield detected (%d yields in %.3fs, last interval %.3fs), client disconnected: %s", len(yield_timestamps), elapsed, time_since_last, self._session_id
+                            )
+                            return True
+                return False
+
             try:
                 while not self._client_gone.is_set():
+                    # Check if client has disconnected via request state
+                    if await request.is_disconnected():
+                        logger.info("SSE client disconnected (detected via request): %s", self._session_id)
+                        self._client_gone.set()
+                        break
+
                     try:
                         # Use timeout-based polling only when keepalive is enabled
                         if not settings.sse_keepalive_enabled:
@@ -434,20 +488,55 @@ class SSETransport(Transport):
                                 logger.debug("Sending SSE message: %s", json_bytes.decode())
 
                             yield _build_sse_frame(b"message", json_bytes, settings.sse_retry_timeout)
+                            consecutive_errors = 0  # Reset on successful send
+
+                            # Check for rapid yields after message send
+                            if check_rapid_yield():
+                                self._client_gone.set()
+                                break
                         elif settings.sse_keepalive_enabled:
-                            # Timeout - send keepalive (no exception raised!)
+                            # Timeout - send keepalive
                             yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
+                            consecutive_errors = 0  # Reset on successful send
+                            # Check for rapid yields after keepalive too
+                            if check_rapid_yield():
+                                self._client_gone.set()
+                                break
+                            # Note: We don't clear yield_timestamps here. The deque has maxlen
+                            # which automatically drops old entries. Clearing would prevent
+                            # detection of spin loops where yields happen faster than expected.
+
+                    except GeneratorExit:
+                        # Client disconnected - generator is being closed
+                        logger.info("SSE generator exit (client disconnected): %s", self._session_id)
+                        self._client_gone.set()
+                        break
                     except Exception as e:
-                        logger.error("Error processing SSE message: %s", e)
-                        yield _build_sse_frame(b"error", orjson.dumps({"error": str(e)}), settings.sse_retry_timeout)
+                        consecutive_errors += 1
+                        logger.warning("Error processing SSE message (attempt %d/%d): %s", consecutive_errors, max_consecutive_errors, e)
+                        if consecutive_errors >= max_consecutive_errors:
+                            logger.info("SSE too many consecutive errors, assuming client disconnected: %s", self._session_id)
+                            self._client_gone.set()
+                            break
+                        # Don't yield error frame - it could cause more errors if client is gone
 
             except asyncio.CancelledError:
                 logger.info("SSE event generator cancelled: %s", self._session_id)
+                self._client_gone.set()
+            except GeneratorExit:
+                logger.info("SSE generator exit: %s", self._session_id)
+                self._client_gone.set()
             except Exception as e:
                 logger.error("SSE event generator error: %s", e)
+                self._client_gone.set()
             finally:
                 logger.info("SSE event generator completed: %s", self._session_id)
-                # We intentionally don't set client_gone here to allow queued messages to be processed
+                self._client_gone.set()  # Always set client_gone on exit to clean up
+
+        async def on_client_close(_scope: dict) -> None:
+            """Handle client close event from sse_starlette."""
+            logger.info("SSE client close handler called: %s", self._session_id)
+            self._client_gone.set()
 
         return EventSourceResponse(
             event_generator(),
@@ -458,6 +547,14 @@ class SSETransport(Transport):
                 "Content-Type": "text/event-stream",
                 "X-MCP-SSE": "true",
             },
+            # Timeout for ASGI send() calls - protects against sends that hang indefinitely
+            # when client connection is in a bad state (e.g., client stopped reading but TCP
+            # connection not yet closed). Does NOT affect MCP server response times.
+            # Set to 0 to disable. Default matches keepalive interval.
+            send_timeout=settings.sse_send_timeout if settings.sse_send_timeout > 0 else None,
+            # Callback when client closes - helps detect disconnects that ASGI server
+            # may not properly propagate via request.is_disconnected()
+            client_close_handler_callable=on_client_close,
         )
 
     async def _client_disconnected(self, _request: Request) -> bool:

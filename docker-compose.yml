@@ -20,9 +20,6 @@ networks:
 volumes:                # Named volumes survive podman-compose down/up
   pgdata:
   # pgdata18:  # Enable for postgres 18+
-  mariadbdata:
-  mysqldata:
-  mongodata:
   pgadmindata:
   redisinsight_data:
   nginx_cache:
@@ -109,8 +106,8 @@ services:
       # Choose Granian for:  load spike protection, bursty traffic (graceful degradation)
       # Both achieve same RPS when database is the bottleneck.
       # ═══════════════════════════════════════════════════════════════════════════
-      - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
-      # - HTTP_SERVER=gunicorn # Python-based, battle-tested, lower memory usage
+      # - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
+      - HTTP_SERVER=gunicorn # Python-based, battle-tested, lower memory usage
       - HOST=0.0.0.0
       - PORT=4444
       # Transport: sse, streamablehttp, http, or all (default: all)
@@ -123,9 +120,6 @@ services:
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
       - SQLALCHEMY_ECHO=false
-      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
-      # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
-      # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
@@ -289,8 +283,16 @@ services:
       - HTTPX_POOL_TIMEOUT=10.0             # Wait for available connection (seconds)
       - HTTPX_HTTP2_ENABLED=false           # HTTP/2 support (requires server support)
       - HTTPX_ADMIN_READ_TIMEOUT=30.0       # Admin UI/health check timeout (seconds)
-      # Worker and server tuning for high-concurrency load testing
-      - GUNICORN_WORKERS=16
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Gunicorn Configuration (used when HTTP_SERVER=gunicorn)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - GUNICORN_WORKERS=24                    # Worker processes (match CPU cores)
+      - GUNICORN_TIMEOUT=120                   # Worker timeout in seconds
+      - GUNICORN_GRACEFUL_TIMEOUT=30           # Grace period for worker shutdown
+      - GUNICORN_KEEP_ALIVE=30                 # Keep-alive timeout (matches SSE keepalive)
+      - GUNICORN_MAX_REQUESTS=10000000          # Recycle workers after 10M requests
+      - GUNICORN_MAX_REQUESTS_JITTER=1000000   # ±1M jitter prevents thundering herd
+      - GUNICORN_BACKLOG=4096                  # Connection queue depth
       # ═══════════════════════════════════════════════════════════════════════════
       # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -303,6 +305,22 @@ services:
       - GRANIAN_BACKPRESSURE=128
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
       - GRANIAN_RESPAWN_FAILED=true
+      # ───────────────────────────────────────────────────────────────────────
+      # Granian Worker Lifecycle (recycling to prevent resource leaks)
+      # ───────────────────────────────────────────────────────────────────────
+      # Workaround for granian issue where SSE connections may not be properly
+      # closed after client disconnect, causing CPU spin loops. See:
+      # - https://github.com/emmett-framework/granian/issues/286
+      # - https://github.com/IBM/mcp-context-forge/issues/2357
+      #
+      # GRANIAN_WORKERS_LIFETIME: Restart workers after this duration (min 60s)
+      # GRANIAN_WORKERS_MAX_RSS: Restart workers exceeding this memory (MiB)
+      #
+      # Using both provides natural jitter - workers hit memory limits at
+      # different times based on load, with lifetime as a backstop.
+      # - GRANIAN_WORKERS_LIFETIME=3600    # 1 hour max worker lifetime
+      # - GRANIAN_WORKERS_MAX_RSS=512      # 512 MiB max RSS per worker
+      # ───────────────────────────────────────────────────────────────────────
       # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
       # - nginx sits in front and downgrades to HTTP/1.1 for upstream connections
       # - nginx open-source doesn't support HTTP/2 to backends (only nginx Plus does)
@@ -613,14 +631,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
+      - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (2x DB_POOL_RECYCLE)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (allows slow admin page rendering)
+      - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (aligned with CLIENT_IDLE_TIMEOUT)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -640,62 +658,6 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-
-  # mariadb:
-  #   image: mariadb:10.6
-  #   environment:
-  #     MARIADB_ROOT_PASSWORD: mysecretpassword
-  #     MARIADB_DATABASE: mcp
-  #     MARIADB_USER: mariadb
-  #     MARIADB_PASSWORD: mysecretpassword
-  #   volumes:
-  #     - mariadbdata:/var/lib/mysql
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-  #     interval: 30s
-  #     timeout: 5s
-  #     retries: 5
-  #     start_period: 20s
-
-  # mariadb:
-  #   image: mariadb:11
-  #   environment:
-  #     - MARIADB_ROOT_PASSWORD=mysecretpassword
-  #     - MARIADB_DATABASE=mcp
-  #     - MARIADB_USER=admin
-  #     - MARIADB_PASSWORD=changeme
-  #   volumes: [mariadbdata:/var/lib/mysql]
-  #   networks: [mcpnet]
-
-  # mariadb:
-  #   image: registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
-  #   environment:
-  #     - MYSQL_ROOT_PASSWORD=mysecretpassword
-  #     - MYSQL_DATABASE=mcp
-  #     - MYSQL_USER=mysql
-  #     - MYSQL_PASSWORD=changeme
-  #   volumes: ["mariadbdata:/var/lib/mysql"]
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysecretpassword"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 30s
-
-  # mongodb:
-  #   image: mongo:7
-  #   environment:
-  #     - MONGO_INITDB_ROOT_USERNAME=admin
-  #     - MONGO_INITDB_ROOT_PASSWORD=changeme
-  #     - MONGO_INITDB_DATABASE=mcp
-  #   volumes: [mongodata:/data/db]
-  #   networks: [mcpnet]
 
   # migration:
   #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
@@ -945,6 +907,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
   # Redis Commander - a web-based Redis GUI
@@ -962,6 +925,7 @@ services:
       - REDIS_HOSTS=local:redis:6379
       - HTTP_USER=admin
       - HTTP_PASSWORD=changeme
+    profiles: ["monitoring"]
 
   # # ──────────────────────────────────────────────────────────────────────
   # # Redis Insight - a powerful Redis GUI (recently updated)
@@ -1007,34 +971,6 @@ services:
   #     # ──────────────────────────────────────────────────────────────────
   #     - RI_APP_HOST=0.0.0.0          # <- listen on all interfaces
   #     - RI_APP_PORT=5540             # <- UI port (container-side)
-
-
-  # mongo_express:         # 🔧 MongoDB GUI (works if mongodb service is enabled)
-  #   image: mongo-express:1
-  #   environment:
-  #     - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
-  #     - ME_CONFIG_MONGODB_ADMINPASSWORD=changeme
-  #     - ME_CONFIG_MONGODB_SERVER=mongodb
-  #   ports:
-  #     - "8082:8081"    # http://localhost:8082
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     mongodb:
-  #       condition: service_started
-
-  # phpmyadmin:            # 🔧 MySQL / MariaDB GUI
-  #   image: phpmyadmin:latest
-  #   environment:
-  #     - PMA_HOST=mysql   # or mariadb
-  #     - PMA_USER=mysql
-  #     - PMA_PASSWORD=changeme
-  #     - PMA_ARBITRARY=1  # allow login to any host if you switch DBs
-  #   ports:
-  #     - "8083:80"      # http://localhost:8083
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     mysql:
-  #       condition: service_started
 
 
 ###############################################################################
@@ -1519,27 +1455,3 @@ services:
         print(f'✅ Registration complete: {registered}/{server_count} benchmark servers')
         "
     profiles: ["benchmark"]
-
-  ###############################################################################
-  # Hashicorp Terraform MCP Server
-  # https://hub.docker.com/r/hashicorp/terraform-mcp-server
-  # https://github.com/hashicorp/terraform-mcp-server/blob/main/README.md
-  ###############################################################################
-  # terraform-mcp-server:
-  #   image: docker.io/hashicorp/terraform-mcp-server:dev
-  #   container_name: terraform-mcp-server
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "8001:8080"    # Map host port 8888 to container port 8080
-  #   restart: unless-stopped
-  #   environment:
-  #     - TRANSPORT_MODE=streamable-http
-  #     - TRANSPORT_HOST=0.0.0.0
-  #     - TRANSPORT_PORT=8080
-  #     - MCP_CORS_MODE=disabled
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 20s

@@ -1203,9 +1203,12 @@ class Settings(BaseSettings):
     # Transport
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
-    sse_retry_timeout: int = 5000  # milliseconds
+    sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect
     sse_keepalive_enabled: bool = True  # Enable SSE keepalive events
     sse_keepalive_interval: int = 30  # seconds between keepalive events
+    sse_send_timeout: float = 30.0  # seconds - timeout for ASGI send() calls, protects against hung connections
+    sse_rapid_yield_window_ms: int = 1000  # milliseconds - time window for rapid yield detection
+    sse_rapid_yield_max: int = 50  # max yields per window before assuming client disconnected (0=disabled)
 
     # Gateway/Server Connection Timeout
     # Timeout in seconds for HTTP requests to registered gateways and MCP servers.

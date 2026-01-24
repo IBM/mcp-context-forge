@@ -51,13 +51,14 @@ from mcpgateway.services.gateway_service import (
 _R = TypeVar("_R")
 
 
-def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | None = None) -> MagicMock:
+def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | None = None, rowcount: int = 0) -> MagicMock:
     """
     Return a MagicMock that behaves like the SQLAlchemy Result object the
     service expects after ``Session.execute``:
 
         - .scalar_one_or_none()  -> *scalar*
         - .scalars().all()      -> *scalars_list*  (defaults to [])
+        - .rowcount             -> *rowcount* (for UPDATE/DELETE statements)
 
     This lets us emulate both the "fetch one" path and the "fetch many"
     path with a single helper.
@@ -67,6 +68,7 @@ def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | N
     scalars_proxy = MagicMock()
     scalars_proxy.all.return_value = scalars_list or []
     result.scalars.return_value = scalars_proxy
+    result.rowcount = rowcount
     return result
 
 
@@ -1100,34 +1102,23 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     async def test_set_gateway_state(self, gateway_service, mock_gateway, test_db):
-        """Deactivating an active gateway triggers tool state change + event."""
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        """Deactivating an active gateway triggers bulk state updates + event."""
+        # First call returns gateway (SELECT), subsequent calls return UPDATE results
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+                _make_execute_result(rowcount=1),  # UPDATE tools
+                _make_execute_result(rowcount=1),  # UPDATE prompts
+                _make_execute_result(rowcount=1),  # UPDATE resources
+            ]
+        )
         test_db.commit = Mock()
         test_db.refresh = Mock()
-
-        # Return one tool, one prompt, one resource so state changes get called
-        query_proxy = MagicMock()
-        filter_proxy = MagicMock()
-        filter_proxy.all.return_value = [MagicMock(id=101)]
-        query_proxy.filter.return_value = filter_proxy
-        test_db.query = Mock(return_value=query_proxy)
 
         # Setup gateway service mocks
         gateway_service._notify_gateway_activated = AsyncMock()
         gateway_service._notify_gateway_deactivated = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
-
-        tool_service_stub = MagicMock()
-        tool_service_stub.set_tool_state = AsyncMock()
-        gateway_service.tool_service = tool_service_stub
-
-        prompt_service_stub = MagicMock()
-        prompt_service_stub.set_prompt_state = AsyncMock()
-        gateway_service.prompt_service = prompt_service_stub
-
-        resource_service_stub = MagicMock()
-        resource_service_stub.set_resource_state = AsyncMock()
-        gateway_service.resource_service = resource_service_stub
 
         # Patch model_validate to return a mock with .masked()
         mock_gateway_read = MagicMock()
@@ -1138,42 +1129,34 @@ class TestGatewayService:
 
         assert mock_gateway.enabled is False
         gateway_service._notify_gateway_deactivated.assert_called_once()
-        assert tool_service_stub.set_tool_state.called
-        assert prompt_service_stub.set_prompt_state.called
-        assert resource_service_stub.set_resource_state.called
+        # Bulk UPDATE is used instead of individual set_*_state calls
+        assert test_db.execute.call_count >= 2  # At least SELECT + UPDATE tools
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
     async def test_set_gateway_state_activate(self, gateway_service, mock_gateway, test_db):
         """Test activating an inactive gateway."""
         mock_gateway.enabled = False
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        # Initialize collections as empty lists to avoid SQLAlchemy mapping errors
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+        # First call returns gateway (SELECT), subsequent calls return UPDATE results
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+                _make_execute_result(rowcount=1),  # UPDATE tools
+                _make_execute_result(rowcount=1),  # UPDATE prompts
+                _make_execute_result(rowcount=1),  # UPDATE resources
+            ]
+        )
         test_db.commit = Mock()
         test_db.refresh = Mock()
-
-        # Return one tool, one prompt, one resource so state changes get called
-        query_proxy = MagicMock()
-        filter_proxy = MagicMock()
-        filter_proxy.all.return_value = [MagicMock(id=101)]
-        query_proxy.filter.return_value = filter_proxy
-        test_db.query = Mock(return_value=query_proxy)
 
         # Setup gateway service mocks
         gateway_service._notify_gateway_activated = AsyncMock()
         gateway_service._notify_gateway_deactivated = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
-
-        tool_service_stub = MagicMock()
-        tool_service_stub.set_tool_state = AsyncMock()
-        gateway_service.tool_service = tool_service_stub
-
-        prompt_service_stub = MagicMock()
-        prompt_service_stub.set_prompt_state = AsyncMock()
-        gateway_service.prompt_service = prompt_service_stub
-
-        resource_service_stub = MagicMock()
-        resource_service_stub.set_resource_state = AsyncMock()
-        gateway_service.resource_service = resource_service_stub
 
         # Patch model_validate to return a mock with .masked()
         mock_gateway_read = MagicMock()
@@ -1184,40 +1167,26 @@ class TestGatewayService:
 
         assert mock_gateway.enabled is True
         gateway_service._notify_gateway_activated.assert_called_once()
-        assert tool_service_stub.set_tool_state.called
-        assert prompt_service_stub.set_prompt_state.called
-        assert resource_service_stub.set_resource_state.called
+        # Bulk UPDATE is used instead of individual set_*_state calls
+        assert test_db.execute.call_count >= 2  # At least SELECT + UPDATE tools
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
     async def test_set_gateway_state_only_update_reachable_skips_prompts_resources(self, gateway_service, mock_gateway, test_db):
         """Test that only_update_reachable=True skips prompt/resource state updates."""
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        # First call returns gateway (SELECT), second call returns UPDATE result for tools only
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+                _make_execute_result(rowcount=1),  # UPDATE tools (reachable only)
+            ]
+        )
         test_db.commit = Mock()
         test_db.refresh = Mock()
-
-        # Return one tool so set_tool_state gets called
-        query_proxy = MagicMock()
-        filter_proxy = MagicMock()
-        filter_proxy.all.return_value = [MagicMock(id=101)]
-        query_proxy.filter.return_value = filter_proxy
-        test_db.query = Mock(return_value=query_proxy)
 
         # Setup gateway service mocks
         gateway_service._notify_gateway_offline = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
-
-        tool_service_stub = MagicMock()
-        tool_service_stub.set_tool_state = AsyncMock()
-        gateway_service.tool_service = tool_service_stub
-
-        prompt_service_stub = MagicMock()
-        prompt_service_stub.set_prompt_state = AsyncMock()
-        gateway_service.prompt_service = prompt_service_stub
-
-        resource_service_stub = MagicMock()
-        resource_service_stub.set_resource_state = AsyncMock()
-        gateway_service.resource_service = resource_service_stub
 
         # Patch model_validate to return a mock with .masked()
         mock_gateway_read = MagicMock()
@@ -1226,11 +1195,8 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             result = await gateway_service.set_gateway_state(test_db, 1, activate=True, reachable=False, only_update_reachable=True)
 
-        # Tools should still be updated for reachability
-        assert tool_service_stub.set_tool_state.called
-        # But prompts and resources should NOT be touched when only_update_reachable=True
-        assert not prompt_service_stub.set_prompt_state.called
-        assert not resource_service_stub.set_resource_state.called
+        # With bulk UPDATE, we have SELECT + UPDATE tools only (no prompts/resources)
+        assert test_db.execute.call_count == 2  # SELECT + UPDATE tools
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
@@ -1245,34 +1211,28 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     async def test_set_gateway_state_with_tools_error(self, gateway_service, mock_gateway, test_db):
-        """Test setting gateway state when tool state change fails."""
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        """Test setting gateway state when bulk tool UPDATE fails."""
+        # First call returns gateway, second call (bulk UPDATE) fails
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),  # get_for_update SELECT
+                Exception("Bulk tool update failed"),  # UPDATE tools fails
+            ]
+        )
         test_db.commit = Mock()
         test_db.refresh = Mock()
         test_db.rollback = Mock()
 
-        # Return one tool so set_tool_state gets called
-        query_proxy = MagicMock()
-        filter_proxy = MagicMock()
-        filter_proxy.all.return_value = [MagicMock(id=101)]
-        query_proxy.filter.return_value = filter_proxy
-        test_db.query = Mock(return_value=query_proxy)
-
         # Setup gateway service mocks
         gateway_service._notify_gateway_deactivated = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
-
-        # Make tool toggle fail
-        tool_service_stub = MagicMock()
-        tool_service_stub.set_tool_state = AsyncMock(side_effect=Exception("Tool toggle failed"))
-        gateway_service.tool_service = tool_service_stub
 
         # The set_gateway_state method will catch the exception and raise GatewayError
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.set_gateway_state(test_db, 1, activate=False)
 
         assert "Failed to set gateway state" in str(exc_info.value)
-        assert "Tool toggle failed" in str(exc_info.value)
+        assert "Bulk tool update failed" in str(exc_info.value)
         test_db.rollback.assert_called_once()
 
     # ────────────────────────────────────────────────────────────────────

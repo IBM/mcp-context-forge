@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -5370,7 +5370,16 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
-def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = False, options: Optional[List] = None):
+def get_for_update(
+    db: Session,
+    model,
+    entity_id=None,
+    where: Optional[Any] = None,
+    skip_locked: bool = False,
+    nowait: bool = False,
+    lock_timeout_ms: Optional[int] = None,
+    options: Optional[List] = None,
+):
     """Get entity with row lock for update operations.
 
     Args:
@@ -5381,10 +5390,19 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
         skip_locked: If False (default), wait for locked rows. If True, skip locked
             rows (returns None if row is locked). Use False for conflict checks and
             entity updates to ensure consistency. Use True only for job-queue patterns.
+        nowait: If True, fail immediately if row is locked (raises OperationalError).
+            Use this for operations that should not block. Default False.
+        lock_timeout_ms: Optional lock timeout in milliseconds for PostgreSQL.
+            If set, the query will wait at most this long for locks before failing.
+            Only applies to PostgreSQL. Default None (use database default).
         options: Optional list of loader options (e.g., selectinload(...))
 
     Returns:
         The model instance or None
+
+    Raises:
+        sqlalchemy.exc.OperationalError: If nowait=True and row is locked, or if
+            lock_timeout_ms is exceeded.
 
     Notes:
         - On PostgreSQL this acquires a FOR UPDATE row lock.
@@ -5417,8 +5435,12 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
             return db.get(model, entity_id)
         return db.execute(stmt).scalar_one_or_none()
 
-    # PostgreSQL: apply FOR UPDATE
-    stmt = stmt.with_for_update(skip_locked=skip_locked)
+    # PostgreSQL: set lock timeout if specified
+    if lock_timeout_ms is not None:
+        db.execute(text(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'"))
+
+    # PostgreSQL: apply FOR UPDATE with optional nowait
+    stmt = stmt.with_for_update(skip_locked=skip_locked, nowait=nowait)
     return db.execute(stmt).scalar_one_or_none()
 
 
