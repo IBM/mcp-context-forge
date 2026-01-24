@@ -27,7 +27,10 @@
         <button onclick="viewServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
         <button onclick="editServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
 
-        <!-- Row 3 & 4: Activate/Deactivate | Delete -->
+        <!-- Row 2: Export Config -->
+        <button onclick="showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')" class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors" x-tooltip="'💡Generate client configuration files for this server'">Export Config</button>
+
+        <!-- Row 3: Activate/Deactivate | Delete -->
         <div class="col-span-2 flex flex-col space-y-1">
           <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'servers')">
             <input type="hidden" name="activate" value="{{ 'false' if server.enabled else 'true' }}" />
