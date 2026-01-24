@@ -22,12 +22,12 @@ import ipaddress
 import os
 import re
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Pattern
 from urllib.parse import unquote, urlparse
 
 # Third-Party
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -125,7 +125,7 @@ class VirusTotalConfig(BaseModel):
     # Scan URLs in tool outputs
     scan_tool_outputs: bool = Field(default=True)
     max_urls_per_call: int = Field(default=5, ge=0)
-    url_pattern: str = Field(default=r"https?://[\w\-\._~:/%#\[\]@!\$&'\(\)\*\+,;=]+")
+    url_pattern: Pattern[str] = Field(default=re.compile(r"https?://[\w\-\._~:/%#\[\]@!\$&'\(\)\*\+,;=]+"))
 
     # Scan URLs in prompts and resource contents
     scan_prompt_outputs: bool = Field(default=True)
@@ -134,14 +134,54 @@ class VirusTotalConfig(BaseModel):
     # Policy extras
     min_harmless_ratio: float = Field(default=0.0, ge=0.0, le=1.0, description="Require harmless/(total) >= ratio; 0 disables")
 
-    # Local overrides
-    allow_url_patterns: list[str] = Field(default_factory=list)
-    deny_url_patterns: list[str] = Field(default_factory=list)
+    # Local overrides - compiled patterns
+    allow_url_patterns: list[Pattern[str]] = Field(default_factory=list)
+    deny_url_patterns: list[Pattern[str]] = Field(default_factory=list)
     allow_domains: list[str] = Field(default_factory=list)
     deny_domains: list[str] = Field(default_factory=list)
     allow_ip_cidrs: list[str] = Field(default_factory=list)
     deny_ip_cidrs: list[str] = Field(default_factory=list)
     override_precedence: str = Field(default="deny_over_allow", description="deny_over_allow | allow_over_deny")
+
+    @field_validator('url_pattern', mode='before')
+    @classmethod
+    def compile_url_pattern(cls, v: Any) -> Pattern[str]:
+        """Compile url_pattern string to regex Pattern object.
+
+        Args:
+            v: Regex pattern string or Pattern object.
+
+        Returns:
+            Compiled Pattern object.
+        """
+        if isinstance(v, str):
+            return re.compile(v)
+        return v
+
+    @field_validator('allow_url_patterns', 'deny_url_patterns', mode='before')
+    @classmethod
+    def compile_url_pattern_lists(cls, v: Any) -> list[Pattern[str]]:
+        """Compile list of pattern strings to regex Pattern objects.
+
+        Args:
+            v: List of regex pattern strings or Pattern objects.
+
+        Returns:
+            List of compiled Pattern objects.
+        """
+        if not isinstance(v, list):
+            return v
+        compiled = []
+        for item in v:
+            if isinstance(item, str):
+                compiled.append(re.compile(item))
+            elif isinstance(item, Pattern):
+                compiled.append(item)
+            else:
+                compiled.append(item)
+        return compiled
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 _CACHE: Dict[str, tuple[float, dict[str, Any]]] = {}
@@ -347,21 +387,21 @@ def _domain_matches(host: str, patterns: list[str]) -> bool:
     return False
 
 
-def _url_matches(url: str, patterns: list[str]) -> bool:
+def _url_matches(url: str, patterns: list[Pattern[str]]) -> bool:
     """Check if URL matches any regex pattern.
 
     Args:
         url: URL to check.
-        patterns: List of regex patterns to match against.
+        patterns: List of compiled regex patterns to match against.
 
     Returns:
         True if URL matches any pattern, False otherwise.
     """
     for pat in patterns or []:
         try:
-            if re.search(pat, url):
+            if pat.search(url):
                 return True
-        except re.error:
+        except Exception:
             continue
     return False
 
@@ -764,7 +804,7 @@ class VirusTotalURLCheckerPlugin(Plugin):
 
         # Local allow/deny on any URL encountered
         urls: list[str] = []
-        pattern = re.compile(cfg.url_pattern)
+        pattern = cfg.url_pattern
 
         def add_from(obj: Any):
             """Recursively extract URLs from nested data structures.
@@ -866,7 +906,7 @@ class VirusTotalURLCheckerPlugin(Plugin):
         if not texts:
             return PromptPosthookResult(continue_processing=True)
 
-        pattern = re.compile(cfg.url_pattern)
+        pattern = cfg.url_pattern
         urls: list[str] = []
         for t in texts:
             urls.extend(pattern.findall(t))
@@ -942,7 +982,7 @@ class VirusTotalURLCheckerPlugin(Plugin):
         if not isinstance(text, str) or not text:
             return ResourcePostFetchResult(continue_processing=True)
 
-        pattern = re.compile(cfg.url_pattern)
+        pattern = cfg.url_pattern
         urls = pattern.findall(text)[: cfg.max_urls_per_call]
         if not urls:
             return ResourcePostFetchResult(continue_processing=True)

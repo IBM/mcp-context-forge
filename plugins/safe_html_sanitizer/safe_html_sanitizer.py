@@ -85,6 +85,15 @@ BAD_SCHEMES = ("javascript:", "vbscript:")
 DATA_URI_RE = re.compile(r"^data:([a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+)")
 BIDI_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
+# Precompiled patterns for _to_text function
+_BLOCK_BREAK_RE = re.compile(r"</(p|div|h[1-6]|li|tr|table|blockquote)>", re.IGNORECASE)
+_NO_TAGS_RE = re.compile(r"<[^>]+>")
+_MULTI_NEWLINES_RE = re.compile(r"\n{3,}")
+
+# Precompiled patterns for fallback sanitization
+_DANGEROUS_TAGS_RE = re.compile(r"<\s*(script|iframe|object|embed|style)[^>]*>.*?<\s*/\s*\1\s*>", re.IGNORECASE | re.DOTALL)
+_EVENT_HANDLERS_RE = re.compile(r"on[a-z]+\s*=\s*\"[^\"]*\"", re.IGNORECASE)
+
 
 class SafeHTMLConfig(BaseModel):
     """Configuration for HTML sanitization.
@@ -269,11 +278,11 @@ def _to_text(html_str: str) -> str:
         Plain text with basic formatting preserved.
     """
     # Very simple, retain line breaks around common block tags
-    block_break = re.sub(r"</(p|div|h[1-6]|li|tr|table|blockquote)>", "\n", html_str, flags=re.IGNORECASE)
+    block_break = _BLOCK_BREAK_RE.sub("\n", html_str)
     # Strip the remaining tags
-    no_tags = re.sub(r"<[^>]+>", "", block_break)
+    no_tags = _NO_TAGS_RE.sub("", block_break)
     # Collapse multiple newlines
-    return re.sub(r"\n{3,}", "\n\n", no_tags).strip()
+    return _MULTI_NEWLINES_RE.sub("\n\n", no_tags).strip()
 
 
 class SafeHTMLSanitizerPlugin(Plugin):
@@ -308,8 +317,8 @@ class SafeHTMLSanitizerPlugin(Plugin):
             sanitized = parser.get_html()
         except Exception:
             # On parser errors, fall back to a minimal strip of dangerous tags
-            sanitized = re.sub(r"<\s*(script|iframe|object|embed|style)[^>]*>.*?<\s*/\s*\1\s*>", "", content.text, flags=re.IGNORECASE | re.DOTALL)
-            sanitized = re.sub(r"on[a-z]+\s*=\s*\"[^\"]*\"", "", sanitized, flags=re.IGNORECASE)
+            sanitized = _DANGEROUS_TAGS_RE.sub("", content.text)
+            sanitized = _EVENT_HANDLERS_RE.sub("", sanitized)
 
         if self._cfg.to_text:
             new_text = _to_text(sanitized)
