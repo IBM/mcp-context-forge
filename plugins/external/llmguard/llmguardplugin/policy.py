@@ -14,6 +14,9 @@ from enum import Enum
 import re
 from typing import Union
 
+# Precompiled regex pattern for performance
+_POLICY_OPERATORS_RE = re.compile(r"\b(and|or|not)\b|[()]")
+
 
 class ResponseGuardrailPolicy(Enum):
     """Class to create custom messages responded by your guardrails"""
@@ -156,8 +159,7 @@ def get_policy_filters(policy_expression) -> Union[list, None]:
         Union[list, None]: None if no policy expression is defined, else a comma separated list of filters defined in the policy
     """
     if isinstance(policy_expression, str):
-        pattern = r"\b(and|or|not)\b|[()]"
-        filters = re.sub(pattern, "", policy_expression).strip()
+        filters = _POLICY_OPERATORS_RE.sub("", policy_expression).strip()
         return filters.split()
     elif isinstance(policy_expression, dict):
         filters = list(policy_expression.keys())

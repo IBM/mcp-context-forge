@@ -15,12 +15,12 @@ from __future__ import annotations
 from enum import Enum
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Pattern
 
 # Third-Party
 import httpx
 import orjson
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # First-Party
 from mcpgateway.config import settings
@@ -38,6 +38,10 @@ from mcpgateway.plugins.framework import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Precompiled regex patterns for performance
+_CATEGORY_PATTERN_RE = re.compile(r'"(\w+)":\s*([\d.]+)')
+_PROFANITY_FILTER_RE = re.compile(r"\b(damn|hell|crap)\b", flags=re.IGNORECASE)
 
 
 class ModerationProvider(str, Enum):
@@ -70,6 +74,30 @@ class ModerationCategory(str, Enum):
     SPAM = "spam"
     PROFANITY = "profanity"
     TOXIC = "toxic"
+
+
+# Basic pattern matching patterns, precompiled (defined after ModerationCategory)
+_BASIC_PATTERNS = {
+    ModerationCategory.HATE: [
+        re.compile(r"\b(hate|racist|nazi|fascist)\b", re.IGNORECASE),
+        re.compile(r"\b(kill\s+(all\s+)?(jews|muslims|christians|blacks|whites))\b", re.IGNORECASE),
+    ],
+    ModerationCategory.VIOLENCE: [
+        re.compile(r"\b(kill|murder|shoot|stab|bomb)\s+(you|him|her|them)\b", re.IGNORECASE),
+        re.compile(r"\b(death\s+threat|going\s+to\s+kill)\b", re.IGNORECASE),
+    ],
+    ModerationCategory.SELF_HARM: [
+        re.compile(r"\b(kill\s+myself|suicide|self\s*harm|end\s+it\s+all)\b", re.IGNORECASE),
+        re.compile(r"\b(want\s+to\s+die|cutting\s+myself)\b", re.IGNORECASE),
+    ],
+    ModerationCategory.PROFANITY: [
+        re.compile(r"\b(fuck\w*|shit|damn|hell|crap|bitch|asshole)\b", re.IGNORECASE),
+    ],
+    ModerationCategory.HARASSMENT: [
+        re.compile(r"\b(you\s+suck|loser|idiot|moron|stupid)\b", re.IGNORECASE),
+        re.compile(r"\b(go\s+away|nobody\s+likes\s+you)\b", re.IGNORECASE),
+    ],
+}
 
 
 class IBMWatsonConfig(BaseModel):
@@ -124,7 +152,32 @@ class CategoryConfig(BaseModel):
     threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="Confidence threshold")
     action: ModerationAction = Field(default=ModerationAction.WARN, description="Action to take")
     providers: List[ModerationProvider] = Field(default_factory=list, description="Providers to use for this category")
-    custom_patterns: List[str] = Field(default_factory=list, description="Custom regex patterns")
+    custom_patterns: List[Pattern[str]] = Field(default_factory=list, description="Custom compiled regex patterns")
+
+    @field_validator('custom_patterns', mode='before')
+    @classmethod
+    def compile_patterns(cls, v: Any) -> List[Pattern[str]]:
+        """Compile string patterns to regex Pattern objects.
+
+        Args:
+            v: List of regex pattern strings or Pattern objects.
+
+        Returns:
+            List of compiled Pattern objects.
+        """
+        if not isinstance(v, list):
+            return v
+        compiled = []
+        for item in v:
+            if isinstance(item, str):
+                compiled.append(re.compile(item, re.IGNORECASE))
+            elif isinstance(item, Pattern):
+                compiled.append(item)
+            else:
+                compiled.append(item)
+        return compiled
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ContentModerationConfig(BaseModel):
@@ -378,14 +431,11 @@ Respond with JSON format:
                 categories = orjson.loads(response_text)
             except orjson.JSONDecodeError:
                 # Fallback parsing if JSON is not perfect
+                # Build dict from all matches found in response text
+                parsed_matches = {m.group(1): float(m.group(2)) for m in _CATEGORY_PATTERN_RE.finditer(response_text)}
                 categories = {}
                 for cat in ModerationCategory:
-                    pattern = rf'"{cat.value}":\s*([\d.]+)'
-                    match = re.search(pattern, response_text)
-                    if match:
-                        categories[cat.value] = float(match.group(1))
-                    else:
-                        categories[cat.value] = 0.0
+                    categories[cat.value] = parsed_matches.get(cat.value, 0.0)
 
             # Check if any category exceeds threshold
             flagged = any(score >= self._cfg.categories[ModerationCategory(cat)].threshold for cat, score in categories.items() if ModerationCategory(cat) in self._cfg.categories)
@@ -502,7 +552,7 @@ Respond with JSON format:
                 if score >= self._cfg.categories.get(ModerationCategory(category), CategoryConfig()).threshold:
                     # Simple word replacement for demonstration
                     if category == ModerationCategory.PROFANITY.value:
-                        transformed = re.sub(r"\b(damn|hell|crap)\b", "[FILTERED]", transformed, flags=re.IGNORECASE)
+                        transformed = _PROFANITY_FILTER_RE.sub("[FILTERED]", transformed)
             return transformed
         else:  # WARN or default
             return text  # Return original text
@@ -575,19 +625,11 @@ Respond with JSON format:
         """
         categories = {}
 
-        # Basic pattern matching for different categories
-        patterns = {
-            ModerationCategory.HATE: [r"\b(hate|racist|nazi|fascist)\b", r"\b(kill\s+(all\s+)?(jews|muslims|christians|blacks|whites))\b"],
-            ModerationCategory.VIOLENCE: [r"\b(kill|murder|shoot|stab|bomb)\s+(you|him|her|them)\b", r"\b(death\s+threat|going\s+to\s+kill)\b"],
-            ModerationCategory.SELF_HARM: [r"\b(kill\s+myself|suicide|self\s*harm|end\s+it\s+all)\b", r"\b(want\s+to\s+die|cutting\s+myself)\b"],
-            ModerationCategory.PROFANITY: [r"\b(fuck\w*|shit|damn|hell|crap|bitch|asshole)\b"],
-            ModerationCategory.HARASSMENT: [r"\b(you\s+suck|loser|idiot|moron|stupid)\b", r"\b(go\s+away|nobody\s+likes\s+you)\b"],
-        }
-
-        for category, category_patterns in patterns.items():
+        # Use precompiled basic patterns
+        for category, category_patterns in _BASIC_PATTERNS.items():
             score = 0.0
             for pattern in category_patterns:
-                matches = len(re.findall(pattern, text, re.IGNORECASE))
+                matches = len(pattern.findall(text))
                 if matches > 0:
                     score = min(score + (matches * 0.3), 1.0)
 

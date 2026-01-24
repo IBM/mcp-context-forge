@@ -16,10 +16,10 @@ from __future__ import annotations
 
 # Standard
 import re
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Pattern, Tuple
 
 # Third-Party
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -56,16 +56,37 @@ class HarmfulContentConfig(BaseModel):
     """Configuration for the harmful content detector plugin.
 
     Attributes:
-        categories: Dictionary mapping category names to regex patterns.
+        categories: Dictionary mapping category names to compiled regex patterns.
         block_on: List of categories that should trigger blocking.
         redact: Whether to redact harmful content.
         redaction_text: Text to use for redaction.
     """
 
-    categories: Dict[str, List[str]] = DEFAULT_LEXICONS
+    categories: Dict[str, List[Pattern[str]]] = {}
     block_on: List[str] = ["self_harm", "violence", "hate"]
     redact: bool = False
     redaction_text: str = "[REDACTED]"
+
+    def __init__(self, **data):
+        """Initialize and precompile regex patterns."""
+        # Convert string patterns to compiled patterns if needed
+        if "categories" in data:
+            compiled_cats = {}
+            for cat, patterns in data["categories"].items():
+                compiled_cats[cat] = [
+                    re.compile(p, re.IGNORECASE) if isinstance(p, str) else p
+                    for p in patterns
+                ]
+            data["categories"] = compiled_cats
+        else:
+            # Use default lexicons and compile them
+            data["categories"] = {
+                cat: [re.compile(p, re.IGNORECASE) for p in patterns]
+                for cat, patterns in DEFAULT_LEXICONS.items()
+            }
+        super().__init__(**data)
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 def _scan_text(text: str, cfg: HarmfulContentConfig) -> List[Tuple[str, str]]:
@@ -79,11 +100,10 @@ def _scan_text(text: str, cfg: HarmfulContentConfig) -> List[Tuple[str, str]]:
         List of tuples containing (category, matched_pattern) for each finding.
     """
     findings: List[Tuple[str, str]] = []
-    t = text.lower()
-    for cat, pats in cfg.categories.items():
-        for pat in pats:
-            if re.search(pat, t, flags=re.IGNORECASE):
-                findings.append((cat, pat))
+    for cat, compiled_patterns in cfg.categories.items():
+        for pat in compiled_patterns:
+            if pat.search(text):
+                findings.append((cat, pat.pattern))
     return findings
 
 
