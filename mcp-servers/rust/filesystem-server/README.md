@@ -23,7 +23,7 @@ All tools operate within sandboxed root directories. Operations outside configur
 | `edit_file` | Targeted edits with diff preview | `path: string, edits: [{ oldText, newText }], dryRun: bool` | Supports multi-line & pattern matching, keeps indentation style; returns git-style diff in dry-run mode. Always dry-run first. |
 | `create_directory` | Ensure directory exists | `path: string` | Creates parents (mkdir -p behaviour). |
 | `list_directory` | List items with [FILE] / [DIR] tags | `path: string` | Sorted alphabetically. |
-| `move_file` | Move / rename files or dirs | `source: string, destination: string` | Fails if destination exists. |
+| `move_file` | Move / rename files or dirs | `source: string, destination: string` | Overwrites destination if exists. |
 | `search_files` | Recursive glob search | `path, pattern, excludePatterns[]` | Case-insensitive; returns full paths. |
 | `get_file_info` | Stat + metadata | `path: string` | Size, times, perms, type. |
 | `list_allowed_directories` | Reveal sandbox roots | (none) | Returns array of allowed roots. |

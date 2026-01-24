@@ -189,7 +189,7 @@ impl FilesystemServer {
                 success: true,
             },
             Err(message) => ReadResult {
-                message: format!("Error writing file: {}", message),
+                message: format!("Error reading file: {}", message),
                 success: false,
             },
         };
@@ -289,7 +289,7 @@ impl FilesystemServer {
                     success: true,
                 },
                 Err(message) => WriteResult {
-                    message: format!("Error writing file: {}", message),
+                    message: format!("Error moving file: {}", message),
                     success: false,
                 },
             };
@@ -350,7 +350,7 @@ impl FilesystemServer {
                     success: true,
                 },
                 Err(message) => ReadMultipleResults {
-                    message: format!("Error writing file: {}", message),
+                    message: format!("Error reading files: {}", message),
                     entries: vec![],
                     success: false,
                 },
@@ -379,12 +379,12 @@ impl FilesystemServer {
     ) -> Result<CallToolResult, McpError> {
         let result = match info::get_file_info(&self.ctx.sandbox, &path).await {
             Ok(metadata) => InfoResult {
-                message: "Read files successfully.".to_string(),
+                message: "Retrieved file info successfully.".to_string(),
                 metadata: Some(metadata),
                 success: true,
             },
             Err(err) => InfoResult {
-                message: format!("Error writing file: {}", err),
+                message: format!("Error getting file info: {}", err),
                 metadata: None,
                 success: false,
             },
