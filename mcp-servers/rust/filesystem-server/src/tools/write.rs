@@ -12,7 +12,7 @@ pub struct WriteResult {
 }
 
 pub async fn write_file(sandbox: &Sandbox, path: &str, content: String) -> Result<String> {
-    tracing::info!("Running write_file {}", path);
+    tracing::info!("write_file {}", path);
     let pathname = Path::new(path);
     let filename = pathname
         .file_name()
@@ -43,7 +43,7 @@ pub async fn write_file(sandbox: &Sandbox, path: &str, content: String) -> Resul
 }
 
 pub async fn create_directory(sandbox: &Sandbox, path: &str) -> Result<String> {
-    tracing::info!("Running create_directory '{}'", path);
+    tracing::info!("create directory '{}'", path);
 
     match fs::metadata(path).await {
         Ok(metadata) if metadata.is_file() => {
@@ -62,6 +62,7 @@ pub async fn create_directory(sandbox: &Sandbox, path: &str) -> Result<String> {
         fs::create_dir_all(path)
             .await
             .with_context(|| format!("Could not create dir {}", path))?;
+        tracing::info!("Path '{}' created.", path);
     } else {
         tracing::warn!("Not authorized, path '{}' outside roots", path);
         anyhow::bail!("Not authorized, path '{}' outside roots", path);

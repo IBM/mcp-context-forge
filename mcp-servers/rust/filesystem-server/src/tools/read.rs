@@ -18,7 +18,7 @@ pub struct ReadMultipleResults {
 }
 
 pub async fn read_file(sandbox: &Sandbox, path: &str) -> Result<String> {
-    tracing::info!("Starting read file for {}", path);
+    tracing::info!("read file for {}", path);
 
     // Resolve the path to its canonical form inside the sandbox
     let canon_path = sandbox.resolve_path(path).await?;

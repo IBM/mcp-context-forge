@@ -63,7 +63,7 @@ pub async fn search_files(
 
 /// List immediate directory contents alphabetically
 pub async fn list_directory(sandbox: &Sandbox, path: &str) -> Result<Vec<String>> {
-    tracing::info!("Running list directory for {}", path);
+    tracing::info!("list directory for {}", path);
 
     let canon_path = sandbox.resolve_path(path).await?;
 

@@ -57,7 +57,7 @@ impl Sandbox {
     pub async fn resolve_path(&self, path: &str) -> Result<PathBuf> {
         let canon = fs::canonicalize(path)
             .await
-            .with_context(|| format!("Could not canonicalize path '{}'", path))?;
+            .with_context(|| format!("Could not find path '{}'", path))?;
 
         for root in &self.roots {
             if canon.starts_with(root) {
