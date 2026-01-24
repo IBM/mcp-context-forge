@@ -301,8 +301,8 @@ def _parse_args():
             - data: Optional JSON or key=value pairs for custom payload
             - decode: Optional token string to decode
             - exp: Expiration time in minutes (default: DEFAULT_EXP_MINUTES)
-            - secret: Secret key for signing (default: DEFAULT_SECRET)
-            - algo: Signing algorithm (default: DEFAULT_ALGO)
+            - secret: Secret key for signing (default: "" - uses JWT_SECRET_KEY from config)
+            - algo: Signing algorithm (default: "" - uses JWT_ALGORITHM from config)
             - pretty: Whether to pretty-print payload before encoding
 
     Examples:
@@ -458,10 +458,22 @@ def main() -> None:  # pragma: no cover
 
     # Decode mode takes precedence
     if args.decode:
-        decoded = _decode_jwt_token(args.decode, algorithms=[args.algo])
+        decoded = _decode_jwt_token(args.decode, algorithms=[args.algo or DEFAULT_ALGO])
         sys.stdout.write(orjson.dumps(decoded, default=str, option=orjson.OPT_INDENT_2).decode())
         sys.stdout.write("\n")
         return
+
+    # Validate: --algo requires --secret to avoid algorithm/key mismatch
+    if args.algo and not args.secret:
+        print(
+            "ERROR: --algo requires --secret to be specified.\n"
+            "       Using --algo alone would mix config-based keys with a different algorithm,\n"
+            "       which can produce invalid tokens. Either:\n"
+            "       - Provide both --secret and --algo for full override\n"
+            "       - Omit both to use JWT_SECRET_KEY and JWT_ALGORITHM from config",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Security warning for rich tokens
     if args.admin or args.teams or args.scopes:
