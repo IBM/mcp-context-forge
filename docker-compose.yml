@@ -290,8 +290,8 @@ services:
       - GUNICORN_TIMEOUT=120                   # Worker timeout in seconds
       - GUNICORN_GRACEFUL_TIMEOUT=30           # Grace period for worker shutdown
       - GUNICORN_KEEP_ALIVE=30                 # Keep-alive timeout (matches SSE keepalive)
-      - GUNICORN_MAX_REQUESTS=100000           # Recycle workers after N requests
-      - GUNICORN_MAX_REQUESTS_JITTER=10000     # ±10K jitter prevents thundering herd
+      - GUNICORN_MAX_REQUESTS=10000000          # Recycle workers after 10M requests
+      - GUNICORN_MAX_REQUESTS_JITTER=1000000   # ±1M jitter prevents thundering herd
       - GUNICORN_BACKLOG=4096                  # Connection queue depth
       # ═══════════════════════════════════════════════════════════════════════════
       # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
@@ -907,6 +907,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
   # Redis Commander - a web-based Redis GUI
@@ -924,6 +925,7 @@ services:
       - REDIS_HOSTS=local:redis:6379
       - HTTP_USER=admin
       - HTTP_PASSWORD=changeme
+    profiles: ["monitoring"]
 
   # # ──────────────────────────────────────────────────────────────────────
   # # Redis Insight - a powerful Redis GUI (recently updated)
