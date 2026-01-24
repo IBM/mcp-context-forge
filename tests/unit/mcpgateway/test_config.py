@@ -36,6 +36,8 @@ def test_parse_allowed_origins_json_and_csv():
 
     s_csv = Settings(allowed_origins="https://x.com , https://y.com")
     assert s_csv.allowed_origins == {"https://x.com", "https://y.com"}
+
+
 # --------------------------------------------------------------------------- #
 #                         SSO field validators                            #
 # --------------------------------------------------------------------------- #
@@ -52,6 +54,8 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     # Test empty list
     s_empty = Settings(sso_entra_admin_groups="", _env_file=None)
     assert s_empty.sso_entra_admin_groups == []
+
+
 # --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #
