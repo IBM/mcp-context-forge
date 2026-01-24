@@ -442,7 +442,7 @@ impl ServerHandler for FilesystemServer {
 
     async fn initialize(
         &self,
-        _request: rmcp::model::InitializeRequestParam,
+        _request: rmcp::model::InitializeRequestParams,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         tracing::info!("Client connected to {}", APP_NAME);
