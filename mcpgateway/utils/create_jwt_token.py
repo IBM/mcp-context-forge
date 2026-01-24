@@ -331,8 +331,8 @@ def _parse_args():
         default=DEFAULT_EXP_MINUTES,
         help="Expiration in minutes (0 disables the exp claim).",
     )
-    p.add_argument("-s", "--secret", default="", help="Secret key for signing (will use configuration-based key if not provided).")
-    p.add_argument("--algo", default=DEFAULT_ALGO, help="Signing algorithm to use.")
+    p.add_argument("-s", "--secret", default="", help="[DEPRECATED - ignored] Secret key. Always uses JWT_SECRET_KEY from configuration.")
+    p.add_argument("--algo", default=DEFAULT_ALGO, help="[DEPRECATED - ignored] Algorithm. Always uses JWT_ALGORITHM from configuration.")
     p.add_argument("--pretty", action="store_true", help="Pretty-print payload before encoding.")
 
     # Rich token creation arguments (requires JWT_SECRET_KEY)

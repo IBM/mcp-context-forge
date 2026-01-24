@@ -273,8 +273,34 @@ class TestTokenCatalogService:
 
             assert token == "jwt_token_exp"
             call_kwargs = mock_create_jwt.call_args.kwargs
-            # expires_in_minutes should be calculated from expires_at
-            assert call_kwargs["expires_in_minutes"] > 0
+            # expires_in_minutes should be calculated from expires_at using ceiling
+            # 7 days = 10080 minutes
+            assert call_kwargs["expires_in_minutes"] >= 10079  # Allow for timing variance
+
+    @pytest.mark.asyncio
+    async def test_generate_token_rejects_past_expiry(self, token_service):
+        """Test _generate_token rejects expiration in the past."""
+        expires_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        jti = str(uuid.uuid4())
+
+        with pytest.raises(ValueError, match="Token expiration time is in the past"):
+            await token_service._generate_token("user@example.com", jti=jti, expires_at=expires_at)
+
+    @pytest.mark.asyncio
+    async def test_generate_token_short_expiry_uses_ceiling(self, token_service):
+        """Test _generate_token uses ceiling for sub-minute expiration to ensure exp is always set."""
+        with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
+            mock_create_jwt.return_value = "jwt_token_short"
+            # 30 seconds in the future should round up to 1 minute
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+            jti = str(uuid.uuid4())
+
+            token = await token_service._generate_token("user@example.com", jti=jti, expires_at=expires_at)
+
+            assert token == "jwt_token_short"
+            call_kwargs = mock_create_jwt.call_args.kwargs
+            # Should be at least 1 minute due to ceiling and max(1, ...)
+            assert call_kwargs["expires_in_minutes"] >= 1
 
     @pytest.mark.asyncio
     async def test_generate_token_with_scope(self, token_service, token_scope):

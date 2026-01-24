@@ -6165,7 +6165,7 @@ class TokenCreateRequest(BaseModel):
 
     name: str = Field(..., description="Human-readable token name", min_length=1, max_length=255)
     description: Optional[str] = Field(None, description="Token description", max_length=1000)
-    expires_in_days: Optional[int] = Field(default=None, description="Expiry in days")
+    expires_in_days: Optional[int] = Field(default=None, ge=1, description="Expiry in days (must be >= 1 if specified)")
     scope: Optional[TokenScopeRequest] = Field(None, description="Token scoping configuration")
     tags: List[str] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")

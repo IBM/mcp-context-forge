@@ -17,6 +17,7 @@ Examples:
 # Standard
 from datetime import datetime, timedelta, timezone
 import hashlib
+import math
 from typing import List, Optional
 import uuid
 
@@ -232,6 +233,9 @@ class TokenCatalogService:
         Returns:
             str: Signed JWT token string ready for API authentication
 
+        Raises:
+            ValueError: If expires_at is in the past (cannot create already-expired tokens)
+
         Note:
             This is an internal method. Use create_token() to generate
             tokens with proper database tracking and validation.
@@ -241,7 +245,15 @@ class TokenCatalogService:
         if expires_at:
             now = datetime.now(timezone.utc)
             delta = expires_at - now
-            expires_in_minutes = int(delta.total_seconds() / 60)
+            delta_seconds = delta.total_seconds()
+
+            # Guard: reject already-expired expiration times
+            if delta_seconds <= 0:
+                raise ValueError("Token expiration time is in the past. Cannot create already-expired tokens.")
+
+            # Use ceiling to ensure we always have at least 1 minute expiration
+            # This prevents <60s from rounding to 0 and creating non-expiring tokens
+            expires_in_minutes = max(1, math.ceil(delta_seconds / 60))
 
         # Build user data dict
         user_data = {
