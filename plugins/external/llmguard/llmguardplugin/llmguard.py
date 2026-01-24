@@ -9,12 +9,14 @@ Authors: Shriti Priya
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
 # Third-Party
 from llm_guard import input_scanners, output_scanners, scan_output, scan_prompt
 from llm_guard.output_scanners import Deanonymize
+from llm_guard.util import configure_logger
 from llm_guard.vault import Vault
 from llmguardplugin.policy import get_policy_filters, GuardrailPolicy, ResponseGuardrailPolicy, word_wise_levenshtein_distance
 from llmguardplugin.schema import LLMGuardConfig
@@ -25,6 +27,9 @@ from mcpgateway.services.logging_service import LoggingService
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Quiet the llm_guard logger to reduce noise
+configure_logger("ERROR")
 
 
 class LLMGuardBase:
@@ -219,8 +224,15 @@ class LLMGuardBase:
         if self.lgconfig.output and self.lgconfig.output.sanitizers:
             self._initialize_output_sanitizers()
 
-    def _apply_input_filters(self, input_prompt) -> dict[str, dict[str, Any]]:
-        """Takes in input_prompt and applies filters on it
+    async def _apply_input_filters(self, input_prompt) -> dict[str, dict[str, Any]]:
+        """Takes in input_prompt and applies filters on it in parallel.
+
+        Filters are run concurrently using asyncio.gather() for better performance.
+        If any scanner fails, it is treated as is_valid=False (fail-closed) to ensure
+        security is not bypassed due to scanner errors.
+
+        Note: Filter scanners should be stateless. If a scanner mutates shared state,
+        concurrent requests may cause race conditions.
 
         Args:
             input_prompt: The prompt to apply filters on
@@ -229,10 +241,27 @@ class LLMGuardBase:
             result: A dictionary with key as scanner_name which is the name of the scanner applied to the input and value as a dictionary with keys "sanitized_prompt" which is the actual prompt,
                     "is_valid" which is boolean that says if the prompt is valid or not based on a scanner applied and "risk_score" which gives the risk score assigned by the scanner to the prompt.
         """
+
+        async def scan_async(scanner):
+            """Asynchronously scan input using the provided scanner."""
+            return await asyncio.to_thread(scanner.scan, input_prompt)
+
+        tasks = [scan_async(scanner) for scanner in self.scanners["input"]["filters"]]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
         result = {}
-        for scanner in self.scanners["input"]["filters"]:
-            sanitized_prompt, is_valid, risk_score = scanner.scan(input_prompt)
+        for scanner, scan_result in zip(self.scanners["input"]["filters"], results):
             scanner_name = type(scanner).__name__
+            if isinstance(scan_result, Exception):
+                # Fail-closed: treat scanner errors as invalid to deny the request
+                logger.error(f"Scanner {scanner_name} failed: {scan_result}")
+                result[scanner_name] = {
+                    "sanitized_prompt": input_prompt,
+                    "is_valid": False,
+                    "risk_score": 1.0,
+                }
+                continue
+            sanitized_prompt, is_valid, risk_score = scan_result
             result[scanner_name] = {
                 "sanitized_prompt": sanitized_prompt,
                 "is_valid": is_valid,
@@ -241,8 +270,8 @@ class LLMGuardBase:
 
         return result
 
-    def _apply_input_sanitizers(self, input_prompt) -> dict[str, dict[str, Any]]:
-        """Takes in input_prompt and applies sanitizers on it
+    async def _apply_input_sanitizers(self, input_prompt) -> dict[str, dict[str, Any]]:
+        """Takes in input_prompt and applies sanitizers on it.
 
         Args:
             input_prompt: The prompt to apply filters on
@@ -256,20 +285,24 @@ class LLMGuardBase:
         # Check for expiry of vault, every time before a sanitizer is applied.
         vault_update_status = self._create_new_vault_on_expiry(vault)
         logger.info(f"Status of vault_update {vault_update_status}")
-        result = scan_prompt(self.scanners["input"]["sanitizers"], input_prompt)
+        result = await asyncio.to_thread(scan_prompt, self.scanners["input"]["sanitizers"], input_prompt)
         if "Anonymize" in result[1]:
             anonymize_config = self.lgconfig.input.sanitizers["Anonymize"]
             if "vault_leak_detection" in anonymize_config and anonymize_config["vault_leak_detection"] and not vault_update_status:
                 scanner = Deanonymize(vault)
-                sanitized_output_de, _, _ = scanner.scan(result[0], input_prompt)
+                sanitized_output_de, _, _ = await asyncio.to_thread(scanner.scan, result[0], input_prompt)
                 input_anonymize_score = word_wise_levenshtein_distance(input_prompt, result[0])
                 input_deanonymize_score = word_wise_levenshtein_distance(result[0], sanitized_output_de)
                 if input_anonymize_score != input_deanonymize_score:
                     return None
         return result
 
-    def _apply_output_filters(self, original_input, model_response) -> dict[str, dict[str, Any]]:
-        """Takes in model_response and applies filters on it
+    async def _apply_output_filters(self, original_input, model_response) -> dict[str, dict[str, Any]]:
+        """Takes in model_response and applies filters on it in parallel.
+
+        Filters are run concurrently using asyncio.gather() for better performance.
+        If any scanner fails, it is treated as is_valid=False (fail-closed) to ensure
+        security is not bypassed due to scanner errors.
 
         Args:
             original_input: The original input prompt for which model produced a response
@@ -279,20 +312,38 @@ class LLMGuardBase:
             dict[str, dict[str, Any]]: A dictionary with key as scanner_name which is the name of the scanner applied to the output and value as a dictionary with keys "sanitized_prompt" which is the actual prompt,
                     "is_valid" which is boolean that says if the prompt is valid or not based on a scanner applied and "risk_score" which gives the risk score assigned by the scanner to the prompt.
         """
+
+        async def scan_async(scanner):
+            """Asynchronously scan output using the provided scanner."""
+            return await asyncio.to_thread(scanner.scan, original_input, model_response)
+
+        tasks = [scan_async(scanner) for scanner in self.scanners["output"]["filters"]]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
         result = {}
         logger.info(f"Output scanners {self.scanners}")
-        for scanner in self.scanners["output"]["filters"]:
-            sanitized_prompt, is_valid, risk_score = scanner.scan(original_input, model_response)
+        for scanner, scan_result in zip(self.scanners["output"]["filters"], results):
             scanner_name = type(scanner).__name__
+            if isinstance(scan_result, Exception):
+                # Fail-closed: treat scanner errors as invalid to deny the response
+                logger.error(f"Scanner {scanner_name} failed: {scan_result}")
+                result[scanner_name] = {
+                    "sanitized_prompt": model_response,
+                    "is_valid": False,
+                    "risk_score": 1.0,
+                }
+                continue
+            sanitized_prompt, is_valid, risk_score = scan_result
             result[scanner_name] = {
                 "sanitized_prompt": sanitized_prompt,
                 "is_valid": is_valid,
                 "risk_score": risk_score,
             }
+
         return result
 
-    def _apply_output_sanitizers(self, input_prompt, model_response) -> dict[str, dict[str, Any]]:
-        """Takes in model_response and applies sanitizers on it
+    async def _apply_output_sanitizers(self, input_prompt, model_response) -> dict[str, dict[str, Any]]:
+        """Takes in model_response and applies sanitizers on it.
 
         Args:
             input_prompt: The original input prompt for which model produced a response
@@ -302,7 +353,7 @@ class LLMGuardBase:
             dict[str, dict[str, Any]]: A dictionary with key as scanner_name which is the name of the scanner applied to the output and value as a dictionary with keys "sanitized_prompt" which is the actual prompt,
                     "is_valid" which is boolean that says if the prompt is valid or not based on a scanner applied and "risk_score" which gives the risk score assigned by the scanner to the prompt.
         """
-        result = scan_output(self.scanners["output"]["sanitizers"], input_prompt, model_response)
+        result = await asyncio.to_thread(scan_output, self.scanners["output"]["sanitizers"], input_prompt, model_response)
         return result
 
     def _apply_policy_input(self, result_scan) -> tuple[bool, str, dict[str, Any]]:

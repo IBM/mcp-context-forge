@@ -14,7 +14,7 @@ import os
 
 # Third-Party
 import orjson
-import redis
+import redis.asyncio as aioredis
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -25,7 +25,7 @@ logger = logging_service.get_logger(__name__)
 
 # Initialize redis host and client values
 redis_host = os.getenv("REDIS_HOST", "redis")
-redis_port = int(os.getenv("REDIS_PORT", 6379))
+redis_port = int(os.getenv("REDIS_PORT", "6379"))
 
 
 class CacheTTLDict(dict):
@@ -37,16 +37,16 @@ class CacheTTLDict(dict):
     """
 
     def __init__(self, ttl: int = 0) -> None:
-        """init block for cache. This initializes a redit client.
+        """init block for cache. This initializes a redis client.
 
         Args:
             ttl: Time to live in seconds for cache
         """
         self.cache_ttl = ttl
-        self.cache = redis.Redis(host=redis_host, port=redis_port)
+        self.cache = aioredis.from_url(f"redis://{redis_host}:{redis_port}")
         logger.info(f"Cache Initialization: {self.cache}")
 
-    def update_cache(self, key: int = None, value: list = None) -> tuple[bool, bool]:
+    async def update_cache(self, key: int = None, value: list = None) -> tuple[bool, bool]:
         """Takes in key and value for caching in redis. It sets expiry time for the key.
         And redis, by itself takes care of deleting that key from cache after ttl has been reached.
 
@@ -65,19 +65,22 @@ class CacheTTLDict(dict):
             return False, False
         # Log key and size only - serialized_obj may contain PII
         logger.debug(f"Updating cache for key: {key}, size: {len(serialized_obj)} bytes")
-        success_set = self.cache.set(key, serialized_obj)
-        if success_set:
-            logger.debug(f"Cache set successful for key: {key}")
-        else:
-            logger.error(f"Cache set failed for key: {key}")
-        success_expiry = self.cache.expire(key, self.cache_ttl)
-        if success_expiry:
-            logger.debug(f"Cache expiry set successfully for key: {key}")
-        else:
-            logger.error("Failed to set cache expiration")
-        return success_set, success_expiry
+        async with self.cache.pipeline() as pipe:
+            pipe.set(key, serialized_obj)
+            pipe.expire(key, self.cache_ttl)
+            results = await pipe.execute()
+            success_set, success_expiry = results[0], results[1]
+            if success_set:
+                logger.debug(f"Cache set successful for key: {key}")
+            else:
+                logger.error(f"Cache set failed for key: {key}")
+            if success_expiry:
+                logger.debug(f"Cache expiry set successfully for key: {key}")
+            else:
+                logger.error("Failed to set cache expiration")
+            return success_set, success_expiry
 
-    def retrieve_cache(self, key: int = None) -> list | None:
+    async def retrieve_cache(self, key: int = None) -> list | None:
         """Retrieves cache for a key value
 
         Args:
@@ -86,7 +89,7 @@ class CacheTTLDict(dict):
         Returns:
             list | None: The retrieved object from cache (List[Tuple] for vault) or None if not found.
         """
-        value = self.cache.get(key)
+        value = await self.cache.get(key)
         if value:
             try:
                 retrieved_obj = orjson.loads(value)
@@ -94,7 +97,7 @@ class CacheTTLDict(dict):
                 if not isinstance(retrieved_obj, list):
                     # Unexpected shape - treat as cache miss to avoid downstream crash
                     logger.warning(f"Cache data for key {key} has unexpected type {type(retrieved_obj).__name__}, treating as miss")
-                    self.cache.delete(key)
+                    await self.cache.delete(key)
                     return None
                 retrieved_obj = self._convert_to_list_of_tuples(retrieved_obj)
                 logger.debug(f"Cache hit for key: {key}, items: {len(retrieved_obj)}")
@@ -102,7 +105,7 @@ class CacheTTLDict(dict):
             except orjson.JSONDecodeError as e:
                 logger.error(f"Cache retrieval failed - invalid JSON for id: {key}: {e}")
                 # Delete corrupted entry to avoid repeated error logs
-                self.cache.delete(key)
+                await self.cache.delete(key)
                 return None
         else:
             logger.debug(f"Cache miss for id: {key}")
@@ -118,15 +121,16 @@ class CacheTTLDict(dict):
         """
         return [tuple(item) if isinstance(item, list) else item for item in obj]
 
-    def delete_cache(self, key: int = None) -> None:
+    async def delete_cache(self, key: int = None) -> None:
         """Deletes cache for a key value
 
         Args:
             key: The id of vault in string
         """
         logger.info(f"Deleting cache for key : {key}")
-        deleted_count = self.cache.delete(key)
-        if deleted_count == 1 and self.cache.exists(key) == 0:
+        deleted_count = await self.cache.delete(key)
+        exists_count = await self.cache.exists(key)
+        if deleted_count == 1 and exists_count == 0:
             logger.info(f"Cache deleted successfully for key: {key}")
         else:
             logger.info(f"Unsuccessful cache deletion: {key}")
