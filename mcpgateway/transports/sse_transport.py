@@ -484,6 +484,11 @@ class SSETransport(Transport):
                 "Content-Type": "text/event-stream",
                 "X-MCP-SSE": "true",
             },
+            # Add send_timeout to prevent indefinite hangs when ASGI send fails
+            # This ensures the generator stops if sends consistently fail
+            send_timeout=5.0,
+            # Use built-in ping to help detect disconnections
+            ping=settings.sse_keepalive_interval if settings.sse_keepalive_enabled else 0,
         )
 
     async def _client_disconnected(self, _request: Request) -> bool:
