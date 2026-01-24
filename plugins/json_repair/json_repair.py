@@ -27,6 +27,10 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokeResult,
 )
 
+# Precompiled regex patterns for performance
+_JSON_BRACKETS_RE = re.compile(r"^[\[{].*[\]}]$", flags=re.S)
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
 
 def _try_parse(s: str) -> bool:
     """Check if string is valid JSON.
@@ -56,12 +60,12 @@ def _repair(s: str) -> str | None:
     t = s.strip()
     base = t
     # Replace single quotes with double quotes when it looks like JSON-ish
-    if re.match(r"^[\[{].*[\]}]$", t, flags=re.S) and ("'" in t and '"' not in t):
+    if _JSON_BRACKETS_RE.match(t) and ("'" in t and '"' not in t):
         base = t.replace("'", '"')
         if _try_parse(base):
             return base
     # Remove trailing commas before } or ] (apply on base if changed)
-    cand = re.sub(r",(\s*[}\]])", r"\1", base)
+    cand = _TRAILING_COMMA_RE.sub(r"\1", base)
     if cand != base and _try_parse(cand):
         return cand
     # Wrap raw object-like text missing braces

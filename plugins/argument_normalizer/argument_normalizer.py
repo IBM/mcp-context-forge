@@ -19,11 +19,11 @@ The plugin is non-blocking and returns modified payloads when changes occur.
 from dataclasses import dataclass
 from enum import Enum
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Pattern
 import unicodedata
 
 # Third-Party
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -69,7 +69,7 @@ class FieldOverride(BaseModel):
     - "items[0].title"
     """
 
-    pattern: str
+    pattern: Pattern[str]
     enable_unicode: Optional[bool] = None
     unicode_form: Optional[UnicodeForm] = None
     remove_control_chars: Optional[bool] = None
@@ -89,6 +89,23 @@ class FieldOverride(BaseModel):
 
     enable_numbers: Optional[bool] = None
     decimal_detection: Optional[str] = None  # auto|comma|dot
+
+    @field_validator('pattern', mode='before')
+    @classmethod
+    def compile_pattern(cls, v: Any) -> Pattern[str]:
+        """Compile pattern string to regex Pattern object.
+
+        Args:
+            v: Regex pattern string or Pattern object.
+
+        Returns:
+            Compiled Pattern object.
+        """
+        if isinstance(v, str):
+            return re.compile(v)
+        return v
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ArgumentNormalizerConfig(BaseModel):
@@ -176,7 +193,7 @@ def _merge_overrides(base: ArgumentNormalizerConfig, path: str) -> EffectiveCfg:
 
     for override in cfg.field_overrides:
         try:
-            if re.search(override.pattern, path or ""):
+            if override.pattern.search(path or ""):
                 if override.enable_unicode is not None:
                     eff.enable_unicode = override.enable_unicode
                 if override.unicode_form is not None:
@@ -211,9 +228,9 @@ def _merge_overrides(base: ArgumentNormalizerConfig, path: str) -> EffectiveCfg:
                     eff.enable_numbers = override.enable_numbers
                 if override.decimal_detection is not None:
                     eff.decimal_detection = override.decimal_detection
-        except re.error:
-            # Invalid override pattern: ignore safely
-            logger.warning(f"ArgumentNormalizer: invalid override pattern for path '{path}'")
+        except Exception:
+            # Pattern search error or other issues: ignore safely
+            logger.warning(f"ArgumentNormalizer: error processing override for path '{path}'")
             continue
 
     return eff
