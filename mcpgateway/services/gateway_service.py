@@ -2586,12 +2586,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 now = datetime.now(timezone.utc)
                 if only_update_reachable:
                     # Only update reachable status, keep enabled as-is
-                    tools_result = db.execute(
-                        update(DbTool)
-                        .where(DbTool.gateway_id == gateway_id)
-                        .where(DbTool.reachable != reachable)
-                        .values(reachable=reachable, updated_at=now)
-                    )
+                    tools_result = db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable != reachable).values(reachable=reachable, updated_at=now))
                 else:
                     # Update both enabled and reachable
                     tools_result = db.execute(
@@ -2615,12 +2610,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Bulk update prompts when gateway is deactivated/activated (skip for reachability-only updates)
                 prompts_updated = 0
                 if not only_update_reachable:
-                    prompts_result = db.execute(
-                        update(DbPrompt)
-                        .where(DbPrompt.gateway_id == gateway_id)
-                        .where(DbPrompt.enabled != activate)
-                        .values(enabled=activate, updated_at=now)
-                    )
+                    prompts_result = db.execute(update(DbPrompt).where(DbPrompt.gateway_id == gateway_id).where(DbPrompt.enabled != activate).values(enabled=activate, updated_at=now))
                     prompts_updated = prompts_result.rowcount
                     if prompts_updated > 0:
                         db.commit()
@@ -2629,12 +2619,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Bulk update resources when gateway is deactivated/activated (skip for reachability-only updates)
                 resources_updated = 0
                 if not only_update_reachable:
-                    resources_result = db.execute(
-                        update(DbResource)
-                        .where(DbResource.gateway_id == gateway_id)
-                        .where(DbResource.enabled != activate)
-                        .values(enabled=activate, updated_at=now)
-                    )
+                    resources_result = db.execute(update(DbResource).where(DbResource.gateway_id == gateway_id).where(DbResource.enabled != activate).values(enabled=activate, updated_at=now))
                     resources_updated = resources_result.rowcount
                     if resources_updated > 0:
                         db.commit()

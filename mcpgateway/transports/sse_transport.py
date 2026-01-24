@@ -11,9 +11,9 @@ providing server-to-client streaming with proper session management.
 
 # Standard
 import asyncio
+from collections import deque
 import logging
 import time
-from collections import deque
 from typing import Any, AsyncGenerator, Dict, Optional
 import uuid
 
@@ -446,10 +446,7 @@ class SSETransport(Transport):
                 if time_since_last < 0.1:
                     consecutive_rapid_yields += 1
                     if consecutive_rapid_yields >= 10:  # 10 consecutive fast yields = definite spin
-                        logger.error(
-                            "SSE spin loop detected (%d consecutive rapid yields, last interval %.3fs), client disconnected: %s",
-                            consecutive_rapid_yields, time_since_last, self._session_id
-                        )
+                        logger.error("SSE spin loop detected (%d consecutive rapid yields, last interval %.3fs), client disconnected: %s", consecutive_rapid_yields, time_since_last, self._session_id)
                         return True
                 else:
                     consecutive_rapid_yields = 0  # Reset on normal-speed yield
@@ -464,8 +461,7 @@ class SSETransport(Transport):
                         elapsed = now - oldest
                         if elapsed < rapid_yield_window_sec:
                             logger.error(
-                                "SSE rapid yield detected (%d yields in %.3fs, last interval %.3fs), client disconnected: %s",
-                                len(yield_timestamps), elapsed, time_since_last, self._session_id
+                                "SSE rapid yield detected (%d yields in %.3fs, last interval %.3fs), client disconnected: %s", len(yield_timestamps), elapsed, time_since_last, self._session_id
                             )
                             return True
                 return False
