@@ -2433,6 +2433,12 @@ class ToolService:
                 db=db,
             )
             raise e
+        except ToolLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response
+            raise
+        except ToolNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            raise
         except Exception as e:
             db.rollback()
 

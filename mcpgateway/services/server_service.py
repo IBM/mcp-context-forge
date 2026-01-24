@@ -1526,6 +1526,12 @@ class ServerService:
                 user_email=user_email,
             )
             raise e
+        except ServerLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response
+            raise
+        except ServerNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            raise
         except Exception as e:
             db.rollback()
 

@@ -1358,20 +1358,6 @@ class Settings(BaseSettings):
     db_retry_interval_ms: int = 2000  # Base interval; doubles each attempt, ±25% jitter
     db_max_backoff_seconds: int = 30  # Cap for exponential backoff (jitter applied after cap)
 
-    # Database Lock Timeout Configuration
-    db_lock_timeout_ms: int = Field(
-        default=5000,
-        description="Maximum time to wait for database row locks in milliseconds. "
-        "Used with FOR UPDATE queries to prevent indefinite blocking under high concurrency. "
-        "Set to 0 to disable (wait indefinitely). Recommended: 5000ms for high-load scenarios.",
-    )
-    db_statement_timeout_ms: int = Field(
-        default=30000,
-        description="Maximum time for any database statement to execute in milliseconds. "
-        "Prevents runaway queries from blocking connection pool. Set to 0 to disable. "
-        "Recommended: 30000ms (30 seconds) for most operations.",
-    )
-
     # Database Performance Optimization
     use_postgresdb_percentiles: bool = Field(
         default=True,

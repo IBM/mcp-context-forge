@@ -451,27 +451,31 @@ class SSETransport(Transport):
 
                             yield _build_sse_frame(b"message", json_bytes, settings.sse_retry_timeout)
                             consecutive_errors = 0  # Reset on successful send
+
+                            # Rapid yield detection: track yield rate to detect stuck connections
+                            # When ASGI send() fails but doesn't raise, we yield rapidly without waiting
+                            # Only track message yields, not keepalives (which indicate we waited)
+                            if yield_timestamps is not None:
+                                now = time.monotonic()
+                                yield_timestamps.append(now)
+                                if len(yield_timestamps) > settings.sse_rapid_yield_max:
+                                    # Check if all yields happened within the window
+                                    oldest = yield_timestamps[0]
+                                    elapsed = now - oldest
+                                    if elapsed < rapid_yield_window_sec:
+                                        logger.error(
+                                            "SSE rapid yield detected (%d yields in %.3fs), client disconnected: %s",
+                                            len(yield_timestamps), elapsed, self._session_id
+                                        )
+                                        self._client_gone.set()
+                                        break
                         elif settings.sse_keepalive_enabled:
                             # Timeout - send keepalive (no exception raised!)
+                            # We waited for the timeout, so reset rapid yield detection
                             yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
                             consecutive_errors = 0  # Reset on successful send
-
-                        # Rapid yield detection: track yield rate to detect stuck connections
-                        # When ASGI send() fails but doesn't raise, we yield rapidly without waiting
-                        if yield_timestamps is not None:
-                            now = time.monotonic()
-                            yield_timestamps.append(now)
-                            if len(yield_timestamps) > settings.sse_rapid_yield_max:
-                                # Check if all yields happened within the window
-                                oldest = yield_timestamps[0]
-                                elapsed = now - oldest
-                                if elapsed < rapid_yield_window_sec:
-                                    logger.error(
-                                        "SSE rapid yield detected (%d yields in %.3fs), client disconnected: %s",
-                                        len(yield_timestamps), elapsed, self._session_id
-                                    )
-                                    self._client_gone.set()
-                                    break
+                            if yield_timestamps is not None:
+                                yield_timestamps.clear()  # Reset - we actually waited
 
                     except GeneratorExit:
                         # Client disconnected - generator is being closed
