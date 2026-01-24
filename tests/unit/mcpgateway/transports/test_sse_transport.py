@@ -290,6 +290,9 @@ class TestSSETransport:
             mock_settings.sse_keepalive_enabled = False
             mock_settings.sse_keepalive_interval = 30
             mock_settings.sse_retry_timeout = 5000
+            mock_settings.sse_send_timeout = 30.0
+            mock_settings.sse_rapid_yield_window_ms = 1000
+            mock_settings.sse_rapid_yield_max = 50
 
             await sse_transport.connect()
             response = await sse_transport.create_sse_response(mock_request)
@@ -319,6 +322,9 @@ class TestSSETransport:
             mock_settings.sse_keepalive_enabled = True
             mock_settings.sse_keepalive_interval = 60  # Custom interval
             mock_settings.sse_retry_timeout = 5000
+            mock_settings.sse_send_timeout = 30.0
+            mock_settings.sse_rapid_yield_window_ms = 1000
+            mock_settings.sse_rapid_yield_max = 50
 
             await sse_transport.connect()
             response = await sse_transport.create_sse_response(mock_request)
@@ -344,6 +350,9 @@ class TestSSETransport:
             mock_settings.sse_keepalive_enabled = True
             mock_settings.sse_keepalive_interval = 1  # 1 second for quick test
             mock_settings.sse_retry_timeout = 5000
+            mock_settings.sse_send_timeout = 30.0
+            mock_settings.sse_rapid_yield_window_ms = 1000
+            mock_settings.sse_rapid_yield_max = 50
 
             await sse_transport.connect()
             response = await sse_transport.create_sse_response(mock_request)

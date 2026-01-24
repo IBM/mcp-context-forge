@@ -12,6 +12,8 @@ providing server-to-client streaming with proper session management.
 # Standard
 import asyncio
 import logging
+import time
+from collections import deque
 from typing import Any, AsyncGenerator, Dict, Optional
 import uuid
 
@@ -421,6 +423,11 @@ class SSETransport(Transport):
             consecutive_errors = 0
             max_consecutive_errors = 3  # Exit after 3 consecutive errors (likely client disconnected)
 
+            # Rapid yield detection: If we're yielding faster than expected, client is likely disconnected
+            # but ASGI server isn't properly signaling it. Track yield timestamps in a sliding window.
+            yield_timestamps: deque = deque(maxlen=settings.sse_rapid_yield_max + 1) if settings.sse_rapid_yield_max > 0 else None
+            rapid_yield_window_sec = settings.sse_rapid_yield_window_ms / 1000.0
+
             try:
                 while not self._client_gone.is_set():
                     # Check if client has disconnected via request state
@@ -448,6 +455,23 @@ class SSETransport(Transport):
                             # Timeout - send keepalive (no exception raised!)
                             yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
                             consecutive_errors = 0  # Reset on successful send
+
+                        # Rapid yield detection: track yield rate to detect stuck connections
+                        # When ASGI send() fails but doesn't raise, we yield rapidly without waiting
+                        if yield_timestamps is not None:
+                            now = time.monotonic()
+                            yield_timestamps.append(now)
+                            if len(yield_timestamps) > settings.sse_rapid_yield_max:
+                                # Check if all yields happened within the window
+                                oldest = yield_timestamps[0]
+                                if now - oldest < rapid_yield_window_sec:
+                                    logger.warning(
+                                        "SSE rapid yield detected (%d yields in %.1fs), assuming client disconnected: %s",
+                                        len(yield_timestamps), now - oldest, self._session_id
+                                    )
+                                    self._client_gone.set()
+                                    break
+
                     except GeneratorExit:
                         # Client disconnected - generator is being closed
                         logger.info("SSE generator exit (client disconnected): %s", self._session_id)
@@ -484,11 +508,11 @@ class SSETransport(Transport):
                 "Content-Type": "text/event-stream",
                 "X-MCP-SSE": "true",
             },
-            # Add send_timeout to prevent indefinite hangs when ASGI send fails
-            # This ensures the generator stops if sends consistently fail
-            send_timeout=5.0,
-            # Use built-in ping to help detect disconnections
-            ping=settings.sse_keepalive_interval if settings.sse_keepalive_enabled else 0,
+            # Timeout for ASGI send() calls - protects against sends that hang indefinitely
+            # when client connection is in a bad state (e.g., client stopped reading but TCP
+            # connection not yet closed). Does NOT affect MCP server response times.
+            # Set to 0 to disable. Default matches keepalive interval.
+            send_timeout=settings.sse_send_timeout if settings.sse_send_timeout > 0 else None,
         )
 
     async def _client_disconnected(self, _request: Request) -> bool:

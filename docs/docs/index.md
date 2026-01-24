@@ -1312,10 +1312,15 @@ mcpgateway
 | `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
 | `SSE_KEEPALIVE_ENABLED`   | Enable SSE keepalive events        | `true`  | bool                            |
 | `SSE_KEEPALIVE_INTERVAL`  | SSE keepalive interval (secs)      | `30`    | int > 0                         |
+| `SSE_SEND_TIMEOUT`        | ASGI send timeout (secs)           | `30.0`  | float >= 0 (0=disabled)         |
+| `SSE_RAPID_YIELD_WINDOW_MS` | Rapid yield detection window (ms) | `1000`  | int > 0                         |
+| `SSE_RAPID_YIELD_MAX`     | Max yields before disconnect       | `50`    | int >= 0 (0=disabled)           |
 | `USE_STATEFUL_SESSIONS`   | streamable http config             | `false` | bool                            |
 | `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
 
 > **💡 SSE Keepalive Events**: The gateway sends periodic keepalive events to prevent connection timeouts with proxies and load balancers. Disable with `SSE_KEEPALIVE_ENABLED=false` if your client doesn't handle unknown event types. Common intervals: 30s (default), 60s (AWS ALB), 240s (Azure).
+
+> **💡 SSE Spin Loop Protection**: Under high load, if clients disconnect abruptly without proper TCP close, the ASGI server may not signal disconnection. The rapid yield detection (`SSE_RAPID_YIELD_MAX`) catches this by detecting abnormal iteration patterns and closing the connection.
 
 ### Federation
 

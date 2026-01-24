@@ -400,6 +400,9 @@ mcpContextForge:
     SSE_RETRY_TIMEOUT: "5000"        # milliseconds before SSE client retries
     SSE_KEEPALIVE_ENABLED: "true"    # enable SSE keepalive events
     SSE_KEEPALIVE_INTERVAL: "30"     # seconds between keepalive events
+    SSE_SEND_TIMEOUT: "30.0"         # ASGI send timeout (seconds), 0=disabled
+    SSE_RAPID_YIELD_WINDOW_MS: "1000" # time window for rapid yield detection
+    SSE_RAPID_YIELD_MAX: "50"        # max yields per window before disconnect (0=disabled)
 
     # ─ Streaming sessions ─
     USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
