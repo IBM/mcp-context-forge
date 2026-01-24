@@ -110,6 +110,117 @@ async def get_current_user_with_permissions(
             async def protected_route(user = Depends(get_current_user_with_permissions)):
                 return {"user": user["email"]}
     """
+    # Check for proxy authentication first (if MCP client auth is disabled)
+    if not settings.mcp_client_auth_enabled:
+        # Read plugin context from request.state for cross-hook context sharing
+        # (set by HttpAuthMiddleware for passing contexts between different hook types)
+        plugin_context_table = getattr(request.state, "plugin_context_table", None)
+        plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
+        if settings.trust_proxy_auth:
+            # Extract user from proxy header
+            proxy_user = request.headers.get(settings.proxy_user_header)
+            if proxy_user:
+                # Lookup user in DB to get is_admin status, or check platform_admin_email
+                is_admin = False
+                full_name = proxy_user
+                if proxy_user == settings.platform_admin_email:
+                    is_admin = True
+                    full_name = "Platform Admin"
+                else:
+                    # Try to lookup user in EmailUser table for is_admin status
+                    try:
+                        # Third-Party
+                        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                        # First-Party
+                        from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+                        user = db.execute(select(EmailUser).where(EmailUser.email == proxy_user)).scalar_one_or_none()
+                        if user:
+                            is_admin = user.is_admin
+                            full_name = user.full_name or proxy_user
+                    except Exception as e:
+                        logger.debug(f"Could not lookup proxy user in DB: {e}")
+                        # Continue with is_admin=False if lookup fails
+
+                return {
+                    "email": proxy_user,
+                    "full_name": full_name,
+                    "is_admin": is_admin,
+                    "ip_address": request.client.host if request.client else None,
+                    "user_agent": request.headers.get("user-agent"),
+                    "db": db,
+                    "auth_method": "proxy",
+                    "request_id": getattr(request.state, "request_id", None),
+                    "team_id": getattr(request.state, "team_id", None),
+                    "plugin_context_table": plugin_context_table,
+                    "plugin_global_context": plugin_global_context,
+                }
+
+            # No proxy header - check auth_required to align with WebSocket behavior
+            # For browser requests, redirect to login; for API requests, return 401
+            if settings.auth_required:
+                accept_header = request.headers.get("accept", "")
+                is_htmx = request.headers.get("hx-request") == "true"
+                if "text/html" in accept_header or is_htmx:
+                    raise HTTPException(
+                        status_code=status.HTTP_302_FOUND,
+                        detail="Authentication required",
+                        headers={"Location": f"{settings.app_root_path}/admin/login"},
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Proxy authentication header required",
+                )
+
+            # auth_required=false: allow anonymous access
+            return {
+                "email": "anonymous",
+                "full_name": "Anonymous User",
+                "is_admin": False,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "db": db,
+                "auth_method": "anonymous",
+                "request_id": getattr(request.state, "request_id", None),
+                "team_id": getattr(request.state, "team_id", None),
+                "plugin_context_table": plugin_context_table,
+                "plugin_global_context": plugin_global_context,
+            }
+
+        # Warning: MCP auth disabled without proxy trust - security risk!
+        # This case is already warned about in config validation
+        # Still check auth_required for consistency
+        if settings.auth_required:
+            accept_header = request.headers.get("accept", "")
+            is_htmx = request.headers.get("hx-request") == "true"
+            if "text/html" in accept_header or is_htmx:
+                raise HTTPException(
+                    status_code=status.HTTP_302_FOUND,
+                    detail="Authentication required",
+                    headers={"Location": f"{settings.app_root_path}/admin/login"},
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required but no auth method configured",
+            )
+
+        return {
+            "email": "anonymous",
+            "full_name": "Anonymous User",
+            "is_admin": False,
+            "ip_address": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+            "db": db,
+            "auth_method": "anonymous",
+            "request_id": getattr(request.state, "request_id", None),
+            "team_id": getattr(request.state, "team_id", None),
+            "plugin_context_table": plugin_context_table,
+            "plugin_global_context": plugin_global_context,
+        }
+
+    # Standard JWT authentication flow
     # Try multiple sources for the token, prioritizing manual cookie reading
     token = None
 
