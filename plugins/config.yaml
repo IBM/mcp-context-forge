@@ -63,7 +63,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
-    mode: "permissive"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled
     priority: 50  # Lower number = higher priority (runs first)
     conditions:
       - prompts: []  # Empty list = apply to all prompts
@@ -98,7 +98,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "permissive"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -247,7 +247,7 @@ plugins:
     author: "Osher Elhadad"
     hooks: ["tool_pre_invoke"]
     tags: ["validation", "sparc", "altk", "static", "schema", "type-checking"]
-    mode: "enforce"  # Enable with "enforce" or "permissive"
+    mode: "disabled"  # Enable with "enforce" or "permissive"
     priority: 65  # Run early, after argument normalizer (40) but before schema guard (110)
     conditions: []
     config:
@@ -785,8 +785,7 @@ plugins:
     author: "Adrian Popa"
     hooks: ["tool_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
-    # mode: "permissive"
-    mode: "permissive"
+    mode: "disabled"  # enforce | permissive | disabled
     priority: 10
     conditions:
       - prompts: []
