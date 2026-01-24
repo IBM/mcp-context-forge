@@ -303,6 +303,22 @@ services:
       - GRANIAN_BACKPRESSURE=128
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
       - GRANIAN_RESPAWN_FAILED=true
+      # ───────────────────────────────────────────────────────────────────────
+      # Granian Worker Lifecycle (recycling to prevent resource leaks)
+      # ───────────────────────────────────────────────────────────────────────
+      # Workaround for granian issue where SSE connections may not be properly
+      # closed after client disconnect, causing CPU spin loops. See:
+      # - https://github.com/emmett-framework/granian/issues/286
+      # - https://github.com/IBM/mcp-context-forge/issues/2357
+      #
+      # GRANIAN_WORKERS_LIFETIME: Restart workers after this duration (min 60s)
+      # GRANIAN_WORKERS_MAX_RSS: Restart workers exceeding this memory (MiB)
+      #
+      # Using both provides natural jitter - workers hit memory limits at
+      # different times based on load, with lifetime as a backstop.
+      # - GRANIAN_WORKERS_LIFETIME=3600    # 1 hour max worker lifetime
+      # - GRANIAN_WORKERS_MAX_RSS=512      # 512 MiB max RSS per worker
+      # ───────────────────────────────────────────────────────────────────────
       # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
       # - nginx sits in front and downgrades to HTTP/1.1 for upstream connections
       # - nginx open-source doesn't support HTTP/2 to backends (only nginx Plus does)
