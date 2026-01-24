@@ -121,7 +121,20 @@ make test-lib       # Library tests
 make test-integration  # Integration tests
 make coverage       # Coverage report (HTML)
 ```
+### Test coverage
 
+| Filename       | Function Coverage | Line Coverage | Region Coverage | Branch Coverage |
+|----------------|-----------------|---------------|----------------|----------------|
+| lib.rs         | 60.00% (3/5)    | 46.88% (15/32) | 67.44% (29/43) | - (0/0)        |
+| main.rs        | 0.00% (0/3)     | 0.00% (0/17)   | 0.00% (0/27)   | - (0/0)        |
+| sandbox.rs     | 97.06% (33/34)  | 99.04% (206/208) | 98.89% (357/361) | - (0/0)    |
+| server.rs      | 72.09% (31/43)  | 78.65% (350/445) | 83.03% (494/595) | - (0/0)    |
+| tools/edit.rs  | 87.10% (27/31)  | 98.34% (237/241) | 95.50% (446/467) | - (0/0)    |
+| tools/info.rs  | 92.86% (13/14)  | 98.80% (82/83)   | 96.45% (163/169) | - (0/0)    |
+| tools/read.rs  | 87.50% (21/24)  | 98.22% (166/169) | 95.93% (283/295) | - (0/0)    |
+| tools/search.rs| 95.12% (39/41)  | 98.52% (267/271) | 97.48% (581/596) | - (0/0)    |
+| tools/write.rs | 93.75% (45/48)  | 94.17% (323/343) | 92.74% (626/675) | - (0/0)    |
+| **Totals**     | 87.24% (212/243)| 90.99% (1646/1809)| 92.29% (2979/3228)| - (0/0)   |
 
 
 ## Architecture
@@ -150,39 +163,15 @@ Makefile           # Build & test automation
 - **Sandbox**: All paths resolved against configured roots only
 - **Symlink blocking**: Traversal across symlinks blocked
 - **Atomic writes**: File modifications are atomic via temporary files
-- **Dry-run support**: `edit_file` with `dryRun=true` previews changes without modifying
+- **Dry-run support**: `edit_file` with `dry_run=true` previews changes without modifying
 
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `RUST_LOG` | `info` | Log level (trace, debug, info, warn, error) |
-
-## Performance
-
-| Operation | Latency | Notes |
-|-----------|---------|-------|
-| read_file (1 KB) | ~2ms | Cached |
-| write_file (1 KB) | ~3ms | Atomic |
-| search_files (1000 files) | ~8ms | Glob |
-| list_directory (100 items) | ~1ms | Sorted |
 
 ## Binary Sizes
 
 | Profile | Size |
 |---------|------|
-| Debug | ~450 MB |
-| Release | ~30 MB |
-| Release MUSL | ~4 MB |
-
-## Deployment
-
-### Checklist
-
-- [ ] Tests pass: `make test`
-- [ ] Clippy clean: `make clippy`
-- [ ] Coverage ≥90%: `make coverage`
-- [ ] Docker image <10 MB: `make container-build && docker images filesystem-server`
+| Release | ~3.3 MB |
+| Release MUSL | ~3.3 MB |
 
 ## License
 
