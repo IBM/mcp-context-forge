@@ -21,7 +21,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
@@ -76,6 +76,10 @@ class ServerError(Exception):
 
 class ServerNotFoundError(ServerError):
     """Raised when a requested server is not found."""
+
+
+class ServerLockConflictError(ServerError):
+    """Raised when a server row is locked by another transaction."""
 
 
 class ServerNameConflictError(ServerError):
@@ -1399,6 +1403,7 @@ class ServerService:
 
         Raises:
             ServerNotFoundError: If the server is not found.
+            ServerLockConflictError: If the server row is locked by another transaction.
             ServerError: For other errors.
             PermissionError: If user doesn't own the agent.
 
@@ -1423,18 +1428,25 @@ class ServerService:
             'server_read'
         """
         try:
-            server = get_for_update(
-                db,
-                DbServer,
-                server_id,
-                options=[
-                    selectinload(DbServer.tools),
-                    selectinload(DbServer.resources),
-                    selectinload(DbServer.prompts),
-                    selectinload(DbServer.a2a_agents),
-                    selectinload(DbServer.email_team),
-                ],
-            )
+            # Use nowait=True to fail fast if row is locked, preventing lock contention under high load
+            try:
+                server = get_for_update(
+                    db,
+                    DbServer,
+                    server_id,
+                    nowait=True,
+                    options=[
+                        selectinload(DbServer.tools),
+                        selectinload(DbServer.resources),
+                        selectinload(DbServer.prompts),
+                        selectinload(DbServer.a2a_agents),
+                        selectinload(DbServer.email_team),
+                    ],
+                )
+            except OperationalError as lock_err:
+                # Row is locked by another transaction - fail fast with 409
+                db.rollback()
+                raise ServerLockConflictError(f"Server {server_id} is currently being modified by another request") from lock_err
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
@@ -1514,6 +1526,12 @@ class ServerService:
                 user_email=user_email,
             )
             raise e
+        except ServerLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response
+            raise
+        except ServerNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            raise
         except Exception as e:
             db.rollback()
 

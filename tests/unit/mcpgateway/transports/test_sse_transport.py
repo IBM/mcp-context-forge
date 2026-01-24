@@ -78,8 +78,12 @@ def sse_transport():
 
 @pytest.fixture
 def mock_request():
-    """Create a mock FastAPI request."""
+    """Create a mock FastAPI request with is_disconnected mocked."""
+    from unittest.mock import AsyncMock
+
     mock = Mock(spec=Request)
+    # Mock is_disconnected as an async method returning False (client connected)
+    mock.is_disconnected = AsyncMock(return_value=False)
     return mock
 
 
@@ -189,23 +193,22 @@ class TestSSETransport:
 
     @pytest.mark.asyncio
     async def test_create_sse_response_event_generator_error(self, sse_transport, mock_request):
-        """Test event_generator handles generic Exception and CancelledError."""
+        """Test event_generator handles consecutive errors by stopping gracefully."""
         await sse_transport.connect()
-        # Patch _message_queue.get to raise Exception, then CancelledError
-        with patch.object(sse_transport._message_queue, "get", side_effect=[Exception("fail"), asyncio.CancelledError()]), patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
+        # Patch _get_message_with_timeout to raise Exception multiple times (simulating consecutive errors)
+        # After max_consecutive_errors (3), the generator should stop
+        with patch.object(
+            sse_transport, "_get_message_with_timeout", side_effect=[Exception("fail1"), Exception("fail2"), Exception("fail3")]
+        ), patch("mcpgateway.transports.sse_transport.logger") as mock_logger:
             response = await sse_transport.create_sse_response(mock_request)
             gen = response.body_iterator
             await gen.__anext__()  # endpoint
             await gen.__anext__()  # keepalive
-            # Should yield error event
-            frame = await gen.__anext__()
-            event = parse_sse_frame(frame)
-            assert event["event"] == "error"
-            assert "fail" in event["data"]
-            # Should handle CancelledError gracefully and stop
+            # After 3 consecutive errors, the generator should stop (no error events yielded)
             with pytest.raises(StopAsyncIteration):
                 await gen.__anext__()
-            assert mock_logger.error.called or mock_logger.info.called
+            # Verify warnings were logged for the errors
+            assert mock_logger.warning.called or mock_logger.info.called
 
     def test_session_id_property(self, sse_transport):
         """Test session_id property returns the correct value."""
@@ -287,6 +290,9 @@ class TestSSETransport:
             mock_settings.sse_keepalive_enabled = False
             mock_settings.sse_keepalive_interval = 30
             mock_settings.sse_retry_timeout = 5000
+            mock_settings.sse_send_timeout = 30.0
+            mock_settings.sse_rapid_yield_window_ms = 1000
+            mock_settings.sse_rapid_yield_max = 50
 
             await sse_transport.connect()
             response = await sse_transport.create_sse_response(mock_request)
@@ -316,6 +322,9 @@ class TestSSETransport:
             mock_settings.sse_keepalive_enabled = True
             mock_settings.sse_keepalive_interval = 60  # Custom interval
             mock_settings.sse_retry_timeout = 5000
+            mock_settings.sse_send_timeout = 30.0
+            mock_settings.sse_rapid_yield_window_ms = 1000
+            mock_settings.sse_rapid_yield_max = 50
 
             await sse_transport.connect()
             response = await sse_transport.create_sse_response(mock_request)
@@ -341,6 +350,9 @@ class TestSSETransport:
             mock_settings.sse_keepalive_enabled = True
             mock_settings.sse_keepalive_interval = 1  # 1 second for quick test
             mock_settings.sse_retry_timeout = 5000
+            mock_settings.sse_send_timeout = 30.0
+            mock_settings.sse_rapid_yield_window_ms = 1000
+            mock_settings.sse_rapid_yield_max = 50
 
             await sse_transport.connect()
             response = await sse_transport.create_sse_response(mock_request)

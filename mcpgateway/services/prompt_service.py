@@ -28,7 +28,7 @@ import uuid
 from jinja2 import Environment, meta, select_autoescape, Template
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
@@ -158,6 +158,15 @@ class PromptNameConflictError(PromptError):
 
 class PromptValidationError(PromptError):
     """Raised when prompt validation fails."""
+
+
+class PromptLockConflictError(PromptError):
+    """Raised when a prompt row is locked by another transaction.
+
+    Raises:
+        PromptLockConflictError: When attempting to modify a prompt that is
+            currently locked by another concurrent request.
+    """
 
 
 class PromptService:
@@ -1955,9 +1964,10 @@ class PromptService:
             The updated PromptRead object
 
         Raises:
-            PromptNotFoundError: If the prompt is not found
-            PromptError: For other errors
-            PermissionError: If user doesn't own the agent.
+            PromptNotFoundError: If the prompt is not found.
+            PromptLockConflictError: If the prompt is locked by another transaction.
+            PromptError: For other errors.
+            PermissionError: If user doesn't own the prompt.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -1978,7 +1988,13 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = get_for_update(db, DbPrompt, prompt_id)
+            # Use nowait=True to fail fast if row is locked, preventing lock contention under high load
+            try:
+                prompt = get_for_update(db, DbPrompt, prompt_id, nowait=True)
+            except OperationalError as lock_err:
+                # Row is locked by another transaction - fail fast with 409
+                db.rollback()
+                raise PromptLockConflictError(f"Prompt {prompt_id} is currently being modified by another request") from lock_err
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
@@ -2049,6 +2065,12 @@ class PromptService:
                 db=db,
             )
             raise e
+        except PromptLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response
+            raise
+        except PromptNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            raise
         except Exception as e:
             db.rollback()
 

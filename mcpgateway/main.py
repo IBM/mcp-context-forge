@@ -128,12 +128,12 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
-from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
+from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptService
+from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
+from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
@@ -2386,6 +2386,8 @@ async def set_server_state(
         raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ServerLockConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -3506,6 +3508,8 @@ async def set_tool_state(
         raise HTTPException(status_code=403, detail=str(e))
     except ToolNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ToolLockConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -3614,6 +3618,8 @@ async def set_resource_state(
         raise HTTPException(status_code=403, detail=str(e))
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ResourceLockConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -4073,6 +4079,8 @@ async def set_prompt_state(
         raise HTTPException(status_code=403, detail=str(e))
     except PromptNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PromptLockConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

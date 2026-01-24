@@ -68,7 +68,7 @@ FROM rust-builder-base AS rust-builder
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1767602397 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1769090643 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -196,7 +196,7 @@ RUN chown -R 1001:0 /app \
 ###########################
 # Using ubi10-minimal for cross-platform compatibility (works with QEMU emulation)
 # hadolint ignore=DL3006
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1766033715 AS runtime
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1769090502 AS runtime
 
 ARG PYTHON_VERSION=3.12
 

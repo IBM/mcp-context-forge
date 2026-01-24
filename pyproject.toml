@@ -52,7 +52,7 @@ dependencies = [
     "cryptography>=46.0.3",
     "fastapi>=0.128.0",
     "filelock>=3.20.3",
-    "gunicorn>=23.0.0",
+    "gunicorn>=24.1.1",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
     "jinja2>=3.1.6",
@@ -73,7 +73,7 @@ dependencies = [
     "python-json-logger>=4.0.0",
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
-    "sqlalchemy>=2.0.45",
+    "sqlalchemy>=2.0.46",
     "sse-starlette>=3.2.0",
     "starlette>=0.40.0,<0.51.0",
     "starlette-compress>=1.6.1",
@@ -199,15 +199,15 @@ llmchat = [
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.7",
-    "langgraph>=1.0.6",
+    "langgraph>=1.0.7",
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.150.2",
+    "hypothesis>=6.150.3",
     "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.9.2",
+    "schemathesis>=4.9.4",
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -244,7 +244,7 @@ asyncpg = [
 
 # Plugin templating tools (optional) - copier pulls jinja2-ansible-filters which is GPL licensed
 templating = [
-    "copier>=9.11.1",
+    "copier>=9.11.3",
 ]
 
 # Agent Lifecycle Toolkit(optional)
@@ -259,7 +259,7 @@ toolops = [
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.7",
-    "langgraph>=1.0.6",
+    "langgraph>=1.0.7",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
@@ -274,7 +274,7 @@ grpc = [
 # UI Testing
 playwright = [
     "playwright>=1.57.0",
-    "pytest-html>=4.1.1",
+    "pytest-html>=4.2.0",
     "pytest-playwright>=0.7.2",
     "pytest-timeout>=2.4.0",
 ]
