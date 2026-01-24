@@ -427,6 +427,29 @@ class SSETransport(Transport):
             # but ASGI server isn't properly signaling it. Track yield timestamps in a sliding window.
             yield_timestamps: deque = deque(maxlen=settings.sse_rapid_yield_max + 1) if settings.sse_rapid_yield_max > 0 else None
             rapid_yield_window_sec = settings.sse_rapid_yield_window_ms / 1000.0
+            last_yield_time = time.monotonic()
+
+            def check_rapid_yield() -> bool:
+                """Check if yields are happening too fast, return True if should disconnect."""
+                nonlocal last_yield_time
+                if yield_timestamps is None:
+                    return False
+                now = time.monotonic()
+                yield_timestamps.append(now)
+                # Also check time since last yield - if < 10ms, that's suspicious
+                time_since_last = now - last_yield_time
+                last_yield_time = now
+                if time_since_last < 0.01:  # Less than 10ms between yields is very fast
+                    if len(yield_timestamps) > settings.sse_rapid_yield_max:
+                        oldest = yield_timestamps[0]
+                        elapsed = now - oldest
+                        if elapsed < rapid_yield_window_sec:
+                            logger.error(
+                                "SSE rapid yield detected (%d yields in %.3fs, last interval %.3fs), client disconnected: %s",
+                                len(yield_timestamps), elapsed, time_since_last, self._session_id
+                            )
+                            return True
+                return False
 
             try:
                 while not self._client_gone.is_set():
@@ -452,30 +475,21 @@ class SSETransport(Transport):
                             yield _build_sse_frame(b"message", json_bytes, settings.sse_retry_timeout)
                             consecutive_errors = 0  # Reset on successful send
 
-                            # Rapid yield detection: track yield rate to detect stuck connections
-                            # When ASGI send() fails but doesn't raise, we yield rapidly without waiting
-                            # Only track message yields, not keepalives (which indicate we waited)
-                            if yield_timestamps is not None:
-                                now = time.monotonic()
-                                yield_timestamps.append(now)
-                                if len(yield_timestamps) > settings.sse_rapid_yield_max:
-                                    # Check if all yields happened within the window
-                                    oldest = yield_timestamps[0]
-                                    elapsed = now - oldest
-                                    if elapsed < rapid_yield_window_sec:
-                                        logger.error(
-                                            "SSE rapid yield detected (%d yields in %.3fs), client disconnected: %s",
-                                            len(yield_timestamps), elapsed, self._session_id
-                                        )
-                                        self._client_gone.set()
-                                        break
+                            # Check for rapid yields after message send
+                            if check_rapid_yield():
+                                self._client_gone.set()
+                                break
                         elif settings.sse_keepalive_enabled:
-                            # Timeout - send keepalive (no exception raised!)
-                            # We waited for the timeout, so reset rapid yield detection
+                            # Timeout - send keepalive
                             yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
                             consecutive_errors = 0  # Reset on successful send
+                            # Check for rapid yields after keepalive too
+                            if check_rapid_yield():
+                                self._client_gone.set()
+                                break
+                            # We waited for the timeout, so reset rapid yield detection
                             if yield_timestamps is not None:
-                                yield_timestamps.clear()  # Reset - we actually waited
+                                yield_timestamps.clear()
 
                     except GeneratorExit:
                         # Client disconnected - generator is being closed
