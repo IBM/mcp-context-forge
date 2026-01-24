@@ -464,10 +464,11 @@ class SSETransport(Transport):
                             if len(yield_timestamps) > settings.sse_rapid_yield_max:
                                 # Check if all yields happened within the window
                                 oldest = yield_timestamps[0]
-                                if now - oldest < rapid_yield_window_sec:
-                                    logger.warning(
-                                        "SSE rapid yield detected (%d yields in %.1fs), assuming client disconnected: %s",
-                                        len(yield_timestamps), now - oldest, self._session_id
+                                elapsed = now - oldest
+                                if elapsed < rapid_yield_window_sec:
+                                    logger.error(
+                                        "SSE rapid yield detected (%d yields in %.3fs), client disconnected: %s",
+                                        len(yield_timestamps), elapsed, self._session_id
                                     )
                                     self._client_gone.set()
                                     break
