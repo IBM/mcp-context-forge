@@ -121,10 +121,33 @@ async def get_current_user_with_permissions(
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
+                # Lookup user in DB to get is_admin status, or check platform_admin_email
+                is_admin = False
+                full_name = proxy_user
+                if proxy_user == settings.platform_admin_email:
+                    is_admin = True
+                    full_name = "Platform Admin"
+                else:
+                    # Try to lookup user in EmailUser table for is_admin status
+                    try:
+                        # Third-Party
+                        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                        # First-Party
+                        from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+                        user = db.execute(select(EmailUser).where(EmailUser.email == proxy_user)).scalar_one_or_none()
+                        if user:
+                            is_admin = user.is_admin
+                            full_name = user.full_name or proxy_user
+                    except Exception as e:
+                        logger.debug(f"Could not lookup proxy user in DB: {e}")
+                        # Continue with is_admin=False if lookup fails
+
                 return {
                     "email": proxy_user,
-                    "full_name": proxy_user,
-                    "is_admin": False,  # Proxy users are not admin by default
+                    "full_name": full_name,
+                    "is_admin": is_admin,
                     "ip_address": request.client.host if request.client else None,
                     "user_agent": request.headers.get("user-agent"),
                     "db": db,
@@ -134,9 +157,24 @@ async def get_current_user_with_permissions(
                     "plugin_context_table": plugin_context_table,
                     "plugin_global_context": plugin_global_context,
                 }
-            # If no proxy header but proxy auth is trusted, treat as anonymous
-            # Note: auth_required is not checked here - when using proxy auth,
-            # it's the proxy's responsibility to enforce authentication
+
+            # No proxy header - check auth_required to align with WebSocket behavior
+            # For browser requests, redirect to login; for API requests, return 401
+            if settings.auth_required:
+                accept_header = request.headers.get("accept", "")
+                is_htmx = request.headers.get("hx-request") == "true"
+                if "text/html" in accept_header or is_htmx:
+                    raise HTTPException(
+                        status_code=status.HTTP_302_FOUND,
+                        detail="Authentication required",
+                        headers={"Location": f"{settings.app_root_path}/admin/login"},
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Proxy authentication header required",
+                )
+
+            # auth_required=false: allow anonymous access
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",
@@ -150,8 +188,24 @@ async def get_current_user_with_permissions(
                 "plugin_context_table": plugin_context_table,
                 "plugin_global_context": plugin_global_context,
             }
+
         # Warning: MCP auth disabled without proxy trust - security risk!
         # This case is already warned about in config validation
+        # Still check auth_required for consistency
+        if settings.auth_required:
+            accept_header = request.headers.get("accept", "")
+            is_htmx = request.headers.get("hx-request") == "true"
+            if "text/html" in accept_header or is_htmx:
+                raise HTTPException(
+                    status_code=status.HTTP_302_FOUND,
+                    detail="Authentication required",
+                    headers={"Location": f"{settings.app_root_path}/admin/login"},
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required but no auth method configured",
+            )
+
         return {
             "email": "anonymous",
             "full_name": "Anonymous User",

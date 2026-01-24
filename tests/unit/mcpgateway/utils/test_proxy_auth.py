@@ -202,6 +202,9 @@ class TestRBACProxyAuthentication:
 
         mock_request.headers = {"X-Authenticated-User": "proxy-user"}
 
+        # Mock the database query to return None (user not found in DB)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
         with patch.object(rbac, "settings", mock_settings):
             result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
             assert result["email"] == "proxy-user"
@@ -271,6 +274,53 @@ class TestRBACProxyAuthentication:
             # Verify plugin contexts are passed through for HTTP_AUTH_CHECK_PERMISSION hooks
             assert result["plugin_context_table"] == {"test_plugin": {"key": "value"}}
             assert result["plugin_global_context"] is not None
+
+    @pytest.mark.asyncio
+    async def test_rbac_proxy_auth_missing_header_returns_401_when_auth_required(self, mock_settings, mock_request, mock_db):
+        """Test RBAC middleware returns 401 when proxy header missing and auth_required=true."""
+        # First-Party
+        from mcpgateway.middleware import rbac
+
+        mock_settings.auth_required = True
+        mock_request.headers = {}  # No proxy header
+
+        with patch.object(rbac, "settings", mock_settings):
+            with pytest.raises(HTTPException) as exc_info:
+                await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            assert exc_info.value.status_code == 401
+            assert "Proxy authentication header required" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_rbac_proxy_auth_missing_header_redirects_browser_when_auth_required(self, mock_settings, mock_request, mock_db):
+        """Test RBAC middleware redirects browser when proxy header missing and auth_required=true."""
+        # First-Party
+        from mcpgateway.middleware import rbac
+
+        mock_settings.auth_required = True
+        mock_request.headers = {"accept": "text/html"}  # Browser request, no proxy header
+
+        with patch.object(rbac, "settings", mock_settings):
+            with pytest.raises(HTTPException) as exc_info:
+                await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            assert exc_info.value.status_code == 302
+            assert "/admin/login" in exc_info.value.headers.get("Location", "")
+
+    @pytest.mark.asyncio
+    async def test_rbac_proxy_auth_looks_up_admin_status(self, mock_settings, mock_request, mock_db):
+        """Test RBAC middleware looks up is_admin from database for proxy users."""
+        # First-Party
+        from mcpgateway.middleware import rbac
+
+        mock_request.headers = {"X-Authenticated-User": "admin@example.com"}
+
+        # Mock the platform_admin_email check
+        mock_settings.platform_admin_email = "admin@example.com"
+
+        with patch.object(rbac, "settings", mock_settings):
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            assert result["email"] == "admin@example.com"
+            assert result["is_admin"] is True  # Matches platform_admin_email
+            assert result["auth_method"] == "proxy"
 
 
 class TestWebSocketAuthentication:
