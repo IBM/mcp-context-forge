@@ -64,14 +64,25 @@ class TestProxyAuthentication:
             assert exc_info.value.detail == "Not authenticated"
 
     @pytest.mark.asyncio
-    async def test_proxy_auth_disabled_without_trust(self, mock_settings, mock_request):
-        """Test that disabling MCP client auth without trust returns anonymous."""
+    async def test_proxy_auth_disabled_without_trust_raises_when_auth_required(self, mock_settings, mock_request):
+        """Test that disabling MCP client auth without trust raises 401 when auth_required."""
         mock_settings.mcp_client_auth_enabled = False
         mock_settings.trust_proxy_auth = False
         mock_settings.auth_required = True
 
         with patch.object(vc, "settings", mock_settings):
-            # Should return anonymous and log warning (warning logged in config)
+            with pytest.raises(HTTPException) as exc_info:
+                await vc.require_auth(mock_request, None, None)
+            assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_proxy_auth_disabled_without_trust_returns_anonymous(self, mock_settings, mock_request):
+        """Test that disabling MCP client auth without trust returns anonymous when auth not required."""
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.trust_proxy_auth = False
+        mock_settings.auth_required = False
+
+        with patch.object(vc, "settings", mock_settings):
             result = await vc.require_auth(mock_request, None, None)
             assert result == "anonymous"
 
@@ -87,10 +98,25 @@ class TestProxyAuthentication:
             assert result == {"sub": "proxy-user", "source": "proxy", "token": None}
 
     @pytest.mark.asyncio
-    async def test_proxy_auth_without_header(self, mock_settings, mock_request):
-        """Test proxy authentication without user header returns anonymous."""
+    async def test_proxy_auth_without_header_raises_when_auth_required(self, mock_settings, mock_request):
+        """Test proxy authentication without user header raises 401 when auth_required."""
         mock_settings.mcp_client_auth_enabled = False
         mock_settings.trust_proxy_auth = True
+        mock_settings.auth_required = True
+        mock_request.headers = {}  # No proxy header
+
+        with patch.object(vc, "settings", mock_settings):
+            with pytest.raises(HTTPException) as exc_info:
+                await vc.require_auth(mock_request, None, None)
+            assert exc_info.value.status_code == 401
+            assert "Proxy authentication header required" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_proxy_auth_without_header_returns_anonymous(self, mock_settings, mock_request):
+        """Test proxy authentication without user header returns anonymous when auth not required."""
+        mock_settings.mcp_client_auth_enabled = False
+        mock_settings.trust_proxy_auth = True
+        mock_settings.auth_required = False
         mock_request.headers = {}  # No proxy header
 
         with patch.object(vc, "settings", mock_settings):
