@@ -135,11 +135,11 @@ from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
+from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -2396,6 +2396,9 @@ async def admin_set_server_state(
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting server {server_id} state: {e}")
         error_message = str(e)
+    except ServerLockConflictError as e:
+        LOGGER.warning(f"Lock conflict for user {user_email} setting server {server_id} state: {e}")
+        error_message = "Server is being modified by another request. Please try again."
     except Exception as e:
         LOGGER.error(f"Error setting server status: {e}")
         error_message = "Error setting server status. Please try again."
@@ -10027,6 +10030,9 @@ async def admin_set_tool_state(
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting tool state {tool_id}: {e}")
         error_message = str(e)
+    except ToolLockConflictError as e:
+        LOGGER.warning(f"Lock conflict for user {user_email} setting tool {tool_id} state: {e}")
+        error_message = "Tool is being modified by another request. Please try again."
     except Exception as e:
         LOGGER.error(f"Error setting tool state: {e}")
         error_message = "Failed to set tool state. Please try again."

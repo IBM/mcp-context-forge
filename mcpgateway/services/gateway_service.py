@@ -58,7 +58,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select
+from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -2581,41 +2581,66 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Active (Enabled and Reachable)
                     await self._notify_gateway_activated(gateway)
 
-                tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
-
-                # Set tools state with skip_cache_invalidation=True to avoid N invalidations
+                # Bulk update tools - single UPDATE statement instead of N FOR UPDATE locks
+                # This prevents lock contention under high concurrent load
+                now = datetime.now(timezone.utc)
                 if only_update_reachable:
-                    for tool in tools:
-                        await self.tool_service.set_tool_state(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
+                    # Only update reachable status, keep enabled as-is
+                    tools_result = db.execute(
+                        update(DbTool)
+                        .where(DbTool.gateway_id == gateway_id)
+                        .where(DbTool.reachable != reachable)
+                        .values(reachable=reachable, updated_at=now)
+                    )
                 else:
-                    for tool in tools:
-                        await self.tool_service.set_tool_state(db, tool.id, activate, reachable, skip_cache_invalidation=True)
+                    # Update both enabled and reachable
+                    tools_result = db.execute(
+                        update(DbTool)
+                        .where(DbTool.gateway_id == gateway_id)
+                        .where(or_(DbTool.enabled != activate, DbTool.reachable != reachable))
+                        .values(enabled=activate, reachable=reachable, updated_at=now)
+                    )
+                tools_updated = tools_result.rowcount
 
-                # Invalidate tools cache once after all tool status changes
-                if tools:
+                # Commit tool updates
+                if tools_updated > 0:
+                    db.commit()
+
+                # Invalidate tools cache once after bulk update
+                if tools_updated > 0:
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     await tool_lookup_cache.invalidate_gateway(str(gateway.id))
 
-                # Update prompts state when gateway is deactivated/activated (skip for reachability-only updates)
+                # Bulk update prompts when gateway is deactivated/activated (skip for reachability-only updates)
+                prompts_updated = 0
                 if not only_update_reachable:
-                    prompts = db.query(DbPrompt).filter(DbPrompt.gateway_id == gateway_id).all()
-                    # Set prompts state with skip_cache_invalidation=True to avoid N invalidations
-                    for prompt in prompts:
-                        await self.prompt_service.set_prompt_state(db, prompt.id, activate, skip_cache_invalidation=True)
-                    # Invalidate prompts cache once after all prompt status changes
-                    if prompts:
+                    prompts_result = db.execute(
+                        update(DbPrompt)
+                        .where(DbPrompt.gateway_id == gateway_id)
+                        .where(DbPrompt.enabled != activate)
+                        .values(enabled=activate, updated_at=now)
+                    )
+                    prompts_updated = prompts_result.rowcount
+                    if prompts_updated > 0:
+                        db.commit()
                         await cache.invalidate_prompts()
 
-                # Update resources state when gateway is deactivated/activated (skip for reachability-only updates)
+                # Bulk update resources when gateway is deactivated/activated (skip for reachability-only updates)
+                resources_updated = 0
                 if not only_update_reachable:
-                    resources = db.query(DbResource).filter(DbResource.gateway_id == gateway_id).all()
-                    # Set resources state with skip_cache_invalidation=True to avoid N invalidations
-                    for resource in resources:
-                        await self.resource_service.set_resource_state(db, resource.id, activate, skip_cache_invalidation=True)
-                    # Invalidate resources cache once after all resource status changes
-                    if resources:
+                    resources_result = db.execute(
+                        update(DbResource)
+                        .where(DbResource.gateway_id == gateway_id)
+                        .where(DbResource.enabled != activate)
+                        .values(enabled=activate, updated_at=now)
+                    )
+                    resources_updated = resources_result.rowcount
+                    if resources_updated > 0:
+                        db.commit()
                         await cache.invalidate_resources()
+
+                logger.debug(f"Gateway {gateway.name} bulk state update: {tools_updated} tools, {prompts_updated} prompts, {resources_updated} resources")
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 

@@ -39,7 +39,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
@@ -349,6 +349,10 @@ class ToolNameConflictError(ToolError):
         if not enabled:
             message += f" (currently inactive, ID: {tool_id})"
         super().__init__(message)
+
+
+class ToolLockConflictError(ToolError):
+    """Raised when a tool row is locked by another transaction."""
 
 
 class ToolValidationError(ToolError):
@@ -2324,7 +2328,13 @@ class ToolService:
             'tool_read'
         """
         try:
-            tool = get_for_update(db, DbTool, tool_id)
+            # Use nowait=True to fail fast if row is locked, preventing lock contention under high load
+            try:
+                tool = get_for_update(db, DbTool, tool_id, nowait=True)
+            except OperationalError as lock_err:
+                # Row is locked by another transaction - fail fast with 409
+                db.rollback()
+                raise ToolLockConflictError(f"Tool {tool_id} is currently being modified by another request") from lock_err
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 

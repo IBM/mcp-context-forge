@@ -386,11 +386,11 @@ class SSETransport(Transport):
         """
         return self._connected
 
-    async def create_sse_response(self, _request: Request) -> EventSourceResponse:
+    async def create_sse_response(self, request: Request) -> EventSourceResponse:
         """Create SSE response for streaming.
 
         Args:
-            _request: FastAPI request
+            request: FastAPI request (used for disconnection detection)
 
         Returns:
             SSE response object
@@ -418,8 +418,17 @@ class SSETransport(Transport):
             if settings.sse_keepalive_enabled:
                 yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
 
+            consecutive_errors = 0
+            max_consecutive_errors = 3  # Exit after 3 consecutive errors (likely client disconnected)
+
             try:
                 while not self._client_gone.is_set():
+                    # Check if client has disconnected via request state
+                    if await request.is_disconnected():
+                        logger.info("SSE client disconnected (detected via request): %s", self._session_id)
+                        self._client_gone.set()
+                        break
+
                     try:
                         # Use timeout-based polling only when keepalive is enabled
                         if not settings.sse_keepalive_enabled:
@@ -434,20 +443,37 @@ class SSETransport(Transport):
                                 logger.debug("Sending SSE message: %s", json_bytes.decode())
 
                             yield _build_sse_frame(b"message", json_bytes, settings.sse_retry_timeout)
+                            consecutive_errors = 0  # Reset on successful send
                         elif settings.sse_keepalive_enabled:
                             # Timeout - send keepalive (no exception raised!)
                             yield _build_sse_frame(b"keepalive", b"{}", settings.sse_retry_timeout)
+                            consecutive_errors = 0  # Reset on successful send
+                    except GeneratorExit:
+                        # Client disconnected - generator is being closed
+                        logger.info("SSE generator exit (client disconnected): %s", self._session_id)
+                        self._client_gone.set()
+                        break
                     except Exception as e:
-                        logger.error("Error processing SSE message: %s", e)
-                        yield _build_sse_frame(b"error", orjson.dumps({"error": str(e)}), settings.sse_retry_timeout)
+                        consecutive_errors += 1
+                        logger.warning("Error processing SSE message (attempt %d/%d): %s", consecutive_errors, max_consecutive_errors, e)
+                        if consecutive_errors >= max_consecutive_errors:
+                            logger.info("SSE too many consecutive errors, assuming client disconnected: %s", self._session_id)
+                            self._client_gone.set()
+                            break
+                        # Don't yield error frame - it could cause more errors if client is gone
 
             except asyncio.CancelledError:
                 logger.info("SSE event generator cancelled: %s", self._session_id)
+                self._client_gone.set()
+            except GeneratorExit:
+                logger.info("SSE generator exit: %s", self._session_id)
+                self._client_gone.set()
             except Exception as e:
                 logger.error("SSE event generator error: %s", e)
+                self._client_gone.set()
             finally:
                 logger.info("SSE event generator completed: %s", self._session_id)
-                # We intentionally don't set client_gone here to allow queued messages to be processed
+                self._client_gone.set()  # Always set client_gone on exit to clean up
 
         return EventSourceResponse(
             event_generator(),
