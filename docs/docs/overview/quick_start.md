@@ -79,12 +79,15 @@ Pick an install method below, generate an auth token, then walk through a real t
 
     4. **Generate a bearer token with an expiration time of 10080 seconds (1 week)**
 
+        !!! warning "Development Only"
+            CLI token generation is for development/testing. For production, use the `/tokens` API endpoint which enforces security controls.
+
         ```bash
         export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
             --username admin --exp 10080 --secret my-test-key)
         ```
 
-        !!! tip "Use `--exp 0` for tokens that don't expire"
+        !!! tip "Use `--exp 0` for tokens that don't expire (development only)"
 
     5. **Smoke-test health + version**
 
