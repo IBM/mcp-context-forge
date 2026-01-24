@@ -40,14 +40,13 @@ pub async fn build_router(roots: Vec<String>) -> Result<axum::Router> {
 
 pub fn print_startup_banner(roots: &Vec<String>) {
     tracing::info!(
-"
------------ MCP SERVER -----------
-  App        :  {}
-  Version    :  {}
-  Roots      :  {:?}
-  Transport  :  Streamable-HTTP
-  Listening  :  http://{}/mcp
-",
+        "----------- MCP SERVER -----------
+    App        :  {}
+    Version    :  {}
+    Roots      :  {:?}
+    Transport  :  Streamable-HTTP
+    Listening  :  http://{}/mcp
+    ",
         APP_NAME,
         APP_VERSION,
         roots,

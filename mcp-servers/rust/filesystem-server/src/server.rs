@@ -117,7 +117,7 @@ impl FilesystemServer {
         let result = match search::list_directory(&self.ctx.sandbox, &path).await {
             Ok(entries) => SearchResult {
                 message: format!("Successfully listed directory: {}", path),
-                entries: entries,
+                entries,
                 success: true,
             },
             Err(_) => SearchResult {
@@ -154,7 +154,7 @@ impl FilesystemServer {
             match search::search_files(&self.ctx.sandbox, &path, &pattern, exclude_pattern).await {
                 Ok(entries) => SearchResult {
                     message: format!("Search for path {}", path),
-                    entries: entries,
+                    entries,
                     success: true,
                 },
                 Err(message) => SearchResult {
@@ -185,7 +185,7 @@ impl FilesystemServer {
     ) -> Result<CallToolResult, McpError> {
         let result: ReadResult = match read::read_file(&self.ctx.sandbox, &path).await {
             Ok(message) => ReadResult {
-                message: message,
+                message,
                 success: true,
             },
             Err(message) => ReadResult {
@@ -215,7 +215,7 @@ impl FilesystemServer {
     ) -> Result<CallToolResult, McpError> {
         let result: WriteResult = match write::write_file(&self.ctx.sandbox, &path, content).await {
             Ok(message) => WriteResult {
-                message: message,
+                message,
                 success: true,
             },
             Err(message) => WriteResult {
@@ -254,7 +254,7 @@ impl FilesystemServer {
                 success: true,
             },
             Err(_edits) => EditResult {
-                message: format!("Error applying edits"),
+                message: "Error applying edits".to_string(),
                 edits: None,
                 success: false,
             },
@@ -285,7 +285,7 @@ impl FilesystemServer {
         let result: WriteResult =
             match write::move_file(&self.ctx.sandbox, &source, &destination).await {
                 Ok(message) => WriteResult {
-                    message: message,
+                    message,
                     success: true,
                 },
                 Err(message) => WriteResult {
@@ -314,7 +314,7 @@ impl FilesystemServer {
     ) -> Result<CallToolResult, McpError> {
         let result: WriteResult = match write::create_directory(&self.ctx.sandbox, &path).await {
             Ok(message) => WriteResult {
-                message: message,
+                message,
                 success: true,
             },
             Err(message) => WriteResult {
@@ -345,8 +345,8 @@ impl FilesystemServer {
         let result: ReadMultipleResults =
             match read::read_multiple_files(&self.ctx.sandbox, paths).await {
                 Ok(entries) => ReadMultipleResults {
-                    message: format!("Read files successfully."),
-                    entries: entries,
+                    message: "Read files successfully.".to_string(),
+                    entries,
                     success: true,
                 },
                 Err(message) => ReadMultipleResults {
@@ -379,7 +379,7 @@ impl FilesystemServer {
     ) -> Result<CallToolResult, McpError> {
         let result = match info::get_file_info(&self.ctx.sandbox, &path).await {
             Ok(metadata) => InfoResult {
-                message: format!("Read files successfully."),
+                message: "Read files successfully.".to_string(),
                 metadata: Some(metadata),
                 success: true,
             },
