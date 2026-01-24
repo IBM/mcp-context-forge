@@ -1572,6 +1572,7 @@ Disallow: /
     # Flexible list parsing for envs
     # -------------------------------
     @field_validator(
+        "sso_entra_admin_groups",
         "sso_trusted_domains",
         "sso_auto_admin_domains",
         "sso_github_admin_orgs",
