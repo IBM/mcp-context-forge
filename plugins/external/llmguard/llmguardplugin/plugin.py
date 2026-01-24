@@ -136,7 +136,7 @@ class LLMGuardPlugin(Plugin):
                 if self.lgconfig.input.filters:
                     filters_context = {"input": {"filters": []}}
                     logger.info(f"Applying input guardrail filters on {payload.args[key]}")
-                    result = self.llmguard_instance._apply_input_filters(payload.args[key])
+                    result = await self.llmguard_instance._apply_input_filters(payload.args[key])
                     filters_context["input"]["filters"].append(result)
                     logger.info(f"Result of input guardrail filters: {result}")
                     decision = self.llmguard_instance._apply_policy_input(result)
@@ -157,7 +157,7 @@ class LLMGuardPlugin(Plugin):
                     # initialize a context key "guardrails"
                     sanitizers_context = {"input": {"sanitizers": []}}
                     logger.info(f"Applying input guardrail sanitizers on {payload.args[key]}")
-                    result = self.llmguard_instance._apply_input_sanitizers(payload.args[key])
+                    result = await self.llmguard_instance._apply_input_sanitizers(payload.args[key])
                     sanitizers_context["input"]["sanitizers"].append(result)
                     logger.info(f"Result of input guardrail sanitizers on {result}")
                     if self.lgconfig.set_guardrails_context:
@@ -174,7 +174,7 @@ class LLMGuardPlugin(Plugin):
                     # Set context for the vault if used
                     _, vault_id, vault_tuples = self.llmguard_instance._retreive_vault()
                     if vault_id and vault_tuples:
-                        success, _ = self.cache.update_cache(vault_id, vault_tuples)
+                        success, _ = await self.cache.update_cache(vault_id, vault_tuples)
                         # If cache update was successful, then store it in the context to pass further
                         if success:
                             if self.lgconfig.set_guardrails_context:
@@ -222,10 +222,10 @@ class LLMGuardPlugin(Plugin):
                     text = message.content.text
                     logger.info(f"Applying output sanitizers on {text}")
                     if vault_id:
-                        vault_obj = self.cache.retrieve_cache(vault_id)
+                        vault_obj = await self.cache.retrieve_cache(vault_id)
                         scanner_config = {"Deanonymize": vault_obj}
                         self.llmguard_instance._update_output_sanitizers(scanner_config)
-                    result = self.llmguard_instance._apply_output_sanitizers(original_prompt, text)
+                    result = await self.llmguard_instance._apply_output_sanitizers(original_prompt, text)
                     sanitizers_context["output"]["sanitizers"].append(result)
                     if self.lgconfig.set_guardrails_context:
                         self.__update_context(context, "context", sanitizers_context)
@@ -236,7 +236,7 @@ class LLMGuardPlugin(Plugin):
                     filters_context = {"output": {"filters": []}}
                     text = message.content.text
                     logger.info(f"Applying output guardrails on {text}")
-                    result = self.llmguard_instance._apply_output_filters(original_prompt, text)
+                    result = await self.llmguard_instance._apply_output_filters(original_prompt, text)
                     filters_context["output"]["filters"].append(result)
                     decision = self.llmguard_instance._apply_policy_output(result)
                     logger.info(f"Policy decision on output guardrails: {decision}")
