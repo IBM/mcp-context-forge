@@ -72,6 +72,7 @@ DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
   - Graceful degradation if Redis unavailable (local-only cancellation)
 
 #### **🏗️ Platform & Architecture**
+* **Default Plugins in Docker Compose** ([#2364](https://github.com/IBM/mcp-context-forge/pull/2364)) - Pre-configured plugin setup in docker-compose deployments
 * **ppc64le (IBM POWER) Architecture Support** ([#2205](https://github.com/IBM/mcp-context-forge/issues/2205)) - Container images now available for IBM POWER systems
 * **External PostgreSQL Support** ([#1722](https://github.com/IBM/mcp-context-forge/issues/1722), [#2052](https://github.com/IBM/mcp-context-forge/issues/2052)) - CloudNativePG compatible external database hosting
 * **Helm extraEnvFrom Support** ([#2047](https://github.com/IBM/mcp-context-forge/issues/2047)) - Mount secrets and configmaps as environment variables
@@ -196,6 +197,8 @@ DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
 * **Chart.js Canvas Reuse** ([#1788](https://github.com/IBM/mcp-context-forge/issues/1788)) - Fixed graphs disappearing with canvas error
 * **Resource Fullscreen** ([#1787](https://github.com/IBM/mcp-context-forge/issues/1787)) - Fullscreen mode in resource test no longer vanishes
 * **initializeSearchInputs** ([#2121](https://github.com/IBM/mcp-context-forge/issues/2121)) - Fixed recurrent initialization calls
+* **Export Config Button** ([#2362](https://github.com/IBM/mcp-context-forge/issues/2362), [#2363](https://github.com/IBM/mcp-context-forge/pull/2363)) - Restored missing Export Config button in Virtual Servers table
+* **Pagination URL Parameters** ([#2213](https://github.com/IBM/mcp-context-forge/issues/2213), [#2214](https://github.com/IBM/mcp-context-forge/pull/2214)) - Fixed query parameter mixing across different tables
 
 #### **🔧 MCP Protocol & Tools**
 * **tools/list Limit** ([#1937](https://github.com/IBM/mcp-context-forge/issues/1937), [#1664](https://github.com/IBM/mcp-context-forge/issues/1664)) - Returns all registered tools, not just ~50
@@ -208,10 +211,12 @@ DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
 * **Text Response REST** ([#1576](https://github.com/IBM/mcp-context-forge/issues/1576)) - REST API with text-based responses now works
 * **ExceptionGroup Unwrap** ([#1902](https://github.com/IBM/mcp-context-forge/issues/1902)) - Tool invocation errors show root cause
 * **A2A Agent Test** ([#840](https://github.com/IBM/mcp-context-forge/issues/840)) - Fixed A2A agent test functionality
+* **Tool Schema Validation** ([#2322](https://github.com/IBM/mcp-context-forge/issues/2322), [#2341](https://github.com/IBM/mcp-context-forge/issues/2341), [#2342](https://github.com/IBM/mcp-context-forge/pull/2342)) - Improved schema validation for broader MCP server compatibility
 
 #### **🗄️ Database & Sessions**
 * **Session State Leakage** ([#2055](https://github.com/IBM/mcp-context-forge/issues/2055)) - MCP session pool now isolates state between users
 * **Entity Parsing Failure** ([#2172](https://github.com/IBM/mcp-context-forge/issues/2172)) - Single entity parsing failure no longer stops listing
+* **Inactive Transaction Cleanup** ([#2352](https://github.com/IBM/mcp-context-forge/issues/2352), [#2351](https://github.com/IBM/mcp-context-forge/pull/2351)) - Guard against inactive transaction during async cleanup
 * **Idle-in-Transaction** ([#1885](https://github.com/IBM/mcp-context-forge/issues/1885), [#1934](https://github.com/IBM/mcp-context-forge/issues/1934)) - Fixed connections stuck in transaction under load
 * **PgBouncer Timeout** ([#1877](https://github.com/IBM/mcp-context-forge/issues/1877)) - Client idle timeout errors recognized as disconnects
 * **User Deletion FK** ([#1663](https://github.com/IBM/mcp-context-forge/issues/1663)) - Fixed foreign key constraint on `email_team_member_history`
@@ -237,6 +242,8 @@ DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
 
 ### Security
 
+* **LLM Guard: Safe Expression Evaluator** ([#2156](https://github.com/IBM/mcp-context-forge/issues/2156), [#2180](https://github.com/IBM/mcp-context-forge/pull/2180)) - Replaced unsafe code execution with a safe AST-based evaluator in LLM Guard plugin
+* **LLM Guard: Safe Serialization** ([#2156](https://github.com/IBM/mcp-context-forge/issues/2156), [#2179](https://github.com/IBM/mcp-context-forge/pull/2179)) - Switched to orjson for secure cache serialization in LLM Guard plugin
 * **Environment Isolation Warnings** ([#2141](https://github.com/IBM/mcp-context-forge/issues/2141)) - Optional environment claim validation with warnings
 * **REQUIRE_USER_IN_DB** ([#2128](https://github.com/IBM/mcp-context-forge/issues/2128)) - Configuration option to require users exist in database
 * **JWT Lifecycle Management** ([#2127](https://github.com/IBM/mcp-context-forge/issues/2127)) - Enhanced token lifecycle with revocation and refresh
@@ -251,6 +258,7 @@ DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
 * **Batch Operations** ([#1674](https://github.com/IBM/mcp-context-forge/issues/1674), [#1686](https://github.com/IBM/mcp-context-forge/issues/1686), [#1727](https://github.com/IBM/mcp-context-forge/issues/1727)) - Bulk insert for imports, batch team membership queries, batch exports
 * **SQL Aggregations** ([#1756](https://github.com/IBM/mcp-context-forge/issues/1756), [#1764](https://github.com/IBM/mcp-context-forge/issues/1764), [#1810](https://github.com/IBM/mcp-context-forge/issues/1810), [#1817](https://github.com/IBM/mcp-context-forge/issues/1817)) - Moved percentile calculations to SQL for log aggregation, observability, metrics rollup, and admin views
 * **SELECT FOR UPDATE** ([#1641](https://github.com/IBM/mcp-context-forge/issues/1641)) - Prevent race conditions under high concurrency
+* **FOR UPDATE Lock Contention** ([#2355](https://github.com/IBM/mcp-context-forge/issues/2355), [#2359](https://github.com/IBM/mcp-context-forge/pull/2359)) - Fixed high-load performance degradation and CPU spin loops caused by lock contention
 * **Bulk UPDATE** ([#1760](https://github.com/IBM/mcp-context-forge/issues/1760)) - Token cleanup uses bulk operations
 
 #### **🔗 Connection Pooling**
@@ -325,6 +333,7 @@ DATABASE_URL=postgresql+psycopg://postgres:password@localhost:5432/mcp
 * **Session Registry Polling** ([#1675](https://github.com/IBM/mcp-context-forge/issues/1675)) - Reduced database polling overhead
 * **httpx Client Churn** ([#1731](https://github.com/IBM/mcp-context-forge/issues/1731)) - Fixed memory pressure under load
 * **Admin Dashboard Queries** ([#1687](https://github.com/IBM/mcp-context-forge/issues/1687)) - Optimized Admin UI dashboard
+* **Logging CPU Optimization** ([#1865](https://github.com/IBM/mcp-context-forge/issues/1865), [#2170](https://github.com/IBM/mcp-context-forge/pull/2170)) - Reduced CPU overhead in logging hot paths
 
 ### Chores
 
