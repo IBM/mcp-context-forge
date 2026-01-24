@@ -109,8 +109,8 @@ services:
       # Choose Granian for:  load spike protection, bursty traffic (graceful degradation)
       # Both achieve same RPS when database is the bottleneck.
       # ═══════════════════════════════════════════════════════════════════════════
-      - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
-      # - HTTP_SERVER=gunicorn # Python-based, battle-tested, lower memory usage
+      # - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
+      - HTTP_SERVER=gunicorn # Python-based, battle-tested, lower memory usage
       - HOST=0.0.0.0
       - PORT=4444
       # Transport: sse, streamablehttp, http, or all (default: all)
@@ -289,8 +289,16 @@ services:
       - HTTPX_POOL_TIMEOUT=10.0             # Wait for available connection (seconds)
       - HTTPX_HTTP2_ENABLED=false           # HTTP/2 support (requires server support)
       - HTTPX_ADMIN_READ_TIMEOUT=30.0       # Admin UI/health check timeout (seconds)
-      # Worker and server tuning for high-concurrency load testing
-      - GUNICORN_WORKERS=16
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Gunicorn Configuration (used when HTTP_SERVER=gunicorn)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - GUNICORN_WORKERS=16                    # Worker processes (match CPU cores)
+      - GUNICORN_TIMEOUT=120                   # Worker timeout in seconds
+      - GUNICORN_GRACEFUL_TIMEOUT=30           # Grace period for worker shutdown
+      - GUNICORN_KEEP_ALIVE=30                 # Keep-alive timeout (matches SSE keepalive)
+      - GUNICORN_MAX_REQUESTS=100000           # Recycle workers after N requests
+      - GUNICORN_MAX_REQUESTS_JITTER=10000     # ±10K jitter prevents thundering herd
+      - GUNICORN_BACKLOG=4096                  # Connection queue depth
       # ═══════════════════════════════════════════════════════════════════════════
       # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -629,14 +637,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
+      - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (2x DB_POOL_RECYCLE)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (allows slow admin page rendering)
+      - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (aligned with CLIENT_IDLE_TIMEOUT)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -949,7 +957,7 @@ services:
 #  OPTIONAL ADMIN TOOLS - handy web UIs for DB & cache (disabled by default)
 ###############################################################################
   pgadmin:              # 🔧 Postgres admin UI
-    image: dpage/pgadmin4:9.11.0
+    image: dpage/pgadmin4:latest
     environment:
       - PGADMIN_DEFAULT_EMAIL=admin@example.com
       - PGADMIN_DEFAULT_PASSWORD=changeme
