@@ -152,6 +152,7 @@ class TestProxyAuthentication:
             result = await vc.require_auth(mock_request, creds, None)
             assert result == {"sub": "proxy-user", "source": "proxy", "token": None}
 
+
 class TestRBACProxyAuthentication:
     """Test cases for RBAC middleware proxy authentication functionality."""
 
@@ -238,9 +239,6 @@ class TestRBACProxyAuthentication:
     @pytest.mark.asyncio
     async def test_rbac_standard_jwt_when_mcp_auth_enabled(self, mock_settings, mock_request, mock_db):
         """Test RBAC middleware uses JWT when MCP client auth is enabled."""
-        # Third-Party
-        import jwt
-
         # First-Party
         from mcpgateway.middleware import rbac
 
@@ -253,7 +251,6 @@ class TestRBACProxyAuthentication:
             result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
             assert result["email"] == mock_settings.platform_admin_email
             assert result["auth_method"] == "disabled"
-
 
 
 class TestWebSocketAuthentication:
