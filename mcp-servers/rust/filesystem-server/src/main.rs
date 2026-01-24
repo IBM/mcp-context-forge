@@ -5,7 +5,7 @@ use tokio::net::TcpListener;
 
 #[derive(Parser, Debug)]
 struct Args {
-    #[arg(long)]
+    #[arg(long = "roots", value_delimiter = ' ')]
     roots: Vec<String>,
 }
 
