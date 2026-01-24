@@ -6,11 +6,17 @@ use std::os::unix::fs::PermissionsExt;
 use tokio::fs;
 
 #[derive(Debug, Serialize, Deserialize)]
-struct MetadataResults {
-    permissions: String,
-    size: u64,
-    created: Option<String>,
-    modified: Option<String>,
+pub struct MetadataResults {
+    pub permissions: String,
+    pub size: u64,
+    pub created: Option<String>,
+    pub modified: Option<String>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InfoResult {
+    pub message: String,
+    pub metadata: Option<MetadataResults>,
+    pub success: bool,
 }
 
 fn format_system_time(time: std::time::SystemTime) -> String {
@@ -19,7 +25,7 @@ fn format_system_time(time: std::time::SystemTime) -> String {
         .to_string()
 }
 
-pub async fn get_file_info(sandbox: &Sandbox, path: &str) -> Result<String> {
+pub async fn get_file_info(sandbox: &Sandbox, path: &str) -> Result<MetadataResults> {
     tracing::info!(path = %path, "getting file metadata");
 
     let canon_path = sandbox.resolve_path(path).await?;
@@ -41,7 +47,7 @@ pub async fn get_file_info(sandbox: &Sandbox, path: &str) -> Result<String> {
         modified,
     };
 
-    serde_json::to_string(&result).context("failed to serialize file metadata to JSON")
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -66,15 +72,13 @@ mod tests {
 
         async_fs::write(&file_path, b"hello").await.unwrap();
 
-        let result_json = get_file_info(&sandbox, file_path.to_str().unwrap())
+        let metadata = get_file_info(&sandbox, file_path.to_str().unwrap())
             .await
             .unwrap();
 
-        let result: MetadataResults = serde_json::from_str(&result_json).unwrap();
-
-        assert_eq!(result.size, 5);
-        assert!(result.permissions.len() > 0);
-        assert!(result.created.is_some() || result.modified.is_some());
+        assert_eq!(metadata.size, 5);
+        assert!(metadata.permissions.len() > 0);
+        assert!(metadata.created.is_some() || metadata.modified.is_some());
     }
 
     #[tokio::test]
@@ -90,12 +94,11 @@ mod tests {
         symlink(&target, &link).unwrap();
 
         // Should follow symlink
-        let result_json = get_file_info(&sandbox, link.to_str().unwrap())
+        let metadata = get_file_info(&sandbox, link.to_str().unwrap())
             .await
             .unwrap();
 
-        let result: MetadataResults = serde_json::from_str(&result_json).unwrap();
-        assert_eq!(result.size, 7);
+        assert_eq!(metadata.size, 7);
     }
 
     #[tokio::test]
@@ -119,11 +122,10 @@ mod tests {
         perms.set_mode(0o644);
         async_fs::set_permissions(&file_path, perms).await.unwrap();
 
-        let result_json = get_file_info(&sandbox, file_path.to_str().unwrap())
+        let metadata = get_file_info(&sandbox, file_path.to_str().unwrap())
             .await
             .unwrap();
 
-        let result: MetadataResults = serde_json::from_str(&result_json).unwrap();
-        assert_eq!(result.permissions, "644");
+        assert_eq!(metadata.permissions, "644");
     }
 }

@@ -1,7 +1,21 @@
 use crate::{MAX_FILE_SIZE, sandbox::Sandbox};
 use anyhow::{Context, Result};
 use futures::future::join_all;
+use serde::{Deserialize, Serialize};
 use tokio::{fs, io::AsyncReadExt};
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ReadResult {
+    pub message: String,
+    pub success: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ReadMultipleResults {
+    pub message: String,
+    pub entries: Vec<String>,
+    pub success: bool,
+}
 
 pub async fn read_file(sandbox: &Sandbox, path: &str) -> Result<String> {
     tracing::info!("Starting read file for {}", path);

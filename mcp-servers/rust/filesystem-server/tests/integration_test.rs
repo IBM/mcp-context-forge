@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod comprehensive_tests {
     use filesystem_server::sandbox::Sandbox;
-    use filesystem_server::tools::edit::{Edit, edit_file, move_file};
+    use filesystem_server::tools::edit::{Edit, edit_file};
     use filesystem_server::tools::info::get_file_info;
     use filesystem_server::tools::read::{read_file, read_multiple_files};
     use filesystem_server::tools::search::{list_directory, search_files};
-    use filesystem_server::tools::write::{create_directory, write_file};
+    use filesystem_server::tools::write::{create_directory, move_file, write_file};
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -93,18 +93,17 @@ mod comprehensive_tests {
         assert!(moved_content.contains("# My Awesome Document"));
 
         // 9. Get file info
-        let info_json = get_file_info(&sandbox, &new_file_path)
+        let metadata = get_file_info(&sandbox, &new_file_path)
             .await
             .expect("get file info");
-        let info: serde_json::Value = serde_json::from_str(&info_json).unwrap();
-        assert!(info["size"].as_u64().unwrap() > 0);
-        assert!(info["permissions"].is_string());
+        assert!(metadata.size > 0);
+        assert!(!metadata.permissions.is_empty());
 
         // 10. List directory to verify structure
         let result = list_directory(&sandbox, &archived_dir)
             .await
             .expect("list archived directory");
-        assert!(result.entries.iter().any(|e| e.contains("README.md")));
+        assert!(result.iter().any(|e| e.contains("README.md")));
     }
 
     #[tokio::test]
@@ -129,12 +128,10 @@ mod comprehensive_tests {
         .expect("write config file");
 
         // 2. Get initial metadata
-        let initial_info = get_file_info(&sandbox, &config_file)
+        let initial = get_file_info(&sandbox, &config_file)
             .await
             .expect("get initial info");
-        let initial_val: serde_json::Value = serde_json::from_str(&initial_info).unwrap();
-        let initial_size = initial_val["size"].as_u64().unwrap();
-        assert!(initial_size > 0);
+        assert!(initial.size > 0);
 
         // 3. Edit file to change size
         let edits = vec![Edit {
@@ -149,10 +146,8 @@ mod comprehensive_tests {
         let updated_info = get_file_info(&sandbox, &config_file)
             .await
             .expect("get updated info");
-        let updated_val: serde_json::Value = serde_json::from_str(&updated_info).unwrap();
-        let updated_size = updated_val["size"].as_u64().unwrap();
         assert!(
-            updated_size > initial_size,
+            updated_info.size > initial.size,
             "File should be larger after edit"
         );
 
@@ -163,12 +158,10 @@ mod comprehensive_tests {
             .await
             .expect("set permissions");
 
-        let perms_info = get_file_info(&sandbox, &config_file)
+        let metadata = get_file_info(&sandbox, &config_file)
             .await
             .expect("get permissions info");
-        let perms_val: serde_json::Value = serde_json::from_str(&perms_info).unwrap();
-        let perms_str = perms_val["permissions"].as_str().unwrap();
-        assert_eq!(perms_str, "600");
+        assert_eq!(metadata.permissions, "600");
 
         // 6. Read final content and verify
         let final_content = read_file(&sandbox, &config_file)
@@ -183,11 +176,10 @@ mod comprehensive_tests {
             .await
             .expect("move to backup");
 
-        let backup_info = get_file_info(&sandbox, &backup_file)
+        let metadata = get_file_info(&sandbox, &backup_file)
             .await
             .expect("get backup info");
-        let backup_val: serde_json::Value = serde_json::from_str(&backup_info).unwrap();
-        assert_eq!(backup_val["size"].as_u64().unwrap(), updated_size);
+        assert_eq!(metadata.size, updated_info.size);
     }
 
     #[tokio::test]
@@ -252,26 +244,26 @@ mod comprehensive_tests {
         let result = search_files(&sandbox, &root, "*.md", vec![])
             .await
             .expect("search markdown");
-        assert!(result.entries.len() >= 2);
-        assert!(result.entries.iter().any(|f| f.ends_with("readme.md")));
-        assert!(result.entries.iter().any(|f| f.ends_with("guide.md")));
+        assert!(result.len() >= 2);
+        assert!(result.iter().any(|f| f.ends_with("readme.md")));
+        assert!(result.iter().any(|f| f.ends_with("guide.md")));
 
         // 4. Search excluding specific patterns
         let code_files = search_files(&sandbox, &code_dir, "*", vec!["*.txt".to_string()])
             .await
             .expect("search code files");
-        assert!(code_files.entries.len() >= 2);
+        assert!(code_files.len() >= 2);
 
         // 5. List each directory and verify content
         let docs = list_directory(&sandbox, &docs_dir)
             .await
             .expect("list docs");
-        assert_eq!(docs.entries.len(), 2);
+        assert_eq!(docs.len(), 2);
 
         let code = list_directory(&sandbox, &code_dir)
             .await
             .expect("list code");
-        assert_eq!(code.entries.len(), 2);
+        assert_eq!(code.len(), 2);
 
         // 6. Edit a markdown file
         let readme_path = format!("{}/readme.md", docs_dir);
@@ -313,23 +305,22 @@ mod comprehensive_tests {
         let remaining_md = search_files(&sandbox, &root, "*.md", vec![])
             .await
             .expect("search remaining markdown");
-        assert!(remaining_md.entries.iter().any(|f| f.contains("archive")));
+        assert!(remaining_md.iter().any(|f| f.contains("archive")));
 
         // 9. Get metadata on moved files
         let archived_readme = format!("{}/readme.md", archive_dir);
         let readme_info = get_file_info(&sandbox, &archived_readme)
             .await
             .expect("get archived readme info");
-        let readme_info_val: serde_json::Value = serde_json::from_str(&readme_info).unwrap();
-        assert!(readme_info_val["size"].as_u64().unwrap() > 20);
+        assert!(readme_info.size > 20);
 
         // 10. Final verification - list archive directory
         let archive_entries = list_directory(&sandbox, &archive_dir)
             .await
             .expect("list archive");
-        assert_eq!(archive_entries.entries.len(), 2);
-        assert!(archive_entries.entries.iter().any(|e| e.contains("readme.md")));
-        assert!(archive_entries.entries.iter().any(|e| e.contains("guide.md")));
+        assert_eq!(archive_entries.len(), 2);
+        assert!(archive_entries.iter().any(|e| e.contains("readme.md")));
+        assert!(archive_entries.iter().any(|e| e.contains("guide.md")));
     }
 
     // ==================== SERVER TESTS ====================
@@ -418,21 +409,19 @@ mod comprehensive_tests {
         let backup1_info = get_file_info(&sandbox, &backup1)
             .await
             .expect("get backup1 info");
-        let backup1_val: serde_json::Value = serde_json::from_str(&backup1_info).unwrap();
-        assert!(backup1_val["size"].as_u64().unwrap() > 0);
+        assert!(backup1_info.size > 0);
 
         let backup2_info = get_file_info(&sandbox, &backup2)
             .await
             .expect("get backup2 info");
-        let backup2_val: serde_json::Value = serde_json::from_str(&backup2_info).unwrap();
-        assert!(backup2_val["size"].as_u64().unwrap() > 0);
+        assert!(backup2_info.size > 0);
 
         // 8. List directories in both roots
         let result1 = list_directory(&sandbox, &root1).await.expect("list root1");
-        assert!(result1.entries.iter().any(|e| e.ends_with("/")));
+        assert!(result1.iter().any(|e| e.ends_with("/")));
 
         let result2 = list_directory(&sandbox, &root2).await.expect("list root2");
-        assert!(result2.entries.iter().any(|e| e.ends_with("/")));
+        assert!(result2.iter().any(|e| e.ends_with("/")));
     }
 
     #[tokio::test]
@@ -610,11 +599,11 @@ mod comprehensive_tests {
         let result = list_directory(&sandbox, root1.as_str())
             .await
             .expect("list root1");
-        assert!(result.entries.iter().any(|e| e.contains("file1")));
+        assert!(result.iter().any(|e| e.contains("file1")));
 
         let result2 = list_directory(&sandbox, root2.as_str())
             .await
             .expect("list root2");
-        assert!(result2.entries.iter().any(|e| e.contains("file2")));
+        assert!(result2.iter().any(|e| e.contains("file2")));
     }
 }

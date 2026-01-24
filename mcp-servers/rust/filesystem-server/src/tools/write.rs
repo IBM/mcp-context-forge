@@ -69,6 +69,51 @@ pub async fn create_directory(sandbox: &Sandbox, path: &str) -> Result<String> {
     Ok(format!("Path '{}' created.", path))
 }
 
+pub async fn move_file(
+    sandbox: &Sandbox,
+    source: &str,
+    destination: &str,
+) -> anyhow::Result<String> {
+    let source_canon_path = sandbox.resolve_path(source).await?;
+
+    let dest_path = Path::new(destination);
+    let dest_filename = dest_path
+        .file_name()
+        .with_context(|| format!("Could not get filename from path: '{:?}'", dest_path))?;
+
+    let dest_parent = dest_path
+        .parent()
+        .context("Invalid path: no parent directory")?;
+
+    let dest_canon_parent = sandbox
+        .resolve_path(
+            dest_parent
+                .to_str()
+                .context("Invalid destination parent path")?,
+        )
+        .await?;
+
+    tokio::fs::rename(&source_canon_path, dest_canon_parent.join(dest_filename))
+        .await
+        .with_context(|| {
+            format!(
+                "Could not move '{}' to '{}'",
+                source_canon_path.display(),
+                dest_filename.display()
+            )
+        })?;
+    tracing::info!(
+        "Moved file from {} to {}",
+        &source_canon_path.display(),
+        dest_canon_parent.join(dest_filename).display()
+    );
+    Ok(format!(
+        "Successfully moved file from {} to {}",
+        &source_canon_path.display(),
+        dest_canon_parent.join(dest_filename).display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +305,112 @@ mod tests {
         let check_path = temp_dir.path().join("trailing");
         assert!(check_path.exists());
         assert_eq!(result, format!("Path '{}' created.", path));
+    }
+
+    #[tokio::test]
+    async fn test_move_file_success() {
+        let temp_dir = TempDir::new().unwrap();
+        let sandbox = setup_sandbox(&temp_dir).await;
+
+        let src_path = temp_dir.path().join("src.txt");
+        fs::write(&src_path, "hello").await.unwrap();
+        let dst_path = temp_dir.path().join("dst.txt");
+
+        move_file(
+            &sandbox,
+            src_path.to_str().unwrap(),
+            dst_path.to_str().unwrap(),
+        )
+        .await
+        .expect("move_file should succeed");
+
+        assert!(!src_path.exists());
+        assert!(dst_path.exists());
+        assert_eq!(fs::read_to_string(&dst_path).await.unwrap(), "hello");
+    }
+
+    #[tokio::test]
+    async fn test_move_file_overwrite() {
+        let temp_dir = TempDir::new().unwrap();
+        let sandbox = setup_sandbox(&temp_dir).await;
+
+        let src = temp_dir.path().join("src.txt");
+        let dst = temp_dir.path().join("dst.txt");
+
+        fs::write(&src, "new").await.unwrap();
+        fs::write(&dst, "old").await.unwrap();
+
+        move_file(&sandbox, src.to_str().unwrap(), dst.to_str().unwrap())
+            .await
+            .expect("move_file should overwrite");
+
+        assert_eq!(fs::read_to_string(&dst).await.unwrap(), "new");
+        assert!(!src.exists());
+    }
+
+    #[tokio::test]
+    async fn test_move_file_nested_destination() {
+        let temp_dir = TempDir::new().unwrap();
+        let sandbox = setup_sandbox(&temp_dir).await;
+
+        let nested_dir = temp_dir.path().join("subdir");
+        fs::create_dir_all(&nested_dir).await.unwrap();
+
+        let src = temp_dir.path().join("file.txt");
+        let dst = nested_dir.join("file.txt");
+
+        fs::write(&src, "data").await.unwrap();
+        move_file(&sandbox, src.to_str().unwrap(), dst.to_str().unwrap())
+            .await
+            .unwrap();
+
+        assert!(dst.exists());
+        assert!(!src.exists());
+    }
+
+    #[tokio::test]
+    async fn test_move_file_invalid_source() {
+        let temp_dir = TempDir::new().unwrap();
+        let sandbox = setup_sandbox(&temp_dir).await;
+
+        let result = move_file(
+            &sandbox,
+            temp_dir.path().join("missing.txt").to_str().unwrap(),
+            temp_dir.path().join("dst.txt").to_str().unwrap(),
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_move_file_invalid_destination() {
+        let temp_dir = TempDir::new().unwrap();
+        let sandbox = setup_sandbox(&temp_dir).await;
+
+        let src = temp_dir.path().join("src.txt");
+        fs::write(&src, "data").await.unwrap();
+
+        // Use root as destination filename (likely invalid)
+        let dst = Path::new("/");
+
+        let result = move_file(&sandbox, src.to_str().unwrap(), dst.to_str().unwrap()).await;
+        assert!(result.is_err());
+        assert!(src.exists()); // original file still exists
+    }
+
+    #[tokio::test]
+    async fn test_move_file_destination_parent_missing() {
+        let temp_dir = TempDir::new().unwrap();
+        let sandbox = setup_sandbox(&temp_dir).await;
+
+        let src = temp_dir.path().join("src.txt");
+        fs::write(&src, "data").await.unwrap();
+
+        let dst = temp_dir.path().join("missing_dir/dst.txt");
+
+        let result = move_file(&sandbox, src.to_str().unwrap(), dst.to_str().unwrap()).await;
+        assert!(result.is_err());
+        assert!(src.exists());
     }
 }

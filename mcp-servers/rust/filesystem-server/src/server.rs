@@ -1,6 +1,10 @@
 use crate::APP_NAME;
 use crate::sandbox::Sandbox;
-use crate::tools::edit::Edit;
+use crate::tools::edit::{Edit, EditResult};
+use crate::tools::info::InfoResult;
+use crate::tools::read::{ReadMultipleResults, ReadResult};
+
+use crate::tools::search::SearchResult;
 use crate::tools::write::WriteResult;
 use crate::tools::{edit, info, read, search, write};
 use rmcp::ErrorData as McpError;
@@ -110,11 +114,18 @@ impl FilesystemServer {
         &self,
         Parameters(ReadFolderParameters { path }): Parameters<ReadFolderParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = search::list_directory(&self.ctx.sandbox, &path)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(format!("Error listing directory '{}': {}", path, e), None)
-            })?;
+        let result = match search::list_directory(&self.ctx.sandbox, &path).await {
+            Ok(entries) => SearchResult {
+                message: format!("Successfully listed directory: {}", path),
+                entries: entries,
+                success: true,
+            },
+            Err(_) => SearchResult {
+                message: format!("Error listing directories: {}", path),
+                entries: vec![],
+                success: false,
+            },
+        };
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -123,7 +134,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(description = "Recursively search for files under a directory matching glob patterns")]
@@ -135,14 +150,19 @@ impl FilesystemServer {
             exclude_pattern,
         }): Parameters<SearchFolderParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = search::search_files(&self.ctx.sandbox, &path, &pattern, exclude_pattern)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("Error searching files in '{}': {}", path, e),
-                    None,
-                )
-            })?;
+        let result: SearchResult =
+            match search::search_files(&self.ctx.sandbox, &path, &pattern, exclude_pattern).await {
+                Ok(entries) => SearchResult {
+                    message: format!("Search for path {}", path),
+                    entries: entries,
+                    success: true,
+                },
+                Err(message) => SearchResult {
+                    message: format!("Error creating path: {}", message),
+                    entries: vec![],
+                    success: false,
+                },
+            };
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -151,7 +171,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(description = "Read a file from a given filepath")]
@@ -159,11 +183,16 @@ impl FilesystemServer {
         &self,
         Parameters(ReadFileParameters { path }): Parameters<ReadFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = read::read_file(&self.ctx.sandbox, &path)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(format!("Error reading file '{}': {}", path, e), None)
-            })?;
+        let result: ReadResult = match read::read_file(&self.ctx.sandbox, &path).await {
+            Ok(message) => ReadResult {
+                message: message,
+                success: true,
+            },
+            Err(message) => ReadResult {
+                message: format!("Error writing file: {}", message),
+                success: false,
+            },
+        };
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -172,7 +201,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(description = "Create or overwrite a file")]
@@ -198,7 +231,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(description = "Edit file with dry run")]
@@ -210,11 +247,18 @@ impl FilesystemServer {
             dry_run,
         }): Parameters<EditFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = edit::edit_file(&self.ctx.sandbox, &path, edits, dry_run)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(format!("Error editing file '{}': {}", path, e), None)
-            })?;
+        let result = match edit::edit_file(&self.ctx.sandbox, &path, edits, dry_run).await {
+            Ok(edits) => EditResult {
+                message: format!("Edits run successfully, dry run: {}", dry_run),
+                edits: Some(edits),
+                success: true,
+            },
+            Err(_edits) => EditResult {
+                message: format!("Error applying edits"),
+                edits: None,
+                success: false,
+            },
+        };
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -223,7 +267,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(description = "Move a file from a source path to destination path")]
@@ -234,18 +282,17 @@ impl FilesystemServer {
             destination,
         }): Parameters<MoveFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = edit::move_file(&self.ctx.sandbox, &source, &destination)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!(
-                        "Error moving file from '{}' to '{}': {}",
-                        source, destination, e
-                    ),
-                    None,
-                )
-            })?;
-
+        let result: WriteResult =
+            match write::move_file(&self.ctx.sandbox, &source, &destination).await {
+                Ok(message) => WriteResult {
+                    message: message,
+                    success: true,
+                },
+                Err(message) => WriteResult {
+                    message: format!("Error writing file: {}", message),
+                    success: false,
+                },
+            };
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
                 format!("Error converting file content to JSON: {}", e),
@@ -253,7 +300,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(description = "Create new directory")]
@@ -279,7 +330,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(description = "Read several files from a list of filepaths")]
@@ -287,11 +342,19 @@ impl FilesystemServer {
         &self,
         Parameters(ReadMultipleFileParameters { paths }): Parameters<ReadMultipleFileParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = read::read_multiple_files(&self.ctx.sandbox, paths)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(format!("Error reading multiple files: {}", e), None)
-            })?;
+        let result: ReadMultipleResults =
+            match read::read_multiple_files(&self.ctx.sandbox, paths).await {
+                Ok(entries) => ReadMultipleResults {
+                    message: format!("Read files successfully."),
+                    entries: entries,
+                    success: true,
+                },
+                Err(message) => ReadMultipleResults {
+                    message: format!("Error writing file: {}", message),
+                    entries: vec![],
+                    success: false,
+                },
+            };
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -300,7 +363,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(
@@ -310,14 +377,18 @@ impl FilesystemServer {
         &self,
         Parameters(GetFileInfoParameters { path }): Parameters<GetFileInfoParameters>,
     ) -> Result<CallToolResult, McpError> {
-        let result = info::get_file_info(&self.ctx.sandbox, &path)
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("Error retrieving file info for '{}': {}", path, e),
-                    None,
-                )
-            })?;
+        let result = match info::get_file_info(&self.ctx.sandbox, &path).await {
+            Ok(metadata) => InfoResult {
+                message: format!("Read files successfully."),
+                metadata: Some(metadata),
+                success: true,
+            },
+            Err(err) => InfoResult {
+                message: format!("Error writing file: {}", err),
+                metadata: None,
+                success: false,
+            },
+        };
 
         let content = Content::json(&result).map_err(|e| {
             McpError::internal_error(
@@ -326,7 +397,11 @@ impl FilesystemServer {
             )
         })?;
 
-        Ok(CallToolResult::success(vec![content]))
+        if result.success {
+            Ok(CallToolResult::success(vec![content]))
+        } else {
+            Ok(CallToolResult::error(vec![content]))
+        }
     }
 
     #[tool(description = "Reveal sandbox roots")]
@@ -583,8 +658,9 @@ mod tests {
             .read_file(Parameters(ReadFileParameters {
                 path: "/nonexistent/file.txt".to_string(),
             }))
-            .await;
-        assert!(r.is_err());
+            .await
+            .unwrap();
+        assert!(r.is_error.unwrap());
 
         // Move non-existent
         let m = server
@@ -592,8 +668,9 @@ mod tests {
                 source: "/nonexistent/source.txt".to_string(),
                 destination: "/nonexistent/dest.txt".to_string(),
             }))
-            .await;
-        assert!(m.is_err());
+            .await
+            .unwrap();
+        assert!(m.is_error.unwrap());
 
         // Edit non-existent
         let e = server
@@ -605,8 +682,9 @@ mod tests {
                 }],
                 dry_run: false,
             }))
-            .await;
-        assert!(e.is_err());
+            .await
+            .unwrap();
+        assert!(e.is_error.unwrap());
 
         // Search invalid
         let s = server
@@ -615,7 +693,8 @@ mod tests {
                 pattern: "*.txt".to_string(),
                 exclude_pattern: vec![],
             }))
-            .await;
-        assert!(s.is_err());
+            .await
+            .unwrap();
+        assert!(s.is_error.unwrap());
     }
 }

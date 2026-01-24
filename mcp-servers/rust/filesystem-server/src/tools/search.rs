@@ -8,10 +8,9 @@ use crate::sandbox::Sandbox;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SearchResult {
-    pub path: String,
+    pub message: String,
     pub entries: Vec<String>,
     pub success: bool,
-    pub error: Option<String>,
 }
 
 pub async fn search_files(
@@ -19,7 +18,7 @@ pub async fn search_files(
     path: &str,
     pattern: &str,
     exclude_patterns: Vec<String>,
-) -> Result<SearchResult> {
+) -> Result<Vec<String>> {
     tracing::info!(
         path = %path,
         include_pattern = %pattern,
@@ -59,16 +58,11 @@ pub async fn search_files(
     }
 
     files.sort();
-    Ok(SearchResult {
-        path: format!("{}", canon_path.display()),
-        entries: files,
-        success: true,
-        error: None,
-    })
+    Ok(files)
 }
 
 /// List immediate directory contents alphabetically
-pub async fn list_directory(sandbox: &Sandbox, path: &str) -> Result<SearchResult> {
+pub async fn list_directory(sandbox: &Sandbox, path: &str) -> Result<Vec<String>> {
     tracing::info!("Running list directory for {}", path);
 
     let canon_path = sandbox.resolve_path(path).await?;
@@ -98,12 +92,7 @@ pub async fn list_directory(sandbox: &Sandbox, path: &str) -> Result<SearchResul
     }
 
     results.sort();
-    Ok(SearchResult {
-        path: format!("{}", canon_path.display()),
-        entries: results,
-        success: true,
-        error: None,
-    })
+    Ok(results)
 }
 
 /// Helper struct to store compiled glob patterns
@@ -167,8 +156,8 @@ mod tests {
             .await
             .expect("search_files should succeed");
 
-        assert_eq!(result.entries.len(), 3);
-        assert!(result.entries.iter().all(|f| f.ends_with(".txt")));
+        assert_eq!(result.len(), 3);
+        assert!(result.iter().all(|f| f.ends_with(".txt")));
     }
 
     #[tokio::test]
@@ -180,7 +169,7 @@ mod tests {
         let result = search_files(&sandbox, temp_path.to_str().unwrap(), "*.txt", vec![])
             .await
             .expect("search_files should succeed");
-        assert_eq!(result.entries.len(), 0);
+        assert_eq!(result.len(), 0);
     }
 
     #[tokio::test]
@@ -204,8 +193,8 @@ mod tests {
         .await
         .expect("search_files should succeed");
 
-        assert_eq!(result.entries.len(), 2);
-        assert!(result.entries.iter().all(|f| f.ends_with(".txt")));
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|f| f.ends_with(".txt")));
     }
 
     #[tokio::test]
@@ -220,7 +209,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.len(), 1);
     }
 
     #[tokio::test]
@@ -259,7 +248,7 @@ mod tests {
         let result = search_files(&sandbox, root.path().to_str().unwrap(), "*.txt", vec![]).await;
 
         // MUST NOT leak outside files
-        assert!(result.is_err() || result.unwrap().entries.is_empty());
+        assert!(result.is_err() || result.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -274,7 +263,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.entries.is_empty());
+        assert!(result.is_empty());
     }
 
     #[tokio::test]
@@ -308,7 +297,7 @@ mod tests {
             .unwrap();
 
         // decide and enforce policy
-        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.len(), 1);
     }
     #[cfg(unix)]
     #[tokio::test]
@@ -349,7 +338,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.len(), 1);
     }
 
     #[tokio::test]
@@ -366,7 +355,7 @@ mod tests {
             .await
             .expect("list_directory should succeed");
 
-        assert_eq!(response.entries, vec!["afile.txt", "bfile.txt", "subdir/"]);
+        assert_eq!(response, vec!["afile.txt", "bfile.txt", "subdir/"]);
     }
 
     #[cfg(unix)]
@@ -387,6 +376,6 @@ mod tests {
             .await
             .expect("list_directory should succeed");
 
-        assert_eq!(response.entries, vec!["file.txt"]);
+        assert_eq!(response, vec!["file.txt"]);
     }
 }
