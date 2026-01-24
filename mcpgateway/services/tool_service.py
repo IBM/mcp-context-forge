@@ -2306,6 +2306,7 @@ class ToolService:
 
         Raises:
             ToolNotFoundError: If the tool is not found.
+            ToolLockConflictError: If the tool row is locked by another transaction.
             ToolError: For other errors.
             PermissionError: If user doesn't own the agent.
 

@@ -1403,6 +1403,7 @@ class ServerService:
 
         Raises:
             ServerNotFoundError: If the server is not found.
+            ServerLockConflictError: If the server row is locked by another transaction.
             ServerError: For other errors.
             PermissionError: If user doesn't own the agent.
 
