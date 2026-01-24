@@ -207,6 +207,9 @@ class TestRBACProxyAuthentication:
             assert result["email"] == "proxy-user"
             assert result["auth_method"] == "proxy"
             assert result["is_admin"] is False
+            # Verify plugin context fields are included for cross-hook sharing
+            assert "plugin_context_table" in result
+            assert "plugin_global_context" in result
 
     @pytest.mark.asyncio
     async def test_rbac_proxy_auth_without_header(self, mock_settings, mock_request, mock_db):
@@ -251,6 +254,23 @@ class TestRBACProxyAuthentication:
             result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
             assert result["email"] == mock_settings.platform_admin_email
             assert result["auth_method"] == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_rbac_proxy_auth_preserves_plugin_context(self, mock_settings, mock_request, mock_db):
+        """Test RBAC middleware preserves plugin context for cross-hook sharing."""
+        # First-Party
+        from mcpgateway.middleware import rbac
+
+        mock_request.headers = {"X-Authenticated-User": "proxy-user"}
+        # Simulate plugin context set by HttpAuthMiddleware
+        mock_request.state.plugin_context_table = {"test_plugin": {"key": "value"}}
+        mock_request.state.plugin_global_context = Mock()
+
+        with patch.object(rbac, "settings", mock_settings):
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            # Verify plugin contexts are passed through for HTTP_AUTH_CHECK_PERMISSION hooks
+            assert result["plugin_context_table"] == {"test_plugin": {"key": "value"}}
+            assert result["plugin_global_context"] is not None
 
 
 class TestWebSocketAuthentication:

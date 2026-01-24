@@ -112,6 +112,11 @@ async def get_current_user_with_permissions(
     """
     # Check for proxy authentication first (if MCP client auth is disabled)
     if not settings.mcp_client_auth_enabled:
+        # Read plugin context from request.state for cross-hook context sharing
+        # (set by HttpAuthMiddleware for passing contexts between different hook types)
+        plugin_context_table = getattr(request.state, "plugin_context_table", None)
+        plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
         if settings.trust_proxy_auth:
             # Extract user from proxy header
             proxy_user = request.headers.get(settings.proxy_user_header)
@@ -126,8 +131,12 @@ async def get_current_user_with_permissions(
                     "auth_method": "proxy",
                     "request_id": getattr(request.state, "request_id", None),
                     "team_id": getattr(request.state, "team_id", None),
+                    "plugin_context_table": plugin_context_table,
+                    "plugin_global_context": plugin_global_context,
                 }
             # If no proxy header but proxy auth is trusted, treat as anonymous
+            # Note: auth_required is not checked here - when using proxy auth,
+            # it's the proxy's responsibility to enforce authentication
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",
@@ -138,6 +147,8 @@ async def get_current_user_with_permissions(
                 "auth_method": "anonymous",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
+                "plugin_context_table": plugin_context_table,
+                "plugin_global_context": plugin_global_context,
             }
         # Warning: MCP auth disabled without proxy trust - security risk!
         # This case is already warned about in config validation
@@ -151,6 +162,8 @@ async def get_current_user_with_permissions(
             "auth_method": "anonymous",
             "request_id": getattr(request.state, "request_id", None),
             "team_id": getattr(request.state, "team_id", None),
+            "plugin_context_table": plugin_context_table,
+            "plugin_global_context": plugin_global_context,
         }
 
     # Standard JWT authentication flow
