@@ -229,11 +229,15 @@ Tokens can be scoped to specific teams using the `teams` JWT claim:
 
 Server-scoped tokens are restricted to specific MCP servers and cannot access admin endpoints:
 
+!!! danger "CLI Token Security Warning"
+    The examples below use CLI token generation for demonstration. The CLI bypasses all security validations (team membership, permission containment, audit logging). **For production**, use the `/tokens` API endpoint which enforces proper security controls.
+
 ```bash
-# Generate server-scoped token (example)
+# Generate server-scoped token (DEV/TEST ONLY)
 python3 -m mcpgateway.utils.create_jwt_token \
   --username user@example.com \
-  --scopes '{"server_id": "my-specific-server"}'
+  --scopes '{"server_id": "my-specific-server"}' \
+  --secret my-test-key
 ```
 
 **Security Features:**
@@ -247,10 +251,11 @@ python3 -m mcpgateway.utils.create_jwt_token \
 Tokens can be restricted to specific permission sets:
 
 ```bash
-# Generate permission-scoped token
+# Generate permission-scoped token (DEV/TEST ONLY)
 python3 -m mcpgateway.utils.create_jwt_token \
   --username user@example.com \
-  --scopes '{"permissions": ["tools.read", "resources.read"]}'
+  --scopes '{"permissions": ["tools.read", "resources.read"]}' \
+  --secret my-test-key
 ```
 
 **Canonical Permissions Used:**

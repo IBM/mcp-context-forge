@@ -180,6 +180,7 @@ BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
   mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
 
 # 3️⃣  Generate a bearer token & smoke-test the API
+# Note: CLI token generation is for dev/testing only. For production, use /tokens API.
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
     --username admin@example.com --exp 10080 --secret my-test-key)
 
