@@ -57,7 +57,7 @@ dev = [
 docs = [
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.1",
-    "mkdocstrings[python]>=1.0.0",
+    "mkdocstrings[python]>=1.0.1",
 ]
 benchmark = [
     "locust>=2.43.1",
@@ -68,8 +68,8 @@ anthropic = [
     "anthropic>=0.76.0",
 ]
 aws = [
-    "boto3>=1.42.30",
-    "botocore>=1.42.30",
+    "boto3>=1.42.34",
+    "botocore>=1.42.34",
 ]
 ollama = [
     "aiohttp>=3.13.3",
@@ -88,8 +88,8 @@ rest = [
 all = [
     "aiohttp>=3.13.3",
     "anthropic>=0.76.0",
-    "boto3>=1.42.30",
-    "botocore>=1.42.30",
+    "boto3>=1.42.34",
+    "botocore>=1.42.34",
     "fastapi>=0.128.0",
     "google-generativeai>=0.8.6",
     "ibm-watsonx-ai>=1.5.0",
