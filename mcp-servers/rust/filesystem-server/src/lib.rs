@@ -23,7 +23,7 @@ pub fn init_tracing() {
 
 pub async fn build_router(roots: Vec<String>) -> Result<axum::Router> {
     let sandbox = Arc::new(Sandbox::new(roots).await.context("Could not add roots")?);
-
+    let processed_roots = &sandbox.get_roots();
     let ctx = Arc::new(AppContext { sandbox });
 
     let service = transport::streamable_http_server::StreamableHttpService::new(
@@ -34,6 +34,23 @@ pub async fn build_router(roots: Vec<String>) -> Result<axum::Router> {
         transport::streamable_http_server::session::local::LocalSessionManager::default().into(),
         Default::default(),
     );
-
+    print_startup_banner(processed_roots);
     Ok(axum::Router::new().nest_service("/mcp", service))
+}
+
+pub fn print_startup_banner(roots: &Vec<String>) {
+    tracing::info!(
+"
+----------- MCP SERVER -----------
+  App        :  {}
+  Version    :  {}
+  Roots      :  {:?}
+  Transport  :  Streamable-HTTP
+  Listening  :  http://{}/mcp
+",
+        APP_NAME,
+        APP_VERSION,
+        roots,
+        DEFAULT_BIND_ADDRESS,
+    );
 }
