@@ -128,8 +128,8 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
-from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
+from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptService
+from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
@@ -3618,6 +3618,8 @@ async def set_resource_state(
         raise HTTPException(status_code=403, detail=str(e))
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ResourceLockConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -4077,6 +4079,8 @@ async def set_prompt_state(
         raise HTTPException(status_code=403, detail=str(e))
     except PromptNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except PromptLockConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

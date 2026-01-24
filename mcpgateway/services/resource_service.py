@@ -40,7 +40,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -141,6 +141,15 @@ class ResourceURIConflictError(ResourceError):
 
 class ResourceValidationError(ResourceError):
     """Raised when resource validation fails."""
+
+
+class ResourceLockConflictError(ResourceError):
+    """Raised when a resource row is locked by another transaction.
+
+    Raises:
+        ResourceLockConflictError: When attempting to modify a resource that is
+            currently locked by another concurrent request.
+    """
 
 
 class ResourceService:
@@ -2300,9 +2309,10 @@ class ResourceService:
             The updated ResourceRead object
 
         Raises:
-            ResourceNotFoundError: If the resource is not found
-            ResourceError: For other errors
-            PermissionError: If user doesn't own the agent.
+            ResourceNotFoundError: If the resource is not found.
+            ResourceLockConflictError: If the resource is locked by another transaction.
+            ResourceError: For other errors.
+            PermissionError: If user doesn't own the resource.
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -2323,7 +2333,13 @@ class ResourceService:
             'resource_read'
         """
         try:
-            resource = get_for_update(db, DbResource, resource_id)
+            # Use nowait=True to fail fast if row is locked, preventing lock contention under high load
+            try:
+                resource = get_for_update(db, DbResource, resource_id, nowait=True)
+            except OperationalError as lock_err:
+                # Row is locked by another transaction - fail fast with 409
+                db.rollback()
+                raise ResourceLockConflictError(f"Resource {resource_id} is currently being modified by another request") from lock_err
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
@@ -2406,6 +2422,12 @@ class ResourceService:
                 db=db,
             )
             raise e
+        except ResourceLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response
+            raise
+        except ResourceNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            raise
         except Exception as e:
             db.rollback()
 
