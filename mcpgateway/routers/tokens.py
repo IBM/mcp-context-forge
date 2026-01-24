@@ -43,6 +43,7 @@ def _require_interactive_session(current_user: dict) -> None:
 
     BLOCKED:
     - "api_token": Explicitly blocked
+    - "anonymous": Unauthenticated/missing proxy header
     - None: Fail-secure - auth flow didn't set auth_method (code bug)
 
     Args:
@@ -68,7 +69,14 @@ def _require_interactive_session(current_user: dict) -> None:
             detail="Token management requires interactive session (web login). " "API tokens cannot create, modify, or revoke tokens.",
         )
 
-    # All other auth_methods (jwt, oauth, oidc, saml, disabled, etc.) are allowed
+    # Block anonymous users (missing proxy header or unauthenticated)
+    if auth_method == "anonymous":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token management requires interactive session (web login). " "Anonymous access is not permitted.",
+        )
+
+    # All other auth_methods (jwt, oauth, oidc, saml, proxy, disabled, etc.) are allowed
 
 
 async def _get_caller_permissions(
