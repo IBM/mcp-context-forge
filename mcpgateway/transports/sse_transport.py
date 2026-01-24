@@ -428,17 +428,36 @@ class SSETransport(Transport):
             yield_timestamps: deque = deque(maxlen=settings.sse_rapid_yield_max + 1) if settings.sse_rapid_yield_max > 0 else None
             rapid_yield_window_sec = settings.sse_rapid_yield_window_ms / 1000.0
             last_yield_time = time.monotonic()
+            consecutive_rapid_yields = 0  # Track consecutive fast yields for simpler detection
 
             def check_rapid_yield() -> bool:
-                """Check if yields are happening too fast, return True if should disconnect."""
-                nonlocal last_yield_time
-                if yield_timestamps is None:
-                    return False
+                """Check if yields are happening too fast.
+
+                Returns:
+                    True if spin loop detected and should disconnect, False otherwise.
+                """
+                nonlocal last_yield_time, consecutive_rapid_yields
                 now = time.monotonic()
-                yield_timestamps.append(now)
-                # Also check time since last yield - if < 10ms, that's suspicious
                 time_since_last = now - last_yield_time
                 last_yield_time = now
+
+                # Track consecutive rapid yields (< 100ms apart)
+                # This catches spin loops even without full deque analysis
+                if time_since_last < 0.1:
+                    consecutive_rapid_yields += 1
+                    if consecutive_rapid_yields >= 10:  # 10 consecutive fast yields = definite spin
+                        logger.error(
+                            "SSE spin loop detected (%d consecutive rapid yields, last interval %.3fs), client disconnected: %s",
+                            consecutive_rapid_yields, time_since_last, self._session_id
+                        )
+                        return True
+                else:
+                    consecutive_rapid_yields = 0  # Reset on normal-speed yield
+
+                # Also use deque-based detection for more nuanced analysis
+                if yield_timestamps is None:
+                    return False
+                yield_timestamps.append(now)
                 if time_since_last < 0.01:  # Less than 10ms between yields is very fast
                     if len(yield_timestamps) > settings.sse_rapid_yield_max:
                         oldest = yield_timestamps[0]
@@ -487,9 +506,9 @@ class SSETransport(Transport):
                             if check_rapid_yield():
                                 self._client_gone.set()
                                 break
-                            # We waited for the timeout, so reset rapid yield detection
-                            if yield_timestamps is not None:
-                                yield_timestamps.clear()
+                            # Note: We don't clear yield_timestamps here. The deque has maxlen
+                            # which automatically drops old entries. Clearing would prevent
+                            # detection of spin loops where yields happen faster than expected.
 
                     except GeneratorExit:
                         # Client disconnected - generator is being closed
@@ -518,6 +537,11 @@ class SSETransport(Transport):
                 logger.info("SSE event generator completed: %s", self._session_id)
                 self._client_gone.set()  # Always set client_gone on exit to clean up
 
+        async def on_client_close(_scope: dict) -> None:
+            """Handle client close event from sse_starlette."""
+            logger.info("SSE client close handler called: %s", self._session_id)
+            self._client_gone.set()
+
         return EventSourceResponse(
             event_generator(),
             status_code=200,
@@ -532,6 +556,9 @@ class SSETransport(Transport):
             # connection not yet closed). Does NOT affect MCP server response times.
             # Set to 0 to disable. Default matches keepalive interval.
             send_timeout=settings.sse_send_timeout if settings.sse_send_timeout > 0 else None,
+            # Callback when client closes - helps detect disconnects that ASGI server
+            # may not properly propagate via request.is_disconnected()
+            client_close_handler_callable=on_client_close,
         )
 
     async def _client_disconnected(self, _request: Request) -> bool:

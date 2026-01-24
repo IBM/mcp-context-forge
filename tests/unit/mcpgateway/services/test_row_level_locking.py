@@ -247,7 +247,7 @@ class TestResourceServiceLocking:
 
     @pytest.mark.asyncio
     async def test_set_resource_state_uses_for_update(self):
-        """Verify resource state change uses get_for_update."""
+        """Verify resource state change uses get_for_update with nowait=True."""
         service = ResourceService()
         db = MagicMock(spec=Session)
 
@@ -263,7 +263,7 @@ class TestResourceServiceLocking:
                     except Exception:
                         pass
 
-            mock_get.assert_called_once_with(db, Resource, 1)
+            mock_get.assert_called_once_with(db, Resource, 1, nowait=True)
 
     @pytest.mark.asyncio
     async def test_update_resource_uses_for_update(self):
@@ -294,7 +294,7 @@ class TestPromptServiceLocking:
 
     @pytest.mark.asyncio
     async def test_set_prompt_state_uses_for_update(self):
-        """Verify prompt state change uses get_for_update."""
+        """Verify prompt state change uses get_for_update with nowait=True."""
         service = PromptService()
         db = MagicMock(spec=Session)
 
@@ -310,7 +310,7 @@ class TestPromptServiceLocking:
                     except Exception:
                         pass
 
-            mock_get.assert_called_once_with(db, Prompt, 1)
+            mock_get.assert_called_once_with(db, Prompt, 1, nowait=True)
 
     @pytest.mark.asyncio
     async def test_update_prompt_uses_for_update(self):
