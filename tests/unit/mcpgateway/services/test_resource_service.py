@@ -1079,6 +1079,97 @@ class TestResourceTemplates:
             assert len(result) == 1
             MockTemplate.model_validate.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_list_resource_templates_with_visibility_filter(self, resource_service, mock_db):
+        """Test listing resource templates with visibility filter."""
+        mock_template_resource = MagicMock()
+        mock_template_resource.uri_template = "test://template/{param}"
+        mock_template_resource.visibility = "public"
+
+        mock_template = MagicMock()
+        mock_template.uri_template = "test://template/{param}"
+        mock_template.visibility = "public"
+
+        with patch("mcpgateway.services.resource_service.ResourceTemplate") as MockTemplate:
+            MockTemplate.model_validate.return_value = mock_template
+
+            mock_scalars = MagicMock()
+            mock_scalars.all.return_value = [mock_template_resource]
+            mock_execute_result = MagicMock()
+            mock_execute_result.scalars.return_value = mock_scalars
+            mock_db.execute.return_value = mock_execute_result
+
+            result = await resource_service.list_resource_templates(
+                mock_db, visibility="public"
+            )
+
+            assert len(result) == 1
+            # Verify the query was executed with the visibility filter
+            mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_resource_templates_with_tags_filter(self, resource_service, mock_db):
+        """Test listing resource templates with tags filter."""
+        from sqlalchemy import text
+
+        mock_template_resource = MagicMock()
+        mock_template_resource.uri_template = "test://template/{param}"
+        mock_template_resource.tags = [{"id": "api"}]
+
+        mock_template = MagicMock()
+        mock_template.uri_template = "test://template/{param}"
+
+        with patch("mcpgateway.services.resource_service.ResourceTemplate") as MockTemplate:
+            MockTemplate.model_validate.return_value = mock_template
+
+            mock_scalars = MagicMock()
+            mock_scalars.all.return_value = [mock_template_resource]
+            mock_execute_result = MagicMock()
+            mock_execute_result.scalars.return_value = mock_scalars
+            mock_db.execute.return_value = mock_execute_result
+
+            with patch("mcpgateway.services.resource_service.json_contains_tag_expr") as mock_json_contains:
+                # Return a valid SQLAlchemy text expression
+                mock_json_contains.return_value = text("1=1")
+
+                result = await resource_service.list_resource_templates(
+                    mock_db, tags=["api", "data"]
+                )
+
+                assert len(result) == 1
+                # Verify json_contains_tag_expr was called with the tags
+                mock_json_contains.assert_called_once()
+                call_args = mock_json_contains.call_args
+                assert call_args[0][2] == ["api", "data"]  # tags parameter
+                assert call_args[1]["match_any"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_resource_templates_with_include_inactive(self, resource_service, mock_db):
+        """Test listing resource templates with include_inactive=True."""
+        mock_template_resource = MagicMock()
+        mock_template_resource.uri_template = "test://template/{param}"
+        mock_template_resource.enabled = False
+
+        mock_template = MagicMock()
+        mock_template.uri_template = "test://template/{param}"
+
+        with patch("mcpgateway.services.resource_service.ResourceTemplate") as MockTemplate:
+            MockTemplate.model_validate.return_value = mock_template
+
+            mock_scalars = MagicMock()
+            mock_scalars.all.return_value = [mock_template_resource]
+            mock_execute_result = MagicMock()
+            mock_execute_result.scalars.return_value = mock_scalars
+            mock_db.execute.return_value = mock_execute_result
+
+            result = await resource_service.list_resource_templates(
+                mock_db, include_inactive=True
+            )
+
+            assert len(result) == 1
+            # The query should have been executed without the enabled filter
+            mock_db.execute.assert_called_once()
+
     def test_uri_matches_template(self):
         from mcpgateway.services import ResourceService
 
