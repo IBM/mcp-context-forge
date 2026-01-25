@@ -503,6 +503,11 @@
               "description": "Database pool recycle time",
               "default": "3600"
             },
+            "DB_SQLITE_BUSY_TIMEOUT": {
+              "type": "string",
+              "description": "SQLite lock wait timeout in milliseconds",
+              "default": "5000"
+            },
             "CACHE_TYPE": {
               "type": "string",
               "description": "Cache backend type",

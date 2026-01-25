@@ -1396,6 +1396,9 @@ class Settings(BaseSettings):
         description="Pre-ping connections: auto, true, or false",
     )
 
+    # SQLite busy timeout: Maximum time (ms) SQLite will wait to acquire a database lock before returning SQLITE_BUSY.
+    db_sqlite_busy_timeout: int = Field(default=5000, ge=1000, le=60000, description="SQLite busy timeout in milliseconds (default: 5000ms)")
+
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
     redis_url: Optional[str] = "redis://localhost:6379/0"
