@@ -937,6 +937,12 @@ class Permissions:
     RESOURCES_DELETE = "resources.delete"
     RESOURCES_SHARE = "resources.share"
 
+    # Gateway permissions
+    GATEWAYS_CREATE = "gateways.create"
+    GATEWAYS_READ = "gateways.read"
+    GATEWAYS_UPDATE = "gateways.update"
+    GATEWAYS_DELETE = "gateways.delete"
+
     # Prompt permissions
     PROMPTS_CREATE = "prompts.create"
     PROMPTS_READ = "prompts.read"
