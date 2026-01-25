@@ -583,13 +583,14 @@ class TokenScopingMiddleware:
                     logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
-                # PRIVATE SERVERS: Check if server belongs to token's teams
+                # PRIVATE SERVERS: Owner-only access (per RBAC doc)
                 if server_visibility == "private":
-                    if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private server {resource_id} in token's team {server.team_id}")
+                    server_owner = getattr(server, "owner_email", None)
+                    if server_owner and server_owner == _user_email:
+                        logger.debug(f"Access granted: Private server {resource_id} owned by {_user_email}")
                         return True
 
-                    logger.warning(f"Access denied: Server {resource_id} is private to team '{server.team_id}'")
+                    logger.warning(f"Access denied: Server {resource_id} is private, owner is '{server_owner}', requester is '{_user_email}'")
                     return False
 
                 # Unknown visibility - deny by default
@@ -628,14 +629,14 @@ class TokenScopingMiddleware:
                     logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
-                # PRIVATE TOOLS: Check if tool is in token's team context
+                # PRIVATE TOOLS: Owner-only access (per RBAC doc)
                 if tool_visibility in ["private", "user"]:
-                    tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private tool {resource_id} in token's team {tool_team_id}")
+                    tool_owner = getattr(tool, "owner_email", None)
+                    if tool_owner and tool_owner == _user_email:
+                        logger.debug(f"Access granted: Private tool {resource_id} owned by {_user_email}")
                         return True
 
-                    logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility} and not in token's teams")
+                    logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility}, owner is '{tool_owner}', requester is '{_user_email}'")
                     return False
 
                 # Unknown visibility - deny by default
@@ -674,14 +675,14 @@ class TokenScopingMiddleware:
                     logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
-                # PRIVATE RESOURCES: Check if resource is in token's team context
+                # PRIVATE RESOURCES: Owner-only access (per RBAC doc)
                 if resource_visibility in ["private", "user"]:
-                    resource_team_id = getattr(resource, "team_id", None)
-                    if resource_team_id and resource_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private resource {resource_id} in token's team {resource_team_id}")
+                    resource_owner = getattr(resource, "owner_email", None)
+                    if resource_owner and resource_owner == _user_email:
+                        logger.debug(f"Access granted: Private resource {resource_id} owned by {_user_email}")
                         return True
 
-                    logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility} and not in token's teams")
+                    logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility}, owner is '{resource_owner}', requester is '{_user_email}'")
                     return False
 
                 # Unknown visibility - deny by default
@@ -720,14 +721,14 @@ class TokenScopingMiddleware:
                     logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
-                # PRIVATE PROMPTS: Check if prompt is in token's team context
+                # PRIVATE PROMPTS: Owner-only access (per RBAC doc)
                 if prompt_visibility in ["private", "user"]:
-                    prompt_team_id = getattr(prompt, "team_id", None)
-                    if prompt_team_id and prompt_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private prompt {resource_id} in token's team {prompt_team_id}")
+                    prompt_owner = getattr(prompt, "owner_email", None)
+                    if prompt_owner and prompt_owner == _user_email:
+                        logger.debug(f"Access granted: Private prompt {resource_id} owned by {_user_email}")
                         return True
 
-                    logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility} and not in token's teams")
+                    logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility}, owner is '{prompt_owner}', requester is '{_user_email}'")
                     return False
 
                 # Unknown visibility - deny by default
