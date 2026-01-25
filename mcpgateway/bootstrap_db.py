@@ -315,14 +315,14 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         created_roles.append(existing_role)
                         continue
 
-                    # Create the role
+                    # Create the role (description and is_system_role are optional)
                     role = await role_service.create_role(
                         name=str(role_def["name"]),
-                        description=str(role_def["description"]),
+                        description=str(role_def.get("description", "")),
                         scope=str(role_def["scope"]),
                         permissions=cast(list[str], role_def["permissions"]),
                         created_by=settings.platform_admin_email,
-                        is_system_role=bool(role_def["is_system_role"]),
+                        is_system_role=bool(role_def.get("is_system_role", False)),
                     )
                     created_roles.append(role)
                     logger.info(f"Created system role: {role.name}")

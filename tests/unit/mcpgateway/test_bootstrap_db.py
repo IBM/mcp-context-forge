@@ -563,6 +563,55 @@ class TestBootstrapDefaultRoles:
                             assert mock_role_service.create_role.call_count >= 7
 
     @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_minimal_valid_role(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test that a role with only required fields (no description/is_system_role) is created successfully."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a role with ONLY required fields - no description or is_system_role
+        minimal_roles = [
+            {
+                "name": "minimal_role",
+                "scope": "team",
+                "permissions": ["tools.read"],
+            }
+        ]
+        roles_file = tmp_path / "minimal_roles.json"
+        roles_file.write_text(json.dumps(minimal_roles))
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should successfully add the minimal role
+                            mock_logger.info.assert_any_call("Added 1 additional roles to default roles in bootstrap db")
+                            # Should create 4 default + 1 minimal = 5 roles
+                            assert mock_role_service.create_role.call_count >= 5
+                            # Verify create_role was called with default values for optional fields
+                            create_calls = mock_role_service.create_role.call_args_list
+                            minimal_call = [c for c in create_calls if c.kwargs.get("name") == "minimal_role"]
+                            assert len(minimal_call) == 1
+                            assert minimal_call[0].kwargs["description"] == ""
+                            assert minimal_call[0].kwargs["is_system_role"] is False
+
+    @pytest.mark.asyncio
     async def test_bootstrap_roles_with_dict_instead_of_list(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
         """Test handling when JSON is a dict instead of a list."""
         mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
