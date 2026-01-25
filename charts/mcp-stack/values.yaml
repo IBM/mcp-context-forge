@@ -638,6 +638,7 @@ mcpContextForge:
     DCR_TOKEN_ENDPOINT_AUTH_METHOD: "client_secret_basic" # token endpoint auth method for DCR
     DCR_METADATA_CACHE_TTL: "3600"         # AS metadata cache TTL in seconds (RFC 8414 discovery)
     DCR_CLIENT_NAME_TEMPLATE: "MCP Gateway ({gateway_name})" # template for client_name in DCR requests
+    DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED: "false" # request refresh_token when AS omits grant_types_supported
     OAUTH_DISCOVERY_ENABLED: "true"        # enable AS metadata discovery (RFC 8414)
     OAUTH_PREFERRED_CODE_CHALLENGE_METHOD: "S256" # PKCE code challenge method (S256 or plain)
 

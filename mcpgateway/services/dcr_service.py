@@ -74,18 +74,26 @@ class DcrService:
         Raises:
             DcrError: If metadata cannot be discovered
         """
-        # Check cache first
-        if issuer in _metadata_cache:
-            cached_entry = _metadata_cache[issuer]
+        # Normalize issuer URL by removing trailing slash for consistency.
+        # Per RFC 8414 Section 3.1, any terminating "/" MUST be removed before
+        # inserting "/.well-known/" and the well-known URI suffix.
+        # This also works around MCP Python SDK issue #1919 where Pydantic's
+        # AnyHttpUrl adds trailing slashes to bare hostnames.
+        # See: https://github.com/modelcontextprotocol/python-sdk/issues/1919
+        normalized_issuer = issuer.rstrip("/")
+
+        # Check cache first (using normalized issuer as key for consistency)
+        if normalized_issuer in _metadata_cache:
+            cached_entry = _metadata_cache[normalized_issuer]
             cached_at = cached_entry["cached_at"]
             cache_age = (datetime.now(timezone.utc) - cached_at).total_seconds()
 
             if cache_age < self.settings.dcr_metadata_cache_ttl:
-                logger.debug(f"Using cached AS metadata for {issuer}")
+                logger.debug(f"Using cached AS metadata for {normalized_issuer}")
                 return cached_entry["metadata"]
 
         # Try RFC 8414 path first
-        rfc8414_url = f"{issuer}/.well-known/oauth-authorization-server"
+        rfc8414_url = f"{normalized_issuer}/.well-known/oauth-authorization-server"
 
         try:
             client = await self._get_client()
@@ -93,20 +101,21 @@ class DcrService:
             if response.status_code == 200:
                 metadata = response.json()
 
-                # Validate issuer matches
-                if metadata.get("issuer") != issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
+                # Validate issuer matches (normalize metadata issuer for comparison)
+                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                if metadata_issuer != normalized_issuer:
+                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
                 # Cache the metadata
-                _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info(f"Discovered AS metadata for {issuer} via RFC 8414")
+                logger.info(f"Discovered AS metadata for {normalized_issuer} via RFC 8414")
                 return metadata
         except httpx.HTTPError as e:
-            logger.debug(f"RFC 8414 discovery failed for {issuer}: {e}, trying OIDC fallback")
+            logger.debug(f"RFC 8414 discovery failed for {normalized_issuer}: {e}, trying OIDC fallback")
 
         # Try OIDC discovery fallback
-        oidc_url = f"{issuer}/.well-known/openid-configuration"
+        oidc_url = f"{normalized_issuer}/.well-known/openid-configuration"
 
         try:
             client = await self._get_client()
@@ -114,19 +123,20 @@ class DcrService:
             if response.status_code == 200:
                 metadata = response.json()
 
-                # Validate issuer matches
-                if metadata.get("issuer") != issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
+                # Validate issuer matches (normalize metadata issuer for comparison)
+                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                if metadata_issuer != normalized_issuer:
+                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
                 # Cache the metadata
-                _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info(f"Discovered AS metadata for {issuer} via OIDC discovery")
+                logger.info(f"Discovered AS metadata for {normalized_issuer} via OIDC discovery")
                 return metadata
 
-            raise DcrError(f"AS metadata not found for {issuer} (status: {response.status_code})")
+            raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
         except httpx.HTTPError as e:
-            raise DcrError(f"Failed to discover AS metadata for {issuer}: {e}")
+            raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {e}")
 
     async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
@@ -145,25 +155,43 @@ class DcrService:
         Raises:
             DcrError: If registration fails
         """
-        # Validate issuer if allowlist is configured
+        # Normalize issuer URL for consistent storage and lookup
+        normalized_issuer = issuer.rstrip("/")
+
+        # Validate issuer if allowlist is configured (normalize both for comparison)
         if self.settings.dcr_allowed_issuers:
-            if issuer not in self.settings.dcr_allowed_issuers:
+            normalized_allowlist = [i.rstrip("/") for i in self.settings.dcr_allowed_issuers]
+            if normalized_issuer not in normalized_allowlist:
                 raise DcrError(f"Issuer {issuer} is not in allowed issuers list")
 
         # Discover AS metadata
-        metadata = await self.discover_as_metadata(issuer)
+        metadata = await self.discover_as_metadata(normalized_issuer)
 
         registration_endpoint = metadata.get("registration_endpoint")
         if not registration_endpoint:
-            raise DcrError(f"AS {issuer} does not support Dynamic Client Registration (no registration_endpoint)")
+            raise DcrError(f"AS {normalized_issuer} does not support Dynamic Client Registration (no registration_endpoint)")
 
         # Build registration request (RFC 7591)
         client_name = self.settings.dcr_client_name_template.replace("{gateway_name}", gateway_name)
 
+        # Determine grant types based on AS metadata
+        # Use `or []` to handle both missing key AND explicit null value (prevents TypeError)
+        grant_types_supported = metadata.get("grant_types_supported") or []
+        requested_grant_types = ["authorization_code"]
+
+        # Only request refresh_token if AS explicitly supports it, or if permissive mode is enabled
+        if "refresh_token" in grant_types_supported:
+            requested_grant_types.append("refresh_token")
+        elif self.settings.dcr_request_refresh_token_when_unsupported and not grant_types_supported:
+            # Permissive mode: request refresh_token when AS doesn't advertise grant_types_supported
+            # This is useful for AS servers that support refresh tokens but don't advertise it
+            requested_grant_types.append("refresh_token")
+            logger.debug(f"Requesting refresh_token for {normalized_issuer} (permissive mode, AS omits grant_types_supported)")
+
         registration_request = {
             "client_name": client_name,
             "redirect_uris": [redirect_uri],
-            "grant_types": ["authorization_code"],
+            "grant_types": requested_grant_types,
             "response_types": ["code"],
             "token_endpoint_auth_method": self.settings.dcr_token_endpoint_auth_method,
             "scope": " ".join(scopes),
@@ -182,7 +210,7 @@ class DcrService:
                 error_desc = error_data.get("error_description", str(error_data))
                 raise DcrError(f"Client registration failed: {error_msg} - {error_desc}")
         except httpx.HTTPError as e:
-            raise DcrError(f"Failed to register client with {issuer}: {e}")
+            raise DcrError(f"Failed to register client with {normalized_issuer}: {e}")
 
         # Encrypt secrets
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
@@ -193,14 +221,15 @@ class DcrService:
         registration_access_token = registration_response.get("registration_access_token")
         registration_access_token_encrypted = encryption.encrypt_secret(registration_access_token) if registration_access_token else None
 
-        # Create database record
+        # Create database record (use normalized issuer for consistent lookup)
+        # Fall back to requested grant_types if AS response omits them
         registered_client = RegisteredOAuthClient(
             gateway_id=gateway_id,
-            issuer=issuer,
+            issuer=normalized_issuer,
             client_id=registration_response["client_id"],
             client_secret_encrypted=client_secret_encrypted,
             redirect_uris=orjson.dumps(registration_response.get("redirect_uris", [redirect_uri])).decode(),
-            grant_types=orjson.dumps(registration_response.get("grant_types", ["authorization_code"])).decode(),
+            grant_types=orjson.dumps(registration_response.get("grant_types", requested_grant_types)).decode(),
             response_types=orjson.dumps(registration_response.get("response_types", ["code"])).decode(),
             scope=registration_response.get("scope", " ".join(scopes)),
             token_endpoint_auth_method=registration_response.get("token_endpoint_auth_method", self.settings.dcr_token_endpoint_auth_method),
@@ -215,7 +244,7 @@ class DcrService:
         db.commit()
         db.refresh(registered_client)
 
-        logger.info(f"Successfully registered client {registered_client.client_id} with {issuer} for gateway {gateway_id}")
+        logger.info(f"Successfully registered client {registered_client.client_id} with {normalized_issuer} for gateway {gateway_id}")
 
         return registered_client
 
@@ -236,26 +265,31 @@ class DcrService:
         Raises:
             DcrError: If client not found and auto-register is disabled
         """
-        # Try to find existing client
+        # Normalize issuer for consistent lookup (matches how register_client stores it)
+        normalized_issuer = issuer.rstrip("/")
+
+        # Try to find existing client using normalized issuer
         existing_client = (
             db.query(RegisteredOAuthClient)
-            .filter(RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == issuer, RegisteredOAuthClient.is_active.is_(True))  # pylint: disable=singleton-comparison
+            .filter(
+                RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == normalized_issuer, RegisteredOAuthClient.is_active.is_(True)
+            )  # pylint: disable=singleton-comparison
             .first()
         )
 
         if existing_client:
-            logger.debug(f"Found existing registered client for gateway {gateway_id} and issuer {issuer}")
+            logger.debug(f"Found existing registered client for gateway {gateway_id} and issuer {normalized_issuer}")
             return existing_client
 
         # No existing client, check if auto-register is enabled
         if not self.settings.dcr_auto_register_on_missing_credentials:
             raise DcrError(
-                f"No registered client found for gateway {gateway_id} and issuer {issuer}. Auto-register is disabled. Set MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true to enable."
+                f"No registered client found for gateway {gateway_id} and issuer {normalized_issuer}. Auto-register is disabled. Set MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true to enable."
             )
 
-        # Auto-register
-        logger.info(f"No existing client found for gateway {gateway_id}, registering new client with {issuer}")
-        return await self.register_client(gateway_id, gateway_name, issuer, redirect_uri, scopes, db)
+        # Auto-register (pass normalized issuer for consistent storage)
+        logger.info(f"No existing client found for gateway {gateway_id}, registering new client with {normalized_issuer}")
+        return await self.register_client(gateway_id, gateway_name, normalized_issuer, redirect_uri, scopes, db)
 
     async def update_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> RegisteredOAuthClient:
         """Update existing client registration (RFC 7591 section 4.2).
