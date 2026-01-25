@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """normalize_registered_oauth_client_issuer
 
 Revision ID: 4e6273136e56
@@ -11,11 +12,12 @@ registrations when the MCP SDK adds trailing slashes via Pydantic's AnyHttpUrl.
 See: https://github.com/modelcontextprotocol/python-sdk/issues/1919
 """
 
+# Standard
 from typing import Sequence, Union
 
+# Third-Party
 from alembic import op
 import sqlalchemy as sa
-
 
 # revision identifiers, used by Alembic.
 revision: str = "4e6273136e56"
@@ -72,4 +74,3 @@ def downgrade() -> None:
     We cannot restore trailing slashes since we don't know which rows originally had them.
     The normalized form is canonical and safe to keep.
     """
-    pass

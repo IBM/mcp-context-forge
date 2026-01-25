@@ -980,11 +980,14 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
-  # emulation may not work properly.
+  # Uses pre-built image by default. On ARM64, build locally:
+  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ghcr.io/ibm/fast-time-server:latest
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
+    build:
+      context: ./mcp-servers/go/fast-time-server
+      dockerfile: Dockerfile
     restart: unless-stopped
     networks: [mcpnet]
     ports:
