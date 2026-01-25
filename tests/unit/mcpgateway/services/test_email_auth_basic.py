@@ -359,6 +359,9 @@ class TestEmailAuthServiceUserManagement:
         mock_service = MagicMock(spec=Argon2PasswordService)
         mock_service.hash_password.return_value = "hashed_password_123"
         mock_service.verify_password.return_value = True
+        # Add async versions for use with asyncio.to_thread
+        mock_service.hash_password_async = AsyncMock(return_value="hashed_password_123")
+        mock_service.verify_password_async = AsyncMock(return_value=True)
         return mock_service
 
     @pytest.fixture
@@ -414,8 +417,8 @@ class TestEmailAuthServiceUserManagement:
                 mock_db.commit.assert_called()
                 mock_db.refresh.assert_called()
 
-                # Verify password was hashed
-                mock_password_service.hash_password.assert_called_once_with("SecurePass123")
+                # Verify password was hashed (async version is called via asyncio.to_thread)
+                mock_password_service.hash_password_async.assert_called_once_with("SecurePass123")
 
     @pytest.mark.skip(reason="PersonalTeamService import happens inside method, complex to mock")
     @pytest.mark.asyncio
@@ -602,6 +605,7 @@ class TestEmailAuthServiceUserManagement:
         """Test authentication with wrong password."""
         service.password_service = mock_password_service
         mock_password_service.verify_password.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
@@ -618,6 +622,7 @@ class TestEmailAuthServiceUserManagement:
         """Test account lockout after multiple failed attempts."""
         service.password_service = mock_password_service
         mock_password_service.verify_password.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_user.increment_failed_attempts.return_value = True  # Account gets locked
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
@@ -642,7 +647,9 @@ class TestEmailAuthServiceUserManagement:
 
         # Make verify return True for old password, False for new (different)
         mock_password_service.verify_password.side_effect = [True, False]
+        mock_password_service.verify_password_async = AsyncMock(side_effect=[True, False])
         mock_password_service.hash_password.return_value = "new_hashed_password"
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
 
         result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!", ip_address="192.168.1.1")
 
@@ -661,7 +668,9 @@ class TestEmailAuthServiceUserManagement:
 
         # Make verify return True for old password, False for new (different)
         mock_password_service.verify_password.side_effect = [True, False]
+        mock_password_service.verify_password_async = AsyncMock(side_effect=[True, False])
         mock_password_service.hash_password.return_value = "new_hashed_password"
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
 
         result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!", ip_address="192.168.1.1")
 
@@ -675,6 +684,7 @@ class TestEmailAuthServiceUserManagement:
         """Test password change with incorrect old password."""
         service.password_service = mock_password_service
         mock_password_service.verify_password.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with pytest.raises(AuthenticationError, match="Current password is incorrect"):
@@ -759,7 +769,9 @@ class TestEmailAuthServiceUserManagement:
 
         # Password has changed
         mock_password_service.verify_password.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_password_service.hash_password.return_value = "new_admin_hash"
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_admin_hash")
 
         result = await service.create_platform_admin(
             email="test@example.com",
@@ -1089,6 +1101,7 @@ class TestEmailAuthServiceUserUpdates:
     async def test_update_user_password(self, service, mock_db, mock_user, mock_password_service):
         """Test updating user's password."""
         service.password_service = mock_password_service
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
@@ -1096,7 +1109,7 @@ class TestEmailAuthServiceUserUpdates:
         result = await service.update_user(email="test@example.com", password="NewSecurePass123!")
 
         assert mock_user.password_hash == "new_hashed_password"
-        mock_password_service.hash_password.assert_called_once_with("NewSecurePass123!")
+        mock_password_service.hash_password_async.assert_called_once_with("NewSecurePass123!")
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
