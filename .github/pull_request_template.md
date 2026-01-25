@@ -1,12 +1,50 @@
-# 📝 Pull Request Template Selection
+<!--
+For specialized templates, append to your PR URL:
+  ?template=bug_fix.md   - Bug fixes
+  ?template=feature.md   - New features
+  ?template=docs.md      - Documentation
+  ?template=plugin.md    - New plugins
 
-Thank you for contributing! To help us review your pull request effectively, please select the appropriate template (go to the `Preview` tab and select the appropriate sub-template):
+Example: https://github.com/IBM/mcp-context-forge/compare/main...your-branch?expand=1&template=bug_fix.md
+-->
 
-- **Bug Fix**: [Use the Bug Fix Template](?template=bug_fix.md)
-- **Feature / Enhancement**: [Use the Feature Template](?template=feature.md)
-- **Documentation Update**: [Use the Docs Template](?template=docs.md)
-- **Plugin**: [Use the Plugin Template](?template=plugin.md)
+## 🔗 Related Issue
+Closes #
 
-Alternatively, after opening your pull request, you can choose the appropriate template from the **"Choose a template"** dropdown menu located at the top-right of the description box.
+---
 
-If none of the above templates fit your changes, feel free to provide a clear and concise description of your pull request below.
+## 📝 Summary
+_What does this PR do and why?_
+
+---
+
+## 🏷️ Type of Change
+- [ ] Bug fix
+- [ ] Feature / Enhancement
+- [ ] Documentation
+- [ ] Refactor
+- [ ] Chore (deps, CI, tooling)
+- [ ] Other (describe below)
+
+---
+
+## 🧪 Verification
+
+| Check                     | Command         | Status |
+|---------------------------|-----------------|--------|
+| Lint suite                | `make lint`     |        |
+| Unit tests                | `make test`     |        |
+| Coverage ≥ 90%            | `make coverage` |        |
+
+---
+
+## ✅ Checklist
+- [ ] Code formatted (`make black isort pre-commit`)
+- [ ] Tests added/updated for changes
+- [ ] Documentation updated (if applicable)
+- [ ] No secrets or credentials committed
+
+---
+
+## 📓 Notes (optional)
+_Screenshots, design decisions, or additional context._
