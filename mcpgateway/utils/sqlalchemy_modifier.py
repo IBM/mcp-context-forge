@@ -12,6 +12,7 @@ SQLAlchemy modifiers
 
 # Standard
 from functools import lru_cache
+import re
 from typing import Any, Iterable, List, Union
 import uuid
 
@@ -41,6 +42,22 @@ def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
     return list(values)
 
 
+def _sanitize_col_prefix(col_ref: str) -> str:
+    """
+    Create a valid SQL bind parameter prefix from a column reference.
+
+    Replaces non-alphanumeric characters with underscores to create a safe
+    prefix for bind parameter names.
+
+    Args:
+        col_ref: Column reference like "resources.tags"
+
+    Returns:
+        Sanitized prefix like "resources_tags"
+    """
+    return re.sub(r"[^a-zA-Z0-9]", "_", col_ref)
+
+
 @lru_cache(maxsize=128)
 def _sqlite_tag_any_template(col_ref: str, n: int) -> TextClause:
     """
@@ -51,26 +68,27 @@ def _sqlite_tag_any_template(col_ref: str, n: int) -> TextClause:
     (e.g., {"id": "api"}). It safely guards `json_extract` with
     `CASE WHEN type = 'object'` to avoid malformed JSON errors on string values.
 
-    The generated SQL uses deterministic positional bind parameters
-    (:p0, :p1, ...) so that the same query shape can be reused and cached
-    efficiently by SQLAlchemy and SQLite.
+    The generated SQL uses deterministic positional bind parameters with
+    column-specific prefixes (e.g., :resources_tags_p0, :resources_tags_p1)
+    to avoid collisions when multiple tag filters are used in the same query.
 
     This function returns a SQLAlchemy `text()` object representing only
     the SQL structure. Values must be bound separately using `.bindparams()`.
 
     Args:
         col_ref (str): Fully-qualified column reference (e.g., "resources.tags").
-        n (int): Number of tag values being matched. Determines the number of placeholders (:p0, :p1, ...).
+        n (int): Number of tag values being matched.
 
     Returns:
         sqlalchemy.sql.elements.TextClause:
             A reusable SQL template for matching ANY of the given tags.
     """
+    prefix = _sanitize_col_prefix(col_ref)
     if n == 1:
-        tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :p0 OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :p0)"  # nosec B608
+        tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{prefix}_p0 OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :{prefix}_p0)"  # nosec B608
         sql = tmp_.strip()
     else:
-        placeholders = ",".join(f":p{i}" for i in range(n))
+        placeholders = ",".join(f":{prefix}_p{i}" for i in range(n))
         tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value IN ({placeholders}) OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) IN ({placeholders}))"  # nosec B608
         sql = tmp_.strip()
 
@@ -90,24 +108,25 @@ def _sqlite_tag_all_template(col_ref: str, n: int) -> TextClause:
     (e.g., {"id": "api"}). It safely guards `json_extract` with
     `CASE WHEN type = 'object'` to avoid malformed JSON errors on string values.
 
-    The generated SQL uses deterministic positional bind parameters
-    (:p0, :p1, ...) so that the same query shape can be reused and cached
-    efficiently by SQLAlchemy and SQLite.
+    The generated SQL uses deterministic positional bind parameters with
+    column-specific prefixes (e.g., :resources_tags_p0, :resources_tags_p1)
+    to avoid collisions when multiple tag filters are used in the same query.
 
     This function returns a SQLAlchemy `text()` object representing only
     the SQL structure. Values must be bound separately using `.bindparams()`.
 
     Args:
         col_ref (str): Fully-qualified column reference (e.g., "resources.tags").
-        n (int): Number of tag values being matched. Determines the number of placeholders (:p0, :p1, ...).
+        n (int): Number of tag values being matched.
 
     Returns:
         sqlalchemy.sql.elements.TextClause:
             A reusable SQL template for matching ALL of the given tags.
     """
+    prefix = _sanitize_col_prefix(col_ref)
     clauses = []
     for i in range(n):
-        tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :p{i} OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :p{i})"  # nosec B608
+        tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{prefix}_p{i} OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :{prefix}_p{i})"  # nosec B608
         clauses.append(tmp_.strip())
 
     return text(" AND ".join(clauses))
@@ -184,7 +203,10 @@ def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], matc
         if n == 0:
             raise ValueError("values must be non-empty")
 
-        params = {f"p{i}": t for i, t in enumerate(values_list)}
+        # Use column-specific prefix to avoid bind name collisions when multiple
+        # tag filters are combined in the same query
+        prefix = _sanitize_col_prefix(col_ref)
+        params = {f"{prefix}_p{i}": t for i, t in enumerate(values_list)}
 
         if match_any:
             tmpl = _sqlite_tag_any_template(col_ref, n)
