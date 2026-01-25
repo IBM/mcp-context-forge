@@ -11,8 +11,9 @@ SQLAlchemy modifiers
 """
 
 # Standard
-from functools import lru_cache
+import itertools
 import re
+import threading
 from typing import Any, Iterable, List, Union
 import uuid
 
@@ -20,6 +21,10 @@ import uuid
 import orjson
 from sqlalchemy import and_, func, or_, text
 from sqlalchemy.sql.elements import TextClause
+
+# Thread-safe counter for generating unique bind parameter prefixes
+_bind_counter = itertools.count()
+_bind_counter_lock = threading.Lock()
 
 
 def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
@@ -42,48 +47,49 @@ def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
     return list(values)
 
 
-def _sanitize_col_prefix(col_ref: str) -> str:
+def _generate_unique_prefix(col_ref: str) -> str:
     """
-    Create a valid SQL bind parameter prefix from a column reference.
+    Generate a unique SQL bind parameter prefix for a column reference.
 
-    Replaces non-alphanumeric characters with underscores to create a safe
-    prefix for bind parameter names.
+    Combines a sanitized column name with a thread-safe counter to ensure
+    unique bind parameter names across all calls, even when:
+    - The same column is filtered multiple times in one query
+    - Different column refs sanitize to the same string (e.g., a_b.c vs a.b_c)
 
     Args:
         col_ref: Column reference like "resources.tags"
 
     Returns:
-        Sanitized prefix like "resources_tags"
+        Unique prefix like "resources_tags_42"
     """
-    return re.sub(r"[^a-zA-Z0-9]", "_", col_ref)
+    sanitized = re.sub(r"[^a-zA-Z0-9]", "_", col_ref)
+    with _bind_counter_lock:
+        counter = next(_bind_counter)
+    return f"{sanitized}_{counter}"
 
 
-@lru_cache(maxsize=128)
-def _sqlite_tag_any_template(col_ref: str, n: int) -> TextClause:
+def _sqlite_tag_any_template(col_ref: str, prefix: str, n: int) -> TextClause:
     """
-    Build and cache a SQLite SQL template for matching ANY of the given tags
+    Build a SQLite SQL template for matching ANY of the given tags
     inside a JSON array column.
 
     This template supports both legacy string tags and object-style tags
     (e.g., {"id": "api"}). It safely guards `json_extract` with
     `CASE WHEN type = 'object'` to avoid malformed JSON errors on string values.
 
-    The generated SQL uses deterministic positional bind parameters with
-    column-specific prefixes (e.g., :resources_tags_p0, :resources_tags_p1)
-    to avoid collisions when multiple tag filters are used in the same query.
-
-    This function returns a SQLAlchemy `text()` object representing only
-    the SQL structure. Values must be bound separately using `.bindparams()`.
+    The generated SQL uses unique bind parameters with the provided prefix
+    (e.g., :resources_tags_42_p0) to avoid collisions when multiple tag
+    filters are used in the same query.
 
     Args:
         col_ref (str): Fully-qualified column reference (e.g., "resources.tags").
+        prefix (str): Unique prefix for bind parameters (from _generate_unique_prefix).
         n (int): Number of tag values being matched.
 
     Returns:
         sqlalchemy.sql.elements.TextClause:
-            A reusable SQL template for matching ANY of the given tags.
+            A SQL template for matching ANY of the given tags.
     """
-    prefix = _sanitize_col_prefix(col_ref)
     if n == 1:
         tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{prefix}_p0 OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :{prefix}_p0)"  # nosec B608
         sql = tmp_.strip()
@@ -95,10 +101,9 @@ def _sqlite_tag_any_template(col_ref: str, n: int) -> TextClause:
     return text(sql)
 
 
-@lru_cache(maxsize=128)
-def _sqlite_tag_all_template(col_ref: str, n: int) -> TextClause:
+def _sqlite_tag_all_template(col_ref: str, prefix: str, n: int) -> TextClause:
     """
-    Build and cache a SQLite SQL template for matching ALL of the given tags
+    Build a SQLite SQL template for matching ALL of the given tags
     inside a JSON array column.
 
     This is implemented as an AND-chain of EXISTS subqueries, where each
@@ -108,22 +113,19 @@ def _sqlite_tag_all_template(col_ref: str, n: int) -> TextClause:
     (e.g., {"id": "api"}). It safely guards `json_extract` with
     `CASE WHEN type = 'object'` to avoid malformed JSON errors on string values.
 
-    The generated SQL uses deterministic positional bind parameters with
-    column-specific prefixes (e.g., :resources_tags_p0, :resources_tags_p1)
-    to avoid collisions when multiple tag filters are used in the same query.
-
-    This function returns a SQLAlchemy `text()` object representing only
-    the SQL structure. Values must be bound separately using `.bindparams()`.
+    The generated SQL uses unique bind parameters with the provided prefix
+    (e.g., :resources_tags_42_p0) to avoid collisions when multiple tag
+    filters are used in the same query.
 
     Args:
         col_ref (str): Fully-qualified column reference (e.g., "resources.tags").
+        prefix (str): Unique prefix for bind parameters (from _generate_unique_prefix).
         n (int): Number of tag values being matched.
 
     Returns:
         sqlalchemy.sql.elements.TextClause:
-            A reusable SQL template for matching ALL of the given tags.
+            A SQL template for matching ALL of the given tags.
     """
-    prefix = _sanitize_col_prefix(col_ref)
     clauses = []
     for i in range(n):
         tmp_ = f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{prefix}_p{i} OR (CASE WHEN type = 'object' THEN json_extract(value, '$.id') END) = :{prefix}_p{i})"  # nosec B608
@@ -203,16 +205,17 @@ def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], matc
         if n == 0:
             raise ValueError("values must be non-empty")
 
-        # Use column-specific prefix to avoid bind name collisions when multiple
-        # tag filters are combined in the same query
-        prefix = _sanitize_col_prefix(col_ref)
+        # Generate unique prefix to avoid bind name collisions when multiple
+        # tag filters are combined in the same query (even on the same column
+        # or when different column refs sanitize to the same string)
+        prefix = _generate_unique_prefix(col_ref)
         params = {f"{prefix}_p{i}": t for i, t in enumerate(values_list)}
 
         if match_any:
-            tmpl = _sqlite_tag_any_template(col_ref, n)
+            tmpl = _sqlite_tag_any_template(col_ref, prefix, n)
             return tmpl.bindparams(**params)
 
-        tmpl = _sqlite_tag_all_template(col_ref, n)
+        tmpl = _sqlite_tag_all_template(col_ref, prefix, n)
         return tmpl.bindparams(**params)
 
     raise RuntimeError(f"Unsupported dialect for json_contains_tag: {dialect}")

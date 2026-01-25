@@ -9,7 +9,7 @@ This suite provides complete test coverage for:
 - _ensure_list function
 - json_contains_expr function across supported SQL dialects
 - json_contains_tag_expr function for tag filtering
-- _sanitize_col_prefix helper function
+- _generate_unique_prefix helper function
 """
 
 import pytest
@@ -22,7 +22,7 @@ from mcpgateway.utils.sqlalchemy_modifier import (
     _ensure_list,
     json_contains_expr,
     json_contains_tag_expr,
-    _sanitize_col_prefix,
+    _generate_unique_prefix,
     _sqlite_tag_any_template,
     _sqlite_tag_all_template,
 )
@@ -122,19 +122,29 @@ def test_json_contains_expr_sqlite_single_value(mock_session: Any):
     assert "EXISTS" in str(expr)
 
 
-# --- Tests for _sanitize_col_prefix ---
+# --- Tests for _generate_unique_prefix ---
 
 
-def test_sanitize_col_prefix_basic():
-    """Test that column references are properly sanitized."""
-    assert _sanitize_col_prefix("tools.tags") == "tools_tags"
-    assert _sanitize_col_prefix("resources.tags") == "resources_tags"
+def test_generate_unique_prefix_basic():
+    """Test that unique prefixes are generated with counter suffix."""
+    prefix1 = _generate_unique_prefix("tools.tags")
+    prefix2 = _generate_unique_prefix("tools.tags")
+    # Should start with sanitized column name
+    assert prefix1.startswith("tools_tags_")
+    assert prefix2.startswith("tools_tags_")
+    # Each call should get a unique counter
+    assert prefix1 != prefix2
 
 
-def test_sanitize_col_prefix_special_chars():
-    """Test that special characters are replaced with underscores."""
-    assert _sanitize_col_prefix("schema.table.column") == "schema_table_column"
-    assert _sanitize_col_prefix("my-table.my-column") == "my_table_my_column"
+def test_generate_unique_prefix_prevents_collision():
+    """Test that different columns that sanitize to same string get unique prefixes."""
+    # These would collide with simple sanitization: a_b.c -> a_b_c, a.b_c -> a_b_c
+    prefix1 = _generate_unique_prefix("a_b.c")
+    prefix2 = _generate_unique_prefix("a.b_c")
+    # Both start with a_b_c_ but have different counter suffixes
+    assert prefix1.startswith("a_b_c_")
+    assert prefix2.startswith("a_b_c_")
+    assert prefix1 != prefix2
 
 
 # --- Tests for json_contains_tag_expr ---
@@ -150,37 +160,41 @@ def test_json_contains_tag_expr_empty_values(mock_session: Any):
 
 def test_json_contains_tag_expr_sqlite_match_any(mock_session: Any):
     """Test SQLite tag filtering with match_any=True."""
+    import re
     mock_session.get_bind().dialect.name = "sqlite"
     col = DummyColumn(name="tags", table_name="tools")
     expr = json_contains_tag_expr(mock_session, col, ["api", "data"], match_any=True)
     expr_str = str(expr)
     assert "EXISTS" in expr_str
     assert "json_each" in expr_str
-    assert "tools_tags_p0" in expr_str
-    assert "tools_tags_p1" in expr_str
+    # Check for pattern with unique counter: tools_tags_<counter>_p0, tools_tags_<counter>_p1
+    assert re.search(r"tools_tags_\d+_p0", expr_str)
+    assert re.search(r"tools_tags_\d+_p1", expr_str)
 
 
 def test_json_contains_tag_expr_sqlite_match_all(mock_session: Any):
     """Test SQLite tag filtering with match_any=False (match all)."""
+    import re
     mock_session.get_bind().dialect.name = "sqlite"
     col = DummyColumn(name="tags", table_name="resources")
     expr = json_contains_tag_expr(mock_session, col, ["api", "data"], match_any=False)
     expr_str = str(expr)
     assert "EXISTS" in expr_str
     # match_all returns and_() of multiple EXISTS clauses
-    assert "resources_tags_p0" in expr_str
-    assert "resources_tags_p1" in expr_str
+    assert re.search(r"resources_tags_\d+_p0", expr_str)
+    assert re.search(r"resources_tags_\d+_p1", expr_str)
 
 
 def test_json_contains_tag_expr_sqlite_single_tag(mock_session: Any):
     """Test SQLite tag filtering with a single tag value."""
+    import re
     mock_session.get_bind().dialect.name = "sqlite"
     col = DummyColumn(name="tags", table_name="prompts")
     expr = json_contains_tag_expr(mock_session, col, ["single"], match_any=True)
     expr_str = str(expr)
-    assert "prompts_tags_p0" in expr_str
+    assert re.search(r"prompts_tags_\d+_p0", expr_str)
     # Should not have IN clause for single value
-    assert "IN" not in expr_str or "prompts_tags_p0" in expr_str
+    assert "IN" not in expr_str
 
 
 def test_json_contains_tag_expr_no_bind_collision(mock_session: Any):
@@ -202,49 +216,55 @@ def test_json_contains_tag_expr_no_bind_collision(mock_session: Any):
 
     # All 4 params should be present (2 for each column)
     assert len(compiled.params) == 4
-    assert "tools_tags_p0" in compiled.params
-    assert "tools_tags_p1" in compiled.params
-    assert "tools_categories_p0" in compiled.params
-    assert "tools_categories_p1" in compiled.params
 
-    # Verify values are correct
-    assert compiled.params["tools_tags_p0"] == "tag1"
-    assert compiled.params["tools_tags_p1"] == "tag2"
-    assert compiled.params["tools_categories_p0"] == "cat1"
-    assert compiled.params["tools_categories_p1"] == "cat2"
+    # Verify all values are present (order doesn't matter due to unique counters)
+    values = set(compiled.params.values())
+    assert values == {"tag1", "tag2", "cat1", "cat2"}
 
 
-# --- Tests for cached template functions ---
+def test_json_contains_tag_expr_same_column_no_collision(mock_session: Any):
+    """Test that filtering the same column twice doesn't cause collision."""
+    mock_session.get_bind().dialect.name = "sqlite"
+
+    col = DummyColumn(name="tags", table_name="tools")
+
+    # Filter same column twice (edge case)
+    expr1 = json_contains_tag_expr(mock_session, col, ["tag1"], match_any=True)
+    expr2 = json_contains_tag_expr(mock_session, col, ["tag2"], match_any=True)
+
+    combined = and_(expr1, expr2)
+    engine = create_engine("sqlite:///:memory:")
+    compiled = combined.compile(engine)
+
+    # Both params should be present with unique names
+    assert len(compiled.params) == 2
+    assert set(compiled.params.values()) == {"tag1", "tag2"}
 
 
-def test_sqlite_tag_any_template_uses_column_prefix():
-    """Test that _sqlite_tag_any_template uses column-specific prefixes."""
-    tmpl = _sqlite_tag_any_template("resources.tags", 2)
+# --- Tests for template functions ---
+
+
+def test_sqlite_tag_any_template_uses_provided_prefix():
+    """Test that _sqlite_tag_any_template uses the provided prefix."""
+    tmpl = _sqlite_tag_any_template("resources.tags", "my_prefix", 2)
     tmpl_str = str(tmpl)
-    assert "resources_tags_p0" in tmpl_str
-    assert "resources_tags_p1" in tmpl_str
+    assert "my_prefix_p0" in tmpl_str
+    assert "my_prefix_p1" in tmpl_str
 
 
-def test_sqlite_tag_all_template_uses_column_prefix():
-    """Test that _sqlite_tag_all_template uses column-specific prefixes."""
-    tmpl = _sqlite_tag_all_template("prompts.tags", 3)
+def test_sqlite_tag_all_template_uses_provided_prefix():
+    """Test that _sqlite_tag_all_template uses the provided prefix."""
+    tmpl = _sqlite_tag_all_template("prompts.tags", "custom_prefix", 3)
     tmpl_str = str(tmpl)
-    assert "prompts_tags_p0" in tmpl_str
-    assert "prompts_tags_p1" in tmpl_str
-    assert "prompts_tags_p2" in tmpl_str
+    assert "custom_prefix_p0" in tmpl_str
+    assert "custom_prefix_p1" in tmpl_str
+    assert "custom_prefix_p2" in tmpl_str
 
 
-def test_sqlite_tag_any_template_caching():
-    """Test that template caching works correctly."""
-    # Clear cache first
-    _sqlite_tag_any_template.cache_clear()
-
-    tmpl1 = _sqlite_tag_any_template("tools.tags", 2)
-    tmpl2 = _sqlite_tag_any_template("tools.tags", 2)
-
-    # Same inputs should return the same cached object
-    assert tmpl1 is tmpl2
-
-    # Different inputs should return different objects
-    tmpl3 = _sqlite_tag_any_template("tools.tags", 3)
-    assert tmpl1 is not tmpl3
+def test_sqlite_tag_any_template_single_value():
+    """Test _sqlite_tag_any_template with single value uses equality, not IN."""
+    tmpl = _sqlite_tag_any_template("tools.tags", "prefix", 1)
+    tmpl_str = str(tmpl)
+    assert "prefix_p0" in tmpl_str
+    # Single value should use = not IN
+    assert "IN" not in tmpl_str
