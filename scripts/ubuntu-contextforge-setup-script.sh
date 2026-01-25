@@ -42,6 +42,10 @@ check_ubuntu() {
     source /etc/os-release
     if [[ "$ID" != "ubuntu" ]]; then
         log_warn "This script is designed for Ubuntu. Detected: $ID"
+        if [[ "$YES_MODE" == true ]]; then
+            log_error "Unsupported OS in non-interactive mode. Use -y only on Ubuntu."
+            exit 1
+        fi
         read -p "Continue anyway? [y/N] " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -142,13 +146,27 @@ clone_repository() {
     local target_dir="${1:-$HOME/mcp-context-forge}"
 
     if [[ -d "$target_dir" ]]; then
+        # Check if it's a git repository
+        if [[ ! -d "$target_dir/.git" ]]; then
+            log_error "Directory $target_dir exists but is not a git repository."
+            log_error "Please remove or rename it, or choose a different install directory."
+            exit 1
+        fi
+
         log_info "Directory $target_dir already exists"
-        read -p "Pull latest changes? [Y/n] " -n 1 -r
-        echo >&2
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        if [[ "$YES_MODE" == true ]]; then
+            log_info "Pulling latest changes (non-interactive mode)..."
             cd "$target_dir"
             git pull >&2
             log_success "Repository updated"
+        else
+            read -p "Pull latest changes? [Y/n] " -n 1 -r
+            echo >&2
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                cd "$target_dir"
+                git pull >&2
+                log_success "Repository updated"
+            fi
         fi
     else
         log_info "Cloning ContextForge repository..."
@@ -258,11 +276,16 @@ print_summary() {
 parse_args() {
     INSTALL_DIR="$HOME/mcp-context-forge"
     SKIP_START=false
+    YES_MODE=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --skip-start)
                 SKIP_START=true
+                shift
+                ;;
+            -y|--yes)
+                YES_MODE=true
                 shift
                 ;;
             -h|--help)
@@ -322,16 +345,17 @@ show_help() {
     echo
     echo "Options:"
     echo "  --skip-start  Skip starting the services after setup"
+    echo "  -y, --yes     Non-interactive mode (auto-confirm prompts, fail on unsupported OS)"
     echo "  -h, --help    Show this help message"
     echo
     echo "Arguments:"
     echo "  INSTALL_DIR   Directory to install ContextForge (default: ~/mcp-context-forge)"
     echo
     echo "Examples:"
-    echo "  $0                              # Install to ~/mcp-context-forge and start"
+    echo "  $0                              # Interactive install and start"
     echo "  $0 --skip-start                 # Install but don't start services"
     echo "  $0 ~/contextforge               # Install to ~/contextforge and start"
-    echo "  $0 ~/contextforge --skip-start  # Install to ~/contextforge, don't start"
+    echo "  $0 -y --skip-start              # Fully non-interactive install"
 }
 
 main "$@"

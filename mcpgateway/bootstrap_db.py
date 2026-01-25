@@ -35,9 +35,9 @@ from contextlib import contextmanager
 from importlib.resources import files
 import json
 import os
+from pathlib import Path
 import tempfile
 from typing import cast
-from pathlib import Path
 
 # Third-Party
 from alembic import command
