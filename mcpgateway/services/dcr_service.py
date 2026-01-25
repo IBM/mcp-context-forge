@@ -216,10 +216,10 @@ class DcrService:
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
 
         client_secret = registration_response.get("client_secret")
-        client_secret_encrypted = encryption.encrypt_secret(client_secret) if client_secret else None
+        client_secret_encrypted = await encryption.encrypt_secret_async(client_secret) if client_secret else None
 
         registration_access_token = registration_response.get("registration_access_token")
-        registration_access_token_encrypted = encryption.encrypt_secret(registration_access_token) if registration_access_token else None
+        registration_access_token_encrypted = await encryption.encrypt_secret_async(registration_access_token) if registration_access_token else None
 
         # Create database record (use normalized issuer for consistent lookup)
         # Fall back to requested grant_types if AS response omits them
@@ -312,7 +312,7 @@ class DcrService:
 
         # Decrypt registration access token
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
-        registration_access_token = encryption.decrypt_secret(client_record.registration_access_token_encrypted)
+        registration_access_token = await encryption.decrypt_secret_async(client_record.registration_access_token_encrypted)
 
         # Build update request
         update_request = {"client_id": client_record.client_id, "redirect_uris": orjson.loads(client_record.redirect_uris), "grant_types": orjson.loads(client_record.grant_types)}
@@ -327,7 +327,7 @@ class DcrService:
 
                 # Update encrypted secret if changed
                 if "client_secret" in updated_response:
-                    client_record.client_secret_encrypted = encryption.encrypt_secret(updated_response["client_secret"])
+                    client_record.client_secret_encrypted = await encryption.encrypt_secret_async(updated_response["client_secret"])
 
                 db.commit()
                 db.refresh(client_record)
@@ -363,7 +363,7 @@ class DcrService:
 
         # Decrypt registration access token
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
-        registration_access_token = encryption.decrypt_secret(client_record.registration_access_token_encrypted)
+        registration_access_token = await encryption.decrypt_secret_async(client_record.registration_access_token_encrypted)
 
         # Send delete request
         try:

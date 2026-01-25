@@ -340,7 +340,7 @@ class EmailAuthService:
             raise UserExistsError(f"User with email {email} already exists")
 
         # Hash the password
-        password_hash = self.password_service.hash_password(password)
+        password_hash = await self.password_service.hash_password_async(password)
 
         # Create new user (record password change timestamp)
         user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider, password_changed_at=utc_now())
@@ -431,7 +431,7 @@ class EmailAuthService:
                 return None
 
             # Verify password
-            if not self.password_service.verify_password(password, user.password_hash):
+            if not await self.password_service.verify_password_async(password, user.password_hash):
                 failure_reason = "Invalid password"
 
                 # Increment failed attempts
@@ -502,13 +502,13 @@ class EmailAuthService:
         self.validate_password(new_password)
 
         # Check if new password is same as old (optional policy)
-        if getattr(settings, "password_prevent_reuse", True) and self.password_service.verify_password(new_password, user.password_hash):
+        if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
             raise PasswordValidationError("New password must be different from current password")
 
         success = False
         try:
             # Hash new password and update
-            new_password_hash = self.password_service.hash_password(new_password)
+            new_password_hash = await self.password_service.hash_password_async(new_password)
             user.password_hash = new_password_hash
             # Clear the flag that requires the user to change password
             user.password_change_required = False
@@ -585,8 +585,8 @@ class EmailAuthService:
                 existing_admin.full_name = full_name
 
             # Check if password needs update (verify current password first)
-            if not self.password_service.verify_password(password, existing_admin.password_hash):
-                existing_admin.password_hash = self.password_service.hash_password(password)
+            if not await self.password_service.verify_password_async(password, existing_admin.password_hash):
+                existing_admin.password_hash = await self.password_service.hash_password_async(password)
                 try:
                     existing_admin.password_changed_at = utc_now()
                 except Exception as exc:
@@ -1017,7 +1017,7 @@ class EmailAuthService:
             if password is not None:
                 if not self.validate_password(password):
                     raise ValueError("Password does not meet security requirements")
-                user.password_hash = self.password_service.hash_password(password)
+                user.password_hash = await self.password_service.hash_password_async(password)
                 user.password_change_required = False  # Clear password change requirement
                 user.password_changed_at = utc_now()  # Update password change timestamp
 

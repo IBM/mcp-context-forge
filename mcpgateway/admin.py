@@ -3657,7 +3657,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 # Detect default password on login if enabled
                 if getattr(settings, "detect_default_password_on_login", True):
                     password_service = Argon2PasswordService()
-                    is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                    is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
                     if is_using_default_password:
                         if getattr(settings, "require_password_change_for_default_password", True):
                             user.password_change_required = True
@@ -10280,7 +10280,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 # Encrypt the client secret if present
                 if oauth_config and "client_secret" in oauth_config:
                     encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
+                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_config["client_secret"])
             except (orjson.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
@@ -10317,7 +10317,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 if oauth_client_secret:
                     # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
 
                 # Add username and password for password grant type
                 if oauth_username:
@@ -10624,7 +10624,7 @@ async def admin_edit_gateway(
                 # Encrypt the client secret if present and not empty
                 if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
                     encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
+                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_config["client_secret"])
             except (orjson.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
@@ -10661,7 +10661,7 @@ async def admin_edit_gateway(
                 if oauth_client_secret:
                     # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
 
                 # Add username and password for password grant type
                 if oauth_username:
@@ -14249,7 +14249,7 @@ async def admin_add_a2a_agent(
                 # Encrypt the client secret if present
                 if oauth_config and "client_secret" in oauth_config:
                     encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
+                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_config["client_secret"])
             except (orjson.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
@@ -14286,7 +14286,7 @@ async def admin_add_a2a_agent(
                 if oauth_client_secret:
                     # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
 
                 # Add username and password for password grant type
                 if oauth_username:
@@ -14570,7 +14570,7 @@ async def admin_edit_a2a_agent(
                 # Encrypt the client secret if present and not empty
                 if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
                     encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
+                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_config["client_secret"])
             except (orjson.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
@@ -14607,7 +14607,7 @@ async def admin_edit_a2a_agent(
                 if oauth_client_secret:
                     # Encrypt the client secret
                     encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
 
                 # Add username and password for password grant type
                 if oauth_username:
