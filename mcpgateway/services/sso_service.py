@@ -889,11 +889,11 @@ class SSOService:
 
         # Add user teams to token
         teams = user.get_teams()
-        token_data["teams"] = [{"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": user.get_team_role(team.id)} for team in teams]
+        token_data["teams"] = [team.id for team in teams]
 
         # Add namespaces for RBAC
         namespaces = [f"user:{user.email}"]
-        namespaces.extend([f"team:{team['slug']}" for team in token_data["teams"]])
+        namespaces.extend([f"team:{team.slug}" for team in teams])
         namespaces.append("public")
         token_data["namespaces"] = namespaces
 
