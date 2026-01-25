@@ -1,7 +1,7 @@
 ---
 name: Feature request
 about: Propose a new capability or improvement for the project
-title: "[Feature Request]: "
+title: "[FEATURE]: "
 labels: enhancement, triage
 assignees: ''
 
