@@ -833,6 +833,12 @@
       "title": "Dcr Client Name Template",
       "type": "string"
     },
+    "dcr_request_refresh_token_when_unsupported": {
+      "default": false,
+      "description": "Request refresh_token even when AS metadata omits grant_types_supported. Enable for AS servers that support refresh tokens but don't advertise it.",
+      "title": "Dcr Request Refresh Token When Unsupported",
+      "type": "boolean"
+    },
     "oauth_discovery_enabled": {
       "default": true,
       "description": "Enable OAuth AS metadata discovery (RFC 8414)",
