@@ -298,6 +298,7 @@ class TestRegisterClient:
         """Test that registration request has correct RFC 7591 fields."""
         dcr_service = DcrService()
 
+        # AS does not advertise refresh_token support
         mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
 
         mock_response = MagicMock()
@@ -320,9 +321,72 @@ class TestRegisterClient:
 
             assert request_json["client_name"] == "MCP Gateway (Test Gateway)"
             assert request_json["redirect_uris"] == ["http://localhost:4444/callback"]
-            assert request_json["grant_types"] == ["authorization_code", "refresh_token"]
+            # Only authorization_code when AS doesn't advertise refresh_token support
+            assert request_json["grant_types"] == ["authorization_code"]
             assert request_json["response_types"] == ["code"]
             assert request_json["scope"] == "mcp:read"
+
+    @pytest.mark.asyncio
+    async def test_register_client_includes_refresh_token_when_supported(self, test_db):
+        """Test that refresh_token is included when AS advertises support."""
+        dcr_service = DcrService()
+
+        # AS advertises refresh_token support
+        mock_metadata = {
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            await dcr_service.register_client(
+                gateway_id="test-gw-refresh", gateway_name="Test Gateway", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
+            )
+
+            # Verify request payload includes refresh_token
+            call_kwargs = mock_client.post.call_args[1]
+            request_json = call_kwargs["json"]
+
+            assert request_json["grant_types"] == ["authorization_code", "refresh_token"]
+
+    @pytest.mark.asyncio
+    async def test_register_client_stores_requested_grant_types_as_fallback(self, test_db):
+        """Test that requested grant_types are stored when AS response omits them."""
+        dcr_service = DcrService()
+
+        mock_metadata = {
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+        }
+
+        # AS response omits grant_types
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test-fallback", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-fallback", gateway_name="Test Gateway", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
+            )
+
+            # Stored grant_types should be the requested ones, not hardcoded fallback
+            import orjson
+
+            stored_grant_types = orjson.loads(result.grant_types)
+            assert stored_grant_types == ["authorization_code", "refresh_token"]
 
     @pytest.mark.asyncio
     async def test_register_client_no_registration_endpoint(self, test_db):
@@ -695,6 +759,50 @@ class TestIssuerValidation:
                     scopes=["mcp:read"],
                     db=test_db,
                 )
+
+    @pytest.mark.asyncio
+    async def test_issuer_validation_normalizes_trailing_slash(self, test_db):
+        """Test that allowlist comparison normalizes trailing slashes.
+
+        This ensures that issuer with trailing slash (e.g., from MCP SDK's Pydantic AnyHttpUrl)
+        matches an allowlist entry without trailing slash, and vice versa.
+        """
+        dcr_service = DcrService()
+
+        from mcpgateway.db import Gateway
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-issuer-slash", name="Test", slug="test-issuer-slash", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        # Allowlist has NO trailing slash, but issuer has trailing slash (MCP SDK behavior)
+        with (
+            patch.object(dcr_service.settings, "dcr_allowed_issuers", ["https://as-slash.example.com"]),
+            patch.object(dcr_service, "discover_as_metadata") as mock_discover,
+        ):
+            mock_discover.return_value = {"registration_endpoint": "https://as-slash.example.com/register"}
+
+            mock_response = MagicMock()
+            mock_response.status_code = 201
+            mock_response.json = MagicMock(return_value={"client_id": "test-slash", "redirect_uris": []})
+
+            mock_client = AsyncMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+
+            with patch.object(dcr_service, "_get_client", return_value=mock_client):
+                # Should not raise error - trailing slash should be normalized
+                result = await dcr_service.register_client(
+                    gateway_id="test-gw-issuer-slash",
+                    gateway_name="Test",
+                    issuer="https://as-slash.example.com/",  # Has trailing slash
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
+
+                # Verify the stored issuer is normalized (no trailing slash)
+                assert result.issuer == "https://as-slash.example.com"
 
 
 class TestDcrError:
