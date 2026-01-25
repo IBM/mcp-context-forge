@@ -254,6 +254,34 @@ print_summary() {
     echo
 }
 
+# Parse command line arguments
+parse_args() {
+    INSTALL_DIR="$HOME/mcp-context-forge"
+    SKIP_START=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --skip-start)
+                SKIP_START=true
+                shift
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+            *)
+                INSTALL_DIR="$1"
+                shift
+                ;;
+        esac
+    done
+}
+
 # Main function
 main() {
     echo "========================================"
@@ -261,8 +289,7 @@ main() {
     echo "========================================"
     echo
 
-    local install_dir="${1:-$HOME/mcp-context-forge}"
-    local skip_start="${2:-false}"
+    parse_args "$@"
 
     check_not_root
     check_ubuntu
@@ -273,10 +300,10 @@ main() {
     install_uv
 
     local project_dir
-    project_dir=$(clone_repository "$install_dir")
+    project_dir=$(clone_repository "$INSTALL_DIR")
     setup_env "$project_dir"
 
-    if [[ "$skip_start" != "--skip-start" ]]; then
+    if [[ "$SKIP_START" != true ]]; then
         start_contextforge "$project_dir"
         verify_installation "$project_dir"
     fi
@@ -285,23 +312,26 @@ main() {
 }
 
 # Show help
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    echo "Usage: $0 [INSTALL_DIR] [--skip-start]"
+show_help() {
+    echo "Usage: $0 [OPTIONS] [INSTALL_DIR]"
     echo
     echo "Prerequisites (run as root first):"
     echo "  adduser contextforge"
     echo "  usermod -aG sudo contextforge"
     echo "  su - contextforge"
     echo
+    echo "Options:"
+    echo "  --skip-start  Skip starting the services after setup"
+    echo "  -h, --help    Show this help message"
+    echo
     echo "Arguments:"
     echo "  INSTALL_DIR   Directory to install ContextForge (default: ~/mcp-context-forge)"
-    echo "  --skip-start  Skip starting the services after setup"
     echo
     echo "Examples:"
-    echo "  $0                          # Install to ~/mcp-context-forge and start"
-    echo "  $0 /opt/contextforge        # Install to /opt/contextforge and start"
-    echo "  $0 ~/cf --skip-start        # Install but don't start services"
-    exit 0
-fi
+    echo "  $0                              # Install to ~/mcp-context-forge and start"
+    echo "  $0 --skip-start                 # Install but don't start services"
+    echo "  $0 ~/contextforge               # Install to ~/contextforge and start"
+    echo "  $0 ~/contextforge --skip-start  # Install to ~/contextforge, don't start"
+}
 
 main "$@"

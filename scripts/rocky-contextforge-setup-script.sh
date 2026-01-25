@@ -48,6 +48,10 @@ check_rocky() {
             ;;
         *)
             log_warn "This script is designed for Rocky Linux and RHEL-compatible distributions. Detected: $ID"
+            if [[ "$YES_MODE" == true ]]; then
+                log_error "Unsupported OS in non-interactive mode. Use -y only on supported distributions."
+                exit 1
+            fi
             read -p "Continue anyway? [y/N] " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -60,7 +64,8 @@ check_rocky() {
 # Install system packages
 install_system_packages() {
     log_info "Installing essential packages..."
-    sudo dnf install -y \
+    # Use --allowerasing to handle curl-minimal vs curl conflict in minimal images
+    sudo dnf install -y --allowerasing \
         git \
         make \
         curl \
@@ -169,13 +174,27 @@ clone_repository() {
     local target_dir="${1:-$HOME/mcp-context-forge}"
 
     if [[ -d "$target_dir" ]]; then
+        # Check if it's a git repository
+        if [[ ! -d "$target_dir/.git" ]]; then
+            log_error "Directory $target_dir exists but is not a git repository."
+            log_error "Please remove or rename it, or choose a different install directory."
+            exit 1
+        fi
+
         log_info "Directory $target_dir already exists"
-        read -p "Pull latest changes? [Y/n] " -n 1 -r
-        echo >&2
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        if [[ "$YES_MODE" == true ]]; then
+            log_info "Pulling latest changes (non-interactive mode)..."
             cd "$target_dir"
             git pull >&2
             log_success "Repository updated"
+        else
+            read -p "Pull latest changes? [Y/n] " -n 1 -r
+            echo >&2
+            if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                cd "$target_dir"
+                git pull >&2
+                log_success "Repository updated"
+            fi
         fi
     else
         log_info "Cloning ContextForge repository..."
@@ -374,6 +393,7 @@ parse_args() {
     INSTALL_DIR="$HOME/mcp-context-forge"
     SKIP_START=false
     REMOVE_PODMAN=false
+    YES_MODE=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -383,6 +403,10 @@ parse_args() {
                 ;;
             --remove-podman)
                 REMOVE_PODMAN=true
+                shift
+                ;;
+            -y|--yes)
+                YES_MODE=true
                 shift
                 ;;
             -h|--help)
@@ -443,17 +467,18 @@ show_help() {
     echo
     echo "Options:"
     echo "  --skip-start     Skip starting the services after setup"
-    echo "  --remove-podman  Remove podman/runc without prompting (for non-interactive use)"
+    echo "  --remove-podman  Remove podman/runc without prompting"
+    echo "  -y, --yes        Non-interactive mode (auto-confirm prompts, fail on unsupported OS)"
     echo "  -h, --help       Show this help message"
     echo
     echo "Arguments:"
     echo "  INSTALL_DIR      Directory to install ContextForge (default: ~/mcp-context-forge)"
     echo
     echo "Examples:"
-    echo "  $0                              # Install to ~/mcp-context-forge and start"
-    echo "  $0 --skip-start                 # Install but don't start services"
-    echo "  $0 ~/contextforge               # Install to ~/contextforge and start"
-    echo "  $0 --remove-podman --skip-start # Non-interactive install without starting"
+    echo "  $0                                        # Interactive install and start"
+    echo "  $0 --skip-start                           # Install but don't start services"
+    echo "  $0 ~/contextforge                         # Install to ~/contextforge and start"
+    echo "  $0 -y --remove-podman --skip-start        # Fully non-interactive install"
 }
 
 main "$@"
