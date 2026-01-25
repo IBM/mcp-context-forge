@@ -174,11 +174,19 @@ class DcrService:
         # Build registration request (RFC 7591)
         client_name = self.settings.dcr_client_name_template.replace("{gateway_name}", gateway_name)
 
-        # Determine grant types based on AS metadata (only request refresh_token if AS supports it)
-        grant_types_supported = metadata.get("grant_types_supported", [])
+        # Determine grant types based on AS metadata
+        # Use `or []` to handle both missing key AND explicit null value (prevents TypeError)
+        grant_types_supported = metadata.get("grant_types_supported") or []
         requested_grant_types = ["authorization_code"]
+
+        # Only request refresh_token if AS explicitly supports it, or if permissive mode is enabled
         if "refresh_token" in grant_types_supported:
             requested_grant_types.append("refresh_token")
+        elif self.settings.dcr_request_refresh_token_when_unsupported and not grant_types_supported:
+            # Permissive mode: request refresh_token when AS doesn't advertise grant_types_supported
+            # This is useful for AS servers that support refresh tokens but don't advertise it
+            requested_grant_types.append("refresh_token")
+            logger.debug(f"Requesting refresh_token for {normalized_issuer} (permissive mode, AS omits grant_types_supported)")
 
         registration_request = {
             "client_name": client_name,

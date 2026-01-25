@@ -355,6 +355,12 @@ class Settings(BaseSettings):
     # Client name template
     dcr_client_name_template: str = Field(default="MCP Gateway ({gateway_name})", description="Template for client_name in DCR requests")
 
+    # Refresh token behavior
+    dcr_request_refresh_token_when_unsupported: bool = Field(
+        default=False,
+        description="Request refresh_token even when AS metadata omits grant_types_supported. Enable for AS servers that support refresh tokens but don't advertise it.",
+    )
+
     # ===================================
     # OAuth Discovery (RFC 8414)
     # ===================================

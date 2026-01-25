@@ -389,6 +389,76 @@ class TestRegisterClient:
             assert stored_grant_types == ["authorization_code", "refresh_token"]
 
     @pytest.mark.asyncio
+    async def test_register_client_handles_null_grant_types_supported(self, test_db):
+        """Test that explicit null grant_types_supported doesn't cause TypeError.
+
+        Some AS servers return {"grant_types_supported": null} instead of omitting the field.
+        This should be handled gracefully without raising TypeError.
+        """
+        dcr_service = DcrService()
+
+        # AS returns explicit null for grant_types_supported
+        mock_metadata = {
+            "registration_endpoint": "https://as.example.com/register",
+            "grant_types_supported": None,  # Explicit null, not missing
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test-null", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            # Should not raise TypeError
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-null", gateway_name="Test", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
+            )
+
+            # Should only request authorization_code (strict mode)
+            call_kwargs = mock_client.post.call_args[1]
+            request_json = call_kwargs["json"]
+            assert request_json["grant_types"] == ["authorization_code"]
+
+    @pytest.mark.asyncio
+    async def test_register_client_permissive_refresh_token_mode(self, test_db):
+        """Test that permissive mode requests refresh_token when AS omits grant_types_supported."""
+        dcr_service = DcrService()
+
+        # AS omits grant_types_supported entirely
+        mock_metadata = {
+            "registration_endpoint": "https://as.example.com/register",
+            # No grant_types_supported field
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test-permissive", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        # Enable permissive mode
+        with (
+            patch.object(dcr_service.settings, "dcr_request_refresh_token_when_unsupported", True),
+            patch.object(dcr_service, "discover_as_metadata") as mock_discover,
+            patch.object(dcr_service, "_get_client", return_value=mock_client),
+        ):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-permissive", gateway_name="Test", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
+            )
+
+            # Should request both authorization_code and refresh_token in permissive mode
+            call_kwargs = mock_client.post.call_args[1]
+            request_json = call_kwargs["json"]
+            assert request_json["grant_types"] == ["authorization_code", "refresh_token"]
+
+    @pytest.mark.asyncio
     async def test_register_client_no_registration_endpoint(self, test_db):
         """Test registration failure when AS doesn't support DCR."""
         dcr_service = DcrService()
