@@ -33,9 +33,11 @@ Examples:
 import asyncio
 from contextlib import contextmanager
 from importlib.resources import files
+import json
 import os
 import tempfile
 from typing import cast
+from pathlib import Path
 
 # Third-Party
 from alembic import command
@@ -260,6 +262,48 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 },
             ]
 
+            # Logic to add additional default roles from a json file
+            if settings.mcpgateway_bootstrap_roles_in_db_enabled:
+                try:
+                    additional_default_roles_path = Path(settings.mcpgateway_bootstrap_roles_in_db_file)
+                    # Try multiple locations for the mcpgateway_bootstrap_roles_in_db_file file
+                    if not additional_default_roles_path.is_absolute():
+                        # Try current directory first
+                        if not additional_default_roles_path.exists():
+                            # Try project root (mcpgateway/bootstrap_db.py -> parent.parent = repo root)
+                            additional_default_roles_path = Path(__file__).resolve().parent.parent / settings.mcpgateway_bootstrap_roles_in_db_file
+
+                    if not additional_default_roles_path.exists():
+                        logger.warning(f"Additional roles file not found. Searched: CWD/{settings.mcpgateway_bootstrap_roles_in_db_file}, {additional_default_roles_path}")
+                    else:
+                        with open(additional_default_roles_path, "r", encoding="utf-8") as f:
+                            additional_default_roles_data = json.load(f)
+
+                        # Validate JSON structure: must be a list of dicts with required keys
+                        required_keys = {"name", "scope", "permissions"}
+                        if not isinstance(additional_default_roles_data, list):
+                            logger.error(f"Additional roles file must contain a JSON array, got {type(additional_default_roles_data).__name__}")
+                        else:
+                            valid_roles = []
+                            for idx, role in enumerate(additional_default_roles_data):
+                                if not isinstance(role, dict):
+                                    logger.warning(f"Skipping invalid role at index {idx}: expected dict, got {type(role).__name__}")
+                                    continue
+                                missing_keys = required_keys - set(role.keys())
+                                if missing_keys:
+                                    role_name = role.get("name", f"<index {idx}>")
+                                    logger.warning(f"Skipping role '{role_name}': missing required keys {missing_keys}")
+                                    continue
+                                valid_roles.append(role)
+
+                            if valid_roles:
+                                default_roles.extend(valid_roles)
+                                logger.info(f"Added {len(valid_roles)} additional roles to default roles in bootstrap db")
+                            elif additional_default_roles_data:
+                                logger.warning("No valid roles found in additional roles file")
+                except Exception as e:
+                    logger.error(f"Failed to load mcpgateway_bootstrap_roles_in_db_file: {e}")
+
             # Create default roles
             created_roles = []
             for role_def in default_roles:
@@ -271,14 +315,14 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         created_roles.append(existing_role)
                         continue
 
-                    # Create the role
+                    # Create the role (description and is_system_role are optional)
                     role = await role_service.create_role(
                         name=str(role_def["name"]),
-                        description=str(role_def["description"]),
+                        description=str(role_def.get("description", "")),
                         scope=str(role_def["scope"]),
                         permissions=cast(list[str], role_def["permissions"]),
                         created_by=settings.platform_admin_email,
-                        is_system_role=bool(role_def["is_system_role"]),
+                        is_system_role=bool(role_def.get("is_system_role", False)),
                     )
                     created_roles.append(role)
                     logger.info(f"Created system role: {role.name}")
