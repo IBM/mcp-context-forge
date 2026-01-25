@@ -110,6 +110,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.HTTPX_READ_TIMEOUT | string | `"120.0"` |  |
 | mcpContextForge.config.HTTPX_WRITE_TIMEOUT | string | `"30.0"` |  |
 | mcpContextForge.config.HTTP_SERVER | string | `"gunicorn"` |  |
+| mcpContextForge.config.INSECURE_ALLOW_QUERYPARAM_AUTH | string | `"false"` |  |
+| mcpContextForge.config.INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS | string | `"[]"` |  |
 | mcpContextForge.config.JSON_RESPONSE_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.LLMCHAT_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.LLM_API_PREFIX | string | `"/v1"` |  |
@@ -261,7 +263,10 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.SKIP_SSL_VERIFY | string | `"false"` |  |
 | mcpContextForge.config.SSE_KEEPALIVE_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.SSE_KEEPALIVE_INTERVAL | string | `"30"` |  |
+| mcpContextForge.config.SSE_RAPID_YIELD_MAX | string | `"50"` |  |
+| mcpContextForge.config.SSE_RAPID_YIELD_WINDOW_MS | string | `"1000"` |  |
 | mcpContextForge.config.SSE_RETRY_TIMEOUT | string | `"5000"` |  |
+| mcpContextForge.config.SSE_SEND_TIMEOUT | string | `"30.0"` |  |
 | mcpContextForge.config.TEAM_MEMBER_COUNT_CACHE_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.TEAM_MEMBER_COUNT_CACHE_TTL | string | `"300"` |  |
 | mcpContextForge.config.TEMPLATES_AUTO_RELOAD | string | `"false"` |  |
@@ -380,10 +385,12 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.DCR_DEFAULT_SCOPES | string | `"[\"mcp:read\"]"` |  |
 | mcpContextForge.secret.DCR_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.DCR_METADATA_CACHE_TTL | string | `"3600"` |  |
+| mcpContextForge.secret.DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED | string | `"false"` |  |
 | mcpContextForge.secret.DCR_TOKEN_ENDPOINT_AUTH_METHOD | string | `"client_secret_basic"` |  |
 | mcpContextForge.secret.DOCS_ALLOW_BASIC_AUTH | string | `"false"` |  |
 | mcpContextForge.secret.ED25519_PRIVATE_KEY | string | `""` |  |
 | mcpContextForge.secret.EMAIL_AUTH_ENABLED | string | `"true"` |  |
+| mcpContextForge.secret.EMBED_ENVIRONMENT_IN_TOKENS | string | `"false"` |  |
 | mcpContextForge.secret.ENABLE_ED25519_SIGNING | string | `"false"` |  |
 | mcpContextForge.secret.INVITATION_EXPIRY_DAYS | string | `"7"` |  |
 | mcpContextForge.secret.JWT_ALGORITHM | string | `"HS256"` |  |
@@ -398,6 +405,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.MAX_MEMBERS_PER_TEAM | string | `"100"` |  |
 | mcpContextForge.secret.MAX_TEAMS_PER_USER | string | `"50"` |  |
 | mcpContextForge.secret.MCP_CLIENT_AUTH_ENABLED | string | `"true"` |  |
+| mcpContextForge.secret.MCP_REQUIRE_AUTH | string | `"false"` |  |
 | mcpContextForge.secret.MIN_PASSWORD_LENGTH | string | `"12"` |  |
 | mcpContextForge.secret.MIN_SECRET_LENGTH | string | `"32"` |  |
 | mcpContextForge.secret.OAUTH_DEFAULT_TIMEOUT | string | `"3600"` |  |
@@ -422,12 +430,10 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.PREV_ED25519_PRIVATE_KEY | string | `""` |  |
 | mcpContextForge.secret.PROXY_USER_HEADER | string | `"X-Authenticated-User"` |  |
 | mcpContextForge.secret.REQUIRE_EMAIL_VERIFICATION_FOR_INVITES | string | `"true"` |  |
+| mcpContextForge.secret.REQUIRE_JTI | string | `"false"` |  |
 | mcpContextForge.secret.REQUIRE_STRONG_SECRETS | string | `"false"` |  |
 | mcpContextForge.secret.REQUIRE_TOKEN_EXPIRATION | string | `"false"` |  |
-| mcpContextForge.secret.REQUIRE_JTI | string | `"false"` |  |
 | mcpContextForge.secret.REQUIRE_USER_IN_DB | string | `"false"` |  |
-| mcpContextForge.secret.EMBED_ENVIRONMENT_IN_TOKENS | string | `"false"` | Embed env claim in gateway-issued JWTs |
-| mcpContextForge.secret.VALIDATE_TOKEN_ENVIRONMENT | string | `"false"` | Reject tokens with mismatched env claim |
 | mcpContextForge.secret.SSO_AUTO_ADMIN_DOMAINS | string | `"[]"` |  |
 | mcpContextForge.secret.SSO_AUTO_CREATE_USERS | string | `"true"` |  |
 | mcpContextForge.secret.SSO_ENABLED | string | `"false"` |  |
@@ -477,6 +483,8 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.SSO_TRUSTED_DOMAINS | string | `"[]"` |  |
 | mcpContextForge.secret.TOKEN_EXPIRY | string | `"10080"` |  |
 | mcpContextForge.secret.TRUST_PROXY_AUTH | string | `"false"` |  |
+| mcpContextForge.secret.VALIDATE_TOKEN_ENVIRONMENT | string | `"false"` |  |
+| mcpContextForge.service.annotations | object | `{}` |  |
 | mcpContextForge.service.port | int | `80` |  |
 | mcpContextForge.service.type | string | `"ClusterIP"` |  |
 | mcpFastTimeServer.enabled | bool | `true` |  |
@@ -727,3 +735,4 @@ Kubernetes: `>=1.21.0-0`
 | serviceAccount.automountServiceAccountToken | bool | `true` | Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting) |
 | serviceAccount.create | bool | `false` | Create a ServiceAccount for all pods in this release |
 | serviceAccount.name | string | `""` | ServiceAccount name. If empty and create=true, uses release fullname. If create=false, uses this name or "default" |
+

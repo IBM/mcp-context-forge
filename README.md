@@ -1629,6 +1629,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
 | `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
 | `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
+| `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |
 | `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
 | `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
 | `JWT_AUDIENCE_VERIFICATION`                | JWT audience verification (disable for DCR)                    | `true`                         | bool          |

@@ -42,6 +42,7 @@ MCPGATEWAY_DCR_ALLOWED_ISSUERS=""                        # Optional allowlist of
 MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD="client_secret_basic" # Auth method: client_secret_basic or client_secret_post
 MCPGATEWAY_DCR_METADATA_CACHE_TTL=3600                   # AS metadata cache TTL in seconds (default: 1 hour)
 MCPGATEWAY_DCR_CLIENT_NAME_TEMPLATE="MCP Gateway ({gateway_name})" # Client name template for registration
+MCPGATEWAY_DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED=false       # Request refresh_token when AS omits grant_types_supported
 
 # OAuth Settings (used by DCR)
 OAUTH_REQUEST_TIMEOUT=30                                 # HTTP request timeout in seconds
@@ -108,6 +109,9 @@ The AS responds with registered credentials:
 ```
 
 Gateway stores these in the `registered_oauth_clients` table (encrypted).
+
+!!! note "Refresh Token Behavior"
+    By default, `refresh_token` is only requested if the AS metadata explicitly includes `"refresh_token"` in `grant_types_supported`. This prevents DCR failures with strict AS servers. To request `refresh_token` when AS metadata omits `grant_types_supported`, set `MCPGATEWAY_DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED=true`.
 
 ### 3. OAuth Flow with Registered Credentials
 
