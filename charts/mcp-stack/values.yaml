@@ -196,6 +196,7 @@ mcpContextForge:
     DB_MAX_OVERFLOW: "30"            # extra connections allowed beyond pool size
     DB_POOL_TIMEOUT: "30"            # seconds to wait for a connection
     DB_POOL_RECYCLE: "3600"          # recycle connections after N seconds
+    DB_SQLITE_BUSY_TIMEOUT: "5000"   # SQLite lock wait timeout in ms (1000-60000)
 
     # ─ Cache behaviour ─
     CACHE_TYPE: redis                # Backend cache driver (redis, memory, database)
