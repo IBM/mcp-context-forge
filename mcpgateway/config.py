@@ -739,18 +739,16 @@ class Settings(BaseSettings):
         Returns:
             Itself.
         """
-        if self.client_mode:
-            return self
+        if not self.client_mode:
+            # Check for dangerous combinations - only log warnings, don't raise errors
+            if not self.auth_required and self.mcpgateway_ui_enabled:
+                logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
 
-        # Check for dangerous combinations - only log warnings, don't raise errors
-        if not self.auth_required and self.mcpgateway_ui_enabled:
-            logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
+            if self.skip_ssl_verify and not self.dev_mode:
+                logger.warning("🔓 SECURITY WARNING: SSL verification is disabled in non-dev mode. This is a security risk! Set SKIP_SSL_VERIFY=false for production.")
 
-        if self.skip_ssl_verify and not self.dev_mode:
-            logger.warning("🔓 SECURITY WARNING: SSL verification is disabled in non-dev mode. This is a security risk! Set SKIP_SSL_VERIFY=false for production.")
-
-        if self.debug and not self.dev_mode:
-            logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
+            if self.debug and not self.dev_mode:
+                logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
         return self
 

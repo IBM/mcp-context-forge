@@ -836,11 +836,10 @@ class ToolCreate(BaseModel):
             ValueError: If any plugin is not in the allowed set.
         """
         allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
-        if v is None:
-            return v
-        for plugin in v:
-            if plugin not in allowed_plugins:
-                raise ValueError(f"Unknown plugin: {plugin}")
+        if v is not None:
+            for plugin in v:
+                if plugin not in allowed_plugins:
+                    raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
     @model_validator(mode="after")
@@ -1258,11 +1257,10 @@ class ToolUpdate(BaseModelWithConfigDict):
             ValueError: If any plugin is not in the allowed set.
         """
         allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
-        if v is None:
-            return v
-        for plugin in v:
-            if plugin not in allowed_plugins:
-                raise ValueError(f"Unknown plugin: {plugin}")
+        if v is not None:
+            for plugin in v:
+                if plugin not in allowed_plugins:
+                    raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
 
@@ -3075,14 +3073,14 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If required fields are missing when setting query_param auth.
         """
-        if self.auth_type != "query_param":
-            return self
-        # Validate fields are provided when explicitly setting query_param auth
-        # Feature flag/allowlist check happens in service layer (has access to existing gateway)
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+        if self.auth_type == "query_param":
+            # Validate fields are provided when explicitly setting query_param auth
+            # Feature flag/allowlist check happens in service layer (has access to existing gateway)
+            if not self.auth_query_param_key:
+                raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
+            if not self.auth_query_param_value:
+                raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+
         return self
 
 
@@ -4821,14 +4819,14 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If required fields are missing when setting query_param auth.
         """
-        if self.auth_type != "query_param":
-            return self
-        # Validate fields are provided when explicitly setting query_param auth
-        # Feature flag/allowlist check happens in service layer (has access to existing agent)
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+        if self.auth_type == "query_param":
+            # Validate fields are provided when explicitly setting query_param auth
+            # Feature flag/allowlist check happens in service layer (has access to existing agent)
+            if not self.auth_query_param_key:
+                raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
+            if not self.auth_query_param_value:
+                raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+
         return self
 
 
