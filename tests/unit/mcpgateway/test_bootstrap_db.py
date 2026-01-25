@@ -562,6 +562,86 @@ class TestBootstrapDefaultRoles:
                             # Should create 4 default roles + 3 custom roles = 7 total
                             assert mock_role_service.create_role.call_count >= 7
 
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_dict_instead_of_list(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test handling when JSON is a dict instead of a list."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a file with a dict instead of a list
+        invalid_data = {"name": "single_role", "scope": "team", "permissions": ["tools.read"]}
+        roles_file = tmp_path / "dict_role.json"
+        roles_file.write_text(json.dumps(invalid_data))
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should log error about wrong type
+                            mock_logger.error.assert_any_call("Additional roles file must contain a JSON array, got dict")
+                            # Should still create default roles (4 roles)
+                            assert mock_role_service.create_role.call_count >= 4
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_missing_required_keys(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test handling when role entries are missing required keys."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a file with roles missing required keys
+        invalid_roles = [
+            {"name": "missing_scope_and_permissions"},  # Missing scope and permissions
+            {"name": "valid_role", "scope": "team", "permissions": ["tools.read"]},  # Valid
+            {"scope": "team", "permissions": ["tools.read"]},  # Missing name
+            "not_a_dict",  # Not a dict at all
+        ]
+        roles_file = tmp_path / "missing_keys.json"
+        roles_file.write_text(json.dumps(invalid_roles))
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should log warnings about invalid entries
+                            warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
+                            assert any("missing required keys" in call or "expected dict" in call for call in warning_calls)
+                            # Default roles should still be created even when additional roles have issues
+                            assert mock_role_service.create_role.call_count >= 4
+
 
 class TestNormalizeTeamVisibility:
     """Test normalize_team_visibility function."""
