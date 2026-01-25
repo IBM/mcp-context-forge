@@ -735,4 +735,3 @@ Kubernetes: `>=1.21.0-0`
 | serviceAccount.automountServiceAccountToken | bool | `true` | Mount the ServiceAccount token in pods. Only applies when create=true (existing ServiceAccounts control their own token mounting) |
 | serviceAccount.create | bool | `false` | Create a ServiceAccount for all pods in this release |
 | serviceAccount.name | string | `""` | ServiceAccount name. If empty and create=true, uses release fullname. If create=false, uses this name or "default" |
-

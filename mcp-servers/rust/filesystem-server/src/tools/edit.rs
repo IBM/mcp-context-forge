@@ -77,11 +77,11 @@ pub async fn edit_file(
         std::io::Write::write_all(&mut tmp, new_content.as_bytes())
             .with_context(|| format!("Could not write to temp file in '{}'", dir.display()))?;
         tmp.flush()?;
-        
+
         tmp.persist(&canon_path)
             .with_context(|| format!("Could not persist edits to '{}'", canon_path.display()))?;
         tracing::info!("persited file {}", canon_path.display());
-        
+
     }
 
     Ok(Edits {
