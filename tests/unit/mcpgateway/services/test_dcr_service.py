@@ -66,6 +66,70 @@ class TestDiscoverASMetadata:
             assert "/.well-known/oauth-authorization-server" in first_call_url
 
     @pytest.mark.asyncio
+    async def test_discover_as_metadata_normalizes_trailing_slash(self):
+        """Test that trailing slashes are normalized for discovery and validation.
+
+        This tests the fix for MCP Python SDK issue #1919 where Pydantic's AnyHttpUrl
+        adds trailing slashes to bare hostnames, causing issuer mismatch errors.
+        """
+        # Clear cache
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+
+        # Server returns issuer WITHOUT trailing slash (common behavior)
+        mock_metadata = {"issuer": "https://as.example.com"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            # Call with trailing slash (simulating MCP SDK behavior)
+            result = await dcr_service.discover_as_metadata("https://as.example.com/")
+
+            # Should succeed without raising issuer mismatch error
+            assert result["issuer"] == "https://as.example.com"
+
+            # Verify the discovery URL was constructed correctly (no double slashes)
+            call_url = mock_client.get.call_args_list[0][0][0]
+            assert call_url == "https://as.example.com/.well-known/oauth-authorization-server"
+            assert "//.well-known" not in call_url
+
+    @pytest.mark.asyncio
+    async def test_discover_as_metadata_cache_uses_normalized_issuer(self):
+        """Test that cache lookup uses normalized issuer to avoid cache misses."""
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+
+        dcr_service = DcrService()
+
+        mock_metadata = {"issuer": "https://as.example.com"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value=mock_metadata)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            # First call with trailing slash
+            await dcr_service.discover_as_metadata("https://as.example.com/")
+
+            # Second call without trailing slash should hit cache
+            await dcr_service.discover_as_metadata("https://as.example.com")
+
+            # Should only have made one HTTP request (second call used cache)
+            assert mock_client.get.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_discover_as_metadata_falls_back_to_oidc(self):
         """Test fallback to OIDC discovery if RFC 8414 fails."""
         # Clear cache
@@ -256,7 +320,7 @@ class TestRegisterClient:
 
             assert request_json["client_name"] == "MCP Gateway (Test Gateway)"
             assert request_json["redirect_uris"] == ["http://localhost:4444/callback"]
-            assert request_json["grant_types"] == ["authorization_code"]
+            assert request_json["grant_types"] == ["authorization_code", "refresh_token"]
             assert request_json["response_types"] == ["code"]
             assert request_json["scope"] == "mcp:read"
 
@@ -624,13 +688,13 @@ class TestIssuerValidation:
             with patch.object(dcr_service, "_get_client", return_value=mock_client):
                 # Should not raise error
                 result = await dcr_service.register_client(
-                gateway_id="test-gw-issuer-auth",
-                gateway_name="Test",
-                issuer="https://as-issuer-auth.example.com",  # In allowlist
-                redirect_uri="http://localhost:4444/callback",
-                scopes=["mcp:read"],
-                db=test_db,
-            )
+                    gateway_id="test-gw-issuer-auth",
+                    gateway_name="Test",
+                    issuer="https://as-issuer-auth.example.com",  # In allowlist
+                    redirect_uri="http://localhost:4444/callback",
+                    scopes=["mcp:read"],
+                    db=test_db,
+                )
 
 
 class TestDcrError:

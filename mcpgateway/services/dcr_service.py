@@ -74,30 +74,26 @@ class DcrService:
         Raises:
             DcrError: If metadata cannot be discovered
         """
-        # Check cache first
-        if issuer in _metadata_cache:
-            cached_entry = _metadata_cache[issuer]
+        # Normalize issuer URL by removing trailing slash for consistency.
+        # Per RFC 8414 Section 3.1, any terminating "/" MUST be removed before
+        # inserting "/.well-known/" and the well-known URI suffix.
+        # This also works around MCP Python SDK issue #1919 where Pydantic's
+        # AnyHttpUrl adds trailing slashes to bare hostnames.
+        # See: https://github.com/modelcontextprotocol/python-sdk/issues/1919
+        normalized_issuer = issuer.rstrip("/")
+
+        # Check cache first (using normalized issuer as key for consistency)
+        if normalized_issuer in _metadata_cache:
+            cached_entry = _metadata_cache[normalized_issuer]
             cached_at = cached_entry["cached_at"]
             cache_age = (datetime.now(timezone.utc) - cached_at).total_seconds()
 
             if cache_age < self.settings.dcr_metadata_cache_ttl:
-                logger.debug(f"Using cached AS metadata for {issuer}")
+                logger.debug(f"Using cached AS metadata for {normalized_issuer}")
                 return cached_entry["metadata"]
 
-        # > If the issuer identifier value contains a path component, any
-        # > terminating "/" MUST be removed before inserting "/.well-known/" and
-        # > the well-known URI suffix between the host component and the path
-        # > component.
-        # > -- RFC 8414 Section 3.1 second paragraph: https://datatracker.ietf.org/doc/html/rfc8414#section-3.1
-        #
-        # The spec is ambiguous whether the terminating slash in the mostly-path-less "https://example.com/"
-        # should be removed. Because of an incompatibility with the MCP python SDK:
-        # https://github.com/modelcontextprotocol/python-sdk/issues/1919, we choose to believe that even a lonely "/" is
-        # a path component.
-        discovery_base_url = issuer.rstrip("/")
-
         # Try RFC 8414 path first
-        rfc8414_url = f"{discovery_base_url}/.well-known/oauth-authorization-server"
+        rfc8414_url = f"{normalized_issuer}/.well-known/oauth-authorization-server"
 
         try:
             client = await self._get_client()
@@ -105,20 +101,21 @@ class DcrService:
             if response.status_code == 200:
                 metadata = response.json()
 
-                # Validate issuer matches
-                if metadata.get("issuer") != issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
+                # Validate issuer matches (normalize metadata issuer for comparison)
+                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                if metadata_issuer != normalized_issuer:
+                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
                 # Cache the metadata
-                _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info(f"Discovered AS metadata for {issuer} via RFC 8414")
+                logger.info(f"Discovered AS metadata for {normalized_issuer} via RFC 8414")
                 return metadata
         except httpx.HTTPError as e:
-            logger.debug(f"RFC 8414 discovery failed for {issuer}: {e}, trying OIDC fallback")
+            logger.debug(f"RFC 8414 discovery failed for {normalized_issuer}: {e}, trying OIDC fallback")
 
         # Try OIDC discovery fallback
-        oidc_url = f"{discovery_base_url}/.well-known/openid-configuration"
+        oidc_url = f"{normalized_issuer}/.well-known/openid-configuration"
 
         try:
             client = await self._get_client()
@@ -126,19 +123,20 @@ class DcrService:
             if response.status_code == 200:
                 metadata = response.json()
 
-                # Validate issuer matches
-                if metadata.get("issuer") != issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
+                # Validate issuer matches (normalize metadata issuer for comparison)
+                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                if metadata_issuer != normalized_issuer:
+                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
                 # Cache the metadata
-                _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
-                logger.info(f"Discovered AS metadata for {issuer} via OIDC discovery")
+                logger.info(f"Discovered AS metadata for {normalized_issuer} via OIDC discovery")
                 return metadata
 
-            raise DcrError(f"AS metadata not found for {issuer} (status: {response.status_code})")
+            raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
         except httpx.HTTPError as e:
-            raise DcrError(f"Failed to discover AS metadata for {issuer}: {e}")
+            raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {e}")
 
     async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
