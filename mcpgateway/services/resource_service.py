@@ -3348,6 +3348,8 @@ class ResourceService:
         include_inactive: bool = False,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        tags: Optional[List[str]] = None,
+        visibility: Optional[str] = None,
     ) -> List[ResourceTemplate]:
         """
         List resource templates with visibility-based access control.
@@ -3358,6 +3360,8 @@ class ResourceService:
             user_email: Email of requesting user (for private visibility check)
             token_teams: Teams from JWT. None = admin (no filtering),
                          [] = public-only (no owner access), [...] = team-scoped
+            tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            visibility (Optional[str]): Filter by visibility (private, team, public).
 
         Returns:
             List of ResourceTemplate objects the user has access to
@@ -3399,6 +3403,12 @@ class ResourceService:
             query = query.where(or_(*conditions))
 
         # Cursor-based pagination logic can be implemented here in the future.
+        if visibility:
+            query = query.where(DbResource.visibility == visibility)
+
+        if tags:
+            query = query.where(json_contains_tag_expr(db, DbResource.tags, tags, match_any=True))
+
         templates = db.execute(query).scalars().all()
         result = [ResourceTemplate.model_validate(t) for t in templates]
         return result
