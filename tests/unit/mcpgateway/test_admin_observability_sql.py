@@ -8,14 +8,36 @@ Tests SQL-based and Python-based computation paths for:
 """
 
 # Standard
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
 # Local
 from tests.utils.rbac_mocks import create_mock_user_context
+
+
+@pytest.fixture(autouse=True)
+def mock_fresh_db_session_for_rbac(monkeypatch):
+    """Mock fresh_db_session for RBAC decorators.
+
+    As of Issue #1865, permission decorators use fresh_db_session()
+    for short-lived permission checks instead of user_context["db"].
+    """
+    # Mock fresh_db_session to avoid real DB connections
+    @contextmanager
+    def mock_fresh_db_session():
+        yield MagicMock()
+
+    # Mock PermissionService to always grant permissions
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission = AsyncMock(return_value=True)
+    mock_perm_service.check_admin_permission = AsyncMock(return_value=True)
+
+    monkeypatch.setattr("mcpgateway.middleware.rbac.fresh_db_session", mock_fresh_db_session)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
 
 # First-Party
 from mcpgateway.admin import (
@@ -331,7 +353,7 @@ class TestToolUsageStatistics:
         # Mock request and dependencies
         mock_request = MagicMock(spec=Request)
         mock_user = create_mock_user_context()
-        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+        # Note: db is injected via Depends(get_db), not from user context (Issue #1865)
 
         # This should not raise GroupingError
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
@@ -374,7 +396,7 @@ class TestToolErrorStatistics:
 
         mock_request = MagicMock(spec=Request)
         mock_user = create_mock_user_context()
-        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+        # Note: db is injected via Depends(get_db), not from user context (Issue #1865)
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -420,7 +442,7 @@ class TestToolChains:
 
         mock_request = MagicMock(spec=Request)
         mock_user = create_mock_user_context()
-        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+        # Note: db is injected via Depends(get_db), not from user context (Issue #1865)
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -461,7 +483,7 @@ class TestPromptStatistics:
 
         mock_request = MagicMock(spec=Request)
         mock_user = create_mock_user_context()
-        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+        # Note: db is injected via Depends(get_db), not from user context (Issue #1865)
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -497,7 +519,7 @@ class TestPromptStatistics:
 
         mock_request = MagicMock(spec=Request)
         mock_user = create_mock_user_context()
-        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+        # Note: db is injected via Depends(get_db), not from user context (Issue #1865)
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -537,7 +559,7 @@ class TestResourceStatistics:
 
         mock_request = MagicMock(spec=Request)
         mock_user = create_mock_user_context()
-        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+        # Note: db is injected via Depends(get_db), not from user context (Issue #1865)
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
@@ -573,7 +595,7 @@ class TestResourceStatistics:
 
         mock_request = MagicMock(spec=Request)
         mock_user = create_mock_user_context()
-        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+        # Note: db is injected via Depends(get_db), not from user context (Issue #1865)
 
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):

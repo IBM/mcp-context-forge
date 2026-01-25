@@ -105,6 +105,32 @@ from mcpgateway.services.tool_service import (
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 
 
+# ============================================================================
+# Mock fresh_db_session for all tests (Issue #1865)
+# Since permission decorators now use fresh_db_session() for short-lived
+# permission checks, we need to mock it in unit tests.
+# ============================================================================
+@pytest.fixture(autouse=True)
+def mock_fresh_db_session_for_rbac(monkeypatch):
+    """Mock fresh_db_session used by RBAC decorators to avoid real DB connections.
+
+    This fixture ensures permission checks pass without requiring a real database.
+    """
+    from contextlib import contextmanager
+
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    mock_perm_service.check_admin_permission.return_value = True
+
+    @contextmanager
+    def mock_fresh_db_session():
+        yield MagicMock()
+
+    # Patch both the rbac module's fresh_db_session and PermissionService
+    monkeypatch.setattr("mcpgateway.middleware.rbac.fresh_db_session", mock_fresh_db_session)
+    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+
+
 class FakeForm(dict):
     """Enhanced fake form with better list handling."""
 

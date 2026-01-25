@@ -142,7 +142,7 @@ async def oauth_test_db():
         return generate_test_jwt()
 
     test_user_context = create_mock_user_context(email="testuser@example.com", full_name="Test User", is_admin=True)
-    test_user_context["db"] = TestSessionLocal()
+    # Note: db no longer in user context - permission decorators use fresh_db_session() (Issue #1865)
 
     async def simple_mock_user_with_permissions():
         return test_user_context

@@ -107,7 +107,7 @@ async def client(app_with_temp_db):
         test_db_session.commit()
 
     test_user_context = create_mock_user_context(email="admin@example.com", full_name="Test Admin", is_admin=True)
-    test_user_context["db"] = test_db_session
+    # Note: db no longer in user context - permission decorators use fresh_db_session() (Issue #1865)
 
     async def mock_require_admin_auth():
         return "admin@example.com"

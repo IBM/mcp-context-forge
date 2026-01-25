@@ -48,8 +48,9 @@ def client():
     # Override auth dependencies
     app.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
 
+    # auth_method is required to distinguish user context from request body payloads (Issue #2319)
     def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None, db=None):
-        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "db": db}
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "auth_method": "test", "db": db}
 
     app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 

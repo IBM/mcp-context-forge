@@ -15,9 +15,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 import orjson
+from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import LLMProviderType
+from mcpgateway.db import get_db, LLMProviderType
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.llm_provider_service import (
     LLMModelNotFoundError,
@@ -48,6 +49,7 @@ async def get_providers_partial(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get HTML partial for LLM providers list.
@@ -56,13 +58,12 @@ async def get_providers_partial(
         request: FastAPI request object.
         page: Page number.
         per_page: Items per page.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
         HTML partial for providers table.
     """
-    db = current_user_ctx["db"]
-
     providers, total = llm_provider_service.list_providers(
         db=db,
         page=page,
@@ -124,6 +125,7 @@ async def get_models_partial(
     provider_id: Optional[str] = Query(None, description="Filter by provider ID"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=100, description="Items per page"),
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get HTML partial for LLM models list.
@@ -133,13 +135,12 @@ async def get_models_partial(
         provider_id: Filter by provider ID.
         page: Page number.
         per_page: Items per page.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
         HTML partial for models table.
     """
-    db = current_user_ctx["db"]
-
     models, total = llm_provider_service.list_models(
         db=db,
         provider_id=provider_id,
@@ -219,6 +220,7 @@ async def get_models_partial(
 async def set_provider_state_html(
     request: Request,
     provider_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Set provider enabled state and return updated row.
@@ -226,6 +228,7 @@ async def set_provider_state_html(
     Args:
         request: FastAPI request object.
         provider_id: Provider ID to update.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -235,7 +238,6 @@ async def set_provider_state_html(
         HTTPException: If provider is not found.
     """
     try:
-        db = current_user_ctx["db"]
         provider = llm_provider_service.set_provider_state(db, provider_id)
 
         return request.app.state.templates.TemplateResponse(
@@ -264,6 +266,7 @@ async def set_provider_state_html(
 async def check_provider_health(
     request: Request,
     provider_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ):
     """Check provider health and return status JSON.
@@ -271,6 +274,7 @@ async def check_provider_health(
     Args:
         request: FastAPI request object.
         provider_id: Provider ID to check.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -280,7 +284,6 @@ async def check_provider_health(
         HTTPException: If provider is not found.
     """
     try:
-        db = current_user_ctx["db"]
         health = await llm_provider_service.check_provider_health(db, provider_id)
 
         return {
@@ -298,6 +301,7 @@ async def check_provider_health(
 async def delete_provider_html(
     request: Request,
     provider_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Delete provider and return empty response for row removal.
@@ -305,6 +309,7 @@ async def delete_provider_html(
     Args:
         request: FastAPI request object.
         provider_id: Provider ID to delete.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -314,7 +319,6 @@ async def delete_provider_html(
         HTTPException: If provider is not found.
     """
     try:
-        db = current_user_ctx["db"]
         llm_provider_service.delete_provider(db, provider_id)
         return HTMLResponse(content="", status_code=200)
     except LLMProviderNotFoundError as e:
@@ -331,6 +335,7 @@ async def delete_provider_html(
 async def set_model_state_html(
     request: Request,
     model_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Set model enabled state and return updated row.
@@ -338,6 +343,7 @@ async def set_model_state_html(
     Args:
         request: FastAPI request object.
         model_id: Model ID to update.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -347,7 +353,6 @@ async def set_model_state_html(
         HTTPException: If model is not found.
     """
     try:
-        db = current_user_ctx["db"]
         model = llm_provider_service.set_model_state(db, model_id)
 
         try:
@@ -383,6 +388,7 @@ async def set_model_state_html(
 async def delete_model_html(
     request: Request,
     model_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Delete model and return empty response for row removal.
@@ -390,6 +396,7 @@ async def delete_model_html(
     Args:
         request: FastAPI request object.
         model_id: Model ID to delete.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -399,7 +406,6 @@ async def delete_model_html(
         HTTPException: If model is not found.
     """
     try:
-        db = current_user_ctx["db"]
         llm_provider_service.delete_model(db, model_id)
         return HTMLResponse(content="", status_code=200)
     except LLMModelNotFoundError as e:
@@ -415,12 +421,14 @@ async def delete_model_html(
 @require_permission("admin.system_config")
 async def get_api_info_partial(
     request: Request,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get HTML partial for LLM API info and testing.
 
     Args:
         request: FastAPI request object.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -428,8 +436,6 @@ async def get_api_info_partial(
     """
     # First-Party
     from mcpgateway.config import settings
-
-    db = current_user_ctx["db"]
 
     # Get enabled providers and models
     providers, total_providers = llm_provider_service.list_providers(db, enabled_only=True)
@@ -481,6 +487,7 @@ async def get_api_info_partial(
 @require_permission("admin.system_config")
 async def admin_test_api(
     request: Request,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ):
     """Test LLM API without requiring an API key.
@@ -490,6 +497,7 @@ async def admin_test_api(
 
     Args:
         request: FastAPI request object.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -505,7 +513,6 @@ async def admin_test_api(
     from mcpgateway.services.llm_proxy_service import LLMProxyService
     from mcpgateway.utils.orjson_response import ORJSONResponse
 
-    db = current_user_ctx["db"]
     body = orjson.loads(await request.body())
 
     test_type = body.get("test_type", "models")
@@ -649,6 +656,7 @@ async def get_provider_configs(
 async def fetch_provider_models(
     request: Request,
     provider_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ):
     """Fetch available models from a provider's API.
@@ -656,6 +664,7 @@ async def fetch_provider_models(
     Args:
         request: FastAPI request object.
         provider_id: Provider ID to fetch models from.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -669,8 +678,6 @@ async def fetch_provider_models(
 
     # First-Party
     from mcpgateway.utils.services_auth import decode_auth
-
-    db = current_user_ctx["db"]
 
     try:
         provider = llm_provider_service.get_provider(db, provider_id)
@@ -783,6 +790,7 @@ async def fetch_provider_models(
 async def sync_provider_models(
     request: Request,
     provider_id: str,
+    db: Session = Depends(get_db),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
 ):
     """Sync models from provider API to database.
@@ -793,6 +801,7 @@ async def sync_provider_models(
     Args:
         request: FastAPI request object.
         provider_id: Provider ID to sync models for.
+        db: Database session.
         current_user_ctx: Authenticated user context.
 
     Returns:
@@ -801,10 +810,8 @@ async def sync_provider_models(
     # First-Party
     from mcpgateway.llm_schemas import LLMModelCreate
 
-    db = current_user_ctx["db"]
-
     # First fetch models from the provider
-    fetch_result = await fetch_provider_models(request, provider_id, current_user_ctx)
+    fetch_result = await fetch_provider_models(request, provider_id, db, current_user_ctx)
 
     if not fetch_result.get("success"):
         return fetch_result
