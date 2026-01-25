@@ -1792,10 +1792,8 @@ class ToolService:
 
         # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
-            print("\n================= TRIGGERED TOOLS TAG =================\n")
             query = query.where(json_contains_tag_expr(db, DbTool.tags, tags, match_any=True))
-            print(query)
-            print("\n================= TRIGGERED TOOLS TAG =================\n")
+
         # Use unified pagination helper - handles both page and cursor pagination
         pag_result = await unified_paginate(
             db=db,
