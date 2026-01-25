@@ -1,7 +1,7 @@
 ---
 name: Testing (bug, unit, manual. or new test)
 about: Add or improve unit tests, integration tests, or perform manual testing
-title: "[Test]: "
+title: "[TESTING]: "
 labels: testing, triage
 assignees: ''
 
@@ -52,7 +52,7 @@ What should pass or be verified?
 
 ---
 
-### 📓 Notes & Steps
+### 📓 Additional Context & Steps
 Include commands, expected behaviors, or test strategy.
 
 ```bash

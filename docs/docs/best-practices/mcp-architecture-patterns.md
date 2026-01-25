@@ -548,6 +548,8 @@ stateDiagram-v2
 
 # Enterprise Security Patterns
 
+For additional security guidance, see the [CoSAI MCP Security Framework](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/mcp/model-context-protocol-security.md) which provides comprehensive coverage of authentication, access control, input validation, and supply chain security.
+
 ---
 
 ## Pattern SEC1 - Secure-by-Design Development
@@ -1059,3 +1061,10 @@ For enterprise deployments, MCP architecture should align with the **Agent Devel
 - **Architecting Secure Enterprise AI Agents with MCP** (IBM, Verified by Anthropic, October 2025)
   https://ibm.biz/enterprise-ai-with-mcp
   *Comprehensive guide covering the Agent Development Lifecycle (ADLC), MCP gateway patterns, enterprise security, observability, and governance.*
+
+- **Securing the AI Agent Revolution: A Practical Guide to MCP Security** (Coalition for Secure AI)
+  https://www.coalitionforsecureai.org/securing-the-ai-agent-revolution-a-practical-guide-to-mcp-security/
+
+- **Model Context Protocol Security** (OASIS CoSAI)
+  https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/mcp/model-context-protocol-security.md
+  *Technical security framework covering authentication, access control, input validation, data protection, and supply chain security for MCP deployments.*
