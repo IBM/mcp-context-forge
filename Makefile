@@ -1252,7 +1252,7 @@ load-test-spin-detector:                   ## CPU spin loop detector (spike/drop
 	@echo "   👥 User classes: RealisticUser, ReadOnlyAPIUser, FastTimeUser,"
 	@echo "                    MCPJsonRpcUser, FastTestEchoUser, FastTestTimeUser,"
 	@echo "                    HealthCheckUser, WriteAPIUser, StressTestUser"
-	@echo "   🎯 Baselines: Same as load-test-ui (4000 users, 200 spawn/s)"
+	@echo "   🎯 Cycles: 500 -> 750 -> 1000 users (faster iteration)"
 	@echo ""
 	@echo "   💡 Prerequisites:"
 	@echo "      make testing-down testing-up   # Fresh gateway on port 4444"

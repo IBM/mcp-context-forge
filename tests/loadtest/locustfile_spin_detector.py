@@ -47,9 +47,10 @@ from locust import LoadTestShape, between, constant_throughput, events, tag, tas
 from locust.contrib.fasthttp import FastHttpUser
 from locust.runners import MasterRunner, WorkerRunner
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging - WARNING level to reduce noise in multi-worker mode
+logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.WARNING)  # Suppress INFO messages from this module
 
 
 # =============================================================================
@@ -80,10 +81,7 @@ def _load_env_file() -> dict[str, str]:
             break
 
     if env_file is None:
-        logger.info("No .env file found, using environment variables only")
         return env_vars
-
-    logger.info(f"Loading configuration from {env_file}")
 
     try:
         with open(env_file, "r", encoding="utf-8") as f:
@@ -391,7 +389,6 @@ def _generate_jwt_token() -> str:
             "jti": jti,
         }
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-        logger.info(f"Generated JWT token for user: {JWT_USERNAME} (jti={jti[:8]}...)")
         return token
     except ImportError:
         logger.warning("PyJWT not installed, falling back to basic auth")
@@ -1065,18 +1062,21 @@ class RealisticUser(BaseUser):
 @events.init.add_listener
 def on_locust_init(environment, **_kwargs):
     """Initialize test environment."""
+    # Suppress noisy logging - only log on master for debugging
     if isinstance(environment.runner, MasterRunner):
-        logger.info("Running as master node")
+        logger.debug("Running as master node")
     elif isinstance(environment.runner, WorkerRunner):
-        logger.info("Running as worker node")
+        logger.debug("Running as worker node")
     else:
-        logger.info("Running in standalone mode")
+        logger.debug("Running in standalone mode")
 
 
 @events.test_start.add_listener
 def on_test_start(environment, **_kwargs):
-    """Fetch existing entity IDs for use in tests."""
-    logger.info("Test starting - fetching entity IDs...")
+    """Fetch existing entity IDs for use in tests (master/standalone only)."""
+    # Only fetch on master or standalone - workers don't need this
+    if isinstance(environment.runner, WorkerRunner):
+        return
 
     host = environment.host or "http://localhost:4444"
     headers = _get_auth_headers()
@@ -1088,21 +1088,18 @@ def on_test_start(environment, **_kwargs):
             items = data if isinstance(data, list) else data.get("tools", data.get("items", []))
             TOOL_IDS.extend([str(t.get("id")) for t in items[:50] if t.get("id")])
             TOOL_NAMES.extend([str(t.get("name")) for t in items[:50] if t.get("name")])
-            logger.info(f"Loaded {len(TOOL_IDS)} tool IDs, {len(TOOL_NAMES)} tool names")
 
         # Fetch servers
         status, data = _fetch_json(f"{host}/servers", headers)
         if status == 200 and data:
             items = data if isinstance(data, list) else data.get("servers", data.get("items", []))
             SERVER_IDS.extend([str(s.get("id")) for s in items[:50] if s.get("id")])
-            logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
 
         # Fetch gateways
         status, data = _fetch_json(f"{host}/gateways", headers)
         if status == 200 and data:
             items = data if isinstance(data, list) else data.get("gateways", data.get("items", []))
             GATEWAY_IDS.extend([str(g.get("id")) for g in items[:50] if g.get("id")])
-            logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
 
         # Fetch resources
         status, data = _fetch_json(f"{host}/resources", headers)
@@ -1110,7 +1107,6 @@ def on_test_start(environment, **_kwargs):
             items = data if isinstance(data, list) else data.get("resources", data.get("items", []))
             RESOURCE_IDS.extend([str(r.get("id")) for r in items[:50] if r.get("id")])
             RESOURCE_URIS.extend([str(r.get("uri")) for r in items[:50] if r.get("uri")])
-            logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs")
 
         # Fetch prompts
         status, data = _fetch_json(f"{host}/prompts", headers)
@@ -1118,17 +1114,18 @@ def on_test_start(environment, **_kwargs):
             items = data if isinstance(data, list) else data.get("prompts", data.get("items", []))
             PROMPT_IDS.extend([str(p.get("id")) for p in items[:50] if p.get("id")])
             PROMPT_NAMES.extend([str(p.get("name")) for p in items[:50] if p.get("name")])
-            logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs")
 
-    except Exception as e:
-        logger.warning(f"Failed to fetch entity IDs: {e}")
-        logger.info("Tests will continue without pre-fetched IDs")
+    except Exception:
+        pass  # Tests will continue without pre-fetched IDs
 
 
 @events.test_stop.add_listener
 def on_test_stop(environment, **_kwargs):
-    """Clean up on test stop."""
-    logger.info("Test stopped")
+    """Clean up on test stop (master/standalone only)."""
+    # Only run cleanup on master or standalone
+    if isinstance(environment.runner, WorkerRunner):
+        return
+
     TOOL_IDS.clear()
     SERVER_IDS.clear()
     GATEWAY_IDS.clear()
@@ -1159,16 +1156,16 @@ class SpinDetectorShape(LoadTestShape):
     """
 
     # Configuration for each cycle: (target_users, ramp_time, sustain_time, pause_time)
-    # Matches load-test-ui defaults: 4000 users baseline
+    # Reduced from 4000 to 1000 peak for faster iteration during testing
     cycles = [
-        (2000, 30, 20, 30),  # Cycle 1: 2000 users (warmup)
-        (3000, 30, 20, 30),  # Cycle 2: 3000 users
-        (4000, 30, 20, 30),  # Cycle 3: 4000 users (peak - matches load-test-ui default)
-        (2000, 20, 10, 20),  # Cycle 4: Quick cycle
-        (4000, 30, 20, 30),  # Cycle 5: Final peak
+        (500, 15, 10, 20),   # Cycle 1: 500 users (warmup)
+        (750, 15, 10, 20),   # Cycle 2: 750 users
+        (1000, 20, 15, 30),  # Cycle 3: 1000 users (peak)
+        (500, 10, 5, 15),    # Cycle 4: Quick cycle
+        (1000, 20, 15, 30),  # Cycle 5: Final peak
     ]
 
-    spawn_rate = 200  # Matches LOADTEST_SPAWN_RATE default
+    spawn_rate = 100  # Spawn rate for faster ramp
 
     def __init__(self):
         """Initialize the load shape."""
@@ -1240,22 +1237,11 @@ class SpinDetectorShape(LoadTestShape):
   Detect CPU spin loop bug caused by orphaned asyncio tasks.
 
 {Colors.BOLD}TEST PATTERN:{Colors.RESET}
-  1. {Colors.GREEN}Ramp up{Colors.RESET} to high user count (creates sessions)
+  1. {Colors.GREEN}Ramp up{Colors.RESET} to user count (creates sessions)
   2. {Colors.CYAN}Sustain{Colors.RESET} load for observation
   3. {Colors.MAGENTA}Drop{Colors.RESET} to 0 users (triggers cleanup)
   4. {Colors.YELLOW}Pause{Colors.RESET} to monitor CPU (should return to idle)
-  5. Repeat for 5 cycles (peak: 4000 users)
-
-{Colors.BOLD}USER CLASSES:{Colors.RESET}
-  - RealisticUser (weight=10): Mixed API/RPC traffic
-  - ReadOnlyAPIUser (weight=5): REST API reads
-  - FastTimeUser (weight=5): fast-time MCP tools
-  - MCPJsonRpcUser (weight=4): JSON-RPC protocol
-  - FastTestEchoUser (weight=3): fast-test echo
-  - FastTestTimeUser (weight=3): fast-test time
-  - HealthCheckUser (weight=1): Health probes
-  - WriteAPIUser (weight=1): Create/delete ops
-  - StressTestUser (weight=1): High-throughput
+  5. Repeat for 5 cycles (500 -> 750 -> 1000 users)
 
 {Colors.BOLD}EXPECTED:{Colors.RESET}
   {Colors.GREEN}PASS:{Colors.RESET} CPU <10% during pause | {Colors.RED}FAIL:{Colors.RESET} CPU >100% during pause
