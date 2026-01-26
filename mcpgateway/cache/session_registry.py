@@ -1140,6 +1140,8 @@ class SessionRegistry(SessionBackend):
                         await asyncio.sleep(0.1)
                         continue
                     if msg["type"] != "message":
+                        # Sleep on non-message types to prevent spin in edge cases
+                        await asyncio.sleep(0.1)
                         continue
 
                     data = orjson.loads(msg["data"])
