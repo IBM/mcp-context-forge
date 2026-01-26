@@ -18,9 +18,11 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Optional
 import uuid
 
 # Third-Party
+import anyio
 from fastapi import Request
 import orjson
-from sse_starlette.sse import EventSourceResponse
+from sse_starlette.sse import EventSourceResponse as BaseEventSourceResponse
+from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
@@ -30,6 +32,70 @@ from mcpgateway.transports.base import Transport
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Timeout for SSE task group cleanup (seconds)
+# Prevents CPU spin loops when tasks don't respond to cancellation
+# See: https://github.com/agronholm/anyio/issues/695
+SSE_TASK_GROUP_CLEANUP_TIMEOUT = 5.0
+
+
+class EventSourceResponse(BaseEventSourceResponse):
+    """Patched EventSourceResponse with CPU spin detection.
+
+    This mitigates a CPU spin loop issue (anyio#695) where _deliver_cancellation
+    spins at 100% CPU when tasks in the SSE task group don't respond to
+    cancellation.
+
+    Instead of trying to timeout the task group (which would affect normal
+    SSE connections), we copy the __call__ method and add a deadline to
+    the cancel scope to ensure cleanup doesn't hang indefinitely.
+
+    See:
+    - https://github.com/agronholm/anyio/issues/695
+    - https://github.com/anthropics/claude-agent-sdk-python/issues/378
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Handle SSE request with cancel scope deadline to prevent spin.
+
+        This method is copied from sse_starlette with one key modification:
+        the task group's cancel_scope gets a deadline set when cancellation
+        starts, preventing indefinite spinning if tasks don't respond.
+
+        Args:
+            scope: ASGI scope dictionary.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        # Copy of sse_starlette.sse.EventSourceResponse.__call__ with deadline fix
+        # Standard
+        from typing import Awaitable, Callable
+
+        async with anyio.create_task_group() as task_group:
+            # Add deadline to cancel scope to prevent indefinite spin on cleanup
+            # The deadline is set far in the future initially, and only becomes
+            # relevant if the scope is cancelled and cleanup takes too long
+
+            async def cancel_on_finish(coro: Callable[[], Awaitable[None]]) -> None:
+                await coro()
+                # When cancelling, set a deadline to prevent indefinite spin
+                # if other tasks don't respond to cancellation
+                task_group.cancel_scope.deadline = anyio.current_time() + SSE_TASK_GROUP_CLEANUP_TIMEOUT
+                task_group.cancel_scope.cancel()
+
+            task_group.start_soon(cancel_on_finish, lambda: self._stream_response(send))
+            task_group.start_soon(cancel_on_finish, lambda: self._ping(send))
+            task_group.start_soon(cancel_on_finish, self._listen_for_exit_signal)
+
+            if self.data_sender_callable:
+                task_group.start_soon(self.data_sender_callable)
+
+            # Wait for the client to disconnect last
+            task_group.start_soon(cancel_on_finish, lambda: self._listen_for_disconnect(receive))
+
+        if self.background is not None:
+            await self.background()
+
 
 # Pre-computed SSE frame components for performance
 _SSE_EVENT_PREFIX = b"event: "
