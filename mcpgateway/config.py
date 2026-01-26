@@ -1335,6 +1335,33 @@ class Settings(BaseSettings):
     # See: https://github.com/agronholm/anyio/issues/695
     sse_task_group_cleanup_timeout: float = 5.0
 
+    # =========================================================================
+    # EXPERIMENTAL: anyio _deliver_cancellation spin loop workaround
+    # =========================================================================
+    # When enabled, monkey-patches anyio's CancelScope._deliver_cancellation to
+    # limit the number of retry iterations. This prevents 100% CPU spin loops
+    # when tasks don't respond to CancelledError (anyio issue #695).
+    #
+    # WARNING: This is a workaround for an upstream issue. May be removed when
+    # anyio or MCP SDK fix the underlying problem. Enable only if you experience
+    # CPU spin loops during SSE/MCP connection cleanup.
+    #
+    # Trade-offs when enabled:
+    # - Prevents indefinite CPU spin (good)
+    # - May leave some tasks uncancelled after max iterations (usually harmless)
+    # - Worker recycling (GUNICORN_MAX_REQUESTS) cleans up orphaned tasks
+    #
+    # See: https://github.com/agronholm/anyio/issues/695
+    # Env: ANYIO_CANCEL_DELIVERY_PATCH_ENABLED
+    anyio_cancel_delivery_patch_enabled: bool = False
+
+    # Maximum iterations for _deliver_cancellation before giving up.
+    # Only used when anyio_cancel_delivery_patch_enabled=True.
+    # Higher values = more attempts to cancel tasks, but longer potential spin.
+    # Lower values = faster recovery, but more orphaned tasks.
+    # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
+    anyio_cancel_delivery_max_iterations: int = 100
+
     # Prompts
     prompt_cache_size: int = 100
     max_prompt_size: int = 100 * 1024  # 100KB

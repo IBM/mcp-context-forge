@@ -36,60 +36,141 @@ logger = logging_service.get_logger(__name__)
 
 
 # =============================================================================
-# MONKEY-PATCH: Fix anyio's _deliver_cancellation spin loop (anyio#695)
+# EXPERIMENTAL WORKAROUND: anyio _deliver_cancellation spin loop (anyio#695)
 # =============================================================================
 # anyio's _deliver_cancellation can spin at 100% CPU when tasks don't respond
-# to CancelledError. This monkey-patch adds a max iteration limit to prevent
-# indefinite spinning. After the limit is reached, we give up delivering
+# to CancelledError. This optional monkey-patch adds a max iteration limit to
+# prevent indefinite spinning. After the limit is reached, we give up delivering
 # cancellation and let the scope exit (tasks will be orphaned but won't spin).
 #
+# This workaround is DISABLED by default. Enable via:
+#   ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true
+#
+# Trade-offs:
+# - Prevents indefinite CPU spin (good)
+# - May leave some tasks uncancelled after max iterations (usually harmless)
+# - Worker recycling (GUNICORN_MAX_REQUESTS) cleans up orphaned tasks
+#
+# This workaround may be removed when anyio or MCP SDK fix the underlying issue.
 # See: https://github.com/agronholm/anyio/issues/695
 # =============================================================================
 
-_CANCEL_DELIVERY_MAX_ITERATIONS = 100  # Max call_soon iterations before giving up
+# Store original for potential restoration and for the patch to call
 _original_deliver_cancellation = CancelScope._deliver_cancellation  # type: ignore[attr-defined]  # pylint: disable=protected-access
+_patch_applied = False  # pylint: disable=invalid-name
 
 
-def _patched_deliver_cancellation(self: CancelScope, origin: CancelScope) -> bool:  # pylint: disable=protected-access
-    """Patched _deliver_cancellation with max iteration limit to prevent spin.
-
-    This wraps anyio's original _deliver_cancellation to track iteration count
-    and give up after a maximum number of attempts. This prevents the CPU spin
-    loop that occurs when tasks don't respond to CancelledError.
+def _create_patched_deliver_cancellation(max_iterations: int):  # noqa: C901
+    """Create a patched _deliver_cancellation with configurable max iterations.
 
     Args:
-        self: The cancel scope being processed.
-        origin: The cancel scope that originated the cancellation.
+        max_iterations: Maximum iterations before giving up cancellation delivery.
 
     Returns:
-        True if delivery should be retried, False if done or max iterations reached.
+        Patched function that limits cancellation delivery iterations.
     """
-    # Track iteration count on the origin scope (the one that initiated cancel)
-    if not hasattr(origin, "_delivery_iterations"):
-        origin._delivery_iterations = 0  # type: ignore[attr-defined]  # pylint: disable=protected-access
 
-    origin._delivery_iterations += 1  # type: ignore[attr-defined]  # pylint: disable=protected-access
+    def _patched_deliver_cancellation(self: CancelScope, origin: CancelScope) -> bool:  # pylint: disable=protected-access
+        """Patched _deliver_cancellation with max iteration limit to prevent spin.
 
-    # Check if we've exceeded the maximum iterations
-    if origin._delivery_iterations > _CANCEL_DELIVERY_MAX_ITERATIONS:  # type: ignore[attr-defined]  # pylint: disable=protected-access
-        # Log warning and give up - this prevents indefinite spin
-        logger.warning(
-            "anyio cancel delivery exceeded %d iterations - giving up to prevent CPU spin. "
-            "Some tasks may not have been properly cancelled.",
-            _CANCEL_DELIVERY_MAX_ITERATIONS,
+        This wraps anyio's original _deliver_cancellation to track iteration count
+        and give up after a maximum number of attempts. This prevents the CPU spin
+        loop that occurs when tasks don't respond to CancelledError.
+
+        Args:
+            self: The cancel scope being processed.
+            origin: The cancel scope that originated the cancellation.
+
+        Returns:
+            True if delivery should be retried, False if done or max iterations reached.
+        """
+        # Track iteration count on the origin scope (the one that initiated cancel)
+        if not hasattr(origin, "_delivery_iterations"):
+            origin._delivery_iterations = 0  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+        origin._delivery_iterations += 1  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+        # Check if we've exceeded the maximum iterations
+        if origin._delivery_iterations > max_iterations:  # type: ignore[attr-defined]  # pylint: disable=protected-access
+            # Log warning and give up - this prevents indefinite spin
+            logger.warning(
+                "anyio cancel delivery exceeded %d iterations - giving up to prevent CPU spin. "
+                "Some tasks may not have been properly cancelled. "
+                "Disable with ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false if this causes issues.",
+                max_iterations,
+            )
+            # Clear the cancel handle to stop further retries
+            if hasattr(self, "_cancel_handle") and self._cancel_handle is not None:  # pylint: disable=protected-access
+                self._cancel_handle = None  # pylint: disable=protected-access
+            return False  # Don't retry
+
+        # Call the original implementation
+        return _original_deliver_cancellation(self, origin)
+
+    return _patched_deliver_cancellation
+
+
+def apply_anyio_cancel_delivery_patch() -> bool:
+    """Apply the anyio _deliver_cancellation monkey-patch if enabled in config.
+
+    This function is idempotent - calling it multiple times has no additional effect.
+
+    Returns:
+        True if patch was applied (or already applied), False if disabled.
+    """
+    global _patch_applied  # pylint: disable=global-statement
+
+    if _patch_applied:
+        return True
+
+    try:
+        if not settings.anyio_cancel_delivery_patch_enabled:
+            logger.debug("anyio _deliver_cancellation patch DISABLED. Enable with ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true if you experience CPU spin loops.")
+            return False
+
+        max_iterations = settings.anyio_cancel_delivery_max_iterations
+        patched_func = _create_patched_deliver_cancellation(max_iterations)
+        CancelScope._deliver_cancellation = patched_func  # type: ignore[method-assign]  # pylint: disable=protected-access
+        _patch_applied = True
+
+        logger.info(
+            "anyio _deliver_cancellation patch ENABLED (max_iterations=%d). "
+            "This is an experimental workaround for anyio#695. "
+            "Disable with ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false if it causes issues.",
+            max_iterations,
         )
-        # Clear the cancel handle to stop further retries
-        if hasattr(self, "_cancel_handle") and self._cancel_handle is not None:  # pylint: disable=protected-access
-            self._cancel_handle = None  # pylint: disable=protected-access
-        return False  # Don't retry
+        return True
 
-    # Call the original implementation
-    return _original_deliver_cancellation(self, origin)
+    except Exception as e:
+        logger.warning("Failed to apply anyio _deliver_cancellation patch: %s", e)
+        return False
 
 
-# Apply the monkey-patch
-CancelScope._deliver_cancellation = _patched_deliver_cancellation  # type: ignore[method-assign]  # pylint: disable=protected-access
-logger.debug("Applied anyio _deliver_cancellation monkey-patch to prevent CPU spin loops")
+def remove_anyio_cancel_delivery_patch() -> bool:
+    """Remove the anyio _deliver_cancellation monkey-patch.
+
+    Restores the original anyio implementation.
+
+    Returns:
+        True if patch was removed, False if it wasn't applied.
+    """
+    global _patch_applied  # pylint: disable=global-statement
+
+    if not _patch_applied:
+        return False
+
+    try:
+        CancelScope._deliver_cancellation = _original_deliver_cancellation  # type: ignore[method-assign]  # pylint: disable=protected-access
+        _patch_applied = False
+        logger.info("anyio _deliver_cancellation patch removed - restored original implementation")
+        return True
+    except Exception as e:
+        logger.warning("Failed to remove anyio _deliver_cancellation patch: %s", e)
+        return False
+
+
+# Apply patch at module load time if enabled
+apply_anyio_cancel_delivery_patch()
 
 
 def _get_sse_cleanup_timeout() -> float:

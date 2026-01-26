@@ -359,6 +359,15 @@ services:
       # Only affects cancelled/released connections, not normal operation.
       - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
       - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
+      # ─────────────────────────────────────────────────────────────────────────
+      # EXPERIMENTAL: anyio _deliver_cancellation spin loop workaround
+      # ─────────────────────────────────────────────────────────────────────────
+      # Monkey-patches anyio to limit cancellation delivery iterations.
+      # Enable only if you experience CPU spin loops that cleanup timeouts don't fix.
+      # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
+      # See: https://github.com/agronholm/anyio/issues/695
+      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false               # Enable workaround (default: false)
+      # - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=100              # Max iterations before giving up
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
