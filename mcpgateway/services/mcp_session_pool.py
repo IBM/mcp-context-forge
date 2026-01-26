@@ -50,6 +50,11 @@ from mcpgateway.utils.url_auth import sanitize_url_for_logging
 # JSON-RPC standard error code for method not found
 METHOD_NOT_FOUND = -32601
 
+# Timeout for session cleanup operations (seconds)
+# This prevents indefinite blocking when session tasks don't respond to cancellation
+# which can cause CPU spin loops in anyio's _deliver_cancellation
+SESSION_CLEANUP_TIMEOUT = 5.0
+
 if TYPE_CHECKING:
     # Standard
     from collections.abc import AsyncIterator
@@ -869,21 +874,33 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         finally:
             # Clean up on ANY failure (Exception, CancelledError, etc.)
             # Only clean up if we didn't succeed
+            # Use timeouts to prevent indefinite blocking if tasks don't respond to cancellation
             if not success:
                 if session is not None:
                     try:
-                        await session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-                    except Exception:  # nosec B110 - Best effort cleanup on connection failure
+                        await asyncio.wait_for(
+                            session.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
+                            timeout=SESSION_CLEANUP_TIMEOUT,
+                        )
+                    except (asyncio.TimeoutError, Exception):  # nosec B110 - Best effort cleanup on connection failure
                         pass
                 if transport_ctx is not None:
                     try:
-                        await transport_ctx.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
-                    except Exception:  # nosec B110 - Best effort cleanup on connection failure
+                        await asyncio.wait_for(
+                            transport_ctx.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
+                            timeout=SESSION_CLEANUP_TIMEOUT,
+                        )
+                    except (asyncio.TimeoutError, Exception):  # nosec B110 - Best effort cleanup on connection failure
                         pass
 
     async def _close_session(self, pooled: PooledSession) -> None:
         """
         Close a session and its transport.
+
+        Uses timeouts to prevent indefinite blocking if session/transport tasks
+        don't respond to cancellation. This prevents CPU spin loops in anyio's
+        _deliver_cancellation which can occur when async iterators or blocking
+        operations don't properly handle CancelledError.
 
         Args:
             pooled: The session to close.
@@ -893,13 +910,25 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         pooled.mark_closed()
 
+        # Use timeout to prevent indefinite blocking if session tasks don't respond to cancellation
         try:
-            await pooled.session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+            await asyncio.wait_for(
+                pooled.session.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
+                timeout=SESSION_CLEANUP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Session cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
         except Exception as e:
             logger.debug(f"Error closing session: {e}")
 
+        # Use timeout for transport cleanup as well (terminate_session HTTP call can hang)
         try:
-            await pooled.transport_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+            await asyncio.wait_for(
+                pooled.transport_context.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
+                timeout=SESSION_CLEANUP_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Transport cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
         except Exception as e:
             logger.debug(f"Error closing transport: {e}")
 

@@ -580,12 +580,15 @@ class CacheInvalidationSubscriber:
         except Exception as e:
             logger.warning("CacheInvalidationSubscriber failed to start: %s", e)
             # Clean up partially created pubsub to prevent leaks
+            # Use timeout to prevent blocking if pubsub doesn't close cleanly
             if self._pubsub is not None:
                 try:
                     try:
-                        await self._pubsub.aclose()
+                        await asyncio.wait_for(self._pubsub.aclose(), timeout=5.0)
                     except AttributeError:
-                        await self._pubsub.close()
+                        await asyncio.wait_for(self._pubsub.close(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.debug("Pubsub cleanup timed out - proceeding anyway")
                 except Exception as cleanup_err:
                     logger.debug("Error during pubsub cleanup: %s", cleanup_err)
                 self._pubsub = None
@@ -618,11 +621,18 @@ class CacheInvalidationSubscriber:
 
         if self._pubsub:
             try:
-                await self._pubsub.unsubscribe(self._channel)
+                await asyncio.wait_for(self._pubsub.unsubscribe(self._channel), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.debug("Pubsub unsubscribe timed out - proceeding anyway")
+            except Exception as e:
+                logger.debug("Error unsubscribing from pubsub: %s", e)
+            try:
                 try:
-                    await self._pubsub.aclose()
+                    await asyncio.wait_for(self._pubsub.aclose(), timeout=5.0)
                 except AttributeError:
-                    await self._pubsub.close()
+                    await asyncio.wait_for(self._pubsub.close(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.debug("Pubsub close timed out - proceeding anyway")
             except Exception as e:
                 logger.debug("Error closing pubsub: %s", e)
             self._pubsub = None

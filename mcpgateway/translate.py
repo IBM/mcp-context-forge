@@ -2144,9 +2144,18 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         await server.serve()
     finally:
         await _shutdown()
-        # Clean up streamable HTTP context
+        # Clean up streamable HTTP context with timeout to prevent spin loop
+        # if tasks don't respond to cancellation (anyio _deliver_cancellation issue)
         if streamable_context:
-            await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+            try:
+                await asyncio.wait_for(
+                    streamable_context.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call,no-member
+                    timeout=5.0,
+                )
+            except asyncio.TimeoutError:
+                LOGGER.warning("Streamable HTTP context cleanup timed out - proceeding anyway")
+            except Exception as e:
+                LOGGER.debug(f"Error cleaning up streamable HTTP context: {e}")
 
 
 async def _simple_sse_pump(client: "Any", url: str, max_retries: int, initial_retry_delay: float) -> None:

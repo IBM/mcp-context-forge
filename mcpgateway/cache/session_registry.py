@@ -580,9 +580,12 @@ class SessionRegistry(SessionBackend):
                     logger.error("Some stuck tasks could not be cancelled during shutdown")
 
         # Close Redis pubsub (but not the shared client)
+        # Use timeout to prevent blocking if pubsub doesn't close cleanly
         if self._backend == "redis" and getattr(self, "_pubsub", None):
             try:
-                await self._pubsub.aclose()
+                await asyncio.wait_for(self._pubsub.aclose(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Redis pubsub close timed out - proceeding anyway")
             except Exception as e:
                 logger.error(f"Error closing Redis pubsub: {e}")
             # Don't close self._redis - it's the shared client managed by redis_client.py
@@ -1155,12 +1158,22 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"PubSub listener error for session {session_id}: {e}")
             finally:
-                # Pubsub cleanup first
-                await pubsub.unsubscribe(session_id)
+                # Pubsub cleanup first - use timeouts to prevent blocking
                 try:
-                    await pubsub.aclose()
-                except AttributeError:
-                    await pubsub.close()
+                    await asyncio.wait_for(pubsub.unsubscribe(session_id), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.debug(f"Pubsub unsubscribe timed out for session {session_id}")
+                except Exception as e:
+                    logger.debug(f"Error unsubscribing pubsub for session {session_id}: {e}")
+                try:
+                    try:
+                        await asyncio.wait_for(pubsub.aclose(), timeout=5.0)
+                    except AttributeError:
+                        await asyncio.wait_for(pubsub.close(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    logger.debug(f"Pubsub close timed out for session {session_id}")
+                except Exception as e:
+                    logger.debug(f"Error closing pubsub for session {session_id}: {e}")
                 logger.info(f"Cleaned up pubsub for session {session_id}")
                 # Clean up task reference LAST (idempotent - may already be removed by _cancel_respond_task)
                 self._respond_tasks.pop(session_id, None)
