@@ -1,0 +1,596 @@
+((Admin) => {
+    // ===================================================================
+    // ENHANCED TAB HANDLING with Better Error Management
+    // ===================================================================
+    Admin.ADMIN_ONLY_TABS = new Set([
+        "users",
+        "metrics",
+        "performance",
+        "observability",
+        "plugins",
+        "logs",
+        "export-import",
+        "version-info",
+        "maintenance",
+    ]);
+
+    Admin.isAdminUser = function () {
+        return Boolean(window.IS_ADMIN);
+    };
+
+    Admin.isAdminOnlyTab = function (tabName) {
+        return Admin.ADMIN_ONLY_TABS.has(tabName);
+    };
+
+    Admin.getDefaultTabName = function () {
+        return Admin.safeGetElement("overview-panel", true) ? "overview" : "gateways";
+    };
+
+    let tabSwitchTimeout = null;
+
+    /**
+    * Dynamically detects which pagination table names belong to a given tab panel
+    * by scanning for pagination control elements within that panel.
+    * Returns array of table names (e.g., ['tools'], ['servers'], etc.)
+    */
+    Admin.getTableNamesForTab = function (tabName) {
+        const panel = Admin.safeGetElement(`${tabName}-panel`);
+        if (!panel) {
+            return [];
+        }
+
+        // Find all pagination control elements within this panel
+        // Pattern: id="<tableName>-pagination-controls"
+        const paginationControls = panel.querySelectorAll(
+            '[id$="-pagination-controls"]',
+        );
+
+        const tableNames = [];
+        paginationControls.forEach((control) => {
+            // Extract table name from id: "tools-pagination-controls" -> "tools"
+            const match = control.id.match(/^(.+)-pagination-controls$/);
+            if (match) {
+                tableNames.push(match[1]);
+            }
+        });
+
+        return tableNames;
+    };
+
+    /**
+    * Cleans up URL params for tables not belonging to the target tab
+    * Keeps only params for the current tab's tables and global params (team_id)
+    * Automatically detects which tables belong to the tab by scanning the DOM.
+    */
+    Admin.cleanUpUrlParamsForTab = function (targetTabName) {
+        const currentUrl = new URL(window.location.href);
+        const newParams = new URLSearchParams();
+
+        // Dynamically detect which tables belong to this tab
+        const targetTables = Admin.getTableNamesForTab(targetTabName);
+
+        // Preserve global params
+        if (currentUrl.searchParams.has("team_id")) {
+            newParams.set("team_id", currentUrl.searchParams.get("team_id"));
+        }
+
+        // Only keep params for tables that belong to the target tab
+        currentUrl.searchParams.forEach((value, key) => {
+            // Check if this param belongs to one of the target tab's tables
+            for (const tableName of targetTables) {
+                const prefix = tableName + "_";
+                if (key.startsWith(prefix)) {
+                    newParams.set(key, value);
+                    break;
+                }
+            }
+        });
+
+        // Update URL
+        const newUrl =
+            currentUrl.pathname +
+            (newParams.toString() ? "?" + newParams.toString() : "") +
+            currentUrl.hash;
+        window.history.replaceState({}, "", newUrl);
+    };
+
+    Admin.showTab = function (tabName) {
+        try {
+            if (!Admin.isAdminUser() && Admin.isAdminOnlyTab(tabName)) {
+                console.warn(`Blocked non-admin access to tab: ${tabName}`);
+                const fallbackTab = Admin.getDefaultTabName();
+                if (tabName !== fallbackTab) {
+                    Admin.showTab(fallbackTab);
+                }
+                return;
+            }
+            console.log(`Switching to tab: ${tabName}`);
+
+            // Clear any pending tab switch
+            if (tabSwitchTimeout) {
+                clearTimeout(tabSwitchTimeout);
+            }
+
+            // Cleanup observability tab when leaving
+            const currentPanel = document.querySelector(".tab-panel:not(.hidden)");
+            if (
+                currentPanel &&
+                currentPanel.id === "observability-panel" &&
+                tabName !== "observability"
+            ) {
+                console.log("Leaving observability tab, triggering cleanup...");
+                // Destroy all observability charts
+                Admin.chartRegistry.destroyByPrefix("metrics-");
+                Admin.chartRegistry.destroyByPrefix("tools-");
+                Admin.chartRegistry.destroyByPrefix("prompts-");
+                Admin.chartRegistry.destroyByPrefix("resources-");
+                // Dispatch event so Alpine components can stop intervals and reset state
+                document.dispatchEvent(new CustomEvent("observability:leave"));
+            }
+
+            // Clean up URL params from other tabs when switching tabs
+            Admin.cleanUpUrlParamsForTab(tabName);
+
+            // Navigation styling (immediate)
+            document.querySelectorAll(".tab-panel").forEach((p) => {
+                if (p) {
+                    p.classList.add("hidden");
+                }
+            });
+
+            document.querySelectorAll(".sidebar-link").forEach((l) => {
+                if (l) {
+                    l.classList.remove("active");
+                }
+            });
+
+            // Reveal chosen panel
+            const panel = Admin.safeGetElement(`${tabName}-panel`);
+            if (panel) {
+                panel.classList.remove("hidden");
+            } else {
+                console.error(`Panel ${tabName}-panel not found`);
+                return;
+            }
+
+            const nav = document.querySelector(`.sidebar-link[href="#${tabName}"]`);
+            if (nav) {
+                nav.classList.add("active");
+            }
+
+            // Debounced content loading
+            tabSwitchTimeout = setTimeout(() => {
+                try {
+                    if (tabName === "overview") {
+                        // Load overview content if not already loaded
+                        const overviewPanel = Admin.safeGetElement("overview-panel");
+                        if (overviewPanel) {
+                            const hasLoadingMessage =
+                                overviewPanel.innerHTML.includes(
+                                    "Loading overview",
+                                );
+                            if (hasLoadingMessage) {
+                                // Trigger HTMX load manually if HTMX is available
+                                if (window.htmx && window.htmx.trigger) {
+                                    window.htmx.trigger(overviewPanel, "load");
+                                }
+                            }
+                        }
+                    }
+
+                    if (tabName === "metrics") {
+                        // Only load if we're still on the metrics tab
+                        if (!panel.classList.contains("hidden")) {
+                            Admin.loadAggregatedMetrics();
+                        }
+                    }
+                    if (tabName === "llm-chat") {
+                        Admin.initializeLLMChat();
+                    }
+
+                    if (tabName === "logs") {
+                        // Load structured logs when tab is first opened
+                        const logsTbody = Admin.safeGetElement("logs-tbody");
+                        if (logsTbody && logsTbody.children.length === 0) {
+                            Admin.searchStructuredLogs();
+                        }
+                    }
+
+                    if (tabName === "teams") {
+                        // Load Teams list if not already loaded
+                        const teamsList = Admin.safeGetElement("teams-list");
+                        if (teamsList) {
+                            // Check if it's still showing the loading message or is empty
+                            const hasLoadingMessage =
+                                teamsList.innerHTML.includes("Loading teams...");
+                            const isEmpty = teamsList.innerHTML.trim() === "";
+                            if (hasLoadingMessage || isEmpty) {
+                                // Trigger HTMX load manually if HTMX is available
+                                if (window.htmx && window.htmx.trigger) {
+                                    window.htmx.trigger(teamsList, "load");
+                                }
+                            }
+                        }
+                    }
+
+                    if (tabName === "gateways") {
+                        // Load Gateways table if not already loaded
+                        const gatewaysTable = Admin.safeGetElement("gateways-table");
+                        if (gatewaysTable) {
+                            const hasLoadingMessage =
+                                gatewaysTable.innerHTML.includes(
+                                    "Loading gateways...",
+                                );
+                            const isEmpty = gatewaysTable.innerHTML.trim() === "";
+                            if (hasLoadingMessage || isEmpty) {
+                                // Trigger HTMX load manually if HTMX is available
+                                if (window.htmx && window.htmx.trigger) {
+                                    window.htmx.trigger(gatewaysTable, "load");
+                                }
+                            }
+                        }
+                    }
+
+                    if (tabName === "tokens") {
+                        // Load Tokens list and set up form handling
+                        const tokensList = Admin.safeGetElement("tokens-list");
+                        if (tokensList) {
+                            const hasLoadingMessage =
+                                tokensList.innerHTML.includes("Loading tokens...");
+                            const isEmpty = !tokensList.innerHTML.trim();
+                            if (hasLoadingMessage || isEmpty) {
+                                Admin.loadTokensList();
+                            }
+                        }
+
+                        // Set up create token form if not already set up
+                        const createForm = Admin.safeGetElement("create-token-form");
+                        if (createForm && !createForm.hasAttribute("data-setup")) {
+                            Admin.setupCreateTokenForm();
+                            createForm.setAttribute("data-setup", "true");
+                        }
+
+                        // Update team scoping warning when switching to tokens tab
+                        Admin.updateTeamScopingWarning();
+                    }
+
+                    if (tabName === "catalog") {
+                        // Load servers list if not already loaded
+                        const serversList = Admin.safeGetElement("servers-table");
+                        if (serversList) {
+                            const hasLoadingMessage =
+                                serversList.innerHTML.includes(
+                                    "Loading servers...",
+                                );
+                            if (hasLoadingMessage) {
+                                // Trigger HTMX load manually if HTMX is available
+                                if (window.htmx && window.htmx.trigger) {
+                                    window.htmx.trigger(serversList, "load");
+                                }
+                            }
+                        }
+                    }
+
+                    if (tabName === "a2a-agents") {
+                        // Load A2A agents list if not already loaded
+                        const agentsList = Admin.safeGetElement("agents-table");
+                        if (agentsList) {
+                            const hasLoadingMessage =
+                                agentsList.innerHTML.includes("Loading agents...");
+                            if (hasLoadingMessage) {
+                                // Trigger HTMX load manually if HTMX is available
+                                if (window.htmx && window.htmx.trigger) {
+                                    window.htmx.trigger(agentsList, "load");
+                                }
+                            }
+                        }
+                    }
+
+                    if (tabName === "mcp-registry") {
+                        // Load MCP Registry content
+                        const registryContent = Admin.safeGetElement(
+                            "mcp-registry-servers",
+                        );
+                        if (registryContent) {
+                            // Always load on first visit or if showing loading message
+                            const hasLoadingMessage =
+                                registryContent.innerHTML.includes(
+                                    "Loading MCP Registry servers...",
+                                );
+                            const needsLoad =
+                                hasLoadingMessage ||
+                                !registryContent.getAttribute("data-loaded");
+
+                            if (needsLoad) {
+                                const rootPath = window.ROOT_PATH || "";
+
+                                // Use HTMX if available
+                                if (window.htmx && window.htmx.ajax) {
+                                    window.htmx
+                                        .ajax(
+                                            "GET",
+                                            `${rootPath}/admin/mcp-registry/partial`,
+                                            {
+                                                target: "#mcp-registry-servers",
+                                                swap: "innerHTML",
+                                            },
+                                        )
+                                        .then(() => {
+                                            registryContent.setAttribute(
+                                                "data-loaded",
+                                                "true",
+                                            );
+                                        });
+                                } else {
+                                    // Fallback to fetch if HTMX is not available
+                                    fetch(`${rootPath}/admin/mcp-registry/partial`)
+                                        .then((response) => response.text())
+                                        .then((html) => {
+                                            registryContent.innerHTML = html;
+                                            registryContent.setAttribute(
+                                                "data-loaded",
+                                                "true",
+                                            );
+                                            // Process any HTMX attributes in the new content
+                                            if (window.htmx) {
+                                                window.htmx.process(
+                                                    registryContent,
+                                                );
+                                            }
+                                        })
+                                        .catch((error) => {
+                                            console.error(
+                                                "Failed to load MCP Registry:",
+                                                error,
+                                            );
+                                            registryContent.innerHTML =
+                                                '<div class="text-center text-red-600 py-8">Failed to load MCP Registry servers</div>';
+                                        });
+                                }
+                            }
+                        }
+                    }
+
+                    if (tabName === "gateways") {
+                        // Load gateways list if not already loaded
+                        const gatewaysList = Admin.safeGetElement("gateways-table");
+                        if (gatewaysList) {
+                            const hasLoadingMessage =
+                                gatewaysList.innerHTML.includes(
+                                    "Loading gateways...",
+                                );
+                            if (hasLoadingMessage) {
+                                // Trigger HTMX load manually if HTMX is available
+                                if (window.htmx && window.htmx.trigger) {
+                                    window.htmx.trigger(gatewaysList, "load");
+                                } else {
+                                    // Fallback: reload the page section via fetch
+                                    const rootPath = window.ROOT_PATH || "";
+                                    fetch(`${rootPath}/admin`)
+                                        .then((response) => response.text())
+                                        .then((html) => {
+                                            // Parse the HTML and extract just the gateways table
+                                            const parser = new DOMParser();
+                                            const doc = parser.parseFromString(
+                                                html,
+                                                "text/html",
+                                            );
+                                            const newTable =
+                                                doc.querySelector(
+                                                    "#gateways-table",
+                                                );
+                                            if (newTable) {
+                                                gatewaysList.innerHTML =
+                                                    newTable.innerHTML;
+                                                // Process any HTMX attributes in the new content
+                                                if (window.htmx) {
+                                                    window.htmx.process(
+                                                        gatewaysList,
+                                                    );
+                                                }
+                                            }
+                                        })
+                                        .catch((error) => {
+                                            console.error(
+                                                "Failed to reload gateways:",
+                                                error,
+                                            );
+                                        });
+                                }
+                            }
+                        }
+                    }
+
+                    // Note: Charts are already destroyed when leaving observability tab (see above),
+                    // so we don't need to destroy them again on entry. The loaded partials will
+                    // re-render charts on their next auto-refresh cycle or when the partial is reloaded.
+
+                    if (tabName === "plugins") {
+                        const pluginsPanel = Admin.safeGetElement("plugins-panel");
+                        if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
+                            const rootPath = window.ROOT_PATH || "";
+                            Admin.fetchWithTimeout(
+                                `${rootPath}/admin/plugins/partial`,
+                                {
+                                    method: "GET",
+                                    credentials: "same-origin",
+                                    headers: {
+                                        Accept: "text/html",
+                                    },
+                                },
+                                5000,
+                            )
+                                .then((response) => {
+                                    if (!response.ok) {
+                                        throw new Error(
+                                            `HTTP error! status: ${response.status}`,
+                                        );
+                                    }
+                                    return response.text();
+                                })
+                                .then((html) => {
+                                    pluginsPanel.innerHTML = html;
+                                    // Initialize plugin functions after HTML is loaded
+                                    Admin.initializePluginFunctions();
+                                    // Populate filter dropdowns
+                                    if (window.populatePluginFilters) {
+                                        window.populatePluginFilters();
+                                    }
+                                })
+                                .catch((error) => {
+                                    console.error(
+                                        "Error loading plugins partial:",
+                                        error,
+                                    );
+                                    pluginsPanel.innerHTML = `
+                                        <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                                            <strong class="font-bold">Error loading plugins:</strong>
+                                            <span class="block sm:inline">${escapeHtml(error.message)}</span>
+                                        </div>
+                                    `;
+                                });
+                        }
+                    }
+
+                    if (tabName === "version-info") {
+                        const versionPanel = Admin.safeGetElement("version-info-panel");
+                        if (versionPanel && versionPanel.innerHTML.trim() === "") {
+                            Admin.fetchWithTimeout(
+                                `${window.ROOT_PATH}/version?partial=true`,
+                                {},
+                                window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+                            )
+                                .then((resp) => {
+                                    if (!resp.ok) {
+                                        throw new Error(
+                                            `HTTP ${resp.status}: ${resp.statusText}`,
+                                        );
+                                    }
+                                    return resp.text();
+                                })
+                                .then((html) => {
+                                    Admin.safeSetInnerHTML(versionPanel, html, true);
+                                    console.log("✓ Version info loaded");
+                                })
+                                .catch((err) => {
+                                    console.error(
+                                        "Failed to load version info:",
+                                        err,
+                                    );
+                                    const errorDiv = document.createElement("div");
+                                    errorDiv.className = "text-red-600 p-4";
+                                    errorDiv.textContent =
+                                        "Failed to load version info. Please try again.";
+                                    versionPanel.innerHTML = "";
+                                    versionPanel.appendChild(errorDiv);
+                                });
+                        }
+                    }
+
+                    if (tabName === "maintenance") {
+                        const maintenancePanel =
+                            Admin.safeGetElement("maintenance-panel");
+                        if (
+                            maintenancePanel &&
+                            maintenancePanel.innerHTML.trim() === ""
+                        ) {
+                            Admin.fetchWithTimeout(
+                                `${window.ROOT_PATH}/admin/maintenance/partial`,
+                                {},
+                                window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+                            )
+                                .then((resp) => {
+                                    if (!resp.ok) {
+                                        if (resp.status === 403) {
+                                            throw new Error(
+                                                "Platform administrator access required",
+                                            );
+                                        }
+                                        throw new Error(
+                                            `HTTP ${resp.status}: ${resp.statusText}`,
+                                        );
+                                    }
+                                    return resp.text();
+                                })
+                                .then((html) => {
+                                    Admin.safeSetInnerHTML(maintenancePanel, html, true);
+                                    console.log("✓ Maintenance panel loaded");
+                                })
+                                .catch((err) => {
+                                    console.error(
+                                        "Failed to load maintenance panel:",
+                                        err,
+                                    );
+                                    const errorDiv = document.createElement("div");
+                                    errorDiv.className = "text-red-600 p-4";
+                                    errorDiv.textContent =
+                                        err.message ||
+                                        "Failed to load maintenance panel. Please try again.";
+                                    maintenancePanel.innerHTML = "";
+                                    maintenancePanel.appendChild(errorDiv);
+                                });
+                        }
+                    }
+
+                    if (tabName === "export-import") {
+                        // Initialize export/import functionality when tab is shown
+                        if (!panel.classList.contains("hidden")) {
+                            console.log(
+                                "🔄 Initializing export/import tab content",
+                            );
+                            try {
+                                // Ensure the export/import functionality is initialized
+                                if (typeof Admin.initializeExportImport === "function") {
+                                    Admin.initializeExportImport();
+                                }
+                                // Load recent imports
+                                if (typeof Admin.loadRecentImports === "function") {
+                                    Admin.loadRecentImports();
+                                }
+                            } catch (error) {
+                                console.error(
+                                    "Error loading export/import content:",
+                                    error,
+                                );
+                            }
+                        }
+                    }
+
+                    if (tabName === "permissions") {
+                        // Initialize permissions panel when tab is shown
+                        if (!panel.classList.contains("hidden")) {
+                            console.log("🔄 Initializing permissions tab content");
+                            try {
+                                // Check if initializePermissionsPanel function exists
+                                if (
+                                    typeof Admin.initializePermissionsPanel === "function"
+                                ) {
+                                    Admin.initializePermissionsPanel();
+                                } else {
+                                    console.warn(
+                                        "Admin.initializePermissionsPanel function not found",
+                                    );
+                                }
+                            } catch (error) {
+                                console.error(
+                                    "Error initializing permissions panel:",
+                                    error,
+                                );
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error(
+                        `Error in tab ${tabName} content loading:`,
+                        error,
+                    );
+                };
+            }, 300); // 300ms debounce
+
+            console.log(`✓ Successfully switched to tab: ${tabName}`);
+        } catch (error) {
+            console.error(`Error switching to tab ${tabName}:`, error);
+            Admin.showErrorMessage(`Failed to switch to ${tabName} tab`);
+        };
+    };
+})(window.Admin)
