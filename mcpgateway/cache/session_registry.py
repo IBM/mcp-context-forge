@@ -302,6 +302,7 @@ class SessionRegistry(SessionBackend):
         self._stuck_tasks: Dict[str, asyncio.Task] = {}  # Tasks that couldn't be cancelled (for monitoring)
         self._lock = asyncio.Lock()
         self._cleanup_task: Task | None = None
+        self._stuck_task_reaper: Task | None = None  # Reaper for stuck tasks
 
     def register_respond_task(self, session_id: str, task: asyncio.Task) -> None:
         """Register a respond task for later cancellation.
@@ -355,10 +356,7 @@ class SessionRegistry(SessionBackend):
             logger.debug(f"Respond task cancelled for session {session_id}")
         except asyncio.TimeoutError:
             # ESCALATION (Finding 1): Force-disconnect transport to unblock the task
-            logger.warning(
-                f"Respond task cancellation timed out for {session_id}, "
-                f"escalating with transport disconnect"
-            )
+            logger.warning(f"Respond task cancellation timed out for {session_id}, " f"escalating with transport disconnect")
 
             # Force-disconnect the transport to unblock any pending I/O
             transport = self._sessions.get(session_id)
@@ -379,10 +377,7 @@ class SessionRegistry(SessionBackend):
                     # Still stuck - move to stuck_tasks for monitoring (Finding 2 fix)
                     self._respond_tasks.pop(session_id, None)
                     self._stuck_tasks[session_id] = task
-                    logger.error(
-                        f"Respond task for {session_id} still stuck after escalation, "
-                        f"moved to stuck_tasks for monitoring (total stuck: {len(self._stuck_tasks)})"
-                    )
+                    logger.error(f"Respond task for {session_id} still stuck after escalation, " f"moved to stuck_tasks for monitoring (total stuck: {len(self._stuck_tasks)})")
                 except asyncio.CancelledError:
                     self._respond_tasks.pop(session_id, None)
                     logger.info(f"Respond task cancelled after escalation for {session_id}")
@@ -401,6 +396,72 @@ class SessionRegistry(SessionBackend):
             # Remove from tracking on unexpected error - task state unknown
             self._respond_tasks.pop(session_id, None)
             logger.warning(f"Error during respond task cancellation for {session_id}: {e}")
+
+    async def _reap_stuck_tasks(self) -> None:
+        """Periodically clean up stuck tasks that have completed.
+
+        This reaper runs every 30 seconds and:
+        1. Removes completed tasks from _stuck_tasks
+        2. Retries cancellation for tasks that are still running
+        3. Logs warnings for tasks that remain stuck
+
+        This prevents memory leaks from tasks that eventually complete after
+        being moved to _stuck_tasks during escalation.
+        """
+        reap_interval = 30.0  # seconds
+        retry_timeout = 2.0  # seconds for retry cancellation
+
+        while True:
+            try:
+                await asyncio.sleep(reap_interval)
+
+                if not self._stuck_tasks:
+                    continue
+
+                # Collect completed and still-stuck tasks
+                completed = []
+                still_stuck = []
+
+                for session_id, task in list(self._stuck_tasks.items()):
+                    if task.done():
+                        completed.append(session_id)
+                        try:
+                            task.result()  # Consume result to avoid warnings
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    else:
+                        still_stuck.append((session_id, task))
+
+                # Remove completed tasks
+                for session_id in completed:
+                    self._stuck_tasks.pop(session_id, None)
+
+                if completed:
+                    logger.info(f"Reaped {len(completed)} completed stuck tasks")
+
+                # Retry cancellation for still-stuck tasks
+                for session_id, task in still_stuck:
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=retry_timeout)
+                        self._stuck_tasks.pop(session_id, None)
+                        logger.info(f"Stuck task {session_id} finally cancelled during reap")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Task {session_id} still stuck after reap retry")
+                    except asyncio.CancelledError:
+                        self._stuck_tasks.pop(session_id, None)
+                        logger.info(f"Stuck task {session_id} cancelled during reap")
+                    except Exception as e:
+                        logger.warning(f"Error during stuck task reap for {session_id}: {e}")
+
+                if self._stuck_tasks:
+                    logger.warning(f"Stuck tasks remaining: {len(self._stuck_tasks)}")
+
+            except asyncio.CancelledError:
+                logger.debug("Stuck task reaper cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in stuck task reaper: {e}")
 
     async def initialize(self) -> None:
         """Initialize the registry with async setup.
@@ -445,6 +506,10 @@ class SessionRegistry(SessionBackend):
             self._cleanup_task = asyncio.create_task(self._memory_cleanup_task())
             logger.info("Memory cleanup task started")
 
+        # Start stuck task reaper for all backends
+        self._stuck_task_reaper = asyncio.create_task(self._reap_stuck_tasks())
+        logger.info("Stuck task reaper started")
+
     async def shutdown(self) -> None:
         """Shutdown the registry and clean up resources.
 
@@ -471,6 +536,14 @@ class SessionRegistry(SessionBackend):
             except asyncio.CancelledError:
                 pass
 
+        # Cancel stuck task reaper
+        if self._stuck_task_reaper:
+            self._stuck_task_reaper.cancel()
+            try:
+                await self._stuck_task_reaper
+            except asyncio.CancelledError:
+                pass
+
         # CRITICAL: Cancel ALL respond tasks to prevent CPU spin loops
         if self._respond_tasks:
             logger.info(f"Cancelling {len(self._respond_tasks)} respond tasks")
@@ -483,10 +556,7 @@ class SessionRegistry(SessionBackend):
 
             if tasks_to_cancel:
                 try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*tasks_to_cancel, return_exceptions=True),
-                        timeout=10.0
-                    )
+                    await asyncio.wait_for(asyncio.gather(*tasks_to_cancel, return_exceptions=True), timeout=10.0)
                     logger.info("All respond tasks cancelled successfully")
                 except asyncio.TimeoutError:
                     logger.warning("Timeout waiting for respond tasks to cancel")
@@ -503,10 +573,7 @@ class SessionRegistry(SessionBackend):
 
             if stuck_to_cancel:
                 try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*stuck_to_cancel, return_exceptions=True),
-                        timeout=5.0
-                    )
+                    await asyncio.wait_for(asyncio.gather(*stuck_to_cancel, return_exceptions=True), timeout=5.0)
                     logger.info("Stuck tasks cancelled during shutdown")
                 except asyncio.TimeoutError:
                     logger.error("Some stuck tasks could not be cancelled during shutdown")
@@ -1052,8 +1119,7 @@ class SessionRegistry(SessionBackend):
                     # Use get_message with timeout instead of blocking listen()
                     try:
                         msg = await asyncio.wait_for(
-                            pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout),
-                            timeout=poll_timeout + 0.5  # Slightly longer to account for Redis timeout
+                            pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout), timeout=poll_timeout + 0.5  # Slightly longer to account for Redis timeout
                         )
                     except asyncio.TimeoutError:
                         # No message, loop back to check session existence

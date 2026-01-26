@@ -1239,7 +1239,7 @@ load-test-stress:                          ## Stress test (500 users, 60s)
 	fi
 
 load-test-spin-detector:                   ## CPU spin loop detector (spike/drop pattern, issue #2360)
-	@echo "🔄 CPU SPIN LOOP DETECTOR"
+	@echo "🔄 CPU SPIN LOOP DETECTOR (Full-featured, matching load-test-ui)"
 	@echo "   Issue: https://github.com/IBM/mcp-context-forge/issues/2360"
 	@echo ""
 	@echo "   This test uses a spike/drop pattern to detect CPU spin loops:"
@@ -1247,6 +1247,12 @@ load-test-spin-detector:                   ## CPU spin loop detector (spike/drop
 	@echo "   2. Drop to 0 users (all clients disconnect)"
 	@echo "   3. Pause 30s to observe CPU (should return to idle)"
 	@echo "   4. Repeat 5 cycles (~6 minutes total)"
+	@echo ""
+	@echo "   🔐 Authentication: JWT (auto-generated from .env settings)"
+	@echo "   👥 User classes: RealisticUser, ReadOnlyAPIUser, FastTimeUser,"
+	@echo "                    MCPJsonRpcUser, FastTestEchoUser, FastTestTimeUser,"
+	@echo "                    HealthCheckUser, WriteAPIUser, StressTestUser"
+	@echo "   🎯 Baselines: Same as load-test-ui (4000 users, 200 spawn/s)"
 	@echo ""
 	@echo "   💡 Prerequisites:"
 	@echo "      make testing-down testing-up   # Fresh gateway on port 4444"
@@ -1268,6 +1274,7 @@ load-test-spin-detector:                   ## CPU spin loop detector (spike/drop
 		locust -f locustfile_spin_detector.py \
 			--host=http://localhost:4444 \
 			--headless \
+			--processes=$(LOADTEST_PROCESSES) \
 			--html=../../reports/spin_detector_report.html \
 			--csv=../../reports/spin_detector \
 			--only-summary"

@@ -11,6 +11,12 @@ The CPU spin loop bug causes workers to consume 100% CPU each when idle
 after clients disconnect, due to orphaned asyncio tasks in anyio's
 _deliver_cancellation loop.
 
+This is a FULL-FEATURED load test (not simplified) that uses:
+- JWT authentication (auto-generated or from MCPGATEWAY_BEARER_TOKEN)
+- All user classes from the main locustfile (API, RPC, Admin, FastTime, etc.)
+- Entity ID fetching on test start
+- Same patterns and weights as load-test-ui
+
 See: https://github.com/IBM/mcp-context-forge/issues/2360
 
 Usage:
@@ -24,37 +30,137 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 """
 
+# Standard
 import logging
+import os
+import random
 import subprocess
 import sys
+import time
+import uuid
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
-from locust import LoadTestShape, between, events, task
+# Third-Party
+from locust import LoadTestShape, between, constant_throughput, events, tag, task
 from locust.contrib.fasthttp import FastHttpUser
+from locust.runners import MasterRunner, WorkerRunner
 
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Minimal User Class (standalone - no imports from main locustfile)
+# Configuration - Load from .env file and environment variables
 # =============================================================================
-class SpinTestUser(FastHttpUser):
-    """Minimal user for spin loop testing - hits simple endpoints."""
 
-    wait_time = between(0.05, 0.2)  # Fast requests for high throughput
-    weight = 1
 
-    @task(3)
-    def health_check(self):
-        """Simple health check - no auth required."""
-        self.client.get("/health", name="/health")
+def _load_env_file() -> dict[str, str]:
+    """Load environment variables from .env file.
 
-    @task(1)
-    def root_check(self):
-        """Root endpoint check."""
-        self.client.get("/", name="/")
+    Searches for .env file in current directory and parent directories.
+    Returns a dict of key-value pairs from the .env file.
+    """
+    env_vars: dict[str, str] = {}
+
+    # Search for .env file
+    search_paths = [
+        Path.cwd() / ".env",
+        Path.cwd().parent / ".env",
+        Path.cwd().parent.parent / ".env",
+        Path(__file__).parent.parent.parent / ".env",  # Project root
+    ]
+
+    env_file = None
+    for path in search_paths:
+        if path.exists():
+            env_file = path
+            break
+
+    if env_file is None:
+        logger.info("No .env file found, using environment variables only")
+        return env_vars
+
+    logger.info(f"Loading configuration from {env_file}")
+
+    try:
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith("#"):
+                    continue
+                # Handle key=value pairs
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip()
+                    # Remove quotes if present
+                    if value and value[0] in ('"', "'") and value[-1] == value[0]:
+                        value = value[1:-1]
+                    env_vars[key] = value
+    except Exception as e:
+        logger.warning(f"Error reading .env file: {e}")
+
+    return env_vars
+
+
+def _get_config(key: str, default: str = "") -> str:
+    """Get configuration value from environment or .env file.
+
+    Priority: Environment variable > .env file > default
+    """
+    # First check environment variable
+    env_value = os.environ.get(key)
+    if env_value is not None:
+        return env_value
+
+    # Then check .env file
+    if key in _ENV_FILE_VARS:
+        return _ENV_FILE_VARS[key]
+
+    return default
+
+
+# Load .env file once at module import
+_ENV_FILE_VARS = _load_env_file()
+
+# Authentication settings (from env or .env file)
+BEARER_TOKEN = _get_config("MCPGATEWAY_BEARER_TOKEN", "")
+BASIC_AUTH_USER = _get_config("BASIC_AUTH_USER", "admin")
+BASIC_AUTH_PASSWORD = _get_config("BASIC_AUTH_PASSWORD", "changeme")
+
+# JWT settings for auto-generation (if MCPGATEWAY_BEARER_TOKEN not set)
+JWT_SECRET_KEY = _get_config("JWT_SECRET_KEY", "my-test-key")
+JWT_ALGORITHM = _get_config("JWT_ALGORITHM", "HS256")
+JWT_AUDIENCE = _get_config("JWT_AUDIENCE", "mcpgateway-api")
+JWT_ISSUER = _get_config("JWT_ISSUER", "mcpgateway")
+# Default to platform admin email for guaranteed authentication
+JWT_USERNAME = _get_config("JWT_USERNAME", _get_config("PLATFORM_ADMIN_EMAIL", "admin@example.com"))
+# Token expiry in hours - default 8760 (1 year) to avoid expiration during long load tests
+JWT_TOKEN_EXPIRY_HOURS = int(_get_config("LOADTEST_JWT_EXPIRY_HOURS", "8760"))
+
+# Test data pools (populated during test setup)
+TOOL_IDS: list[str] = []
+SERVER_IDS: list[str] = []
+GATEWAY_IDS: list[str] = []
+RESOURCE_IDS: list[str] = []
+PROMPT_IDS: list[str] = []
+
+# Names/URIs for RPC calls
+TOOL_NAMES: list[str] = []
+RESOURCE_URIS: list[str] = []
+PROMPT_NAMES: list[str] = []
+
+# Tools that require arguments - excluded from generic rpc_call_tool
+TOOLS_WITH_REQUIRED_ARGS: set[str] = {
+    "fast-time-convert-time",
+    "fast-time-get-system-time",
+    "fast-test-echo",
+    "fast-test-get-system-time",
+}
 
 
 # =============================================================================
@@ -159,8 +265,7 @@ def get_docker_stats() -> tuple[str, list[tuple[str, float]]]:
     """
     try:
         result = subprocess.run(
-            ["docker", "stats", "--no-stream", "--format",
-             "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"],
+            ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -262,7 +367,783 @@ def print_section(title: str, color: str = Colors.BLUE) -> None:
 
 
 # =============================================================================
-# Load Shape
+# Authentication Helpers
+# =============================================================================
+
+
+def _generate_jwt_token() -> str:
+    """Generate a JWT token for API authentication.
+
+    Uses PyJWT to create a token with the configured secret and algorithm.
+    """
+    try:
+        from datetime import timedelta, timezone  # pylint: disable=import-outside-toplevel
+
+        import jwt  # pylint: disable=import-outside-toplevel
+
+        jti = str(uuid.uuid4())
+        payload = {
+            "sub": JWT_USERNAME,
+            "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
+            "iat": datetime.now(timezone.utc),
+            "aud": JWT_AUDIENCE,
+            "iss": JWT_ISSUER,
+            "jti": jti,
+        }
+        token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        logger.info(f"Generated JWT token for user: {JWT_USERNAME} (jti={jti[:8]}...)")
+        return token
+    except ImportError:
+        logger.warning("PyJWT not installed, falling back to basic auth")
+        return ""
+    except Exception as e:
+        logger.warning(f"Failed to generate JWT token: {e}")
+        return ""
+
+
+# Cache the generated token
+_CACHED_TOKEN: str | None = None
+
+
+def _get_auth_headers() -> dict[str, str]:
+    """Get authentication headers.
+
+    Priority:
+    1. MCPGATEWAY_BEARER_TOKEN env var (if set)
+    2. Auto-generated JWT token (if PyJWT available)
+    3. Basic auth fallback
+    """
+    global _CACHED_TOKEN  # pylint: disable=global-statement
+    headers = {"Accept": "application/json"}
+
+    if BEARER_TOKEN:
+        headers["Authorization"] = f"Bearer {BEARER_TOKEN}"
+    else:
+        if _CACHED_TOKEN is None:
+            _CACHED_TOKEN = _generate_jwt_token()
+
+        if _CACHED_TOKEN:
+            headers["Authorization"] = f"Bearer {_CACHED_TOKEN}"
+        else:
+            import base64  # pylint: disable=import-outside-toplevel
+
+            credentials = base64.b64encode(f"{BASIC_AUTH_USER}:{BASIC_AUTH_PASSWORD}".encode()).decode()
+            headers["Authorization"] = f"Basic {credentials}"
+            logger.warning("Using basic auth - REST API endpoints may fail")
+
+    return headers
+
+
+def _log_auth_mode() -> None:
+    """Log which authentication mode the load test will use."""
+    headers = _get_auth_headers()
+    auth_header = headers.get("Authorization", "")
+
+    if auth_header.startswith("Bearer "):
+        if BEARER_TOKEN:
+            log(f"  {Colors.GREEN}Auth: Bearer (MCPGATEWAY_BEARER_TOKEN){Colors.RESET}")
+        else:
+            log(f"  {Colors.GREEN}Auth: Bearer (auto-generated JWT){Colors.RESET}")
+    elif auth_header.startswith("Basic "):
+        log(f"  {Colors.YELLOW}Auth: Basic (WARNING: /rpc calls may fail){Colors.RESET}")
+    else:
+        log(f"  {Colors.RED}Auth: None (WARNING: /rpc calls will fail){Colors.RESET}")
+
+
+def _json_rpc_request(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Create a JSON-RPC 2.0 request."""
+    return {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": method,
+        "params": params or {},
+    }
+
+
+def _fetch_json(url: str, headers: dict[str, str], timeout: float = 30.0) -> tuple[int, Any]:
+    """Fetch JSON from URL using urllib (gevent-safe).
+
+    Args:
+        url: Full URL to fetch
+        headers: HTTP headers to include
+        timeout: Request timeout in seconds
+
+    Returns:
+        Tuple of (status_code, json_data or None)
+    """
+    import json  # pylint: disable=import-outside-toplevel
+    import urllib.error  # pylint: disable=import-outside-toplevel
+    import urllib.request  # pylint: disable=import-outside-toplevel
+
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return (resp.status, data)
+    except urllib.error.HTTPError as e:
+        return (e.code, None)
+    except Exception:
+        return (0, None)
+
+
+# =============================================================================
+# User Classes - Full-featured (matching load-test-ui)
+# =============================================================================
+
+
+class BaseUser(FastHttpUser):
+    """Base user class with common configuration.
+
+    Uses FastHttpUser (gevent-based) for maximum throughput.
+    Optimized for 4000+ concurrent users.
+    """
+
+    abstract = True
+    wait_time = between(0.1, 0.5)
+
+    # Connection tuning for high concurrency
+    connection_timeout = 30.0
+    network_timeout = 30.0
+
+    def __init__(self, *args, **kwargs):
+        """Initialize base user with auth headers."""
+        super().__init__(*args, **kwargs)
+        self.auth_headers: dict[str, str] = {}
+        self.admin_headers: dict[str, str] = {}
+
+    def on_start(self):
+        """Set up authentication for the user."""
+        self.auth_headers = _get_auth_headers()
+        self.admin_headers = {
+            **self.auth_headers,
+            "Accept": "text/html",
+        }
+
+    def _validate_json_response(self, response, allowed_codes: list[int] | None = None):
+        """Validate response is successful and contains valid JSON."""
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        try:
+            data = response.json()
+            if data is None:
+                response.failure("Response JSON is null")
+                return False
+        except Exception as e:
+            response.failure(f"Invalid JSON: {e}")
+            return False
+        response.success()
+        return True
+
+    def _validate_html_response(self, response, allowed_codes: list[int] | None = None):
+        """Validate response is successful HTML."""
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        content_type = response.headers.get("content-type", "")
+        if "text/html" not in content_type:
+            response.failure(f"Expected HTML, got {content_type}")
+            return False
+        response.success()
+        return True
+
+    def _validate_status(self, response, allowed_codes: list[int] | None = None):
+        """Validate response status code only."""
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        response.success()
+        return True
+
+    def _validate_jsonrpc_response(self, response, allowed_codes: list[int] | None = None):
+        """Validate response is successful JSON-RPC (no error field)."""
+        allowed = allowed_codes or [200]
+        if response.status_code not in allowed:
+            response.failure(f"Expected {allowed}, got {response.status_code}")
+            return False
+        try:
+            data = response.json()
+            if data is None:
+                response.failure("Response JSON is null")
+                return False
+            if "error" in data:
+                error_obj = data["error"]
+                error_code = error_obj.get("code", "unknown")
+                error_msg = error_obj.get("message", "Unknown error")
+                error_data = str(error_obj.get("data", ""))[:100]
+                response.failure(f"JSON-RPC error [{error_code}]: {error_msg} - {error_data}")
+                return False
+        except Exception as e:
+            response.failure(f"Invalid JSON: {e}")
+            return False
+        response.success()
+        return True
+
+
+class HealthCheckUser(BaseUser):
+    """User that only performs health checks."""
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(10)
+    @tag("health", "critical")
+    def health_check(self):
+        """Check the health endpoint (no auth required)."""
+        with self.client.get("/health", name="/health", catch_response=True) as response:
+            self._validate_status(response)
+
+    @task(5)
+    @tag("health")
+    def readiness_check(self):
+        """Check readiness endpoint (no auth required)."""
+        with self.client.get("/ready", name="/ready", catch_response=True) as response:
+            self._validate_status(response)
+
+    @task(2)
+    @tag("health")
+    def metrics_endpoint(self):
+        """Check Prometheus metrics endpoint."""
+        with self.client.get("/metrics", headers=self.auth_headers, name="/metrics", catch_response=True) as response:
+            self._validate_status(response)
+
+
+class ReadOnlyAPIUser(BaseUser):
+    """User that performs read-only API operations."""
+
+    weight = 5
+    wait_time = between(0.3, 1.5)
+
+    @task(10)
+    @tag("api", "tools")
+    def list_tools(self):
+        """List all tools."""
+        with self.client.get("/tools", headers=self.auth_headers, name="/tools", catch_response=True) as response:
+            self._validate_json_response(response)
+
+    @task(8)
+    @tag("api", "servers")
+    def list_servers(self):
+        """List all servers."""
+        with self.client.get("/servers", headers=self.auth_headers, name="/servers", catch_response=True) as response:
+            self._validate_json_response(response)
+
+    @task(6)
+    @tag("api", "gateways")
+    def list_gateways(self):
+        """List all gateways."""
+        with self.client.get("/gateways", headers=self.auth_headers, name="/gateways", catch_response=True) as response:
+            self._validate_json_response(response)
+
+    @task(5)
+    @tag("api", "resources")
+    def list_resources(self):
+        """List all resources."""
+        with self.client.get("/resources", headers=self.auth_headers, name="/resources", catch_response=True) as response:
+            self._validate_json_response(response)
+
+    @task(5)
+    @tag("api", "prompts")
+    def list_prompts(self):
+        """List all prompts."""
+        with self.client.get("/prompts", headers=self.auth_headers, name="/prompts", catch_response=True) as response:
+            self._validate_json_response(response)
+
+    @task(3)
+    @tag("api", "tools")
+    def get_single_tool(self):
+        """Get a specific tool by ID."""
+        if TOOL_IDS:
+            tool_id = random.choice(TOOL_IDS)
+            with self.client.get(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id]", catch_response=True) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(3)
+    @tag("api", "servers")
+    def get_single_server(self):
+        """Get a specific server by ID."""
+        if SERVER_IDS:
+            server_id = random.choice(SERVER_IDS)
+            with self.client.get(f"/servers/{server_id}", headers=self.auth_headers, name="/servers/[id]", catch_response=True) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
+
+
+class MCPJsonRpcUser(BaseUser):
+    """User that makes MCP JSON-RPC requests."""
+
+    weight = 4
+    wait_time = between(0.2, 1.0)
+
+    def _rpc_request(self, payload: dict, name: str):
+        """Make an RPC request with proper error handling."""
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name=name,
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
+    @task(10)
+    @tag("mcp", "rpc", "tools")
+    def rpc_list_tools(self):
+        """JSON-RPC: List tools."""
+        payload = _json_rpc_request("tools/list")
+        self._rpc_request(payload, "/rpc tools/list")
+
+    @task(8)
+    @tag("mcp", "rpc", "resources")
+    def rpc_list_resources(self):
+        """JSON-RPC: List resources."""
+        payload = _json_rpc_request("resources/list")
+        self._rpc_request(payload, "/rpc resources/list")
+
+    @task(8)
+    @tag("mcp", "rpc", "prompts")
+    def rpc_list_prompts(self):
+        """JSON-RPC: List prompts."""
+        payload = _json_rpc_request("prompts/list")
+        self._rpc_request(payload, "/rpc prompts/list")
+
+    @task(5)
+    @tag("mcp", "rpc", "tools")
+    def rpc_call_tool(self):
+        """JSON-RPC: Call a tool with empty arguments."""
+        callable_tools = [t for t in TOOL_NAMES if t not in TOOLS_WITH_REQUIRED_ARGS]
+        if callable_tools:
+            tool_name = random.choice(callable_tools)
+            payload = _json_rpc_request("tools/call", {"name": tool_name, "arguments": {}})
+            self._rpc_request(payload, "/rpc tools/call")
+
+    @task(4)
+    @tag("mcp", "rpc", "resources")
+    def rpc_read_resource(self):
+        """JSON-RPC: Read a resource."""
+        if RESOURCE_URIS:
+            resource_uri = random.choice(RESOURCE_URIS)
+            payload = _json_rpc_request("resources/read", {"uri": resource_uri})
+            self._rpc_request(payload, "/rpc resources/read")
+
+    @task(3)
+    @tag("mcp", "rpc", "initialize")
+    def rpc_initialize(self):
+        """JSON-RPC: Initialize session."""
+        payload = _json_rpc_request(
+            "initialize",
+            {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+                "clientInfo": {"name": "spin-detector", "version": "1.0.0"},
+            },
+        )
+        self._rpc_request(payload, "/rpc initialize")
+
+    @task(2)
+    @tag("mcp", "rpc", "ping")
+    def rpc_ping(self):
+        """JSON-RPC: Ping."""
+        payload = _json_rpc_request("ping")
+        self._rpc_request(payload, "/rpc ping")
+
+
+class FastTimeUser(BaseUser):
+    """User that calls the fast_time MCP server tools."""
+
+    weight = 5
+    wait_time = between(0.1, 0.5)
+
+    def _rpc_request(self, payload: dict, name: str):
+        """Make an RPC request with proper error handling."""
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name=name,
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
+    @task(10)
+    @tag("mcp", "fasttime", "tools")
+    def call_get_system_time(self):
+        """Call fast-time-get-system-time with Europe/Dublin timezone."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-get-system-time",
+                "arguments": {"timezone": "Europe/Dublin"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-time-get-system-time")
+
+    @task(5)
+    @tag("mcp", "fasttime", "tools")
+    def call_get_system_time_utc(self):
+        """Call fast-time-get-system-time with UTC timezone."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-get-system-time",
+                "arguments": {"timezone": "UTC"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-time-get-system-time [UTC]")
+
+    @task(3)
+    @tag("mcp", "fasttime", "tools")
+    def call_convert_time(self):
+        """Call fast-time-convert-time to convert between timezones."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-convert-time",
+                "arguments": {
+                    "time": "2025-01-01T12:00:00",
+                    "source_timezone": "UTC",
+                    "target_timezone": "Europe/Dublin",
+                },
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-time-convert-time")
+
+
+class FastTestEchoUser(BaseUser):
+    """User that calls the fast_test MCP server echo tool."""
+
+    weight = 3
+    wait_time = between(0.5, 1.5)
+
+    ECHO_MESSAGES = [
+        "Hello, World!",
+        "Testing MCP protocol",
+        "Load test in progress",
+        "Performance benchmark",
+        "Echo echo echo",
+        "The quick brown fox jumps over the lazy dog",
+    ]
+
+    def _rpc_request(self, payload: dict, name: str):
+        """Make an RPC request with proper error handling."""
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name=name,
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
+    @task(10)
+    @tag("mcp", "fasttest", "echo")
+    def call_echo(self):
+        """Call fast-test-echo with a random message."""
+        message = random.choice(self.ECHO_MESSAGES)
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-echo",
+                "arguments": {"message": message},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-echo")
+
+    @task(5)
+    @tag("mcp", "fasttest", "echo")
+    def call_echo_short(self):
+        """Call fast-test-echo with a short message."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-echo",
+                "arguments": {"message": "ping"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-echo [short]")
+
+
+class FastTestTimeUser(BaseUser):
+    """User that calls the fast_test MCP server get_system_time tool."""
+
+    weight = 3
+    wait_time = between(0.5, 1.5)
+
+    TIMEZONES = [
+        "UTC",
+        "America/New_York",
+        "America/Los_Angeles",
+        "Europe/London",
+        "Europe/Paris",
+        "Europe/Dublin",
+        "Asia/Tokyo",
+    ]
+
+    def _rpc_request(self, payload: dict, name: str):
+        """Make an RPC request with proper error handling."""
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name=name,
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
+    @task(10)
+    @tag("mcp", "fasttest", "time")
+    def call_get_system_time(self):
+        """Call fast-time-get-system-time with a random timezone."""
+        timezone = random.choice(self.TIMEZONES)
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-get-system-time",
+                "arguments": {"timezone": timezone},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-get-system-time")
+
+    @task(2)
+    @tag("mcp", "fasttest", "stats")
+    def call_get_stats(self):
+        """Call fast-test-get-stats to get server statistics."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-test-get-stats",
+                "arguments": {},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-test-get-stats")
+
+
+class WriteAPIUser(BaseUser):
+    """User that performs write operations."""
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    def __init__(self, *args, **kwargs):
+        """Initialize with tracking for cleanup."""
+        super().__init__(*args, **kwargs)
+        self.created_tools: list[str] = []
+
+    def on_stop(self):
+        """Clean up created entities."""
+        for tool_id in self.created_tools:
+            try:
+                self.client.delete(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id] [cleanup]")
+            except Exception:
+                pass
+
+    @task(5)
+    @tag("api", "write", "tools")
+    def create_and_delete_tool(self):
+        """Create a tool and then delete it."""
+        tool_name = f"spintest-tool-{uuid.uuid4().hex[:8]}"
+        tool_data = {
+            "name": tool_name,
+            "description": "Spin detector test tool - will be deleted",
+            "integration_type": "MCP",
+            "input_schema": {"type": "object", "properties": {"input": {"type": "string"}}},
+        }
+
+        with self.client.post(
+            "/tools",
+            json=tool_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/tools [create]",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 201):
+                try:
+                    data = response.json()
+                    tool_id = data.get("id") or data.get("name") or tool_name
+                    time.sleep(0.1)
+                    self.client.delete(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id] [delete]")
+                except Exception:
+                    pass
+            elif response.status_code in (409, 422):
+                response.success()
+
+
+class StressTestUser(BaseUser):
+    """User for stress testing with predictable request rate."""
+
+    weight = 1
+    wait_time = constant_throughput(2)
+
+    @task(10)
+    @tag("stress", "health")
+    def rapid_health_check(self):
+        """Rapid health checks."""
+        self.client.get("/health", name="/health [stress]")
+
+    @task(8)
+    @tag("stress", "api")
+    def rapid_tools_list(self):
+        """Rapid tools listing."""
+        self.client.get("/tools", headers=self.auth_headers, name="/tools [stress]")
+
+    @task(5)
+    @tag("stress", "rpc")
+    def rapid_rpc_ping(self):
+        """Rapid RPC pings."""
+        payload = _json_rpc_request("ping")
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/rpc ping [stress]",
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
+
+class RealisticUser(BaseUser):
+    """User that simulates realistic mixed traffic."""
+
+    weight = 10
+    wait_time = between(0.5, 2.0)
+
+    @task(15)
+    @tag("realistic", "health")
+    def health_check(self):
+        """Health check."""
+        self.client.get("/health", name="/health")
+
+    @task(20)
+    @tag("realistic", "api")
+    def list_tools(self):
+        """List tools."""
+        self.client.get("/tools", headers=self.auth_headers, name="/tools")
+
+    @task(15)
+    @tag("realistic", "api")
+    def list_servers(self):
+        """List servers."""
+        self.client.get("/servers", headers=self.auth_headers, name="/servers")
+
+    @task(10)
+    @tag("realistic", "api")
+    def list_gateways(self):
+        """List gateways."""
+        self.client.get("/gateways", headers=self.auth_headers, name="/gateways")
+
+    @task(10)
+    @tag("realistic", "rpc")
+    def rpc_list_tools(self):
+        """JSON-RPC list tools."""
+        payload = _json_rpc_request("tools/list")
+        with self.client.post(
+            "/rpc",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/rpc tools/list",
+            catch_response=True,
+        ) as response:
+            self._validate_jsonrpc_response(response)
+
+    @task(5)
+    @tag("realistic", "api")
+    def get_single_tool(self):
+        """Get specific tool."""
+        if TOOL_IDS:
+            tool_id = random.choice(TOOL_IDS)
+            with self.client.get(f"/tools/{tool_id}", headers=self.auth_headers, name="/tools/[id]", catch_response=True) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
+
+
+# =============================================================================
+# Event Handlers
+# =============================================================================
+
+
+@events.init.add_listener
+def on_locust_init(environment, **_kwargs):
+    """Initialize test environment."""
+    if isinstance(environment.runner, MasterRunner):
+        logger.info("Running as master node")
+    elif isinstance(environment.runner, WorkerRunner):
+        logger.info("Running as worker node")
+    else:
+        logger.info("Running in standalone mode")
+
+
+@events.test_start.add_listener
+def on_test_start(environment, **_kwargs):
+    """Fetch existing entity IDs for use in tests."""
+    logger.info("Test starting - fetching entity IDs...")
+
+    host = environment.host or "http://localhost:4444"
+    headers = _get_auth_headers()
+
+    try:
+        # Fetch tools
+        status, data = _fetch_json(f"{host}/tools", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("tools", data.get("items", []))
+            TOOL_IDS.extend([str(t.get("id")) for t in items[:50] if t.get("id")])
+            TOOL_NAMES.extend([str(t.get("name")) for t in items[:50] if t.get("name")])
+            logger.info(f"Loaded {len(TOOL_IDS)} tool IDs, {len(TOOL_NAMES)} tool names")
+
+        # Fetch servers
+        status, data = _fetch_json(f"{host}/servers", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("servers", data.get("items", []))
+            SERVER_IDS.extend([str(s.get("id")) for s in items[:50] if s.get("id")])
+            logger.info(f"Loaded {len(SERVER_IDS)} server IDs")
+
+        # Fetch gateways
+        status, data = _fetch_json(f"{host}/gateways", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("gateways", data.get("items", []))
+            GATEWAY_IDS.extend([str(g.get("id")) for g in items[:50] if g.get("id")])
+            logger.info(f"Loaded {len(GATEWAY_IDS)} gateway IDs")
+
+        # Fetch resources
+        status, data = _fetch_json(f"{host}/resources", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("resources", data.get("items", []))
+            RESOURCE_IDS.extend([str(r.get("id")) for r in items[:50] if r.get("id")])
+            RESOURCE_URIS.extend([str(r.get("uri")) for r in items[:50] if r.get("uri")])
+            logger.info(f"Loaded {len(RESOURCE_IDS)} resource IDs")
+
+        # Fetch prompts
+        status, data = _fetch_json(f"{host}/prompts", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("prompts", data.get("items", []))
+            PROMPT_IDS.extend([str(p.get("id")) for p in items[:50] if p.get("id")])
+            PROMPT_NAMES.extend([str(p.get("name")) for p in items[:50] if p.get("name")])
+            logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs")
+
+    except Exception as e:
+        logger.warning(f"Failed to fetch entity IDs: {e}")
+        logger.info("Tests will continue without pre-fetched IDs")
+
+
+@events.test_stop.add_listener
+def on_test_stop(environment, **_kwargs):
+    """Clean up on test stop."""
+    logger.info("Test stopped")
+    TOOL_IDS.clear()
+    SERVER_IDS.clear()
+    GATEWAY_IDS.clear()
+    RESOURCE_IDS.clear()
+    PROMPT_IDS.clear()
+    TOOL_NAMES.clear()
+    RESOURCE_URIS.clear()
+    PROMPT_NAMES.clear()
+
+    _close_log_file()
+    log(f"\n{Colors.DIM}Log saved to: {LOG_FILE}{Colors.RESET}\n")
+
+
+# =============================================================================
+# Load Shape - Spike/Drop Pattern for CPU Spin Detection
 # =============================================================================
 class SpinDetectorShape(LoadTestShape):
     """Load shape with spike/drop pattern for detecting CPU spin loops.
@@ -278,15 +1159,16 @@ class SpinDetectorShape(LoadTestShape):
     """
 
     # Configuration for each cycle: (target_users, ramp_time, sustain_time, pause_time)
+    # Matches load-test-ui defaults: 4000 users baseline
     cycles = [
-        (2000, 30, 20, 30),   # Cycle 1: 2000 users
-        (3000, 30, 20, 30),   # Cycle 2: 3000 users
-        (4000, 30, 20, 30),   # Cycle 3: 4000 users (peak)
-        (2000, 20, 10, 20),   # Cycle 4: Quick cycle
-        (4000, 30, 20, 30),   # Cycle 5: Final peak
+        (2000, 30, 20, 30),  # Cycle 1: 2000 users (warmup)
+        (3000, 30, 20, 30),  # Cycle 2: 3000 users
+        (4000, 30, 20, 30),  # Cycle 3: 4000 users (peak - matches load-test-ui default)
+        (2000, 20, 10, 20),  # Cycle 4: Quick cycle
+        (4000, 30, 20, 30),  # Cycle 5: Final peak
     ]
 
-    spawn_rate = 200
+    spawn_rate = 200  # Matches LOADTEST_SPAWN_RATE default
 
     def __init__(self):
         """Initialize the load shape."""
@@ -349,10 +1231,11 @@ class SpinDetectorShape(LoadTestShape):
         print_box(
             "CPU SPIN LOOP DETECTOR",
             f"Issue #2360 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            Colors.CYAN
+            Colors.CYAN,
         )
 
-        log(f"""
+        log(
+            f"""
 {Colors.BOLD}PURPOSE:{Colors.RESET}
   Detect CPU spin loop bug caused by orphaned asyncio tasks.
 
@@ -361,13 +1244,25 @@ class SpinDetectorShape(LoadTestShape):
   2. {Colors.CYAN}Sustain{Colors.RESET} load for observation
   3. {Colors.MAGENTA}Drop{Colors.RESET} to 0 users (triggers cleanup)
   4. {Colors.YELLOW}Pause{Colors.RESET} to monitor CPU (should return to idle)
-  5. Repeat for 5 cycles
+  5. Repeat for 5 cycles (peak: 4000 users)
+
+{Colors.BOLD}USER CLASSES:{Colors.RESET}
+  - RealisticUser (weight=10): Mixed API/RPC traffic
+  - ReadOnlyAPIUser (weight=5): REST API reads
+  - FastTimeUser (weight=5): fast-time MCP tools
+  - MCPJsonRpcUser (weight=4): JSON-RPC protocol
+  - FastTestEchoUser (weight=3): fast-test echo
+  - FastTestTimeUser (weight=3): fast-test time
+  - HealthCheckUser (weight=1): Health probes
+  - WriteAPIUser (weight=1): Create/delete ops
+  - StressTestUser (weight=1): High-throughput
 
 {Colors.BOLD}EXPECTED:{Colors.RESET}
   {Colors.GREEN}PASS:{Colors.RESET} CPU <10% during pause | {Colors.RED}FAIL:{Colors.RESET} CPU >100% during pause
+"""
+        )
 
-{Colors.DIM}Log: {LOG_FILE}{Colors.RESET}
-""")
+        _log_auth_mode()
 
         print_section("Initial Docker Stats")
         stats_output, cpu_values = get_docker_stats()
@@ -386,19 +1281,19 @@ class SpinDetectorShape(LoadTestShape):
             print_box(
                 f"CYCLE {cycle_num}/{total_cycles}: RAMPING UP",
                 f"Target: {target_users} users | Spawn rate: {self.spawn_rate}/s",
-                Colors.BLUE
+                Colors.BLUE,
             )
         elif phase == "sustain":
             print_box(
                 f"CYCLE {cycle_num}/{total_cycles}: SUSTAINING LOAD",
                 f"Holding at {target_users} users",
-                Colors.CYAN
+                Colors.CYAN,
             )
         elif phase == "pause":
             print_box(
                 f"CYCLE {cycle_num}/{total_cycles}: PAUSE - MONITORING CPU",
                 "",
-                Colors.MAGENTA
+                Colors.MAGENTA,
             )
             log("")
             log(f"  {Colors.YELLOW}{Colors.BOLD}>>> ALL USERS DISCONNECTED <<<{Colors.RESET}")
@@ -427,7 +1322,7 @@ class SpinDetectorShape(LoadTestShape):
         print_box(
             "TEST COMPLETE",
             "",
-            Colors.GREEN if all(cpu < 10 for _, cpu in cpu_values) else Colors.RED
+            Colors.GREEN if all(cpu < 10 for _, cpu in cpu_values) else Colors.RED,
         )
 
         # Summary table
@@ -472,13 +1367,3 @@ class SpinDetectorShape(LoadTestShape):
 
         log(f"\n{Colors.DIM}Issue: https://github.com/IBM/mcp-context-forge/issues/2360{Colors.RESET}")
         log(f"{Colors.DIM}Log file: {LOG_FILE}{Colors.RESET}\n")
-
-
-# =============================================================================
-# Event Handlers
-# =============================================================================
-@events.test_stop.add_listener
-def on_test_stop(environment, **_kwargs):
-    """Clean up on test stop."""
-    _close_log_file()
-    log(f"\n{Colors.DIM}Log saved to: {LOG_FILE}{Colors.RESET}\n")

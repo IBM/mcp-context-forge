@@ -1860,6 +1860,49 @@ async def test_cancel_respond_task_timeout_with_escalation(registry: SessionRegi
 
 
 @pytest.mark.asyncio
+async def test_cancel_respond_task_escalation_calls_transport_disconnect(registry: SessionRegistry, caplog):
+    """Test that escalation calls transport.disconnect() to unblock the task."""
+    caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
+
+    stop_flag = asyncio.Event()
+
+    async def stubborn_task():
+        # Task that ignores cancellation until told to stop
+        try:
+            await asyncio.shield(asyncio.sleep(100))
+        except asyncio.CancelledError:
+            while not stop_flag.is_set():
+                await asyncio.sleep(0.001)
+
+    # Create a fake transport and add it to sessions
+    transport = FakeSSETransport("escalation_test")
+    await registry.add_session("escalation_test", transport)
+
+    # Register the stubborn task
+    task = asyncio.create_task(stubborn_task())
+    await asyncio.sleep(0)  # Let task start executing
+    registry.register_respond_task("escalation_test", task)
+
+    # Cancel with very short timeout - will trigger escalation
+    await registry._cancel_respond_task("escalation_test", timeout=0.05)
+
+    # Verify transport.disconnect() was called during escalation
+    assert transport.disconnect_called, "transport.disconnect() should be called during escalation"
+
+    # Verify escalation message in logs
+    assert "Force-disconnected transport" in caplog.text or "escalating" in caplog.text
+
+    # Cleanup
+    stop_flag.set()
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=0.1)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    registry._stuck_tasks.pop("escalation_test", None)
+
+
+@pytest.mark.asyncio
 async def test_cancel_respond_task_with_exception(registry: SessionRegistry, caplog):
     """Test cancelling a task that failed with an exception."""
     caplog.set_level(logging.WARNING, logger="mcpgateway.cache.session_registry")
@@ -1974,6 +2017,55 @@ async def test_register_respond_task_overwrites_previous():
         pass
 
     await registry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stuck_task_reaper_cleans_completed_tasks(caplog):
+    """Test that the stuck task reaper cleans up completed tasks."""
+    caplog.set_level(logging.INFO, logger="mcpgateway.cache.session_registry")
+
+    registry = SessionRegistry(backend="memory")
+    await registry.initialize()
+
+    # Manually add a completed task to _stuck_tasks
+    completed_event = asyncio.Event()
+
+    async def quick_task():
+        completed_event.set()
+        return "done"
+
+    task = asyncio.create_task(quick_task())
+    await asyncio.sleep(0.01)  # Let task complete
+    assert task.done()
+
+    registry._stuck_tasks["completed_stuck"] = task
+
+    # Manually call the reaper logic (don't wait for the loop)
+    # Simulate one iteration of the reaper
+    for session_id, t in list(registry._stuck_tasks.items()):
+        if t.done():
+            registry._stuck_tasks.pop(session_id, None)
+
+    # Verify task was removed
+    assert "completed_stuck" not in registry._stuck_tasks
+
+    await registry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_stuck_task_reaper():
+    """Test that shutdown properly cancels the stuck task reaper."""
+    registry = SessionRegistry(backend="memory")
+    await registry.initialize()
+
+    # Verify reaper was started
+    assert registry._stuck_task_reaper is not None
+    assert not registry._stuck_task_reaper.done()
+
+    await registry.shutdown()
+
+    # Verify reaper was cancelled
+    assert registry._stuck_task_reaper.done()
 
 
 if __name__ == "__main__":

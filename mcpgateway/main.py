@@ -2515,6 +2515,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
         # Defensive cleanup callback - runs immediately on client disconnect
         async def on_disconnect_cleanup() -> None:
+            """Clean up session when SSE client disconnects."""
             try:
                 await session_registry.remove_session(transport.session_id)
                 logger.debug("Defensive session cleanup completed: %s", transport.session_id)
@@ -2523,12 +2524,19 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
         # CRITICAL: Create and register respond task BEFORE create_sse_response (Finding 1 fix)
         # This ensures the task exists when disconnect callback runs, preventing orphaned tasks
-        respond_task = asyncio.create_task(
-            session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url)
-        )
+        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
         session_registry.register_respond_task(transport.session_id, respond_task)
 
-        response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        try:
+            response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        except Exception as sse_error:
+            # CRITICAL: Cleanup on failure - respond task and session would be orphaned otherwise
+            logger.error(f"create_sse_response failed for {transport.session_id}: {sse_error}")
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup after SSE failure also failed: {cleanup_error}")
+            raise
 
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
@@ -5674,6 +5682,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
         # Defensive cleanup callback - runs immediately on client disconnect
         async def on_disconnect_cleanup() -> None:
+            """Clean up session when SSE client disconnects."""
             try:
                 await session_registry.remove_session(transport.session_id)
                 logger.debug("Defensive session cleanup completed: %s", transport.session_id)
@@ -5709,12 +5718,20 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
         # Create respond task and register for cancellation on disconnect
-        respond_task = asyncio.create_task(
-            session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url)
-        )
+        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
         session_registry.register_respond_task(transport.session_id, respond_task)
 
-        response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        try:
+            response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        except Exception as sse_error:
+            # CRITICAL: Cleanup on failure - respond task and session would be orphaned otherwise
+            logger.error("create_sse_response failed for %s: %s", transport.session_id, sse_error)
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning("Cleanup after SSE failure also failed: %s", cleanup_error)
+            raise
+
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
         response.background = tasks
