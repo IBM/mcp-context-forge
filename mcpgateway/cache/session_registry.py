@@ -581,9 +581,10 @@ class SessionRegistry(SessionBackend):
 
         # Close Redis pubsub (but not the shared client)
         # Use timeout to prevent blocking if pubsub doesn't close cleanly
+        cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
         if self._backend == "redis" and getattr(self, "_pubsub", None):
             try:
-                await asyncio.wait_for(self._pubsub.aclose(), timeout=5.0)
+                await asyncio.wait_for(self._pubsub.aclose(), timeout=cleanup_timeout)
             except asyncio.TimeoutError:
                 logger.warning("Redis pubsub close timed out - proceeding anyway")
             except Exception as e:
@@ -1159,17 +1160,18 @@ class SessionRegistry(SessionBackend):
                 logger.error(f"PubSub listener error for session {session_id}: {e}")
             finally:
                 # Pubsub cleanup first - use timeouts to prevent blocking
+                cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
                 try:
-                    await asyncio.wait_for(pubsub.unsubscribe(session_id), timeout=5.0)
+                    await asyncio.wait_for(pubsub.unsubscribe(session_id), timeout=cleanup_timeout)
                 except asyncio.TimeoutError:
                     logger.debug(f"Pubsub unsubscribe timed out for session {session_id}")
                 except Exception as e:
                     logger.debug(f"Error unsubscribing pubsub for session {session_id}: {e}")
                 try:
                     try:
-                        await asyncio.wait_for(pubsub.aclose(), timeout=5.0)
+                        await asyncio.wait_for(pubsub.aclose(), timeout=cleanup_timeout)
                     except AttributeError:
-                        await asyncio.wait_for(pubsub.close(), timeout=5.0)
+                        await asyncio.wait_for(pubsub.close(), timeout=cleanup_timeout)
                 except asyncio.TimeoutError:
                     logger.debug(f"Pubsub close timed out for session {session_id}")
                 except Exception as e:

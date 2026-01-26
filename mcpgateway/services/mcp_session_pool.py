@@ -50,10 +50,26 @@ from mcpgateway.utils.url_auth import sanitize_url_for_logging
 # JSON-RPC standard error code for method not found
 METHOD_NOT_FOUND = -32601
 
-# Timeout for session cleanup operations (seconds)
-# This prevents indefinite blocking when session tasks don't respond to cancellation
-# which can cause CPU spin loops in anyio's _deliver_cancellation
-SESSION_CLEANUP_TIMEOUT = 5.0
+
+def _get_cleanup_timeout() -> float:
+    """Get session cleanup timeout from config (lazy import to avoid circular deps).
+
+    This timeout controls how long to wait for session/transport __aexit__ calls
+    when closing sessions. It prevents CPU spin loops when internal tasks don't
+    respond to cancellation (anyio's _deliver_cancellation issue).
+
+    Returns:
+        Cleanup timeout in seconds (default: 5.0)
+    """
+    try:
+        # Lazy import to avoid circular dependency during startup
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        return settings.mcp_session_pool_cleanup_timeout
+    except Exception:
+        return 5.0  # Fallback default
+
 
 if TYPE_CHECKING:
     # Standard
@@ -880,7 +896,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     try:
                         await asyncio.wait_for(
                             session.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
-                            timeout=SESSION_CLEANUP_TIMEOUT,
+                            timeout=_get_cleanup_timeout(),
                         )
                     except (asyncio.TimeoutError, Exception):  # nosec B110 - Best effort cleanup on connection failure
                         pass
@@ -888,7 +904,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     try:
                         await asyncio.wait_for(
                             transport_ctx.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
-                            timeout=SESSION_CLEANUP_TIMEOUT,
+                            timeout=_get_cleanup_timeout(),
                         )
                     except (asyncio.TimeoutError, Exception):  # nosec B110 - Best effort cleanup on connection failure
                         pass
@@ -914,7 +930,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         try:
             await asyncio.wait_for(
                 pooled.session.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
-                timeout=SESSION_CLEANUP_TIMEOUT,
+                timeout=_get_cleanup_timeout(),
             )
         except asyncio.TimeoutError:
             logger.warning(f"Session cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
@@ -925,7 +941,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         try:
             await asyncio.wait_for(
                 pooled.transport_context.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
-                timeout=SESSION_CLEANUP_TIMEOUT,
+                timeout=_get_cleanup_timeout(),
             )
         except asyncio.TimeoutError:
             logger.warning(f"Transport cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")

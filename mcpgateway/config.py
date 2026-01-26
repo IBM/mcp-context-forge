@@ -1320,6 +1320,12 @@ class Settings(BaseSettings):
         "x-api-key",
         "cookie",
     ]
+    # Timeout for session/transport cleanup operations (__aexit__ calls).
+    # This prevents CPU spin loops when internal tasks (like post_writer waiting on
+    # memory streams) don't respond to cancellation. Does NOT affect tool execution
+    # time - only cleanup of idle/released sessions. Increase if you see frequent
+    # "cleanup timed out" warnings; decrease for faster shutdown at risk of leaks.
+    mcp_session_pool_cleanup_timeout: float = 5.0
 
     # Prompts
     prompt_cache_size: int = 100

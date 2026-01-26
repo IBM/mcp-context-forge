@@ -34,6 +34,21 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def _get_cleanup_timeout() -> float:
+    """Get cleanup timeout from config (lazy import to avoid circular deps).
+
+    Returns:
+        Cleanup timeout in seconds (default: 5.0).
+    """
+    try:
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        return settings.mcp_session_pool_cleanup_timeout
+    except Exception:
+        return 5.0
+
+
 @dataclass
 class CacheEntry:
     """Cache entry with value and expiry timestamp.
@@ -581,12 +596,13 @@ class CacheInvalidationSubscriber:
             logger.warning("CacheInvalidationSubscriber failed to start: %s", e)
             # Clean up partially created pubsub to prevent leaks
             # Use timeout to prevent blocking if pubsub doesn't close cleanly
+            cleanup_timeout = _get_cleanup_timeout()
             if self._pubsub is not None:
                 try:
                     try:
-                        await asyncio.wait_for(self._pubsub.aclose(), timeout=5.0)
+                        await asyncio.wait_for(self._pubsub.aclose(), timeout=cleanup_timeout)
                     except AttributeError:
-                        await asyncio.wait_for(self._pubsub.close(), timeout=5.0)
+                        await asyncio.wait_for(self._pubsub.close(), timeout=cleanup_timeout)
                 except asyncio.TimeoutError:
                     logger.debug("Pubsub cleanup timed out - proceeding anyway")
                 except Exception as cleanup_err:
@@ -620,17 +636,18 @@ class CacheInvalidationSubscriber:
             self._task = None
 
         if self._pubsub:
+            cleanup_timeout = _get_cleanup_timeout()
             try:
-                await asyncio.wait_for(self._pubsub.unsubscribe(self._channel), timeout=5.0)
+                await asyncio.wait_for(self._pubsub.unsubscribe(self._channel), timeout=cleanup_timeout)
             except asyncio.TimeoutError:
                 logger.debug("Pubsub unsubscribe timed out - proceeding anyway")
             except Exception as e:
                 logger.debug("Error unsubscribing from pubsub: %s", e)
             try:
                 try:
-                    await asyncio.wait_for(self._pubsub.aclose(), timeout=5.0)
+                    await asyncio.wait_for(self._pubsub.aclose(), timeout=cleanup_timeout)
                 except AttributeError:
-                    await asyncio.wait_for(self._pubsub.close(), timeout=5.0)
+                    await asyncio.wait_for(self._pubsub.close(), timeout=cleanup_timeout)
             except asyncio.TimeoutError:
                 logger.debug("Pubsub close timed out - proceeding anyway")
             except Exception as e:
