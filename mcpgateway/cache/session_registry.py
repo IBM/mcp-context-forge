@@ -299,6 +299,7 @@ class SessionRegistry(SessionBackend):
         self._sessions: Dict[str, Any] = {}  # Local transport cache
         self._client_capabilities: Dict[str, Dict[str, Any]] = {}  # Client capabilities by session_id
         self._respond_tasks: Dict[str, asyncio.Task] = {}  # Track respond tasks for cancellation
+        self._stuck_tasks: Dict[str, asyncio.Task] = {}  # Tasks that couldn't be cancelled (for monitoring)
         self._lock = asyncio.Lock()
         self._cleanup_task: Task | None = None
 
@@ -375,12 +376,12 @@ class SessionRegistry(SessionBackend):
                     self._respond_tasks.pop(session_id, None)
                     logger.info(f"Respond task cancelled after escalation for {session_id}")
                 except asyncio.TimeoutError:
-                    # Still stuck - remove from tracking anyway to prevent buildup
-                    # The task may eventually complete or be garbage collected
+                    # Still stuck - move to stuck_tasks for monitoring (Finding 2 fix)
                     self._respond_tasks.pop(session_id, None)
+                    self._stuck_tasks[session_id] = task
                     logger.error(
                         f"Respond task for {session_id} still stuck after escalation, "
-                        f"removing from tracking (orphaned task may cause CPU spin)"
+                        f"moved to stuck_tasks for monitoring (total stuck: {len(self._stuck_tasks)})"
                     )
                 except asyncio.CancelledError:
                     self._respond_tasks.pop(session_id, None)
@@ -489,6 +490,26 @@ class SessionRegistry(SessionBackend):
                     logger.info("All respond tasks cancelled successfully")
                 except asyncio.TimeoutError:
                     logger.warning("Timeout waiting for respond tasks to cancel")
+
+        # Also cancel any stuck tasks (tasks that previously couldn't be cancelled)
+        if self._stuck_tasks:
+            logger.warning(f"Attempting final cancellation of {len(self._stuck_tasks)} stuck tasks")
+            stuck_to_cancel = list(self._stuck_tasks.values())
+            self._stuck_tasks.clear()
+
+            for task in stuck_to_cancel:
+                if not task.done():
+                    task.cancel()
+
+            if stuck_to_cancel:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*stuck_to_cancel, return_exceptions=True),
+                        timeout=5.0
+                    )
+                    logger.info("Stuck tasks cancelled during shutdown")
+                except asyncio.TimeoutError:
+                    logger.error("Some stuck tasks could not be cancelled during shutdown")
 
         # Close Redis pubsub (but not the shared client)
         if self._backend == "redis" and getattr(self, "_pubsub", None):
