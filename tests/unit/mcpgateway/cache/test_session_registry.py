@@ -1821,9 +1821,9 @@ async def test_cancel_respond_task_nonexistent(registry: SessionRegistry):
 
 
 @pytest.mark.asyncio
-async def test_cancel_respond_task_timeout(registry: SessionRegistry, caplog):
-    """Test task cancellation timeout - task remains tracked."""
-    caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+async def test_cancel_respond_task_timeout_with_escalation(registry: SessionRegistry, caplog):
+    """Test task cancellation timeout triggers escalation and cleanup."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.cache.session_registry")
 
     stop_flag = asyncio.Event()
 
@@ -1840,21 +1840,21 @@ async def test_cancel_respond_task_timeout(registry: SessionRegistry, caplog):
     await asyncio.sleep(0)  # Let task start executing
     registry.register_respond_task("stubborn_test", task)
 
-    # Cancel with very short timeout
+    # Cancel with very short timeout - will trigger escalation
     await registry._cancel_respond_task("stubborn_test", timeout=0.05)
 
-    # Verify task is still tracked (not removed on timeout)
-    assert "stubborn_test" in registry._respond_tasks
-    assert "timed out" in caplog.text
+    # After escalation, task should be removed from tracking (to prevent buildup)
+    assert "stubborn_test" not in registry._respond_tasks
+    # Should see escalation message
+    assert "escalating" in caplog.text or "still stuck" in caplog.text
 
-    # Cleanup - signal task to stop, then cancel
+    # Cleanup - signal task to stop
     stop_flag.set()
     task.cancel()
     try:
         await asyncio.wait_for(task, timeout=0.1)
     except (asyncio.CancelledError, asyncio.TimeoutError):
         pass
-    registry._respond_tasks.pop("stubborn_test", None)
 
 
 @pytest.mark.asyncio

@@ -1111,6 +1111,7 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
 # help: load-test-stress      - Stress test (500 users, 60s, minimal wait)
+# help: load-test-spin-detector - CPU spin loop detector (spike/drop pattern, issue #2360)
 # help: load-test-report      - Show last load test HTML report
 # help: load-test-compose     - Light load test for compose stack (port 4444)
 # help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
@@ -1236,6 +1237,43 @@ load-test-stress:                          ## Stress test (500 users, 60s)
 	else \
 		echo "❌ Cancelled"; \
 	fi
+
+load-test-spin-detector:                   ## CPU spin loop detector (spike/drop pattern, issue #2360)
+	@echo "🔄 CPU SPIN LOOP DETECTOR"
+	@echo "   Issue: https://github.com/IBM/mcp-context-forge/issues/2360"
+	@echo ""
+	@echo "   This test uses a spike/drop pattern to detect CPU spin loops:"
+	@echo "   1. Ramp up to high user count (2000-4000 users)"
+	@echo "   2. Drop to 0 users (all clients disconnect)"
+	@echo "   3. Pause 30s to observe CPU (should return to idle)"
+	@echo "   4. Repeat 5 cycles (~6 minutes total)"
+	@echo ""
+	@echo "   💡 Prerequisites:"
+	@echo "      make testing-down testing-up   # Fresh gateway on port 4444"
+	@echo ""
+	@echo "   📊 MONITORING (run in another terminal):"
+	@echo "      watch -n 2 'docker stats --no-stream | grep gateway'"
+	@echo ""
+	@echo "   ✅ PASS: CPU drops to <10% during pause phases"
+	@echo "   ❌ FAIL: CPU stays at 100%+ per worker during pauses"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@echo "Starting in 3 seconds... (Ctrl+C to cancel)"
+	@sleep 3
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		cd tests/loadtest && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
+		locust -f locustfile_spin_detector.py \
+			--host=http://localhost:4444 \
+			--headless \
+			--html=../../reports/spin_detector_report.html \
+			--csv=../../reports/spin_detector \
+			--only-summary"
+	@echo ""
+	@echo "📄 HTML Report: reports/spin_detector_report.html"
+	@echo "📋 Log file: /tmp/spin_detector_*.log (timestamped)"
 
 load-test-report:                          ## Show last load test HTML report
 	@if [ -f "$(LOADTEST_HTML_REPORT)" ]; then \

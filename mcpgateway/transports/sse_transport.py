@@ -538,6 +538,13 @@ class SSETransport(Transport):
             finally:
                 logger.info("SSE event generator completed: %s", self._session_id)
                 self._client_gone.set()  # Always set client_gone on exit to clean up
+                # CRITICAL: Also invoke disconnect callback on generator end (Finding 3)
+                # This covers server-initiated close, errors, and cancellation - not just client close
+                if on_disconnect_callback:
+                    try:
+                        await on_disconnect_callback()
+                    except Exception as e:
+                        logger.warning("Disconnect callback in finally failed for %s: %s", self._session_id, e)
 
         async def on_client_close(_scope: dict) -> None:
             """Handle client close event from sse_starlette."""

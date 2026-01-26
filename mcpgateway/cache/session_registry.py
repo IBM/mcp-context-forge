@@ -322,8 +322,8 @@ class SessionRegistry(SessionBackend):
         Safely cancels the respond task associated with a session. Uses a timeout
         to prevent hanging if the task doesn't respond to cancellation.
 
-        The task is only removed from tracking after successful cancellation.
-        If cancellation times out, the task remains tracked for monitoring.
+        If initial cancellation times out, escalates by force-disconnecting the
+        transport to unblock the task, then retries cancellation (Finding 1 fix).
 
         Args:
             session_id: Session identifier whose task should be cancelled.
@@ -353,11 +353,45 @@ class SessionRegistry(SessionBackend):
             self._respond_tasks.pop(session_id, None)
             logger.debug(f"Respond task cancelled for session {session_id}")
         except asyncio.TimeoutError:
-            # Keep task tracked on timeout - may need retry or monitoring
-            logger.error(
+            # ESCALATION (Finding 1): Force-disconnect transport to unblock the task
+            logger.warning(
                 f"Respond task cancellation timed out for {session_id}, "
-                f"task remains tracked for monitoring (may cause CPU spin)"
+                f"escalating with transport disconnect"
             )
+
+            # Force-disconnect the transport to unblock any pending I/O
+            transport = self._sessions.get(session_id)
+            if transport and hasattr(transport, "disconnect"):
+                try:
+                    await transport.disconnect()
+                    logger.debug(f"Force-disconnected transport for {session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to force-disconnect transport for {session_id}: {e}")
+
+            # Retry cancellation with shorter timeout
+            if not task.done():
+                try:
+                    await asyncio.wait_for(task, timeout=2.0)
+                    self._respond_tasks.pop(session_id, None)
+                    logger.info(f"Respond task cancelled after escalation for {session_id}")
+                except asyncio.TimeoutError:
+                    # Still stuck - remove from tracking anyway to prevent buildup
+                    # The task may eventually complete or be garbage collected
+                    self._respond_tasks.pop(session_id, None)
+                    logger.error(
+                        f"Respond task for {session_id} still stuck after escalation, "
+                        f"removing from tracking (orphaned task may cause CPU spin)"
+                    )
+                except asyncio.CancelledError:
+                    self._respond_tasks.pop(session_id, None)
+                    logger.info(f"Respond task cancelled after escalation for {session_id}")
+                except Exception as e:
+                    self._respond_tasks.pop(session_id, None)
+                    logger.warning(f"Error during retry cancellation for {session_id}: {e}")
+            else:
+                self._respond_tasks.pop(session_id, None)
+                logger.debug(f"Respond task completed during escalation for {session_id}")
+
         except asyncio.CancelledError:
             # Cancellation successful - remove from tracking
             self._respond_tasks.pop(session_id, None)
@@ -983,10 +1017,32 @@ class SessionRegistry(SessionBackend):
             pubsub = self._redis.pubsub()
             await pubsub.subscribe(session_id)
 
+            # Use timeout-based polling instead of infinite listen() to allow exit checks
+            # This is critical for allowing cancellation to work (Finding 2)
+            poll_timeout = 1.0  # Check every second if session still exists
+
             try:
-                async for msg in pubsub.listen():
+                while True:
+                    # Check if session still exists - exit if removed (Finding 2 fix)
+                    if session_id not in self._sessions:
+                        logger.info(f"Session {session_id} no longer exists, exiting Redis respond loop")
+                        break
+
+                    # Use get_message with timeout instead of blocking listen()
+                    try:
+                        msg = await asyncio.wait_for(
+                            pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout),
+                            timeout=poll_timeout + 0.5  # Slightly longer to account for Redis timeout
+                        )
+                    except asyncio.TimeoutError:
+                        # No message, loop back to check session existence
+                        continue
+
+                    if msg is None:
+                        continue
                     if msg["type"] != "message":
                         continue
+
                     data = orjson.loads(msg["data"])
                     message = data.get("message", {})
                     transport = self.get_session_sync(session_id)
