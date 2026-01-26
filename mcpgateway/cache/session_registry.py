@@ -898,6 +898,64 @@ class SessionRegistry(SessionBackend):
 
         logger.info(f"Removed session: {session_id}")
 
+    async def _register_session_mapping(self, session_id: str, message: Dict[str, Any]) -> None:
+        """Pre-register session mapping in mcp_session_pool for session affinity.
+
+        Parses the message to extract tool name, looks up tool.gateway via cache,
+        and registers mapping: (session_id, url, transport_type, gateway_id) → pool_key.
+
+        This enables session affinity for SSE-based tool invocations, ensuring that
+        the same downstream session ID routes to the same upstream MCP session even
+        when JWT tokens rotate (different jti values per request).
+
+        Args:
+            session_id: The SSE session ID (used as x-mcp-session-id for upstream).
+            message: The JSON-RPC message being broadcast.
+        """
+        try:
+            method = message.get("method", "")
+            params = message.get("params", {})
+
+            if method != "tools/call":
+                return
+
+            tool_name = params.get("name")
+            if not tool_name:
+                return
+
+            # Look up tool and gateway from cache
+            from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+            cached = await tool_lookup_cache.get(tool_name)
+            if not cached or cached.get("status") != "active":
+                logger.debug(f"Session affinity: tool '{tool_name}' not found in cache")
+                return
+
+            gateway_info = cached.get("gateway")
+            if not gateway_info:
+                logger.debug(f"Session affinity: tool '{tool_name}' has no gateway")
+                return
+
+            url = gateway_info.get("url")
+            gateway_id = gateway_info.get("id", "")
+            transport_type = gateway_info.get("transport", "streamablehttp")
+
+            if not url:
+                logger.debug(f"Session affinity: gateway for tool '{tool_name}' has no URL")
+                return
+
+            # Register in mcp_session_pool
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            pool = get_mcp_session_pool()
+            await pool.register_session_mapping(session_id, url, gateway_id, transport_type)
+
+        except RuntimeError as e:
+            # Pool not initialized yet - this is expected during startup
+            logger.debug(f"Session affinity: pool not ready: {e}")
+        except Exception as e:
+            logger.debug(f"Failed to pre-register session mapping: {e}")
+
     async def broadcast(self, session_id: str, message: Dict[str, Any]) -> None:
         """Broadcast a message to a session.
 
@@ -933,6 +991,10 @@ class SessionRegistry(SessionBackend):
         # Skip for none backend only
         if self._backend == "none":
             return
+
+        # Pre-register session mapping for session affinity (SSE → upstream MCP)
+        if settings.mcpgateway_session_affinity_enabled:
+            await self._register_session_mapping(session_id, message)
 
         def _build_payload(msg: Any) -> str:
             """Build a JSON payload for message broadcasting.
