@@ -2474,7 +2474,6 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
     Raises:
         HTTPException: If there is an error in establishing the SSE connection.
-        asyncio.CancelledError: If the request is cancelled during SSE setup.
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
@@ -2552,8 +2551,6 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         response.background = tasks
         logger.info(f"SSE connection established: {transport.session_id}")
         return response
-    except asyncio.CancelledError:
-        raise  # Re-raise CancelledError without converting to HTTPException
     except Exception as e:
         logger.error(f"SSE connection error: {e}")
         raise HTTPException(status_code=500, detail="SSE connection failed")
@@ -5682,7 +5679,6 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
     Raises:
         HTTPException: Returned with **500 Internal Server Error** if the SSE connection cannot be established or an unexpected error occurs while creating the transport.
-        asyncio.CancelledError: If the request is cancelled during SSE setup.
     """
     try:
         logger.debug("User %s requested SSE connection", user)
@@ -5757,8 +5753,6 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         response.background = tasks
         logger.info("SSE connection established: %s", transport.session_id)
         return response
-    except asyncio.CancelledError:
-        raise  # Re-raise CancelledError without converting to HTTPException
     except Exception as e:
         logger.error("SSE connection error: %s", e)
         raise HTTPException(status_code=500, detail="SSE connection failed")
