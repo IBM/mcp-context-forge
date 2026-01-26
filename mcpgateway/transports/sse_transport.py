@@ -33,11 +33,25 @@ from mcpgateway.transports.base import Transport
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Timeout for SSE task group cleanup (seconds)
-# Prevents CPU spin loops when tasks don't respond to cancellation
-# Keep this short (0.5s) to minimize CPU waste during cleanup
-# See: https://github.com/agronholm/anyio/issues/695
-SSE_TASK_GROUP_CLEANUP_TIMEOUT = 0.5
+
+def _get_sse_cleanup_timeout() -> float:
+    """Get SSE task group cleanup timeout from config (lazy import to avoid circular deps).
+
+    This timeout controls how long to wait for SSE task group tasks to respond
+    to cancellation before forcing cleanup. Prevents CPU spin loops in anyio's
+    _deliver_cancellation when tasks don't properly handle CancelledError.
+
+    Returns:
+        Cleanup timeout in seconds (default: 5.0)
+    """
+    try:
+        # Lazy import to avoid circular dependency during startup
+        # First-Party
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        return settings.sse_task_group_cleanup_timeout
+    except Exception:
+        return 5.0  # Fallback default
 
 
 class EventSourceResponse(BaseEventSourceResponse):
@@ -81,7 +95,7 @@ class EventSourceResponse(BaseEventSourceResponse):
                 await coro()
                 # When cancelling, set a deadline to prevent indefinite spin
                 # if other tasks don't respond to cancellation
-                task_group.cancel_scope.deadline = anyio.current_time() + SSE_TASK_GROUP_CLEANUP_TIMEOUT
+                task_group.cancel_scope.deadline = anyio.current_time() + _get_sse_cleanup_timeout()
                 task_group.cancel_scope.cancel()
 
             task_group.start_soon(cancel_on_finish, lambda: self._stream_response(send))

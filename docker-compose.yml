@@ -351,6 +351,13 @@ services:
       # - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["ping", "skip"]  # Try ping, skip if unsupported
       - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["skip"]  # skip, highest performance
       - MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0               # Timeout per health check attempt
+      # ─────────────────────────────────────────────────────────────────────────
+      # Cleanup Timeouts (anyio#695 CPU spin fix)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Short timeouts (0.5s) reduce CPU waste during cancelled connection cleanup.
+      # Only affects cancelled/released connections, not normal operation.
+      - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
+      - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording

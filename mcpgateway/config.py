@@ -1323,9 +1323,17 @@ class Settings(BaseSettings):
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
     # memory streams) don't respond to cancellation. Does NOT affect tool execution
-    # time - only cleanup of idle/released sessions. Keep short (0.5s) to minimize
-    # CPU waste during spin loops. Increase only if you see frequent cleanup failures.
-    mcp_session_pool_cleanup_timeout: float = 0.5
+    # time - only cleanup of idle/released sessions. Increase if you see frequent
+    # "cleanup timed out" warnings; decrease for faster recovery from spin loops.
+    mcp_session_pool_cleanup_timeout: float = 5.0
+
+    # Timeout for SSE task group cleanup (seconds).
+    # When an SSE connection is cancelled, this controls how long to wait for
+    # internal tasks to respond before forcing cleanup. Shorter values reduce
+    # CPU waste during anyio _deliver_cancellation spin loops but may interrupt
+    # legitimate cleanup. Only affects cancelled connections, not normal operation.
+    # See: https://github.com/agronholm/anyio/issues/695
+    sse_task_group_cleanup_timeout: float = 5.0
 
     # Prompts
     prompt_cache_size: int = 100
