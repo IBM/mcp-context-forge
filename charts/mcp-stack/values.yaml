@@ -457,7 +457,7 @@ mcpContextForge:
     # Options: ping, list_tools, list_prompts, list_resources, skip
     MCP_SESSION_POOL_HEALTH_CHECK_METHODS: '["ping", "skip"]' # try ping, skip if unsupported
     MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT: "5.0"              # timeout per health check attempt
-    MCP_SESSION_POOL_CLEANUP_TIMEOUT: "5.0"                   # timeout for session cleanup (__aexit__) to prevent CPU spin
+    MCP_SESSION_POOL_CLEANUP_TIMEOUT: "0.5"                   # timeout for session cleanup (__aexit__) to prevent CPU spin
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features

@@ -1323,9 +1323,9 @@ class Settings(BaseSettings):
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
     # memory streams) don't respond to cancellation. Does NOT affect tool execution
-    # time - only cleanup of idle/released sessions. Increase if you see frequent
-    # "cleanup timed out" warnings; decrease for faster shutdown at risk of leaks.
-    mcp_session_pool_cleanup_timeout: float = 5.0
+    # time - only cleanup of idle/released sessions. Keep short (0.5s) to minimize
+    # CPU waste during spin loops. Increase only if you see frequent cleanup failures.
+    mcp_session_pool_cleanup_timeout: float = 0.5
 
     # Prompts
     prompt_cache_size: int = 100

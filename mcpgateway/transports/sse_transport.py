@@ -35,8 +35,9 @@ logger = logging_service.get_logger(__name__)
 
 # Timeout for SSE task group cleanup (seconds)
 # Prevents CPU spin loops when tasks don't respond to cancellation
+# Keep this short (0.5s) to minimize CPU waste during cleanup
 # See: https://github.com/agronholm/anyio/issues/695
-SSE_TASK_GROUP_CLEANUP_TIMEOUT = 5.0
+SSE_TASK_GROUP_CLEANUP_TIMEOUT = 0.5
 
 
 class EventSourceResponse(BaseEventSourceResponse):
