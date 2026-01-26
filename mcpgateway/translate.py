@@ -134,7 +134,6 @@ from fastapi.responses import PlainTextResponse
 from mcp.server import Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 import orjson
-from sse_starlette.sse import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
@@ -149,6 +148,9 @@ except ImportError:
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.translate_header_utils import extract_env_vars_from_headers, NormalizedMappings, parse_header_mappings
+
+# Use patched EventSourceResponse with CPU spin protection (anyio#695 fix)
+from mcpgateway.transports.sse_transport import EventSourceResponse
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 # Initialize logging service first
