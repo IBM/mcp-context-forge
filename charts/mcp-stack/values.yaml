@@ -457,8 +457,37 @@ mcpContextForge:
     # Options: ping, list_tools, list_prompts, list_resources, skip
     MCP_SESSION_POOL_HEALTH_CHECK_METHODS: '["ping", "skip"]' # try ping, skip if unsupported
     MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT: "5.0"              # timeout per health check attempt
-    MCP_SESSION_POOL_CLEANUP_TIMEOUT: "5.0"                   # timeout for session cleanup (__aexit__) to prevent CPU spin
-    SSE_TASK_GROUP_CLEANUP_TIMEOUT: "5.0"                     # timeout for SSE task group cleanup (anyio#695 fix)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CPU Spin Loop Mitigation (Issue #2360, anyio#695)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # These settings mitigate CPU spin loops that occur when SSE/MCP connections
+    # are cancelled and internal tasks don't respond to CancelledError. The spin
+    # happens in anyio's _deliver_cancellation method.
+    #
+    # Documentation: docs/docs/operations/cpu-spin-loop-mitigation.md
+    # GitHub Issue: https://github.com/IBM/mcp-context-forge/issues/2360
+    # Upstream Issue: https://github.com/agronholm/anyio/issues/695
+    #
+    # ─ Layer 1: SSE Connection Protection ─
+    # Detect and close dead SSE connections before they cause spin loops.
+    # Note: SSE_SEND_TIMEOUT, SSE_RAPID_YIELD_* are also in Transports section above
+    # SSE_SEND_TIMEOUT: "30.0"                                # ASGI send() timeout (seconds)
+    # SSE_RAPID_YIELD_WINDOW_MS: "1000"                       # detection window (ms)
+    # SSE_RAPID_YIELD_MAX: "50"                               # max yields before disconnect (0=disabled)
+    #
+    # ─ Layer 2: Cleanup Timeouts ─
+    # Limit how long cleanup waits for stuck tasks. Shorter = faster recovery but
+    # may interrupt legitimate cleanup. Only affects cancelled connections.
+    MCP_SESSION_POOL_CLEANUP_TIMEOUT: "5.0"                   # session __aexit__ timeout (default: 5.0)
+    SSE_TASK_GROUP_CLEANUP_TIMEOUT: "5.0"                     # SSE task group timeout (default: 5.0)
+    #
+    # ─ Layer 3: EXPERIMENTAL - anyio Monkey-Patch ─
+    # Last resort: patches anyio to limit _deliver_cancellation iterations.
+    # Enable only if Layers 1-2 don't fully resolve the issue.
+    # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
+    ANYIO_CANCEL_DELIVERY_PATCH_ENABLED: "false"              # enable workaround (default: false)
+    ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS: "100"               # max iterations before giving up
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features
