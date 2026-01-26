@@ -36,6 +36,7 @@ import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
 
 # Third-Party
+import anyio
 import httpx
 from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
@@ -890,24 +891,22 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         finally:
             # Clean up on ANY failure (Exception, CancelledError, etc.)
             # Only clean up if we didn't succeed
-            # Use timeouts to prevent indefinite blocking if tasks don't respond to cancellation
+            # Use anyio.move_on_after instead of asyncio.wait_for to properly propagate
+            # cancellation through anyio's cancel scope system (prevents orphaned spinning tasks)
             if not success:
+                cleanup_timeout = _get_cleanup_timeout()
                 if session is not None:
-                    try:
-                        await asyncio.wait_for(
-                            session.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
-                            timeout=_get_cleanup_timeout(),
-                        )
-                    except (asyncio.TimeoutError, Exception):  # nosec B110 - Best effort cleanup on connection failure
-                        pass
+                    with anyio.move_on_after(cleanup_timeout):
+                        try:
+                            await session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+                        except Exception:  # nosec B110 - Best effort cleanup on connection failure
+                            pass
                 if transport_ctx is not None:
-                    try:
-                        await asyncio.wait_for(
-                            transport_ctx.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
-                            timeout=_get_cleanup_timeout(),
-                        )
-                    except (asyncio.TimeoutError, Exception):  # nosec B110 - Best effort cleanup on connection failure
-                        pass
+                    with anyio.move_on_after(cleanup_timeout):
+                        try:
+                            await transport_ctx.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+                        except Exception:  # nosec B110 - Best effort cleanup on connection failure
+                            pass
 
     async def _close_session(self, pooled: PooledSession) -> None:
         """
@@ -926,27 +925,28 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         pooled.mark_closed()
 
-        # Use timeout to prevent indefinite blocking if session tasks don't respond to cancellation
-        try:
-            await asyncio.wait_for(
-                pooled.session.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
-                timeout=_get_cleanup_timeout(),
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"Session cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
-        except Exception as e:
-            logger.debug(f"Error closing session: {e}")
+        # Use anyio's move_on_after instead of asyncio.wait_for to properly propagate
+        # cancellation through anyio's cancel scope system. asyncio.wait_for() creates
+        # orphaned anyio tasks that keep spinning in _deliver_cancellation.
+        cleanup_timeout = _get_cleanup_timeout()
 
-        # Use timeout for transport cleanup as well (terminate_session HTTP call can hang)
-        try:
-            await asyncio.wait_for(
-                pooled.transport_context.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call
-                timeout=_get_cleanup_timeout(),
-            )
-        except asyncio.TimeoutError:
+        # Close session with anyio timeout
+        with anyio.move_on_after(cleanup_timeout) as session_scope:
+            try:
+                await pooled.session.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+            except Exception as e:
+                logger.debug(f"Error closing session: {e}")
+        if session_scope.cancelled_caught:
+            logger.warning(f"Session cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
+
+        # Close transport with anyio timeout
+        with anyio.move_on_after(cleanup_timeout) as transport_scope:
+            try:
+                await pooled.transport_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call
+            except Exception as e:
+                logger.debug(f"Error closing transport: {e}")
+        if transport_scope.cancelled_caught:
             logger.warning(f"Transport cleanup timed out for {sanitize_url_for_logging(pooled.url)} - proceeding anyway")
-        except Exception as e:
-            logger.debug(f"Error closing transport: {e}")
 
         logger.debug(f"Closed session for {sanitize_url_for_logging(pooled.url)} (uses={pooled.use_count})")
 

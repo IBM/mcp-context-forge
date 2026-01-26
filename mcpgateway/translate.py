@@ -128,6 +128,7 @@ from urllib.parse import urlencode
 import uuid
 
 # Third-Party
+import anyio
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -2157,15 +2158,15 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 cleanup_timeout = cfg.mcp_session_pool_cleanup_timeout
             except Exception:
                 cleanup_timeout = 5.0
-            try:
-                await asyncio.wait_for(
-                    streamable_context.__aexit__(None, None, None),  # pylint: disable=unnecessary-dunder-call,no-member
-                    timeout=cleanup_timeout,
-                )
-            except asyncio.TimeoutError:
+            # Use anyio.move_on_after instead of asyncio.wait_for to properly propagate
+            # cancellation through anyio's cancel scope system (prevents orphaned spinning tasks)
+            with anyio.move_on_after(cleanup_timeout) as cleanup_scope:
+                try:
+                    await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+                except Exception as e:
+                    LOGGER.debug(f"Error cleaning up streamable HTTP context: {e}")
+            if cleanup_scope.cancelled_caught:
                 LOGGER.warning("Streamable HTTP context cleanup timed out - proceeding anyway")
-            except Exception as e:
-                LOGGER.debug(f"Error cleaning up streamable HTTP context: {e}")
 
 
 async def _simple_sse_pump(client: "Any", url: str, max_retries: int, initial_retry_delay: float) -> None:

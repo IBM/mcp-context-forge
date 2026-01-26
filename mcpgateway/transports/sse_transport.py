@@ -19,6 +19,7 @@ import uuid
 
 # Third-Party
 import anyio
+from anyio._backends._asyncio import CancelScope
 from fastapi import Request
 import orjson
 from sse_starlette.sse import EventSourceResponse as BaseEventSourceResponse
@@ -32,6 +33,63 @@ from mcpgateway.transports.base import Transport
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+# =============================================================================
+# MONKEY-PATCH: Fix anyio's _deliver_cancellation spin loop (anyio#695)
+# =============================================================================
+# anyio's _deliver_cancellation can spin at 100% CPU when tasks don't respond
+# to CancelledError. This monkey-patch adds a max iteration limit to prevent
+# indefinite spinning. After the limit is reached, we give up delivering
+# cancellation and let the scope exit (tasks will be orphaned but won't spin).
+#
+# See: https://github.com/agronholm/anyio/issues/695
+# =============================================================================
+
+_CANCEL_DELIVERY_MAX_ITERATIONS = 100  # Max call_soon iterations before giving up
+_original_deliver_cancellation = CancelScope._deliver_cancellation  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+
+def _patched_deliver_cancellation(self: CancelScope, origin: CancelScope) -> bool:  # pylint: disable=protected-access
+    """Patched _deliver_cancellation with max iteration limit to prevent spin.
+
+    This wraps anyio's original _deliver_cancellation to track iteration count
+    and give up after a maximum number of attempts. This prevents the CPU spin
+    loop that occurs when tasks don't respond to CancelledError.
+
+    Args:
+        self: The cancel scope being processed.
+        origin: The cancel scope that originated the cancellation.
+
+    Returns:
+        True if delivery should be retried, False if done or max iterations reached.
+    """
+    # Track iteration count on the origin scope (the one that initiated cancel)
+    if not hasattr(origin, "_delivery_iterations"):
+        origin._delivery_iterations = 0  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+    origin._delivery_iterations += 1  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+    # Check if we've exceeded the maximum iterations
+    if origin._delivery_iterations > _CANCEL_DELIVERY_MAX_ITERATIONS:  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        # Log warning and give up - this prevents indefinite spin
+        logger.warning(
+            "anyio cancel delivery exceeded %d iterations - giving up to prevent CPU spin. "
+            "Some tasks may not have been properly cancelled.",
+            _CANCEL_DELIVERY_MAX_ITERATIONS,
+        )
+        # Clear the cancel handle to stop further retries
+        if hasattr(self, "_cancel_handle") and self._cancel_handle is not None:  # pylint: disable=protected-access
+            self._cancel_handle = None  # pylint: disable=protected-access
+        return False  # Don't retry
+
+    # Call the original implementation
+    return _original_deliver_cancellation(self, origin)
+
+
+# Apply the monkey-patch
+CancelScope._deliver_cancellation = _patched_deliver_cancellation  # type: ignore[method-assign]  # pylint: disable=protected-access
+logger.debug("Applied anyio _deliver_cancellation monkey-patch to prevent CPU spin loops")
 
 
 def _get_sse_cleanup_timeout() -> float:
