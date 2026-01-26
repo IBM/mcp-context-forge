@@ -593,3 +593,354 @@ class TestNotificationE2E:
             include_resources=False,
             include_prompts=True
         )
+
+
+class TestSessionAffinityE2E:
+    """End-to-end tests for session affinity (downstream → upstream mapping).
+
+    These tests verify the bidirectional x-mcp-session-id mapping that enables
+    session affinity between downstream SSE sessions and upstream MCP server sessions.
+    """
+
+    @pytest.mark.asyncio
+    async def test_register_session_mapping_creates_affinity(self):
+        """Verify register_session_mapping creates pool key mapping."""
+        pool = MCPSessionPool()
+
+        try:
+            # Register a session mapping
+            session_id = "downstream-session-123"
+            url = "http://upstream:8080/mcp"
+            gateway_id = "gateway-abc"
+            transport_type = "streamablehttp"
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                await pool.register_session_mapping(session_id, url, gateway_id, transport_type)
+
+                # Verify mapping was stored
+                mapping_key = (session_id, url, transport_type, gateway_id)
+                assert mapping_key in pool._mcp_session_mapping
+
+                # Verify pool key uses session_id hash for identity
+                pool_key = pool._mcp_session_mapping[mapping_key]
+                assert pool_key[0] == "anonymous"  # user_identity
+                assert pool_key[1] == url
+                # pool_key[2] is identity_hash derived from session_id
+                assert pool_key[3] == transport_type
+                assert pool_key[4] == gateway_id
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_acquire_uses_preregistered_mapping(self):
+        """Verify acquire() uses pre-registered mapping for session affinity."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+                with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                    mock_settings.mcpgateway_session_affinity_enabled = True
+
+                    # Pre-register session mapping
+                    session_id = "downstream-session-456"
+                    url = "http://upstream:8080/mcp"
+                    gateway_id = "gateway-xyz"
+                    transport_type = "sse"
+
+                    await pool.register_session_mapping(session_id, url, gateway_id, transport_type)
+
+                    # Create mock session
+                    def create_session_factory(url, headers, transport_type, httpx_client_factory, timeout=None, gateway_id=None):
+                        return PooledSession(
+                            session=MagicMock(),
+                            transport_context=MagicMock(),
+                            url=url,
+                            identity_key=pool._compute_identity_hash(headers),
+                            transport_type=transport_type,
+                            headers=headers or {},
+                            gateway_id=gateway_id or "",
+                        )
+
+                    mock_create.side_effect = create_session_factory
+
+                    # Acquire with x-mcp-session-id header
+                    headers = {
+                        "Authorization": "Bearer rotating-jwt-token-1",
+                        "x-mcp-session-id": session_id,
+                    }
+
+                    s1 = await pool.acquire(
+                        url,
+                        headers=headers,
+                        transport_type=TransportType.SSE,
+                        gateway_id=gateway_id,
+                    )
+                    await pool.release(s1)
+
+                    # Acquire again with DIFFERENT JWT but SAME session_id
+                    headers2 = {
+                        "Authorization": "Bearer rotating-jwt-token-2",  # Different JWT
+                        "x-mcp-session-id": session_id,  # Same session ID
+                    }
+
+                    s2 = await pool.acquire(
+                        url,
+                        headers=headers2,
+                        transport_type=TransportType.SSE,
+                        gateway_id=gateway_id,
+                    )
+                    await pool.release(s2)
+
+                    # Should be a pool hit (same session returned)
+                    metrics = pool.get_metrics()
+                    assert metrics["hits"] >= 1, "Expected pool hit for same session_id with different JWT"
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_session_affinity_disabled_ignores_mapping(self):
+        """Verify session affinity mapping is ignored when disabled."""
+        pool = MCPSessionPool()
+
+        try:
+            session_id = "downstream-session-789"
+            url = "http://upstream:8080/mcp"
+            gateway_id = "gateway-123"
+            transport_type = "streamablehttp"
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = False
+
+                await pool.register_session_mapping(session_id, url, gateway_id, transport_type)
+
+                # Mapping should NOT be stored when disabled
+                mapping_key = (session_id, url, transport_type, gateway_id)
+                assert mapping_key not in pool._mcp_session_mapping
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_different_session_ids_different_pools(self):
+        """Verify different downstream session IDs use different upstream pools."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+                with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                    mock_settings.mcpgateway_session_affinity_enabled = True
+
+                    url = "http://upstream:8080/mcp"
+                    gateway_id = "gateway-multi"
+                    transport_type = "streamablehttp"
+
+                    # Register two different session mappings
+                    session_id_1 = "session-user-A"
+                    session_id_2 = "session-user-B"
+
+                    await pool.register_session_mapping(session_id_1, url, gateway_id, transport_type)
+                    await pool.register_session_mapping(session_id_2, url, gateway_id, transport_type)
+
+                    # Verify different pool keys
+                    mapping_key_1 = (session_id_1, url, transport_type, gateway_id)
+                    mapping_key_2 = (session_id_2, url, transport_type, gateway_id)
+
+                    pool_key_1 = pool._mcp_session_mapping[mapping_key_1]
+                    pool_key_2 = pool._mcp_session_mapping[mapping_key_2]
+
+                    # Pool keys should be different (different identity hash)
+                    assert pool_key_1 != pool_key_2
+                    assert pool_key_1[2] != pool_key_2[2]  # Identity hash differs
+        finally:
+            await pool.close_all()
+
+
+class TestSessionRegistryAffinityE2E:
+    """End-to-end tests for session affinity in SessionRegistry.broadcast()."""
+
+    @pytest.mark.asyncio
+    async def test_broadcast_registers_session_mapping_for_tools_call(self):
+        """Verify broadcast() pre-registers session mapping for tools/call."""
+        # First-Party
+        from mcpgateway.cache.session_registry import SessionRegistry
+
+        registry = SessionRegistry(backend="memory")
+        await registry.initialize()
+
+        try:
+            session_id = "sse-session-abc"
+            message = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "my_tool", "arguments": {}},
+                "id": 1,
+            }
+
+            # Mock tool_lookup_cache to return gateway info
+            mock_cache_result = {
+                "status": "active",
+                "tool": {
+                    "name": "my_tool",
+                    "gateway_id": "gw-123",
+                },
+                "gateway": {
+                    "id": "gw-123",
+                    "url": "http://mcp-server:9000/sse",
+                    "transport": "sse",
+                },
+            }
+
+            # Mock the pool and cache - patch at the import location inside the method
+            with patch("mcpgateway.cache.session_registry.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                mock_cache = MagicMock()
+                mock_cache.get = AsyncMock(return_value=mock_cache_result)
+
+                mock_pool = MagicMock()
+                mock_pool.register_session_mapping = AsyncMock()
+
+                with patch.dict("sys.modules", {"mcpgateway.cache.tool_lookup_cache": MagicMock(tool_lookup_cache=mock_cache)}):
+                    with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
+                        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                            # Call _register_session_mapping directly (broadcast calls this)
+                            await registry._register_session_mapping(session_id, message)
+
+                            # Verify register_session_mapping was called with correct args
+                            mock_pool.register_session_mapping.assert_called_once_with(
+                                session_id,
+                                "http://mcp-server:9000/sse",
+                                "gw-123",
+                                "sse",
+                            )
+        finally:
+            await registry.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_skips_non_tools_call_methods(self):
+        """Verify broadcast() does not register mapping for non-tools/call methods."""
+        # First-Party
+        from mcpgateway.cache.session_registry import SessionRegistry
+
+        registry = SessionRegistry(backend="memory")
+        await registry.initialize()
+
+        try:
+            session_id = "sse-session-def"
+            # List methods should not trigger registration
+            for method in ["tools/list", "resources/list", "prompts/list", "ping", "initialize"]:
+                message = {
+                    "jsonrpc": "2.0",
+                    "method": method,
+                    "params": {},
+                    "id": 1,
+                }
+
+                with patch("mcpgateway.cache.session_registry.settings") as mock_settings:
+                    mock_settings.mcpgateway_session_affinity_enabled = True
+
+                    mock_pool = MagicMock()
+                    mock_pool.register_session_mapping = AsyncMock()
+
+                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                        await registry._register_session_mapping(session_id, message)
+
+                        # Should NOT call register_session_mapping for non-tools/call
+                        mock_pool.register_session_mapping.assert_not_called()
+        finally:
+            await registry.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_handles_missing_tool_gracefully(self):
+        """Verify broadcast() handles missing tool in cache gracefully."""
+        # First-Party
+        from mcpgateway.cache.session_registry import SessionRegistry
+
+        registry = SessionRegistry(backend="memory")
+        await registry.initialize()
+
+        try:
+            session_id = "sse-session-ghi"
+            message = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "nonexistent_tool", "arguments": {}},
+                "id": 1,
+            }
+
+            with patch("mcpgateway.cache.session_registry.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                mock_cache = MagicMock()
+                # Return None for missing tool
+                mock_cache.get = AsyncMock(return_value=None)
+
+                mock_pool = MagicMock()
+                mock_pool.register_session_mapping = AsyncMock()
+
+                with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
+                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                        # Should not raise
+                        await registry._register_session_mapping(session_id, message)
+
+                        # Should NOT call register_session_mapping for missing tool
+                        mock_pool.register_session_mapping.assert_not_called()
+        finally:
+            await registry.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_full_broadcast_flow_with_affinity(self):
+        """Test the full broadcast flow includes session affinity registration."""
+        # First-Party
+        from mcpgateway.cache.session_registry import SessionRegistry
+
+        registry = SessionRegistry(backend="memory")
+        await registry.initialize()
+
+        try:
+            session_id = "full-flow-session"
+            message = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "test_tool", "arguments": {"arg1": "value1"}},
+                "id": 42,
+            }
+
+            mock_cache_result = {
+                "status": "active",
+                "tool": {"name": "test_tool", "gateway_id": "gw-full"},
+                "gateway": {
+                    "id": "gw-full",
+                    "url": "http://full-test:8080/mcp",
+                    "transport": "streamablehttp",
+                },
+            }
+
+            with patch("mcpgateway.cache.session_registry.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                mock_cache = MagicMock()
+                mock_cache.get = AsyncMock(return_value=mock_cache_result)
+
+                mock_pool = MagicMock()
+                mock_pool.register_session_mapping = AsyncMock()
+
+                with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
+                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                        # Call broadcast (which internally calls _register_session_mapping)
+                        await registry.broadcast(session_id, message)
+
+                        # Verify session mapping was registered
+                        mock_pool.register_session_mapping.assert_called_once_with(
+                            session_id,
+                            "http://full-test:8080/mcp",
+                            "gw-full",
+                            "streamablehttp",
+                        )
+
+                        # Verify message was also stored (memory backend behavior)
+                        assert registry._session_message is not None
+                        assert registry._session_message["session_id"] == session_id
+        finally:
+            await registry.shutdown()
