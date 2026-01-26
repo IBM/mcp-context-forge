@@ -291,8 +291,9 @@ services:
       - GUNICORN_TIMEOUT=120                   # Worker timeout in seconds
       - GUNICORN_GRACEFUL_TIMEOUT=30           # Grace period for worker shutdown
       - GUNICORN_KEEP_ALIVE=30                 # Keep-alive timeout (matches SSE keepalive)
-      - GUNICORN_MAX_REQUESTS=10000000          # Recycle workers after 10M requests
-      - GUNICORN_MAX_REQUESTS_JITTER=1000000   # ±1M jitter prevents thundering herd
+      # Worker recycling cleans up MCP SDK stuck task groups (anyio#695 workaround)
+      - GUNICORN_MAX_REQUESTS=5000              # Recycle workers after ~5k requests
+      - GUNICORN_MAX_REQUESTS_JITTER=500       # ±500 jitter prevents thundering herd
       - GUNICORN_BACKLOG=4096                  # Connection queue depth
       # ═══════════════════════════════════════════════════════════════════════════
       # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
