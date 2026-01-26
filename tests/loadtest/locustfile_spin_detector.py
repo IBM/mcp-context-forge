@@ -493,15 +493,15 @@ class BaseUser(FastHttpUser):
     """Base user class with common configuration.
 
     Uses FastHttpUser (gevent-based) for maximum throughput.
-    Optimized for 4000+ concurrent users.
+    Optimized for 10000+ concurrent users with aggressive timing.
     """
 
     abstract = True
-    wait_time = between(0.1, 0.5)
+    wait_time = between(0.01, 0.1)  # Very fast - minimal wait between requests
 
-    # Connection tuning for high concurrency
-    connection_timeout = 30.0
-    network_timeout = 30.0
+    # Aggressive connection settings - fail fast
+    connection_timeout = 5.0
+    network_timeout = 5.0
 
     def __init__(self, *args, **kwargs):
         """Initialize base user with auth headers."""
@@ -585,7 +585,7 @@ class HealthCheckUser(BaseUser):
     """User that only performs health checks."""
 
     weight = 1
-    wait_time = between(1.0, 3.0)
+    wait_time = between(0.1, 0.3)  # Fast health checks
 
     @task(10)
     @tag("health", "critical")
@@ -613,7 +613,7 @@ class ReadOnlyAPIUser(BaseUser):
     """User that performs read-only API operations."""
 
     weight = 5
-    wait_time = between(0.3, 1.5)
+    wait_time = between(0.01, 0.1)  # Aggressive
 
     @task(10)
     @tag("api", "tools")
@@ -673,7 +673,7 @@ class MCPJsonRpcUser(BaseUser):
     """User that makes MCP JSON-RPC requests."""
 
     weight = 4
-    wait_time = between(0.2, 1.0)
+    wait_time = between(0.01, 0.1)  # Aggressive
 
     def _rpc_request(self, payload: dict, name: str):
         """Make an RPC request with proper error handling."""
@@ -752,7 +752,7 @@ class FastTimeUser(BaseUser):
     """User that calls the fast_time MCP server tools."""
 
     weight = 5
-    wait_time = between(0.1, 0.5)
+    wait_time = between(0.01, 0.1)  # Aggressive
 
     def _rpc_request(self, payload: dict, name: str):
         """Make an RPC request with proper error handling."""
@@ -813,7 +813,7 @@ class FastTestEchoUser(BaseUser):
     """User that calls the fast_test MCP server echo tool."""
 
     weight = 3
-    wait_time = between(0.5, 1.5)
+    wait_time = between(0.01, 0.1)  # Aggressive
 
     ECHO_MESSAGES = [
         "Hello, World!",
@@ -867,7 +867,7 @@ class FastTestTimeUser(BaseUser):
     """User that calls the fast_test MCP server get_system_time tool."""
 
     weight = 3
-    wait_time = between(0.5, 1.5)
+    wait_time = between(0.01, 0.1)  # Aggressive
 
     TIMEZONES = [
         "UTC",
@@ -922,7 +922,7 @@ class WriteAPIUser(BaseUser):
     """User that performs write operations."""
 
     weight = 1
-    wait_time = between(2.0, 5.0)
+    wait_time = between(0.1, 0.3)  # Faster writes for stress
 
     def __init__(self, *args, **kwargs):
         """Initialize with tracking for cleanup."""
@@ -1005,7 +1005,7 @@ class RealisticUser(BaseUser):
     """User that simulates realistic mixed traffic."""
 
     weight = 10
-    wait_time = between(0.5, 2.0)
+    wait_time = between(0.01, 0.1)  # Aggressive for stress testing
 
     @task(15)
     @tag("realistic", "health")
@@ -1157,16 +1157,17 @@ class SpinDetectorShape(LoadTestShape):
     """
 
     # Configuration for each cycle: (target_users, ramp_time, sustain_time, pause_time)
-    # Cycles repeat indefinitely for continuous monitoring
+    # AGGRESSIVE pattern: 4000 → cancel → 4000 → cancel → 10000 → cancel
+    # Designed to quickly trigger and detect CPU spin loop
     cycles = [
-        (500, 15, 10, 20),   # Cycle A: 500 users (warmup)
-        (750, 15, 10, 20),   # Cycle B: 750 users
-        (1000, 20, 15, 30),  # Cycle C: 1000 users (peak)
-        (500, 10, 5, 15),    # Cycle D: Quick cycle
-        (1000, 20, 15, 30),  # Cycle E: Peak again
+        (4000, 4, 5, 10),    # Cycle A: 4000 users, fast ramp, short sustain, 10s pause
+        (4000, 4, 5, 10),    # Cycle B: 4000 users again
+        (10000, 10, 5, 10),  # Cycle C: 10000 users (stress test)
+        (4000, 4, 5, 10),    # Cycle D: Back to 4000
+        (10000, 10, 5, 10),  # Cycle E: 10000 again
     ]
 
-    spawn_rate = 100  # Spawn rate for faster ramp
+    spawn_rate = 1000  # FAST spawn rate for aggressive testing
 
     def __init__(self):
         """Initialize the load shape."""
@@ -1239,12 +1240,11 @@ class SpinDetectorShape(LoadTestShape):
 {Colors.BOLD}PURPOSE:{Colors.RESET}
   Detect CPU spin loop bug caused by orphaned asyncio tasks.
 
-{Colors.BOLD}TEST PATTERN:{Colors.RESET}
-  1. {Colors.GREEN}Ramp up{Colors.RESET} to user count (creates sessions)
-  2. {Colors.CYAN}Sustain{Colors.RESET} load for observation
-  3. {Colors.MAGENTA}Drop{Colors.RESET} to 0 users (triggers cleanup)
-  4. {Colors.YELLOW}Pause{Colors.RESET} to monitor CPU (should return to idle)
-  5. {Colors.BOLD}Repeat indefinitely{Colors.RESET} (500 -> 750 -> 1000 users)
+{Colors.BOLD}AGGRESSIVE TEST PATTERN:{Colors.RESET}
+  1. {Colors.GREEN}4000 users{Colors.RESET} (1000/s spawn) → {Colors.MAGENTA}cancel 10s{Colors.RESET}
+  2. {Colors.GREEN}4000 users{Colors.RESET} (1000/s spawn) → {Colors.MAGENTA}cancel 10s{Colors.RESET}
+  3. {Colors.RED}10000 users{Colors.RESET} (1000/s spawn) → {Colors.MAGENTA}cancel 10s{Colors.RESET}
+  4. {Colors.BOLD}Repeat indefinitely{Colors.RESET}
 
 {Colors.BOLD}EXPECTED:{Colors.RESET}
   {Colors.GREEN}PASS:{Colors.RESET} CPU <10% during pause | {Colors.RED}FAIL:{Colors.RESET} CPU >100% during pause
