@@ -2991,6 +2991,12 @@ class ToolService:
                         headers = compute_passthrough_headers_cached(
                             request_headers, headers, passthrough_allowed, gateway_auth_type=gateway_auth_type, gateway_passthrough_headers=gateway_passthrough
                         )
+                        # Preserve x-mcp-session-id for upstream session affinity (fallback)
+                        # This ensures the header is passed even if not in passthrough config
+                        if settings.mcpgateway_session_affinity_enabled:
+                            mcp_session_id = request_headers.get("x-mcp-session-id") or request_headers.get("X-Mcp-Session-Id")
+                            if mcp_session_id and "x-mcp-session-id" not in headers:
+                                headers["x-mcp-session-id"] = mcp_session_id
 
                     def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
                         """Create an SSL context with the provided CA certificate.
