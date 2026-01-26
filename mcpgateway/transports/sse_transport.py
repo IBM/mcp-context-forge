@@ -35,7 +35,7 @@ logger = logging_service.get_logger(__name__)
 
 
 def _get_sse_cleanup_timeout() -> float:
-    """Get SSE task group cleanup timeout from config (lazy import to avoid circular deps).
+    """Get SSE task group cleanup timeout from config.
 
     This timeout controls how long to wait for SSE task group tasks to respond
     to cancellation before forcing cleanup. Prevents CPU spin loops in anyio's
@@ -45,10 +45,6 @@ def _get_sse_cleanup_timeout() -> float:
         Cleanup timeout in seconds (default: 5.0)
     """
     try:
-        # Lazy import to avoid circular dependency during startup
-        # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
         return settings.sse_task_group_cleanup_timeout
     except Exception:
         return 5.0  # Fallback default
@@ -70,6 +66,16 @@ class EventSourceResponse(BaseEventSourceResponse):
     - https://github.com/anthropics/claude-agent-sdk-python/issues/378
     """
 
+    def enable_compression(self, force: bool = False) -> None:  # noqa: ARG002
+        """Enable compression (no-op for SSE streams).
+
+        SSE streams don't support compression as per sse_starlette.
+        This override prevents NotImplementedError from parent class.
+
+        Args:
+            force: Ignored - compression not supported for SSE.
+        """
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Handle SSE request with cancel scope deadline to prevent spin.
 
@@ -83,9 +89,6 @@ class EventSourceResponse(BaseEventSourceResponse):
             send: ASGI send callable.
         """
         # Copy of sse_starlette.sse.EventSourceResponse.__call__ with deadline fix
-        # Standard
-        from typing import Awaitable, Callable
-
         async with anyio.create_task_group() as task_group:
             # Add deadline to cancel scope to prevent indefinite spin on cleanup
             # The deadline is set far in the future initially, and only becomes

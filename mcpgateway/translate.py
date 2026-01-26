@@ -2152,9 +2152,9 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             # Get cleanup timeout from config (with fallback for standalone usage)
             try:
                 # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+                from mcpgateway.config import settings as cfg  # pylint: disable=import-outside-toplevel
 
-                cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
+                cleanup_timeout = cfg.mcp_session_pool_cleanup_timeout
             except Exception:
                 cleanup_timeout = 5.0
             try:
