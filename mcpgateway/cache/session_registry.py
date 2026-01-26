@@ -300,6 +300,7 @@ class SessionRegistry(SessionBackend):
         self._client_capabilities: Dict[str, Dict[str, Any]] = {}  # Client capabilities by session_id
         self._respond_tasks: Dict[str, asyncio.Task] = {}  # Track respond tasks for cancellation
         self._stuck_tasks: Dict[str, asyncio.Task] = {}  # Tasks that couldn't be cancelled (for monitoring)
+        self._closing_sessions: set[str] = set()  # Sessions being closed - respond loop should exit
         self._lock = asyncio.Lock()
         self._cleanup_task: Task | None = None
         self._stuck_task_reaper: Task | None = None  # Reaper for stuck tasks
@@ -815,19 +816,27 @@ class SessionRegistry(SessionBackend):
         if self._backend == "none":
             return
 
-        # CRITICAL: Cancel respond task FIRST before any cleanup
-        # This prevents orphaned tasks that cause CPU spin loops
-        await self._cancel_respond_task(session_id)
+        # Mark session as closing FIRST so respond loop can exit early
+        # This allows the loop to exit without waiting for cancellation to complete
+        self._closing_sessions.add(session_id)
 
-        # Clean up local transport
-        transport = None
-        async with self._lock:
-            if session_id in self._sessions:
-                transport = self._sessions.pop(session_id)
-            # Also clean up client capabilities
-            if session_id in self._client_capabilities:
-                self._client_capabilities.pop(session_id)
-                logger.debug(f"Removed capabilities for session {session_id}")
+        try:
+            # CRITICAL: Cancel respond task before any cleanup
+            # This prevents orphaned tasks that cause CPU spin loops
+            await self._cancel_respond_task(session_id)
+
+            # Clean up local transport
+            transport = None
+            async with self._lock:
+                if session_id in self._sessions:
+                    transport = self._sessions.pop(session_id)
+                # Also clean up client capabilities
+                if session_id in self._client_capabilities:
+                    self._client_capabilities.pop(session_id)
+                    logger.debug(f"Removed capabilities for session {session_id}")
+        finally:
+            # Always remove from closing set
+            self._closing_sessions.discard(session_id)
 
         # Disconnect transport if found
         if transport:
@@ -1111,9 +1120,9 @@ class SessionRegistry(SessionBackend):
 
             try:
                 while True:
-                    # Check if session still exists - exit if removed (Finding 2 fix)
-                    if session_id not in self._sessions:
-                        logger.info(f"Session {session_id} no longer exists, exiting Redis respond loop")
+                    # Check if session still exists or is closing - exit early
+                    if session_id not in self._sessions or session_id in self._closing_sessions:
+                        logger.info(f"Session {session_id} removed or closing, exiting Redis respond loop")
                         break
 
                     # Use get_message with timeout instead of blocking listen()
@@ -1126,6 +1135,9 @@ class SessionRegistry(SessionBackend):
                         continue
 
                     if msg is None:
+                        # CRITICAL: Sleep to prevent tight loop when get_message returns immediately
+                        # This can happen in certain Redis states after disconnects
+                        await asyncio.sleep(0.1)
                         continue
                     if msg["type"] != "message":
                         continue
@@ -1322,6 +1334,11 @@ class SessionRegistry(SessionBackend):
                 backoff_factor = settings.backoff_factor
                 try:
                     while True:
+                        # Check if session is closing before querying DB
+                        if session_id in self._closing_sessions:
+                            logger.debug("Session %s closing, stopping poll loop early", session_id)
+                            break
+
                         session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
 
                         # session gone → stop polling

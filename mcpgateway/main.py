@@ -2529,6 +2529,14 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
         try:
             response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        except asyncio.CancelledError:
+            # Request cancelled - still need to clean up to prevent orphaned tasks
+            logger.debug(f"SSE request cancelled for {transport.session_id}, cleaning up")
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup after SSE cancellation failed: {cleanup_error}")
+            raise  # Re-raise CancelledError
         except Exception as sse_error:
             # CRITICAL: Cleanup on failure - respond task and session would be orphaned otherwise
             logger.error(f"create_sse_response failed for {transport.session_id}: {sse_error}")
@@ -2543,6 +2551,8 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         response.background = tasks
         logger.info(f"SSE connection established: {transport.session_id}")
         return response
+    except asyncio.CancelledError:
+        raise  # Re-raise CancelledError without converting to HTTPException
     except Exception as e:
         logger.error(f"SSE connection error: {e}")
         raise HTTPException(status_code=500, detail="SSE connection failed")
@@ -5723,6 +5733,14 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
         try:
             response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        except asyncio.CancelledError:
+            # Request cancelled - still need to clean up to prevent orphaned tasks
+            logger.debug("SSE request cancelled for %s, cleaning up", transport.session_id)
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning("Cleanup after SSE cancellation failed: %s", cleanup_error)
+            raise  # Re-raise CancelledError
         except Exception as sse_error:
             # CRITICAL: Cleanup on failure - respond task and session would be orphaned otherwise
             logger.error("create_sse_response failed for %s: %s", transport.session_id, sse_error)
@@ -5737,6 +5755,8 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         response.background = tasks
         logger.info("SSE connection established: %s", transport.session_id)
         return response
+    except asyncio.CancelledError:
+        raise  # Re-raise CancelledError without converting to HTTPException
     except Exception as e:
         logger.error("SSE connection error: %s", e)
         raise HTTPException(status_code=500, detail="SSE connection failed")
