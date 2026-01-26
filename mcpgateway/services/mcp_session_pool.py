@@ -144,6 +144,9 @@ class PooledSession:
 # Pool key includes transport type and gateway_id to prevent returning wrong transport for same URL
 # and to ensure correct notification attribution when notifications are enabled
 PoolKey = Tuple[str, str, str, str, str]  # (user_identity_hash, url, identity_hash, transport_type, gateway_id)
+
+# Session affinity mapping key: (mcp_session_id, url, transport_type, gateway_id)
+SessionMappingKey = Tuple[str, str, str, str]
 HttpxClientFactory = Callable[
     [Optional[Dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
     httpx.AsyncClient,
@@ -321,6 +324,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         # Lifecycle
         self._closed = False
 
+        # Pre-registered session mappings for session affinity
+        # Mapping from (mcp_session_id, url, transport_type, gateway_id) -> pool_key
+        # Set by broadcast() before acquire() is called to enable session affinity lookup
+        self._mcp_session_mapping: Dict[SessionMappingKey, PoolKey] = {}
+        self._mcp_session_mapping_lock = asyncio.Lock()
+
     async def __aenter__(self) -> "MCPSessionPool":
         """Async context manager entry.
 
@@ -474,6 +483,43 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         """Record a success, resetting failure count."""
         self._failures[url] = 0
 
+    async def register_session_mapping(
+        self,
+        mcp_session_id: str,
+        url: str,
+        gateway_id: str,
+        transport_type: str,
+    ) -> None:
+        """Pre-register session mapping for session affinity.
+
+        Called by broadcast() to set up mapping BEFORE acquire() is called.
+        This ensures acquire() can find the correct pool key for session affinity.
+
+        The mapping stores the relationship between an incoming MCP session ID
+        and the pool key that should be used for upstream connections. This
+        enables session affinity even when JWT tokens rotate (different jti values
+        per request).
+
+        Args:
+            mcp_session_id: The downstream MCP session ID from x-mcp-session-id header.
+            url: The upstream MCP server URL.
+            gateway_id: The gateway ID.
+            transport_type: The transport type (sse, streamablehttp).
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type, gateway_id)
+
+        # Compute what the pool_key will be for this session
+        # Use mcp_session_id as the identity basis for affinity
+        identity_hash = hashlib.sha256(mcp_session_id.encode()).hexdigest()
+        pool_key: PoolKey = ("anonymous", url, identity_hash, transport_type, gateway_id)
+
+        async with self._mcp_session_mapping_lock:
+            self._mcp_session_mapping[mapping_key] = pool_key
+            logger.debug(f"Session affinity pre-registered: {mcp_session_id[:8]}... → {url}")
+
     async def acquire(
         self,
         url: str,
@@ -517,7 +563,23 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         effective_timeout = timeout if timeout is not None else self._default_transport_timeout
 
         user_id = user_identity or "anonymous"
-        pool_key = self._make_pool_key(url, headers, transport_type, user_id, gateway_id)
+        pool_key: Optional[PoolKey] = None
+
+        # Check pre-registered mapping first (set by broadcast for session affinity)
+        if settings.mcpgateway_session_affinity_enabled and headers:
+            headers_lower = {k.lower(): v for k, v in headers.items()}
+            mcp_session_id = headers_lower.get("x-mcp-session-id")
+            if mcp_session_id:
+                mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type.value, gateway_id or "")
+                async with self._mcp_session_mapping_lock:
+                    pool_key = self._mcp_session_mapping.get(mapping_key)
+                    if pool_key:
+                        logger.debug(f"Session affinity hit (pre-registered): {mcp_session_id[:8]}...")
+
+        # Fallback to normal pool key computation
+        if pool_key is None:
+            pool_key = self._make_pool_key(url, headers, transport_type, user_id, gateway_id)
+
         pool = await self._get_or_create_pool(pool_key)
 
         # Update pool key last used time IMMEDIATELY after getting pool
