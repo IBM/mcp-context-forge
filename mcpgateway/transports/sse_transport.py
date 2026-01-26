@@ -14,7 +14,7 @@ import asyncio
 from collections import deque
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Optional
 import uuid
 
 # Third-Party
@@ -388,11 +388,17 @@ class SSETransport(Transport):
         """
         return self._connected
 
-    async def create_sse_response(self, request: Request) -> EventSourceResponse:
+    async def create_sse_response(
+        self,
+        request: Request,
+        on_disconnect_callback: Callable[[], Awaitable[None]] | None = None,
+    ) -> EventSourceResponse:
         """Create SSE response for streaming.
 
         Args:
             request: FastAPI request (used for disconnection detection)
+            on_disconnect_callback: Optional async callback to run when client disconnects.
+                Used for defensive cleanup (e.g., cancelling respond tasks).
 
         Returns:
             SSE response object
@@ -537,6 +543,13 @@ class SSETransport(Transport):
             """Handle client close event from sse_starlette."""
             logger.info("SSE client close handler called: %s", self._session_id)
             self._client_gone.set()
+
+            # Defensive cleanup via callback (if provided)
+            if on_disconnect_callback:
+                try:
+                    await on_disconnect_callback()
+                except Exception as e:
+                    logger.warning("Disconnect callback failed for %s: %s", self._session_id, e)
 
         return EventSourceResponse(
             event_generator(),

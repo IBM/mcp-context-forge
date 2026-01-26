@@ -2483,7 +2483,16 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
-        response = await transport.create_sse_response(request)
+
+        # Defensive cleanup callback - runs immediately on client disconnect
+        async def on_disconnect_cleanup() -> None:
+            try:
+                await session_registry.remove_session(transport.session_id)
+                logger.debug("Defensive session cleanup completed: %s", transport.session_id)
+            except Exception as e:
+                logger.warning("Defensive session cleanup failed for %s: %s", transport.session_id, e)
+
+        response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         auth_token = None
@@ -2513,7 +2522,11 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         user_with_token["token_teams"] = token_teams  # Always a list, never None
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
-        asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
+        # Create respond task and register for cancellation on disconnect
+        respond_task = asyncio.create_task(
+            session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url)
+        )
+        session_registry.register_respond_task(transport.session_id, respond_task)
 
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
@@ -5657,6 +5670,14 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
 
+        # Defensive cleanup callback - runs immediately on client disconnect
+        async def on_disconnect_cleanup() -> None:
+            try:
+                await session_registry.remove_session(transport.session_id)
+                logger.debug("Defensive session cleanup completed: %s", transport.session_id)
+            except Exception as e:
+                logger.warning("Defensive session cleanup failed for %s: %s", transport.session_id, e)
+
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         auth_token = None
         auth_header = request.headers.get("authorization", "")
@@ -5685,9 +5706,13 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["token_teams"] = token_teams  # Always a list, never None
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
-        asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
+        # Create respond task and register for cancellation on disconnect
+        respond_task = asyncio.create_task(
+            session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url)
+        )
+        session_registry.register_respond_task(transport.session_id, respond_task)
 
-        response = await transport.create_sse_response(request)
+        response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
         response.background = tasks
