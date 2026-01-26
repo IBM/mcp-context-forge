@@ -1280,7 +1280,8 @@ load-test-spin-detector:                   ## CPU spin loop detector (spike/drop
 			--only-summary"
 	@echo ""
 	@echo "📄 HTML Report: reports/spin_detector_report.html"
-	@echo "📋 Log file: /tmp/spin_detector_*.log (timestamped)"
+	@echo "📋 Log file: /tmp/spin_detector.log"
+	@echo "   Monitor: tail -f /tmp/spin_detector.log"
 
 load-test-report:                          ## Show last load test HTML report
 	@if [ -f "$(LOADTEST_HTML_REPORT)" ]; then \

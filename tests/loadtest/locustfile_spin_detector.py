@@ -202,7 +202,8 @@ if not sys.stdout.isatty():
 # =============================================================================
 # Logging Setup
 # =============================================================================
-LOG_FILE = f"/tmp/spin_detector_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+# Fixed log file path for easy monitoring: tail -f /tmp/spin_detector.log
+LOG_FILE = "/tmp/spin_detector.log"
 _log_file_handle = None
 
 
@@ -1156,13 +1157,13 @@ class SpinDetectorShape(LoadTestShape):
     """
 
     # Configuration for each cycle: (target_users, ramp_time, sustain_time, pause_time)
-    # Reduced from 4000 to 1000 peak for faster iteration during testing
+    # Cycles repeat indefinitely for continuous monitoring
     cycles = [
-        (500, 15, 10, 20),   # Cycle 1: 500 users (warmup)
-        (750, 15, 10, 20),   # Cycle 2: 750 users
-        (1000, 20, 15, 30),  # Cycle 3: 1000 users (peak)
-        (500, 10, 5, 15),    # Cycle 4: Quick cycle
-        (1000, 20, 15, 30),  # Cycle 5: Final peak
+        (500, 15, 10, 20),   # Cycle A: 500 users (warmup)
+        (750, 15, 10, 20),   # Cycle B: 750 users
+        (1000, 20, 15, 30),  # Cycle C: 1000 users (peak)
+        (500, 10, 5, 15),    # Cycle D: Quick cycle
+        (1000, 20, 15, 30),  # Cycle E: Peak again
     ]
 
     spawn_rate = 100  # Spawn rate for faster ramp
@@ -1175,6 +1176,7 @@ class SpinDetectorShape(LoadTestShape):
         self._last_phase = None
         self._pause_stats: list[tuple[int, float]] = []  # (cycle, max_cpu) during pauses
         self._banner_printed = False
+        self._total_cycles = 0  # Track total cycles across all iterations
 
     def tick(self) -> Optional[tuple[int, float]]:
         """Calculate the current target user count and spawn rate."""
@@ -1185,10 +1187,10 @@ class SpinDetectorShape(LoadTestShape):
 
         run_time = self.get_run_time()
 
+        # Loop indefinitely - reset to cycle 0 when we reach the end
         if self._current_cycle >= len(self.cycles):
-            if self._last_phase != "complete":
-                self._log_phase_change("complete", 0, 0)
-            return None
+            self._current_cycle = 0
+            self._last_phase = None  # Reset phase to trigger new cycle logging
 
         target_users, ramp_time, sustain_time, pause_time = self.cycles[self._current_cycle]
         cycle_duration = ramp_time + sustain_time + pause_time
@@ -1210,6 +1212,7 @@ class SpinDetectorShape(LoadTestShape):
             users = 0
         else:
             self._current_cycle += 1
+            self._total_cycles += 1
             self._cycle_start_time = run_time
             self._last_phase = None
             return self.tick()
@@ -1241,10 +1244,14 @@ class SpinDetectorShape(LoadTestShape):
   2. {Colors.CYAN}Sustain{Colors.RESET} load for observation
   3. {Colors.MAGENTA}Drop{Colors.RESET} to 0 users (triggers cleanup)
   4. {Colors.YELLOW}Pause{Colors.RESET} to monitor CPU (should return to idle)
-  5. Repeat for 5 cycles (500 -> 750 -> 1000 users)
+  5. {Colors.BOLD}Repeat indefinitely{Colors.RESET} (500 -> 750 -> 1000 users)
 
 {Colors.BOLD}EXPECTED:{Colors.RESET}
   {Colors.GREEN}PASS:{Colors.RESET} CPU <10% during pause | {Colors.RED}FAIL:{Colors.RESET} CPU >100% during pause
+
+{Colors.BOLD}MONITORING:{Colors.RESET}
+  Log file: {Colors.CYAN}{LOG_FILE}{Colors.RESET}
+  Monitor:  {Colors.DIM}tail -f {LOG_FILE}{Colors.RESET}
 """
         )
 
@@ -1257,27 +1264,28 @@ class SpinDetectorShape(LoadTestShape):
 
     def _log_phase_change(self, phase: str, current_users: int, target_users: int) -> None:
         """Log phase transitions with docker stats."""
-        cycle_num = self._current_cycle + 1
-        total_cycles = len(self.cycles)
+        # Use total cycles for display (1-indexed)
+        cycle_num = self._total_cycles + 1
+        cycle_letter = chr(ord('A') + (self._current_cycle % len(self.cycles)))
 
         stats_output, cpu_values = get_docker_stats()
         cpu_status = format_cpu_status(cpu_values)
 
         if phase == "ramp":
             print_box(
-                f"CYCLE {cycle_num}/{total_cycles}: RAMPING UP",
+                f"CYCLE {cycle_num} ({cycle_letter}): RAMPING UP",
                 f"Target: {target_users} users | Spawn rate: {self.spawn_rate}/s",
                 Colors.BLUE,
             )
         elif phase == "sustain":
             print_box(
-                f"CYCLE {cycle_num}/{total_cycles}: SUSTAINING LOAD",
+                f"CYCLE {cycle_num} ({cycle_letter}): SUSTAINING LOAD",
                 f"Holding at {target_users} users",
                 Colors.CYAN,
             )
         elif phase == "pause":
             print_box(
-                f"CYCLE {cycle_num}/{total_cycles}: PAUSE - MONITORING CPU",
+                f"CYCLE {cycle_num} ({cycle_letter}): PAUSE - MONITORING CPU",
                 "",
                 Colors.MAGENTA,
             )
@@ -1291,14 +1299,31 @@ class SpinDetectorShape(LoadTestShape):
                 max_cpu = max(cpu for _, cpu in cpu_values)
                 self._pause_stats.append((cycle_num, max_cpu))
 
-        elif phase == "complete":
-            self._print_final_report()
-            return
+                # Log summary every 5 cycles
+                if cycle_num % 5 == 0:
+                    self._log_periodic_summary()
 
         # Print docker stats
         print_section("Docker Stats")
         log(stats_output)
         log(f"\n{cpu_status}\n")
+
+    def _log_periodic_summary(self) -> None:
+        """Log a periodic summary of pause phase CPU stats."""
+        if not self._pause_stats:
+            return
+
+        # Get last 5 cycles
+        recent = self._pause_stats[-5:]
+        passes = sum(1 for _, cpu in recent if cpu < 10)
+        warns = sum(1 for _, cpu in recent if 10 <= cpu < 50)
+        fails = sum(1 for _, cpu in recent if cpu >= 50)
+
+        log("")
+        log(f"{Colors.CYAN}{Colors.BOLD}=== PERIODIC SUMMARY (last 5 cycles) ==={Colors.RESET}")
+        log(f"  {Colors.GREEN}PASS: {passes}{Colors.RESET} | {Colors.YELLOW}WARN: {warns}{Colors.RESET} | {Colors.RED}FAIL: {fails}{Colors.RESET}")
+        log(f"  Total cycles completed: {len(self._pause_stats)}")
+        log("")
 
     def _print_final_report(self) -> None:
         """Print final summary report."""
