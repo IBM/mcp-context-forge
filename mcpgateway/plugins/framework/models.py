@@ -715,6 +715,7 @@ class PluginSettings(BaseModel):
         fail_on_plugin_error (bool): error when there is a plugin connectivity or ignore.
         enable_plugin_api (bool): enable or disable plugins globally.
         plugin_health_check_interval (int): health check interval check.
+        include_user_info (bool): if enabled user info is injected in plugin context
     """
 
     parallel_execution_within_band: bool = False
@@ -722,6 +723,7 @@ class PluginSettings(BaseModel):
     fail_on_plugin_error: bool = False
     enable_plugin_api: bool = False
     plugin_health_check_interval: int = 60
+    include_user_info: bool = True
 
 
 class Config(BaseModel):
@@ -808,7 +810,7 @@ class GlobalContext(BaseModel):
     """
 
     request_id: str
-    user: Optional[str] = None
+    user: Optional[dict[str, Any]] = Field(default_factory=dict)
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
     state: dict[str, Any] = Field(default_factory=dict)
