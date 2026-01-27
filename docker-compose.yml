@@ -289,11 +289,11 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       - GUNICORN_WORKERS=24                    # Worker processes (match CPU cores)
       - GUNICORN_TIMEOUT=120                   # Worker timeout in seconds
-      - GUNICORN_GRACEFUL_TIMEOUT=30           # Grace period for worker shutdown
+      - GUNICORN_GRACEFUL_TIMEOUT=60           # Grace period for worker shutdown
       - GUNICORN_KEEP_ALIVE=30                 # Keep-alive timeout (matches SSE keepalive)
       # Worker recycling cleans up MCP SDK stuck task groups (anyio#695 workaround)
-      - GUNICORN_MAX_REQUESTS=5000              # Recycle workers after ~5k requests
-      - GUNICORN_MAX_REQUESTS_JITTER=500       # ±500 jitter prevents thundering herd
+      - GUNICORN_MAX_REQUESTS=1000000          # Recycle workers after 1M requests
+      - GUNICORN_MAX_REQUESTS_JITTER=100000    # ±100000 jitter prevents thundering herd
       - GUNICORN_BACKLOG=4096                  # Connection queue depth
       # ═══════════════════════════════════════════════════════════════════════════
       # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
@@ -384,8 +384,8 @@ services:
       # Last resort: patches anyio to limit _deliver_cancellation iterations.
       # Enable only if Layers 1-2 don't fully resolve the issue.
       # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
-      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true               # Enable workaround (default: false)
-      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (default: 100)
+      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true              # Enable workaround (default: false)
+      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=200              # Max iterations before giving up (default: 100)
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording

@@ -1239,25 +1239,29 @@ load-test-stress:                          ## Stress test (500 users, 60s)
 	fi
 
 load-test-spin-detector:                   ## CPU spin loop detector (spike/drop pattern, issue #2360)
-	@echo "🔄 CPU SPIN LOOP DETECTOR (Full-featured, matching load-test-ui)"
+	@echo "🔄 CPU SPIN LOOP DETECTOR (Escalating load pattern)"
 	@echo "   Issue: https://github.com/IBM/mcp-context-forge/issues/2360"
 	@echo ""
-	@echo "   This test uses a spike/drop pattern to detect CPU spin loops:"
-	@echo "   1. Ramp up to high user count (2000-4000 users)"
-	@echo "   2. Drop to 0 users (all clients disconnect)"
-	@echo "   3. Pause 30s to observe CPU (should return to idle)"
-	@echo "   4. Repeat 5 cycles (~6 minutes total)"
+	@echo "   ESCALATING PATTERN (10K users @ 2000/s spawn rate):"
+	@echo "   ┌─────────┬───────────────┬────────────┐"
+	@echo "   │ Cycle   │ Load Duration │ Pause      │"
+	@echo "   ├─────────┼───────────────┼────────────┤"
+	@echo "   │ A       │ ~20 seconds   │ 20 seconds │"
+	@echo "   │ B       │ ~30 seconds   │ 20 seconds │"
+	@echo "   │ C       │ ~40 seconds   │ 20 seconds │"
+	@echo "   │ D       │ ~50 seconds   │ 20 seconds │"
+	@echo "   └─────────┴───────────────┴────────────┘"
+	@echo "   → Repeats indefinitely (Ctrl+C to stop)"
 	@echo ""
+	@echo "   🎯 Target: $(LOADTEST_HOST)"
+	@echo "   📊 Shows RPS (requests/second) during load phases"
 	@echo "   🔐 Authentication: JWT (auto-generated from .env settings)"
-	@echo "   👥 User classes: RealisticUser, ReadOnlyAPIUser, FastTimeUser,"
-	@echo "                    MCPJsonRpcUser, FastTestEchoUser, FastTestTimeUser,"
-	@echo "                    HealthCheckUser, WriteAPIUser, StressTestUser"
-	@echo "   🎯 Cycles: 500 -> 750 -> 1000 users (faster iteration)"
+	@echo "   🔇 Verbose logs off by default (set LOCUST_VERBOSE=1 to enable)"
 	@echo ""
 	@echo "   💡 Prerequisites:"
-	@echo "      make testing-down testing-up   # Fresh gateway on port 4444"
+	@echo "      docker compose up -d   # Gateway on port 8080 (via nginx)"
 	@echo ""
-	@echo "   📊 MONITORING (run in another terminal):"
+	@echo "   📈 MONITORING (run in another terminal):"
 	@echo "      watch -n 2 'docker stats --no-stream | grep gateway'"
 	@echo ""
 	@echo "   ✅ PASS: CPU drops to <10% during pause phases"
@@ -1272,7 +1276,7 @@ load-test-spin-detector:                   ## CPU spin loop detector (spike/drop
 		ulimit -n 65536 2>/dev/null || true && \
 		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
 		locust -f locustfile_spin_detector.py \
-			--host=http://localhost:4444 \
+			--host=$(LOADTEST_HOST) \
 			--headless \
 			--processes=$(LOADTEST_PROCESSES) \
 			--html=../../reports/spin_detector_report.html \
