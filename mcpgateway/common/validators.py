@@ -90,18 +90,54 @@ _POLYGLOT_PATTERNS: List[Pattern[str]] = [
     re.compile(r"javascript:.*\(", re.IGNORECASE),
 ]
 
-# SSTI prevention patterns (precompiled with IGNORECASE)
-# Use [^}]* and [^%]* instead of .* to prevent ReDoS catastrophic backtracking
+# SSTI prevention - uses multiple defense layers:
+# 1. Pattern-based detection for structural matching (ReDoS-safe)
+# 2. Block dangerous dynamic attribute access mechanisms entirely
+# 3. Block suspicious string patterns that could construct dangerous identifiers
+
+# Dangerous Python dunder methods - blocked when found in template expressions
+_SSTI_DANGEROUS_DUNDERS: frozenset = frozenset([
+    "__class__", "__mro__", "__subclasses__", "__globals__", "__builtins__",
+    "__import__", "__init__", "__dict__", "__getattribute__", "__setattr__",
+    "__delattr__", "__base__", "__bases__", "__code__", "__func__",
+    "__self__", "__module__", "__qualname__", "__reduce__", "__reduce_ex__",
+    "__getstate__", "__setstate__", "__new__", "__del__", "__repr__",
+    "__call__", "__getitem__", "__setitem__", "__delitem__", "__iter__",
+])
+
+# Block dangerous dynamic attribute access patterns entirely within templates.
+# These are the primary SSTI bypass mechanisms and are rarely needed legitimately.
+# Pattern 1: |attr( filter - used to access attributes by string name
+_SSTI_ATTR_FILTER_RE: Pattern[str] = re.compile(r"\{\{[^}]*\|attr\s*\(", re.IGNORECASE)
+_SSTI_ATTR_FILTER_TAG_RE: Pattern[str] = re.compile(r"\{%[^%]*\|attr\s*\(", re.IGNORECASE)
+# Pattern 2: Bracket notation with string - obj['attr'] or obj["attr"]
+_SSTI_BRACKET_STRING_RE: Pattern[str] = re.compile(r"\{\{[^}]*\[['\"]", re.IGNORECASE)
+_SSTI_BRACKET_STRING_TAG_RE: Pattern[str] = re.compile(r"\{%[^%]*\[['\"]", re.IGNORECASE)
+# Pattern 3: String concatenation building identifiers (contains _ near ~ or +)
+_SSTI_STRING_CONCAT_RE: Pattern[str] = re.compile(r"['\"][^'\"]*_[^'\"]*['\"]\s*[~+]|[~+]\s*['\"][^'\"]*_", re.IGNORECASE)
+
+# Pattern for dunder-like strings (starting/ending with __)
+_SSTI_DUNDER_STRING_RE: Pattern[str] = re.compile(r"[\"']__|\b__[\"']", re.IGNORECASE)
+
+# ReDoS-safe patterns for structural SSTI detection
+_SSTI_QUOTED_STR = r'\"(?:[^\"\\]|\\.)*\"|\'(?:[^\'\\]|\\.)*\''
+_SSTI_JINJA_CONTENT = r'(?:' + _SSTI_QUOTED_STR + r'|[^}\"\'\\]|}(?!})|\\.)'
+_SSTI_TAG_CONTENT = r'(?:' + _SSTI_QUOTED_STR + r'|[^%\"\'\\]|%(?!})|\\.)'
+_SSTI_DANGEROUS_KW = r'(__|\.|config|self|request|application|globals|builtins|import)'
+
 _SSTI_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"\{\{[^}]*(__|\.|config|self|request|application|globals|builtins|import)[^}]*\}\}", re.IGNORECASE),
-    re.compile(r"\{%[^%]*(__|\.|config|self|request|application|globals|builtins|import)[^%]*%\}", re.IGNORECASE),
+    # Main SSTI patterns - detect dangerous keywords in expressions
+    re.compile(r'\{\{' + _SSTI_JINJA_CONTENT + r'*' + _SSTI_DANGEROUS_KW + _SSTI_JINJA_CONTENT + r'*\}\}', re.IGNORECASE),
+    re.compile(r'\{%' + _SSTI_TAG_CONTENT + r'*' + _SSTI_DANGEROUS_KW + _SSTI_TAG_CONTENT + r'*%\}', re.IGNORECASE),
+    # Simple template expression patterns
     re.compile(r"\$\{[^}]*\}", re.IGNORECASE),
     re.compile(r"#\{[^}]*\}", re.IGNORECASE),
     re.compile(r"%\{[^}]*\}", re.IGNORECASE),
-    re.compile(r"\{\{[^}]*\*[^}]*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{[^}]*\/[^}]*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{[^}]*\+[^}]*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{[^}]*\-[^}]*\}\}", re.IGNORECASE),
+    # Arithmetic operator patterns (detect code execution via math)
+    re.compile(r'\{\{' + _SSTI_JINJA_CONTENT + r'*\*' + _SSTI_JINJA_CONTENT + r'*\}\}', re.IGNORECASE),
+    re.compile(r'\{\{' + _SSTI_JINJA_CONTENT + r'*\/' + _SSTI_JINJA_CONTENT + r'*\}\}', re.IGNORECASE),
+    re.compile(r'\{\{' + _SSTI_JINJA_CONTENT + r'*\+' + _SSTI_JINJA_CONTENT + r'*\}\}', re.IGNORECASE),
+    re.compile(r'\{\{' + _SSTI_JINJA_CONTENT + r'*\-' + _SSTI_JINJA_CONTENT + r'*\}\}', re.IGNORECASE),
 ]
 
 # Dangerous URL protocol patterns (precompiled with IGNORECASE)
@@ -700,6 +736,21 @@ class SecurityValidator:
         for pattern in _SSTI_PATTERNS:
             if pattern.search(value):
                 raise ValueError("Template contains potentially dangerous expressions")
+
+        # Block dangerous dynamic attribute access mechanisms entirely
+        # These are primary SSTI vectors and rarely needed in legitimate templates
+        if _SSTI_ATTR_FILTER_RE.search(value) or _SSTI_ATTR_FILTER_TAG_RE.search(value):
+            raise ValueError("Template contains potentially dangerous expressions")
+        if _SSTI_BRACKET_STRING_RE.search(value) or _SSTI_BRACKET_STRING_TAG_RE.search(value):
+            raise ValueError("Template contains potentially dangerous expressions")
+
+        # Block string concatenation patterns that could build dangerous identifiers
+        if _SSTI_STRING_CONCAT_RE.search(value):
+            raise ValueError("Template contains potentially dangerous expressions")
+
+        # Block dunder-like string literals within template expressions
+        if _SSTI_DUNDER_STRING_RE.search(value):
+            raise ValueError("Template contains potentially dangerous expressions")
 
         return value
 
