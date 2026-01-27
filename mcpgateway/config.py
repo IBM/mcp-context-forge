@@ -1320,6 +1320,47 @@ class Settings(BaseSettings):
         "x-api-key",
         "cookie",
     ]
+    # Timeout for session/transport cleanup operations (__aexit__ calls).
+    # This prevents CPU spin loops when internal tasks (like post_writer waiting on
+    # memory streams) don't respond to cancellation. Does NOT affect tool execution
+    # time - only cleanup of idle/released sessions. Increase if you see frequent
+    # "cleanup timed out" warnings; decrease for faster recovery from spin loops.
+    mcp_session_pool_cleanup_timeout: float = 5.0
+
+    # Timeout for SSE task group cleanup (seconds).
+    # When an SSE connection is cancelled, this controls how long to wait for
+    # internal tasks to respond before forcing cleanup. Shorter values reduce
+    # CPU waste during anyio _deliver_cancellation spin loops but may interrupt
+    # legitimate cleanup. Only affects cancelled connections, not normal operation.
+    # See: https://github.com/agronholm/anyio/issues/695
+    sse_task_group_cleanup_timeout: float = 5.0
+
+    # =========================================================================
+    # EXPERIMENTAL: anyio _deliver_cancellation spin loop workaround
+    # =========================================================================
+    # When enabled, monkey-patches anyio's CancelScope._deliver_cancellation to
+    # limit the number of retry iterations. This prevents 100% CPU spin loops
+    # when tasks don't respond to CancelledError (anyio issue #695).
+    #
+    # WARNING: This is a workaround for an upstream issue. May be removed when
+    # anyio or MCP SDK fix the underlying problem. Enable only if you experience
+    # CPU spin loops during SSE/MCP connection cleanup.
+    #
+    # Trade-offs when enabled:
+    # - Prevents indefinite CPU spin (good)
+    # - May leave some tasks uncancelled after max iterations (usually harmless)
+    # - Worker recycling (GUNICORN_MAX_REQUESTS) cleans up orphaned tasks
+    #
+    # See: https://github.com/agronholm/anyio/issues/695
+    # Env: ANYIO_CANCEL_DELIVERY_PATCH_ENABLED
+    anyio_cancel_delivery_patch_enabled: bool = False
+
+    # Maximum iterations for _deliver_cancellation before giving up.
+    # Only used when anyio_cancel_delivery_patch_enabled=True.
+    # Higher values = more attempts to cancel tasks, but longer potential spin.
+    # Lower values = faster recovery, but more orphaned tasks.
+    # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
+    anyio_cancel_delivery_max_iterations: int = 100
 
     # Prompts
     prompt_cache_size: int = 100
