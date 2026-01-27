@@ -234,6 +234,15 @@ class EventSourceResponse(BaseEventSourceResponse):
             # relevant if the scope is cancelled and cleanup takes too long
 
             async def cancel_on_finish(coro: Callable[[], Awaitable[None]]) -> None:
+                """Execute coroutine then cancel task group with bounded deadline.
+
+                This wrapper runs the given coroutine and, upon completion, cancels
+                the parent task group with a deadline to prevent indefinite spinning
+                if other tasks don't respond to cancellation (anyio#695 mitigation).
+
+                Args:
+                    coro: Async callable to execute before triggering cancellation.
+                """
                 await coro()
                 # When cancelling, set a deadline to prevent indefinite spin
                 # if other tasks don't respond to cancellation
