@@ -13,7 +13,7 @@ the base plugin layer including configurations, and contexts.
 from enum import Enum
 import os
 from pathlib import Path
-from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar
+from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar, Union
 
 # Third-Party
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
@@ -810,7 +810,7 @@ class GlobalContext(BaseModel):
     """
 
     request_id: str
-    user: Optional[dict[str, Any]] = Field(default_factory=dict)
+    user: Optional[Union[str, dict[str, Any]]] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
     state: dict[str, Any] = Field(default_factory=dict)

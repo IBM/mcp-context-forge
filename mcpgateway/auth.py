@@ -966,6 +966,8 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: EmailUser =
         )
 
     if user:
+        if not global_context.user:
+            global_context.user = {}
         global_context.user["email"] = user.email
         global_context.user["is_admin"] = user.is_admin
         global_context.user["full_name"] = user.full_name
