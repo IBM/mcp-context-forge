@@ -2684,7 +2684,7 @@ class ToolService:
             if tool_gateway_id and isinstance(tool_gateway_id, str):
                 global_context.server_id = tool_gateway_id
             # Propagate user email to global context for plugin access
-            if app_user_email and isinstance(app_user_email, str):
+            if not plugin_global_context.user and app_user_email and isinstance(app_user_email, str):
                 global_context.user = app_user_email
         else:
             # Create new context (fallback when middleware didn't run)
