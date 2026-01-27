@@ -56,6 +56,12 @@ logger.setLevel(logging.WARNING)  # Suppress INFO messages from this module
 # Flag to control verbose logging - set LOCUST_VERBOSE=1 to see all logs
 VERBOSE_LOGGING = os.environ.get("LOCUST_VERBOSE", "0") == "1"
 
+# Worker count - passed from Makefile or auto-detected
+# -1 means auto-detect (use all CPUs)
+WORKER_COUNT = int(os.environ.get("LOCUST_WORKERS", "-1"))
+if WORKER_COUNT == -1:
+    WORKER_COUNT = os.cpu_count() or 1
+
 
 # =============================================================================
 # Configuration - Load from .env file and environment variables
@@ -309,11 +315,13 @@ def get_docker_stats() -> tuple[str, list[tuple[str, float]]]:
         return f"(error: {e})", []
 
 
-def format_cpu_status(cpu_values: list[tuple[str, float]]) -> str:
+def format_cpu_status(cpu_values: list[tuple[str, float]], is_pause_phase: bool = False) -> str:
     """Format CPU status with color-coded health indicator.
 
     Args:
         cpu_values: List of (container_name, cpu_percent) tuples.
+        is_pause_phase: If True, high CPU is flagged as FAIL (spin loop detection).
+                        If False, high CPU is expected (under load).
 
     Returns:
         Formatted status string with colors.
@@ -324,15 +332,28 @@ def format_cpu_status(cpu_values: list[tuple[str, float]]) -> str:
     max_cpu = max(cpu for _, cpu in cpu_values)
     total_cpu = sum(cpu for _, cpu in cpu_values)
 
-    if max_cpu < 10:
-        icon = f"{Colors.GREEN}{Colors.BOLD}[PASS]{Colors.RESET}"
-        status = f"{Colors.GREEN}CPU idle - cleanup working correctly{Colors.RESET}"
-    elif max_cpu < 50:
-        icon = f"{Colors.YELLOW}{Colors.BOLD}[WARN]{Colors.RESET}"
-        status = f"{Colors.YELLOW}CPU moderate - may be processing{Colors.RESET}"
+    if is_pause_phase:
+        # During pause: CPU should be idle - this is where we detect spin loops
+        if max_cpu < 10:
+            icon = f"{Colors.GREEN}{Colors.BOLD}[PASS]{Colors.RESET}"
+            status = f"{Colors.GREEN}CPU idle - cleanup working correctly{Colors.RESET}"
+        elif max_cpu < 50:
+            icon = f"{Colors.YELLOW}{Colors.BOLD}[WARN]{Colors.RESET}"
+            status = f"{Colors.YELLOW}CPU elevated - may still be cleaning up{Colors.RESET}"
+        else:
+            icon = f"{Colors.RED}{Colors.BOLD}[FAIL]{Colors.RESET}"
+            status = f"{Colors.RED}CPU HIGH during pause - possible spin loop!{Colors.RESET}"
     else:
-        icon = f"{Colors.RED}{Colors.BOLD}[FAIL]{Colors.RESET}"
-        status = f"{Colors.RED}CPU HIGH - possible spin loop!{Colors.RESET}"
+        # During load: high CPU is expected and normal
+        if max_cpu < 10:
+            icon = f"{Colors.DIM}[IDLE]{Colors.RESET}"
+            status = f"{Colors.DIM}CPU idle (ramping up){Colors.RESET}"
+        elif max_cpu < 200:
+            icon = f"{Colors.CYAN}[LOAD]{Colors.RESET}"
+            status = f"{Colors.CYAN}CPU under load (normal){Colors.RESET}"
+        else:
+            icon = f"{Colors.GREEN}{Colors.BOLD}[LOAD]{Colors.RESET}"
+            status = f"{Colors.GREEN}CPU under heavy load (normal){Colors.RESET}"
 
     return f"{icon} Total: {total_cpu:.1f}% | Max: {max_cpu:.1f}% - {status}"
 
@@ -1338,22 +1359,21 @@ class SpinDetectorShape(LoadTestShape):
     If CPU stays high during pause phases, the spin loop bug is present.
     """
 
-    # Configuration for each cycle: (target_users, ramp_time, sustain_time, pause_time)
-    # ESCALATING pattern: progressively longer load phases to stress test cleanup
-    # Format: (users, ramp_time, sustain_time, pause_time)
-    # Total load time = ramp_time + sustain_time
+    # Configuration for each cycle: (target_users, sustain_time, pause_time)
+    # ESCALATING pattern: progressively more users and longer load phases
+    # Format: (users, sustain_time, pause_time)
+    # Ramp time is calculated automatically based on spawn_rate
     #
-    # Note: 10K users @ 2000/s spawn rate is EXTREME load that may cause
-    # connection errors ("Expected HTTP/") when server is overwhelmed.
-    # These errors are recorded as failures and expected during stress testing.
+    # Pattern: 4K → 6K → 8K → 10K → 10K (repeat forever)
     cycles = [
-        (10000, 5, 15, 20),   # Cycle A: 10K users, ~20s load, 20s pause
-        (10000, 5, 25, 20),   # Cycle B: 10K users, ~30s load, 20s pause
-        (10000, 5, 35, 20),   # Cycle C: 10K users, ~40s load, 20s pause
-        (10000, 5, 45, 20),   # Cycle D: 10K users, ~50s load, 20s pause
+        (4000, 30, 10),    # Wave 1: 4K users, 30s sustain, 10s pause
+        (6000, 45, 15),    # Wave 2: 6K users, 45s sustain, 15s pause
+        (8000, 60, 20),    # Wave 3: 8K users, 60s sustain, 20s pause
+        (10000, 75, 30),   # Wave 4: 10K users, 75s sustain, 30s pause
+        (10000, 90, 30),   # Wave 5: 10K users, 90s sustain, 30s pause
     ]
 
-    spawn_rate = 2000  # 2000/s spawn rate - aggressive for stress testing
+    spawn_rate = 1000  # Always 1000/s spawn rate
 
     def __init__(self):
         """Initialize the load shape."""
@@ -1380,7 +1400,9 @@ class SpinDetectorShape(LoadTestShape):
             self._current_cycle = 0
             self._last_phase = None  # Reset phase to trigger new cycle logging
 
-        target_users, ramp_time, sustain_time, pause_time = self.cycles[self._current_cycle]
+        target_users, sustain_time, pause_time = self.cycles[self._current_cycle]
+        # Calculate ramp time based on spawn rate (e.g., 4000 users / 1000 spawn = 4 seconds)
+        ramp_time = max(1, target_users // self.spawn_rate)
         cycle_duration = ramp_time + sustain_time + pause_time
 
         if self._cycle_start_time == 0:
@@ -1434,12 +1456,13 @@ class SpinDetectorShape(LoadTestShape):
 {Colors.BOLD}PURPOSE:{Colors.RESET}
   Detect CPU spin loop bug caused by orphaned asyncio tasks.
 
-{Colors.BOLD}ESCALATING LOAD PATTERN (10K users @ 2000/s):{Colors.RESET}
-  {Colors.GREEN}Cycle A:{Colors.RESET} 20s load → {Colors.MAGENTA}20s pause{Colors.RESET}
-  {Colors.GREEN}Cycle B:{Colors.RESET} 30s load → {Colors.MAGENTA}20s pause{Colors.RESET}
-  {Colors.YELLOW}Cycle C:{Colors.RESET} 40s load → {Colors.MAGENTA}20s pause{Colors.RESET}
-  {Colors.RED}Cycle D:{Colors.RESET} 50s load → {Colors.MAGENTA}20s pause{Colors.RESET}
-  → {Colors.BOLD}Repeat indefinitely{Colors.RESET}
+{Colors.BOLD}ESCALATING LOAD PATTERN (1000/s spawn rate):{Colors.RESET}
+  {Colors.GREEN}Wave 1:{Colors.RESET}  4,000 users for 30s → {Colors.MAGENTA}10s pause{Colors.RESET}
+  {Colors.GREEN}Wave 2:{Colors.RESET}  6,000 users for 45s → {Colors.MAGENTA}15s pause{Colors.RESET}
+  {Colors.YELLOW}Wave 3:{Colors.RESET}  8,000 users for 60s → {Colors.MAGENTA}20s pause{Colors.RESET}
+  {Colors.RED}Wave 4:{Colors.RESET} 10,000 users for 75s → {Colors.MAGENTA}30s pause{Colors.RESET}
+  {Colors.RED}Wave 5:{Colors.RESET} 10,000 users for 90s → {Colors.MAGENTA}30s pause{Colors.RESET}
+  → {Colors.BOLD}Repeat forever (Ctrl+C to stop){Colors.RESET}
 
 {Colors.BOLD}EXPECTED:{Colors.RESET}
   {Colors.GREEN}PASS:{Colors.RESET} CPU <10% during pause | {Colors.RED}FAIL:{Colors.RESET} CPU >100% during pause
@@ -1447,6 +1470,9 @@ class SpinDetectorShape(LoadTestShape):
 {Colors.BOLD}MONITORING:{Colors.RESET}
   Log file: {Colors.CYAN}{LOG_FILE}{Colors.RESET}
   Monitor:  {Colors.DIM}tail -f {LOG_FILE}{Colors.RESET}
+
+{Colors.BOLD}CONFIGURATION:{Colors.RESET}
+  Workers:  {Colors.CYAN}{WORKER_COUNT}{Colors.RESET} (processes spawning users)
 """
         )
 
@@ -1464,7 +1490,9 @@ class SpinDetectorShape(LoadTestShape):
         cycle_letter = chr(ord('A') + (self._current_cycle % len(self.cycles)))
 
         stats_output, cpu_values = get_docker_stats()
-        cpu_status = format_cpu_status(cpu_values)
+        # Only flag high CPU as a problem during pause phases (spin loop detection)
+        is_pause = (phase == "pause")
+        cpu_status = format_cpu_status(cpu_values, is_pause_phase=is_pause)
 
         if phase == "ramp":
             print_box(
@@ -1553,10 +1581,10 @@ class SpinDetectorShape(LoadTestShape):
                 all_passed = False
             log(f"{cycle_num:<10} {max_cpu:<15.1f} {status}")
 
-        # Final stats
+        # Final stats (check as pause phase - CPU should be idle)
         print_section("Final Docker Stats")
         log(stats_output)
-        log(f"\n{format_cpu_status(cpu_values)}")
+        log(f"\n{format_cpu_status(cpu_values, is_pause_phase=True)}")
 
         # Verdict
         log("")

@@ -1238,25 +1238,31 @@ load-test-stress:                          ## Stress test (500 users, 60s)
 		echo "❌ Cancelled"; \
 	fi
 
+SPIN_DETECTOR_RUN_TIME ?= 300m
+SPIN_DETECTOR_WORKERS ?= $(LOADTEST_PROCESSES)
+
 load-test-spin-detector:                   ## CPU spin loop detector (spike/drop pattern, issue #2360)
 	@echo "🔄 CPU SPIN LOOP DETECTOR (Escalating load pattern)"
 	@echo "   Issue: https://github.com/IBM/mcp-context-forge/issues/2360"
 	@echo ""
-	@echo "   ESCALATING PATTERN (10K users @ 2000/s spawn rate):"
-	@echo "   ┌─────────┬───────────────┬────────────┐"
-	@echo "   │ Cycle   │ Load Duration │ Pause      │"
-	@echo "   ├─────────┼───────────────┼────────────┤"
-	@echo "   │ A       │ ~20 seconds   │ 20 seconds │"
-	@echo "   │ B       │ ~30 seconds   │ 20 seconds │"
-	@echo "   │ C       │ ~40 seconds   │ 20 seconds │"
-	@echo "   │ D       │ ~50 seconds   │ 20 seconds │"
-	@echo "   └─────────┴───────────────┴────────────┘"
-	@echo "   → Repeats indefinitely (Ctrl+C to stop)"
+	@echo "   ESCALATING PATTERN (1000/s spawn rate):"
+	@echo "   ┌─────────┬─────────┬────────────┬────────────┐"
+	@echo "   │ Wave    │ Users   │ Duration   │ Pause      │"
+	@echo "   ├─────────┼─────────┼────────────┼────────────┤"
+	@echo "   │ 1       │  4,000  │ 30 seconds │ 10 seconds │"
+	@echo "   │ 2       │  6,000  │ 45 seconds │ 15 seconds │"
+	@echo "   │ 3       │  8,000  │ 60 seconds │ 20 seconds │"
+	@echo "   │ 4       │ 10,000  │ 75 seconds │ 30 seconds │"
+	@echo "   │ 5       │ 10,000  │ 90 seconds │ 30 seconds │"
+	@echo "   └─────────┴─────────┴────────────┴────────────┘"
+	@echo "   → Repeats until timeout (Ctrl+C to stop early)"
 	@echo ""
 	@echo "   🎯 Target: $(LOADTEST_HOST)"
-	@echo "   📊 Shows RPS (requests/second) during load phases"
+	@echo "   ⏱️  Runtime: $(SPIN_DETECTOR_RUN_TIME) (override: SPIN_DETECTOR_RUN_TIME=60m)"
+	@echo "   👷 Workers: $(SPIN_DETECTOR_WORKERS) (-1 = auto-detect CPUs)"
+	@echo "   📊 Shows RPS + Failure % during load phases"
 	@echo "   🔐 Authentication: JWT (auto-generated from .env settings)"
-	@echo "   🔇 Verbose logs off by default (set LOCUST_VERBOSE=1 to enable)"
+	@echo "   🔇 Verbose logs off (set LOCUST_VERBOSE=1 to enable)"
 	@echo ""
 	@echo "   💡 Prerequisites:"
 	@echo "      docker compose up -d   # Gateway on port 8080 (via nginx)"
@@ -1275,10 +1281,12 @@ load-test-spin-detector:                   ## CPU spin loop detector (spike/drop
 		cd tests/loadtest && \
 		ulimit -n 65536 2>/dev/null || true && \
 		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
+		LOCUST_WORKERS=$(SPIN_DETECTOR_WORKERS) \
 		locust -f locustfile_spin_detector.py \
 			--host=$(LOADTEST_HOST) \
 			--headless \
-			--processes=$(LOADTEST_PROCESSES) \
+			--run-time=$(SPIN_DETECTOR_RUN_TIME) \
+			--processes=$(SPIN_DETECTOR_WORKERS) \
 			--html=../../reports/spin_detector_report.html \
 			--csv=../../reports/spin_detector \
 			--only-summary"
