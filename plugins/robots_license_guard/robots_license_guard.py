@@ -34,7 +34,7 @@ from mcpgateway.plugins.framework import (
 )
 
 META_PATTERN = re.compile(
-    r"<meta\s+[^>]*name=\"(?P<name>robots|x-robots-tag|genai|permissions-policy|license)\"[^>]*content=\"(?P<content>[^\"]+)\"[^>]*>",
+    r'<meta\b[^>]*?\bname="(?P<name>robots|x-robots-tag|genai|permissions-policy|license)"[^>]*?\bcontent="(?P<content>[^"]+)"[^>]*>',
     re.IGNORECASE,
 )
 
