@@ -3189,7 +3189,7 @@ class ToolService:
                         tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
-                    dump = tool_call_result.model_dump(by_alias=True)
+                    dump = tool_call_result.model_dump(by_alias=True, mode="json")
                     logger.debug(f"Tool call result dump: {dump}")
                     content = dump.get("content", [])
                     # Accept both alias and pythonic names for structured content
