@@ -124,8 +124,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
-      # Redis connection pool tuning for load testing (32 workers × 150 = 4800 < 5000 maxclients)
-      - REDIS_MAX_CONNECTIONS=150
+      # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 10000 maxclients)
+      - REDIS_MAX_CONNECTIONS=100
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
@@ -275,8 +275,8 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Shared HTTP client for all outbound requests (federation, health checks,
       # A2A, SSO, catalog). Provides ~20x better performance than per-request clients.
-      - HTTPX_MAX_CONNECTIONS=200           # Total connections in pool (default: 200)
-      - HTTPX_MAX_KEEPALIVE_CONNECTIONS=100 # Keepalive connections (default: 100)
+      - HTTPX_MAX_CONNECTIONS=500           # Total connections in pool (increased from 200 for high concurrency)
+      - HTTPX_MAX_KEEPALIVE_CONNECTIONS=300 # Keepalive connections (increased from 100)
       - HTTPX_KEEPALIVE_EXPIRY=30.0         # Idle connection expiry (seconds)
       - HTTPX_CONNECT_TIMEOUT=5.0           # TCP connection timeout (seconds)
       - HTTPX_READ_TIMEOUT=120.0            # Response read timeout (seconds, high for slow tools)
@@ -337,7 +337,7 @@ services:
       # ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant
       # via identity hashing to prevent cross-user session sharing.
       - MCP_SESSION_POOL_ENABLED=true              # Enable session pooling (default: false, enabled for docker-compose)
-      - MCP_SESSION_POOL_MAX_PER_KEY=50            # Max sessions per (URL, identity, transport)
+      - MCP_SESSION_POOL_MAX_PER_KEY=200           # Max sessions per (URL, identity, transport) - increased from 150 for 4000+ users
       - MCP_SESSION_POOL_TTL=300.0                 # Session TTL in seconds (default: 300)
       - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0  # Idle time before health check (default: 60)
       - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60.0     # Timeout waiting for session slot (default: 30)
@@ -667,14 +667,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (2x DB_POOL_RECYCLE)
+      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (aligned with CLIENT_IDLE_TIMEOUT)
+      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (increased from 120s to handle slow MCP calls)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
