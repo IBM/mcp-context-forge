@@ -528,15 +528,38 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-            # Normalize unstructured content to MCP SDK types
+            # Normalize unstructured content to MCP SDK types, preserving metadata (annotations, _meta, size)
             unstructured: list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource] = []
             for content in result.content:
                 if content.type == "text":
-                    unstructured.append(types.TextContent(type="text", text=content.text))
+                    unstructured.append(
+                        types.TextContent(
+                            type="text",
+                            text=content.text,
+                            annotations=getattr(content, "annotations", None),
+                            _meta=getattr(content, "meta", None),
+                        )
+                    )
                 elif content.type == "image":
-                    unstructured.append(types.ImageContent(type="image", data=content.data, mimeType=content.mime_type))
+                    unstructured.append(
+                        types.ImageContent(
+                            type="image",
+                            data=content.data,
+                            mimeType=content.mime_type,
+                            annotations=getattr(content, "annotations", None),
+                            _meta=getattr(content, "meta", None),
+                        )
+                    )
                 elif content.type == "audio":
-                    unstructured.append(types.AudioContent(type="audio", data=content.data, mimeType=content.mime_type))
+                    unstructured.append(
+                        types.AudioContent(
+                            type="audio",
+                            data=content.data,
+                            mimeType=content.mime_type,
+                            annotations=getattr(content, "annotations", None),
+                            _meta=getattr(content, "meta", None),
+                        )
+                    )
                 elif content.type == "resource_link":
                     unstructured.append(
                         types.ResourceLink(
@@ -545,6 +568,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                             name=content.name,
                             description=getattr(content, "description", None),
                             mimeType=getattr(content, "mime_type", None),
+                            size=getattr(content, "size", None),
+                            _meta=getattr(content, "meta", None),
                         )
                     )
                 elif content.type == "resource":

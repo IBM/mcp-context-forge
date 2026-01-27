@@ -164,6 +164,9 @@ async def test_call_tool_success(monkeypatch):
     mock_content = MagicMock()
     mock_content.type = "text"
     mock_content.text = "hello"
+    # Explicitly set optional metadata to None to avoid MagicMock Pydantic validation issues
+    mock_content.annotations = None
+    mock_content.meta = None
     mock_result.content = [mock_content]
 
     @asynccontextmanager
@@ -196,6 +199,9 @@ async def test_call_tool_with_structured_content(monkeypatch):
     mock_content = MagicMock()
     mock_content.type = "text"
     mock_content.text = '{"result": "success"}'
+    # Explicitly set optional metadata to None to avoid MagicMock Pydantic validation issues
+    mock_content.annotations = None
+    mock_content.meta = None
     mock_result.content = [mock_content]
 
     # Simulate structured content being present
@@ -1822,3 +1828,352 @@ async def test_streamable_http_auth_nested_is_admin_takes_precedence(monkeypatch
     user_ctx = tr.user_context_var.get()
     # Either top-level OR nested is_admin should grant admin access
     assert user_ctx.get("is_admin") is True
+
+
+# ---------------------------------------------------------------------------
+# Mixed Content Types and Metadata Preservation Tests (PR #2517 Regression)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_image_content(monkeypatch):
+    """Test call_tool correctly converts ImageContent with mimeType mapping and metadata."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "image"
+    mock_content.data = "base64encodeddata"
+    mock_content.mime_type = "image/png"
+    mock_content.annotations = {"audience": ["user"]}
+    mock_content.meta = {"source": "screenshot"}
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("image_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.ImageContent)
+    assert result[0].type == "image"
+    assert result[0].data == "base64encodeddata"
+    assert result[0].mimeType == "image/png"  # Note: camelCase for MCP SDK
+    # Annotations are converted to types.Annotations object
+    assert result[0].annotations is not None
+    assert result[0].annotations.audience == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_audio_content(monkeypatch):
+    """Test call_tool correctly converts AudioContent with mimeType mapping and metadata."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "audio"
+    mock_content.data = "base64audiodata"
+    mock_content.mime_type = "audio/mp3"
+    mock_content.annotations = {"priority": 1.0}
+    mock_content.meta = {"duration": "30s"}
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("audio_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.AudioContent)
+    assert result[0].type == "audio"
+    assert result[0].data == "base64audiodata"
+    assert result[0].mimeType == "audio/mp3"
+    # Annotations are converted to types.Annotations object
+    assert result[0].annotations is not None
+    assert result[0].annotations.priority == 1.0
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_resource_link_content(monkeypatch):
+    """Test call_tool correctly converts ResourceLink with all fields including size and metadata."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "resource_link"
+    mock_content.uri = "file:///path/to/file.txt"
+    mock_content.name = "file.txt"
+    mock_content.description = "A text file"
+    mock_content.mime_type = "text/plain"
+    mock_content.size = 1024
+    mock_content.meta = {"modified": "2025-01-01"}
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("resource_link_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.ResourceLink)
+    assert result[0].type == "resource_link"
+    assert str(result[0].uri) == "file:///path/to/file.txt"
+    assert result[0].name == "file.txt"
+    assert result[0].description == "A text file"
+    assert result[0].mimeType == "text/plain"
+    assert result[0].size == 1024  # Regression: size must be preserved
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_embedded_resource_content(monkeypatch):
+    """Test call_tool correctly handles EmbeddedResource via model_validate."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "resource"
+    mock_content.model_dump = lambda by_alias=True, mode="json": {
+        "type": "resource",
+        "resource": {
+            "uri": "file:///embedded.txt",
+            "text": "embedded content",
+            "mimeType": "text/plain",
+        },
+    }
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("embedded_resource_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.EmbeddedResource)
+    assert result[0].type == "resource"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_mixed_content_types(monkeypatch):
+    """Test call_tool correctly handles mixed content types in a single response."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+
+    # Create multiple content types
+    text_content = MagicMock()
+    text_content.type = "text"
+    text_content.text = "Hello"
+    text_content.annotations = None
+    text_content.meta = None
+
+    image_content = MagicMock()
+    image_content.type = "image"
+    image_content.data = "imgdata"
+    image_content.mime_type = "image/jpeg"
+    image_content.annotations = None
+    image_content.meta = None
+
+    resource_link_content = MagicMock()
+    resource_link_content.type = "resource_link"
+    resource_link_content.uri = "https://example.com/file"
+    resource_link_content.name = "file"
+    resource_link_content.description = None
+    resource_link_content.mime_type = None
+    resource_link_content.size = None
+    resource_link_content.meta = None
+
+    mock_result.content = [text_content, image_content, resource_link_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mixed_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert isinstance(result[0], types.TextContent)
+    assert isinstance(result[1], types.ImageContent)
+    assert isinstance(result[2], types.ResourceLink)
+
+
+@pytest.mark.asyncio
+async def test_call_tool_preserves_text_metadata(monkeypatch):
+    """Test call_tool preserves annotations and _meta for TextContent."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "Content with metadata"
+    mock_content.annotations = {"audience": ["assistant"], "priority": 0.8}
+    mock_content.meta = {"generated_at": "2025-01-27T12:00:00Z"}
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("metadata_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.TextContent)
+    assert result[0].text == "Content with metadata"
+    # Regression: annotations must be preserved (converted to types.Annotations object)
+    assert result[0].annotations is not None
+    assert result[0].annotations.audience == ["assistant"]
+    assert result[0].annotations.priority == 0.8
+
+
+@pytest.mark.asyncio
+async def test_call_tool_handles_unknown_content_type(monkeypatch):
+    """Test call_tool gracefully handles unknown content types by converting to TextContent."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "unknown_future_type"
+    mock_content.model_dump = lambda by_alias=True, mode="json": {"type": "unknown_future_type", "data": "something"}
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("unknown_type_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    # Unknown types should be converted to TextContent with JSON representation
+    assert isinstance(result[0], types.TextContent)
+    assert result[0].type == "text"
+    assert "unknown_future_type" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_call_tool_handles_missing_optional_metadata(monkeypatch):
+    """Test call_tool handles content without optional metadata fields (annotations, meta, size)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+
+    # Content without optional attributes (simulating minimal response)
+    mock_content = MagicMock(spec=["type", "text"])
+    mock_content.type = "text"
+    mock_content.text = "Minimal content"
+    # Ensure getattr returns None for missing attributes
+    del mock_content.annotations
+    del mock_content.meta
+
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("minimal_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.TextContent)
+    assert result[0].text == "Minimal content"
+    # Should not raise even when annotations/meta are missing
+    assert result[0].annotations is None
+
+
+@pytest.mark.asyncio
+async def test_call_tool_resource_link_preserves_all_fields(monkeypatch):
+    """Regression test: ResourceLink must preserve all fields including size and _meta (Issue #2512)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "resource_link"
+    mock_content.uri = "s3://bucket/large-file.bin"
+    mock_content.name = "large-file.bin"
+    mock_content.description = "A large binary file"
+    mock_content.mime_type = "application/octet-stream"
+    mock_content.size = 10485760  # 10 MB - critical field that was being dropped
+    mock_content.meta = {"checksum": "sha256:abc123", "uploaded_by": "user@example.com"}
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("s3_link_tool", {})
+    assert isinstance(result, list)
+    assert len(result) == 1
+    resource_link = result[0]
+    assert isinstance(resource_link, types.ResourceLink)
+
+    # Verify ALL fields are preserved (this was the bug fixed in PR #2517)
+    assert str(resource_link.uri) == "s3://bucket/large-file.bin"
+    assert resource_link.name == "large-file.bin"
+    assert resource_link.description == "A large binary file"
+    assert resource_link.mimeType == "application/octet-stream"
+    assert resource_link.size == 10485760  # CRITICAL: size must not be dropped
