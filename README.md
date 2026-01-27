@@ -153,7 +153,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 <summary><strong>🔌 Gateway Layer with Protocol Flexibility</strong></summary>
 
 * Sits in front of any MCP server or REST API
-* Lets you choose your MCP protocol version (e.g., `2025-03-26`)
+* Lets you choose your MCP protocol version (e.g., `2025-06-18`)
 * Exposes a single, unified interface for diverse backends
 
 </details>
@@ -800,7 +800,7 @@ python3 -m mcpgateway.wrapper
 
 ```json
 # Initialize the protocol
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}
 
 # Then after the reply:
 {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
@@ -824,7 +824,7 @@ python3 -m mcpgateway.wrapper
 <summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.9.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.9.0"}}}
 
 # When there's no tools
 {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
@@ -1228,14 +1228,15 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 
 | Setting            | Description                              | Default                | Options                |
 |--------------------|------------------------------------------|------------------------|------------------------|
-| `APP_NAME`         | Gateway / OpenAPI title                  | `MCP Gateway`          | string                 |
+| `APP_NAME`         | Gateway / OpenAPI title                  | `MCP_Gateway`          | string                 |
 | `HOST`             | Bind address for the app                 | `127.0.0.1`            | IPv4/IPv6              |
 | `PORT`             | Port the server listens on               | `4444`                 | 1-65535                |
+| `CLIENT_MODE`      | Client-only mode for gateway-as-client   | `false`                | bool                   |
 | `DATABASE_URL`     | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
 | `APP_ROOT_PATH`    | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
 | `TEMPLATES_DIR`    | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
 | `STATIC_DIR`       | Path to static files                     | `mcpgateway/static`    | path                   |
-| `PROTOCOL_VERSION` | MCP protocol version supported           | `2025-03-26`           | string                 |
+| `PROTOCOL_VERSION` | MCP protocol version supported           | `2025-06-18`           | string                 |
 | `FORGE_CONTENT_TYPE` | Content-Type for outgoing requests to Forge | `application/json`  | `application/json`, `application/x-www-form-urlencoded` |
 
 > 💡 Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
@@ -1301,11 +1302,11 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
+| `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
 | `MCPGATEWAY_BULK_IMPORT_ENABLED` | Enable bulk import endpoint for tools | `true`  | bool    |
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
 | `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT` | Rate limit for bulk import endpoint (requests per minute) | `10` | int |
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
-| `MCPCONTEXT_UI_ENABLED`        | Enable ContextForge UI features        | `true`  | bool    |
 
 > 🖥️ Set both UI and Admin API to `false` to disable management UI and APIs in production.
 > 📥 The bulk import endpoint allows importing up to 200 tools in a single request via `/admin/tools/import`.
@@ -1498,14 +1499,15 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `PLATFORM_ADMIN_EMAIL`        | Email for bootstrap platform admin user          | `admin@example.com`   | string  |
 | `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme`            | string  |
 | `PLATFORM_ADMIN_FULL_NAME`    | Full name for bootstrap platform admin user      | `Platform Administrator` | string |
+| `DEFAULT_USER_PASSWORD`       | Default password for newly created users         | `changeme`            | string  |
 | `ARGON2ID_TIME_COST`          | Argon2id time cost (iterations)                  | `3`                   | int > 0 |
 | `ARGON2ID_MEMORY_COST`        | Argon2id memory cost in KiB                      | `65536`               | int > 0 |
 | `ARGON2ID_PARALLELISM`        | Argon2id parallelism (threads)                   | `1`                   | int > 0 |
 | `PASSWORD_MIN_LENGTH`         | Minimum password length                           | `8`                   | int > 0 |
-| `PASSWORD_REQUIRE_UPPERCASE`  | Require uppercase letters in passwords           | `false`               | bool    |
-| `PASSWORD_REQUIRE_LOWERCASE`  | Require lowercase letters in passwords           | `false`               | bool    |
+| `PASSWORD_REQUIRE_UPPERCASE`  | Require uppercase letters in passwords           | `true`                | bool    |
+| `PASSWORD_REQUIRE_LOWERCASE`  | Require lowercase letters in passwords           | `true`                | bool    |
 | `PASSWORD_REQUIRE_NUMBERS`    | Require numbers in passwords                     | `false`               | bool    |
-| `PASSWORD_REQUIRE_SPECIAL`    | Require special characters in passwords          | `false`               | bool    |
+| `PASSWORD_REQUIRE_SPECIAL`    | Require special characters in passwords          | `true`                | bool    |
 | `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `5`                   | int > 0 |
 | `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `30`                  | int > 0 |
 
@@ -1680,7 +1682,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
 | `SKIP_SSL_VERIFY`         | Skip upstream TLS verification | `false`                                        | bool       |
 | `ENVIRONMENT`             | Deployment environment (affects security defaults) | `development`                              | `development`/`production` |
-| `APP_DOMAIN`              | Domain for production CORS origins | `localhost`                                 | string     |
+| `APP_DOMAIN`              | Domain for production CORS origins | `http://localhost:4444`                     | string     |
 | `ALLOWED_ORIGINS`         | CORS allow-list                | Auto-configured by environment                 | JSON array |
 | `CORS_ENABLED`            | Enable CORS                    | `true`                                         | bool       |
 | `CORS_ALLOW_CREDENTIALS`  | Allow credentials in CORS      | `true`                                         | bool       |
@@ -2258,6 +2260,7 @@ MCP Gateway uses Alembic for database migrations. Common commands:
 | `WELL_KNOWN_ENABLED`          | Enable well-known URI endpoints (/.well-known/*) | `true`                | bool    |
 | `WELL_KNOWN_ROBOTS_TXT`       | robots.txt content                               | (blocks crawlers)     | string  |
 | `WELL_KNOWN_SECURITY_TXT`     | security.txt content (RFC 9116)                 | (empty)               | string  |
+| `WELL_KNOWN_SECURITY_TXT_ENABLED` | Enable security.txt endpoint (auto-enabled when content provided) | `false` | bool |
 | `WELL_KNOWN_CUSTOM_FILES`     | Additional custom well-known files (JSON)       | `{}`                  | JSON object |
 | `WELL_KNOWN_CACHE_MAX_AGE`    | Cache control for well-known files (seconds)    | `3600`                | int > 0 |
 
@@ -2284,14 +2287,16 @@ MCP Gateway uses Alembic for database migrations. Common commands:
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
 | `PLUGIN_CONFIG_FILE`          | Path to main plugin configuration file          | `plugins/config.yaml` | string  |
-| `PLUGINS_MTLS_CA_BUNDLE`      | (Optional) default CA bundle for external plugin mTLS | _(empty)_     | string  |
-| `PLUGINS_MTLS_CLIENT_CERT`    | (Optional) gateway client certificate for plugin mTLS | _(empty)_     | string  |
-| `PLUGINS_MTLS_CLIENT_KEY`     | (Optional) gateway client key for plugin mTLS | _(empty)_             | string  |
-| `PLUGINS_MTLS_CLIENT_KEY_PASSWORD` | (Optional) password for plugin client key | _(empty)_             | string  |
-| `PLUGINS_MTLS_VERIFY`         | (Optional) verify remote plugin certificates (`true`/`false`) | `true` | bool    |
-| `PLUGINS_MTLS_CHECK_HOSTNAME` | (Optional) enforce hostname verification for plugins | `true`      | bool    |
+| `PLUGINS_CLIENT_MTLS_CA_BUNDLE`      | (Optional) default CA bundle for external plugin mTLS | _(empty)_ | string |
+| `PLUGINS_CLIENT_MTLS_CERTFILE`       | (Optional) gateway client certificate for plugin mTLS | _(empty)_ | string |
+| `PLUGINS_CLIENT_MTLS_KEYFILE`        | (Optional) gateway client key for plugin mTLS | _(empty)_ | string |
+| `PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD` | (Optional) password for plugin client key | _(empty)_ | string |
+| `PLUGINS_CLIENT_MTLS_VERIFY`         | (Optional) verify remote plugin certificates (`true`/`false`) | `true` | bool |
+| `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME` | (Optional) enforce hostname verification for plugins | `true` | bool |
 | `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
 | `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
+
+> 🔐 **Plugin mTLS envs**: `PLUGINS_CLIENT_MTLS_*` are read directly by the plugin framework (not via Pydantic Settings).
 
 ### HTTP Retry Configuration
 
@@ -2338,6 +2343,512 @@ These settings mitigate CPU spin loops that can occur when SSE/MCP connections a
 > - **Aggressive** (faster recovery): Set cleanup timeouts to `0.5`-`2.0` seconds
 > - **Conservative** (reliable cleanup): Keep defaults at `5.0` seconds
 > - Worker recycling (`GUNICORN_MAX_REQUESTS`) provides additional protection
+
+### Complete Settings Reference (authoritative)
+
+The list below is generated from `mcpgateway/config.py` (Pydantic Settings). Use `.env.example` for descriptions, defaults, and examples.
+
+<details>
+<summary><strong>📜 Full Settings env list (alphabetical)</strong></summary>
+
+```text
+A2A_STATS_CACHE_TTL
+ACCOUNT_LOCKOUT_DURATION_MINUTES
+ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP
+ADMIN_STATS_CACHE_ENABLED
+ADMIN_STATS_CACHE_OBSERVABILITY_TTL
+ADMIN_STATS_CACHE_PERFORMANCE_TTL
+ADMIN_STATS_CACHE_PLUGINS_TTL
+ADMIN_STATS_CACHE_SYSTEM_TTL
+ADMIN_STATS_CACHE_TAGS_TTL
+ALLOWED_MIME_TYPES
+ALLOWED_ORIGINS
+ALLOWED_ROOTS
+ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
+ANYIO_CANCEL_DELIVERY_PATCH_ENABLED
+APP_DOMAIN
+APP_NAME
+APP_ROOT_PATH
+ARGON2ID_MEMORY_COST
+ARGON2ID_PARALLELISM
+ARGON2ID_TIME_COST
+AUDIT_TRAIL_ENABLED
+AUTH_CACHE_BATCH_QUERIES
+AUTH_CACHE_ENABLED
+AUTH_CACHE_REVOCATION_TTL
+AUTH_CACHE_ROLE_TTL
+AUTH_CACHE_TEAMS_ENABLED
+AUTH_CACHE_TEAMS_TTL
+AUTH_CACHE_TEAM_TTL
+AUTH_CACHE_USER_TTL
+AUTH_ENCRYPTION_SECRET
+AUTH_REQUIRED
+AUTO_CREATE_PERSONAL_TEAMS
+AUTO_REFRESH_SERVERS
+BACKOFF_FACTOR
+BASIC_AUTH_PASSWORD
+BASIC_AUTH_USER
+CACHE_PREFIX
+CACHE_TYPE
+CLIENT_MODE
+COMPRESSION_BROTLI_QUALITY
+COMPRESSION_ENABLED
+COMPRESSION_GZIP_LEVEL
+COMPRESSION_MINIMUM_SIZE
+COMPRESSION_ZSTD_LEVEL
+COOKIE_SAMESITE
+CORRELATION_ID_ENABLED
+CORRELATION_ID_HEADER
+CORRELATION_ID_PRESERVE
+CORRELATION_ID_RESPONSE_HEADER
+CORS_ALLOW_CREDENTIALS
+CORS_ENABLED
+DANGEROUS_PATTERNS
+DATABASE_URL
+DB_DRIVER
+DB_MAX_BACKOFF_SECONDS
+DB_MAX_OVERFLOW
+DB_MAX_RETRIES
+DB_METRICS_RECORDING_ENABLED
+DB_POOL_CLASS
+DB_POOL_PRE_PING
+DB_POOL_RECYCLE
+DB_POOL_SIZE
+DB_POOL_TIMEOUT
+DB_PREPARE_THRESHOLD
+DB_QUERY_LOG_DETECT_N1
+DB_QUERY_LOG_ENABLED
+DB_QUERY_LOG_FILE
+DB_QUERY_LOG_FORMAT
+DB_QUERY_LOG_INCLUDE_PARAMS
+DB_QUERY_LOG_JSON_FILE
+DB_QUERY_LOG_MIN_QUERIES
+DB_QUERY_LOG_N1_THRESHOLD
+DB_RETRY_INTERVAL_MS
+DB_SQLITE_BUSY_TIMEOUT
+DCR_ALLOWED_ISSUERS
+DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS
+DCR_CLIENT_NAME_TEMPLATE
+DCR_DEFAULT_SCOPES
+DCR_ENABLED
+DCR_METADATA_CACHE_TTL
+DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED
+DCR_TOKEN_ENDPOINT_AUTH_METHOD
+DEBUG
+DEFAULT_PASSTHROUGH_HEADERS
+DEFAULT_ROOTS
+DEFAULT_USER_PASSWORD
+DETECT_DEFAULT_PASSWORD_ON_LOGIN
+DEV_MODE
+DOCS_ALLOW_BASIC_AUTH
+ED25519_PRIVATE_KEY
+ED25519_PUBLIC_KEY
+ELASTICSEARCH_ENABLED
+ELASTICSEARCH_INDEX_PREFIX
+ELASTICSEARCH_URL
+EMAIL_AUTH_ENABLED
+EMBED_ENVIRONMENT_IN_TOKENS
+ENABLE_ED25519_SIGNING
+ENABLE_HEADER_PASSTHROUGH
+ENABLE_METRICS
+ENABLE_OVERWRITE_BASE_HEADERS
+ENVIRONMENT
+EXPERIMENTAL_VALIDATE_IO
+FEDERATION_TIMEOUT
+FILELOCK_NAME
+FORGE_CONTENT_TYPE
+GATEWAY_AUTO_REFRESH_INTERVAL
+GATEWAY_HEALTH_CHECK_TIMEOUT
+GATEWAY_MAX_REDIRECTS
+GATEWAY_TOOL_NAME_SEPARATOR
+GATEWAY_VALIDATION_TIMEOUT
+GLOBAL_CONFIG_CACHE_TTL
+HEALTH_CHECK_INTERVAL
+HEALTH_CHECK_TIMEOUT
+HOST
+HSTS_ENABLED
+HSTS_INCLUDE_SUBDOMAINS
+HSTS_MAX_AGE
+HTTPX_ADMIN_READ_TIMEOUT
+HTTPX_CONNECT_TIMEOUT
+HTTPX_HTTP2_ENABLED
+HTTPX_KEEPALIVE_EXPIRY
+HTTPX_MAX_CONNECTIONS
+HTTPX_MAX_KEEPALIVE_CONNECTIONS
+HTTPX_POOL_TIMEOUT
+HTTPX_READ_TIMEOUT
+HTTPX_WRITE_TIMEOUT
+INSECURE_ALLOW_QUERYPARAM_AUTH
+INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS
+INVITATION_EXPIRY_DAYS
+JSON_RESPONSE_ENABLED
+JWT_ALGORITHM
+JWT_AUDIENCE
+JWT_AUDIENCE_VERIFICATION
+JWT_ISSUER
+JWT_ISSUER_VERIFICATION
+JWT_PRIVATE_KEY_PATH
+JWT_PUBLIC_KEY_PATH
+JWT_SECRET_KEY
+LLMCHAT_CHAT_HISTORY_MAX_MESSAGES
+LLMCHAT_CHAT_HISTORY_TTL
+LLMCHAT_ENABLED
+LLMCHAT_SESSION_LOCK_RETRIES
+LLMCHAT_SESSION_LOCK_TTL
+LLMCHAT_SESSION_LOCK_WAIT
+LLMCHAT_SESSION_TTL
+LLM_API_PREFIX
+LLM_HEALTH_CHECK_INTERVAL
+LLM_REQUEST_TIMEOUT
+LLM_STREAMING_ENABLED
+LOG_BACKUP_COUNT
+LOG_BUFFER_SIZE_MB
+LOG_DETAILED_MAX_BODY_SIZE
+LOG_DETAILED_SAMPLE_RATE
+LOG_DETAILED_SKIP_ENDPOINTS
+LOG_FILE
+LOG_FILEMODE
+LOG_FOLDER
+LOG_FORMAT
+LOG_LEVEL
+LOG_MAX_SIZE_MB
+LOG_REQUESTS
+LOG_RESOLVE_USER_IDENTITY
+LOG_RETENTION_DAYS
+LOG_ROTATION_ENABLED
+LOG_SEARCH_MAX_RESULTS
+LOG_TO_FILE
+MASKED_AUTH_VALUE
+MAX_CONCURRENT_HEALTH_CHECKS
+MAX_FAILED_LOGIN_ATTEMPTS
+MAX_INTERVAL
+MAX_MEMBERS_PER_TEAM
+MAX_PARAM_LENGTH
+MAX_PATH_DEPTH
+MAX_PROMPT_SIZE
+MAX_RESOURCE_SIZE
+MAX_TEAMS_PER_USER
+MAX_TOOL_RETRIES
+MCPGATEWAY_A2A_DEFAULT_TIMEOUT
+MCPGATEWAY_A2A_ENABLED
+MCPGATEWAY_A2A_MAX_AGENTS
+MCPGATEWAY_A2A_MAX_RETRIES
+MCPGATEWAY_A2A_METRICS_ENABLED
+MCPGATEWAY_ADMIN_API_ENABLED
+MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED
+MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE
+MCPGATEWAY_BULK_IMPORT_ENABLED
+MCPGATEWAY_BULK_IMPORT_MAX_TOOLS
+MCPGATEWAY_BULK_IMPORT_RATE_LIMIT
+MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK
+MCPGATEWAY_CATALOG_CACHE_TTL
+MCPGATEWAY_CATALOG_ENABLED
+MCPGATEWAY_CATALOG_FILE
+MCPGATEWAY_CATALOG_PAGE_SIZE
+MCPGATEWAY_ELICITATION_ENABLED
+MCPGATEWAY_ELICITATION_MAX_CONCURRENT
+MCPGATEWAY_ELICITATION_TIMEOUT
+MCPGATEWAY_GRPC_ENABLED
+MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE
+MCPGATEWAY_GRPC_REFLECTION_ENABLED
+MCPGATEWAY_GRPC_TIMEOUT
+MCPGATEWAY_GRPC_TLS_ENABLED
+MCPGATEWAY_PERFORMANCE_COLLECTION_INTERVAL
+MCPGATEWAY_PERFORMANCE_DISTRIBUTED
+MCPGATEWAY_PERFORMANCE_MAX_SNAPSHOTS
+MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_CACHE_TTL
+MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED
+MCPGATEWAY_PERFORMANCE_RETENTION_DAYS
+MCPGATEWAY_PERFORMANCE_RETENTION_HOURS
+MCPGATEWAY_PERFORMANCE_TRACKING
+MCPGATEWAY_TOOL_CANCELLATION_ENABLED
+MCPGATEWAY_UI_AIRGAPPED
+MCPGATEWAY_UI_ENABLED
+MCPGATEWAY_UI_TOOL_TEST_TIMEOUT
+MCP_CLIENT_AUTH_ENABLED
+MCP_REQUIRE_AUTH
+MCP_SESSION_POOL_ACQUIRE_TIMEOUT
+MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET
+MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD
+MCP_SESSION_POOL_CLEANUP_TIMEOUT
+MCP_SESSION_POOL_CREATE_TIMEOUT
+MCP_SESSION_POOL_ENABLED
+MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC
+MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL
+MCP_SESSION_POOL_HEALTH_CHECK_METHODS
+MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT
+MCP_SESSION_POOL_IDENTITY_HEADERS
+MCP_SESSION_POOL_IDLE_EVICTION
+MCP_SESSION_POOL_MAX_PER_KEY
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT
+MCP_SESSION_POOL_TTL
+MESSAGE_TTL
+METRICS_AGGREGATION_AUTO_START
+METRICS_AGGREGATION_BACKFILL_HOURS
+METRICS_AGGREGATION_ENABLED
+METRICS_AGGREGATION_WINDOW_MINUTES
+METRICS_BUFFER_ENABLED
+METRICS_BUFFER_FLUSH_INTERVAL
+METRICS_BUFFER_MAX_SIZE
+METRICS_CACHE_ENABLED
+METRICS_CACHE_TTL_SECONDS
+METRICS_CLEANUP_BATCH_SIZE
+METRICS_CLEANUP_ENABLED
+METRICS_CLEANUP_INTERVAL_HOURS
+METRICS_CUSTOM_LABELS
+METRICS_DELETE_RAW_AFTER_ROLLUP
+METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS
+METRICS_EXCLUDED_HANDLERS
+METRICS_NAMESPACE
+METRICS_RETENTION_DAYS
+METRICS_ROLLUP_ENABLED
+METRICS_ROLLUP_INTERVAL_HOURS
+METRICS_ROLLUP_LATE_DATA_HOURS
+METRICS_ROLLUP_RETENTION_DAYS
+METRICS_SUBSYSTEM
+MIN_PASSWORD_LENGTH
+MIN_SECRET_LENGTH
+OAUTH_DEFAULT_TIMEOUT
+OAUTH_DISCOVERY_ENABLED
+OAUTH_MAX_RETRIES
+OAUTH_PREFERRED_CODE_CHALLENGE_METHOD
+OAUTH_REQUEST_TIMEOUT
+OBSERVABILITY_ENABLED
+OBSERVABILITY_EVENTS_ENABLED
+OBSERVABILITY_EXCLUDE_PATHS
+OBSERVABILITY_INCLUDE_PATHS
+OBSERVABILITY_MAX_TRACES
+OBSERVABILITY_METRICS_ENABLED
+OBSERVABILITY_SAMPLE_RATE
+OBSERVABILITY_TRACE_HTTP_REQUESTS
+OBSERVABILITY_TRACE_RETENTION_DAYS
+OTEL_BSP_MAX_EXPORT_BATCH_SIZE
+OTEL_BSP_MAX_QUEUE_SIZE
+OTEL_BSP_SCHEDULE_DELAY
+OTEL_ENABLE_OBSERVABILITY
+OTEL_EXPORTER_JAEGER_ENDPOINT
+OTEL_EXPORTER_OTLP_ENDPOINT
+OTEL_EXPORTER_OTLP_HEADERS
+OTEL_EXPORTER_OTLP_INSECURE
+OTEL_EXPORTER_OTLP_PROTOCOL
+OTEL_EXPORTER_ZIPKIN_ENDPOINT
+OTEL_RESOURCE_ATTRIBUTES
+OTEL_SERVICE_NAME
+OTEL_TRACES_EXPORTER
+PAGINATION_BASE_URL
+PAGINATION_COUNT_CACHE_TTL
+PAGINATION_CURSOR_ENABLED
+PAGINATION_CURSOR_THRESHOLD
+PAGINATION_DEFAULT_PAGE_SIZE
+PAGINATION_DEFAULT_SORT_FIELD
+PAGINATION_DEFAULT_SORT_ORDER
+PAGINATION_INCLUDE_LINKS
+PAGINATION_MAX_OFFSET
+PAGINATION_MAX_PAGE_SIZE
+PAGINATION_MIN_PAGE_SIZE
+PASSTHROUGH_HEADERS_SOURCE
+PASSWORD_CHANGE_ENFORCEMENT_ENABLED
+PASSWORD_MAX_AGE_DAYS
+PASSWORD_MIN_LENGTH
+PASSWORD_POLICY_ENABLED
+PASSWORD_PREVENT_REUSE
+PASSWORD_REQUIRE_LOWERCASE
+PASSWORD_REQUIRE_NUMBERS
+PASSWORD_REQUIRE_SPECIAL
+PASSWORD_REQUIRE_UPPERCASE
+PERFORMANCE_DEGRADATION_MULTIPLIER
+PERFORMANCE_THRESHOLD_DATABASE_QUERY_MS
+PERFORMANCE_THRESHOLD_HTTP_REQUEST_MS
+PERFORMANCE_THRESHOLD_RESOURCE_READ_MS
+PERFORMANCE_THRESHOLD_TOOL_INVOCATION_MS
+PERFORMANCE_TRACKING_ENABLED
+PERSONAL_TEAM_PREFIX
+PLATFORM_ADMIN_EMAIL
+PLATFORM_ADMIN_FULL_NAME
+PLATFORM_ADMIN_PASSWORD
+PLUGINS_CLI_COMPLETION
+PLUGINS_CLI_MARKUP_MODE
+PLUGINS_ENABLED
+PLUGIN_CONFIG_FILE
+POLL_INTERVAL
+PORT
+PREV_ED25519_PRIVATE_KEY
+PREV_ED25519_PUBLIC_KEY
+PROMPT_CACHE_SIZE
+PROMPT_RENDER_TIMEOUT
+PROTOCOL_VERSION
+PROXY_USER_HEADER
+REDIS_DECODE_RESPONSES
+REDIS_HEALTH_CHECK_INTERVAL
+REDIS_LEADER_HEARTBEAT_INTERVAL
+REDIS_LEADER_KEY
+REDIS_LEADER_TTL
+REDIS_MAX_BACKOFF_SECONDS
+REDIS_MAX_CONNECTIONS
+REDIS_MAX_RETRIES
+REDIS_PARSER
+REDIS_RETRY_INTERVAL_MS
+REDIS_RETRY_ON_TIMEOUT
+REDIS_SOCKET_CONNECT_TIMEOUT
+REDIS_SOCKET_TIMEOUT
+REDIS_URL
+REGISTRY_CACHE_AGENTS_TTL
+REGISTRY_CACHE_CATALOG_TTL
+REGISTRY_CACHE_ENABLED
+REGISTRY_CACHE_GATEWAYS_TTL
+REGISTRY_CACHE_PROMPTS_TTL
+REGISTRY_CACHE_RESOURCES_TTL
+REGISTRY_CACHE_SERVERS_TTL
+REGISTRY_CACHE_TOOLS_TTL
+RELOAD
+REMOVE_SERVER_HEADERS
+REQUIRE_EMAIL_VERIFICATION_FOR_INVITES
+REQUIRE_JTI
+REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD
+REQUIRE_STRONG_SECRETS
+REQUIRE_TOKEN_EXPIRATION
+REQUIRE_USER_IN_DB
+RESOURCE_CACHE_SIZE
+RESOURCE_CACHE_TTL
+RETRY_BASE_DELAY
+RETRY_JITTER_MAX
+RETRY_MAX_ATTEMPTS
+RETRY_MAX_DELAY
+SANITIZE_OUTPUT
+SECURE_COOKIES
+SECURITY_FAILED_AUTH_THRESHOLD
+SECURITY_HEADERS_ENABLED
+SECURITY_LOGGING_ENABLED
+SECURITY_LOGGING_LEVEL
+SECURITY_RATE_LIMIT_WINDOW_MINUTES
+SECURITY_THREAT_SCORE_ALERT
+SESSION_TTL
+SKIP_SSL_VERIFY
+SLUG_REFRESH_BATCH_SIZE
+SSE_KEEPALIVE_ENABLED
+SSE_KEEPALIVE_INTERVAL
+SSE_RAPID_YIELD_MAX
+SSE_RAPID_YIELD_WINDOW_MS
+SSE_RETRY_TIMEOUT
+SSE_SEND_TIMEOUT
+SSE_TASK_GROUP_CLEANUP_TIMEOUT
+SSO_AUTO_ADMIN_DOMAINS
+SSO_AUTO_CREATE_USERS
+SSO_ENABLED
+SSO_ENTRA_ADMIN_GROUPS
+SSO_ENTRA_CLIENT_ID
+SSO_ENTRA_CLIENT_SECRET
+SSO_ENTRA_DEFAULT_ROLE
+SSO_ENTRA_ENABLED
+SSO_ENTRA_GROUPS_CLAIM
+SSO_ENTRA_ROLE_MAPPINGS
+SSO_ENTRA_SYNC_ROLES_ON_LOGIN
+SSO_ENTRA_TENANT_ID
+SSO_GENERIC_AUTHORIZATION_URL
+SSO_GENERIC_CLIENT_ID
+SSO_GENERIC_CLIENT_SECRET
+SSO_GENERIC_DISPLAY_NAME
+SSO_GENERIC_ENABLED
+SSO_GENERIC_ISSUER
+SSO_GENERIC_PROVIDER_ID
+SSO_GENERIC_SCOPE
+SSO_GENERIC_TOKEN_URL
+SSO_GENERIC_USERINFO_URL
+SSO_GITHUB_ADMIN_ORGS
+SSO_GITHUB_CLIENT_ID
+SSO_GITHUB_CLIENT_SECRET
+SSO_GITHUB_ENABLED
+SSO_GOOGLE_ADMIN_DOMAINS
+SSO_GOOGLE_CLIENT_ID
+SSO_GOOGLE_CLIENT_SECRET
+SSO_GOOGLE_ENABLED
+SSO_IBM_VERIFY_CLIENT_ID
+SSO_IBM_VERIFY_CLIENT_SECRET
+SSO_IBM_VERIFY_ENABLED
+SSO_IBM_VERIFY_ISSUER
+SSO_ISSUERS
+SSO_KEYCLOAK_BASE_URL
+SSO_KEYCLOAK_CLIENT_ID
+SSO_KEYCLOAK_CLIENT_SECRET
+SSO_KEYCLOAK_EMAIL_CLAIM
+SSO_KEYCLOAK_ENABLED
+SSO_KEYCLOAK_GROUPS_CLAIM
+SSO_KEYCLOAK_MAP_CLIENT_ROLES
+SSO_KEYCLOAK_MAP_REALM_ROLES
+SSO_KEYCLOAK_REALM
+SSO_KEYCLOAK_USERNAME_CLAIM
+SSO_OKTA_CLIENT_ID
+SSO_OKTA_CLIENT_SECRET
+SSO_OKTA_ENABLED
+SSO_OKTA_ISSUER
+SSO_PRESERVE_ADMIN_AUTH
+SSO_REQUIRE_ADMIN_APPROVAL
+SSO_TRUSTED_DOMAINS
+STATIC_DIR
+STRUCTURED_LOGGING_DATABASE_ENABLED
+STRUCTURED_LOGGING_ENABLED
+STRUCTURED_LOGGING_EXTERNAL_ENABLED
+SYSLOG_ENABLED
+SYSLOG_HOST
+SYSLOG_PORT
+TEAM_MEMBER_COUNT_CACHE_ENABLED
+TEAM_MEMBER_COUNT_CACHE_TTL
+TEMPLATES_AUTO_RELOAD
+TEMPLATES_DIR
+TOKEN_EXPIRY
+TOOLOPS_ENABLED
+TOOL_CONCURRENT_LIMIT
+TOOL_LOOKUP_CACHE_ENABLED
+TOOL_LOOKUP_CACHE_L1_MAXSIZE
+TOOL_LOOKUP_CACHE_L2_ENABLED
+TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS
+TOOL_LOOKUP_CACHE_TTL_SECONDS
+TOOL_RATE_LIMIT
+TOOL_TIMEOUT
+TRANSPORT_TYPE
+TRUST_PROXY_AUTH
+UNHEALTHY_THRESHOLD
+USE_POSTGRESDB_PERCENTILES
+USE_STATEFUL_SESSIONS
+VALIDATE_TOKEN_ENVIRONMENT
+VALIDATION_ALLOWED_MIME_TYPES
+VALIDATION_ALLOWED_URL_SCHEMES
+VALIDATION_DANGEROUS_HTML_PATTERN
+VALIDATION_DANGEROUS_JS_PATTERN
+VALIDATION_IDENTIFIER_PATTERN
+VALIDATION_MAX_CONTENT_LENGTH
+VALIDATION_MAX_DESCRIPTION_LENGTH
+VALIDATION_MAX_JSON_DEPTH
+VALIDATION_MAX_METHOD_LENGTH
+VALIDATION_MAX_NAME_LENGTH
+VALIDATION_MAX_REQUESTS_PER_MINUTE
+VALIDATION_MAX_RPC_PARAM_SIZE
+VALIDATION_MAX_TEMPLATE_LENGTH
+VALIDATION_MAX_URL_LENGTH
+VALIDATION_MIDDLEWARE_ENABLED
+VALIDATION_NAME_PATTERN
+VALIDATION_SAFE_URI_PATTERN
+VALIDATION_STRICT
+VALIDATION_TOOL_METHOD_PATTERN
+VALIDATION_TOOL_NAME_PATTERN
+VALIDATION_UNSAFE_URI_PATTERN
+WEBHOOK_LOGGING_ENABLED
+WEBHOOK_LOGGING_URLS
+WEBSOCKET_PING_INTERVAL
+WELL_KNOWN_CACHE_MAX_AGE
+WELL_KNOWN_CUSTOM_FILES
+WELL_KNOWN_ENABLED
+WELL_KNOWN_ROBOTS_TXT
+WELL_KNOWN_SECURITY_TXT
+WELL_KNOWN_SECURITY_TXT_ENABLED
+X_CONTENT_TYPE_OPTIONS_ENABLED
+X_DOWNLOAD_OPTIONS_ENABLED
+X_FRAME_OPTIONS
+X_XSS_PROTECTION_ENABLED
+YIELD_BATCH_SIZE
+```
+
+</details>
 
 </details>
 
@@ -2597,7 +3108,7 @@ curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
-           "protocol_version":"2025-03-26",
+           "protocol_version":"2025-06-18",
            "capabilities":{},
            "client_info":{"name":"MyClient","version":"1.0.0"}
          }' \
