@@ -27,6 +27,7 @@ TODO: this test bails out on the first failed validation pattern, need to fix th
 from datetime import datetime
 import json
 import logging
+import time
 from unittest.mock import patch
 
 # Third-Party
@@ -1189,6 +1190,7 @@ class TestSecurityValidation:
         """Test prevention of ReDoS attacks."""
         logger.debug("Testing ReDoS prevention")
 
+        # Test 1: User-provided patterns in schemas
         redos_patterns = [
             "(a+)+$",
             "([a-zA-Z]+)*",
@@ -1205,6 +1207,38 @@ class TestSecurityValidation:
             tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, input_schema=schema)
             # Input schema might have defaults
             assert tool.input_schema is not None
+
+        # Test 2: SSTI validation patterns should not be vulnerable to ReDoS
+        # The SSTI patterns previously used .* which could cause catastrophic backtracking
+        logger.debug("Testing SSTI ReDoS prevention")
+
+        # Pathological inputs that would trigger catastrophic backtracking with .*
+        # These have opening delimiters but no closing ones, with many repetitions
+        redos_payloads = [
+            "{{" + "a" * 10000,  # Jinja2 double braces without closing
+            "{%" + "b" * 10000,  # Jinja2 tags without closing
+            "${" + "c" * 10000,  # Template expression without closing
+            "#{" + "d" * 10000,  # ERB/Hash without closing
+            "%{" + "e" * 10000,  # Apache/Velocity without closing
+        ]
+
+        for i, payload in enumerate(redos_payloads):
+            logger.debug(f"Testing SSTI ReDoS payload {i + 1}: {payload[:20]}... (length: {len(payload)})")
+
+            # Measure validation time - should complete quickly (< 1 second)
+            start_time = time.time()
+            try:
+                # This should either reject quickly or accept (doesn't match dangerous patterns)
+                PromptCreate(name="test_prompt", template=payload)
+                logger.debug(f"  Payload {i + 1} accepted (no dangerous pattern matched)")
+            except ValidationError:
+                logger.debug(f"  Payload {i + 1} rejected (validation failed)")
+            elapsed = time.time() - start_time
+
+            # Assert validation completed in reasonable time (< 1 second)
+            # With vulnerable .* patterns, this would take many seconds or timeout
+            assert elapsed < 1.0, f"SSTI validation took {elapsed:.2f}s - possible ReDoS vulnerability"
+            logger.debug(f"  ✓ Completed in {elapsed:.4f}s (ReDoS prevention working)")
 
     @pytest.mark.skip(reason="Currently not applicable, XML parsing not used")
     def test_billion_laughs_attack(self):

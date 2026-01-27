@@ -91,16 +91,17 @@ _POLYGLOT_PATTERNS: List[Pattern[str]] = [
 ]
 
 # SSTI prevention patterns (precompiled with IGNORECASE)
+# Use [^}]* and [^%]* instead of .* to prevent ReDoS catastrophic backtracking
 _SSTI_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}", re.IGNORECASE),
-    re.compile(r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}", re.IGNORECASE),
-    re.compile(r"\$\{.*\}", re.IGNORECASE),
-    re.compile(r"#\{.*\}", re.IGNORECASE),
-    re.compile(r"%\{.*\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\*.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\/.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\+.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\-.*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{[^}]*(__|\.|config|self|request|application|globals|builtins|import)[^}]*\}\}", re.IGNORECASE),
+    re.compile(r"\{%[^%]*(__|\.|config|self|request|application|globals|builtins|import)[^%]*%\}", re.IGNORECASE),
+    re.compile(r"\$\{[^}]*\}", re.IGNORECASE),
+    re.compile(r"#\{[^}]*\}", re.IGNORECASE),
+    re.compile(r"%\{[^}]*\}", re.IGNORECASE),
+    re.compile(r"\{\{[^}]*\*[^}]*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{[^}]*\/[^}]*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{[^}]*\+[^}]*\}\}", re.IGNORECASE),
+    re.compile(r"\{\{[^}]*\-[^}]*\}\}", re.IGNORECASE),
 ]
 
 # Dangerous URL protocol patterns (precompiled with IGNORECASE)
