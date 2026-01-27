@@ -557,15 +557,22 @@ coverage:
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
+			--cov=mcpgateway mcpgateway/ || true"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 			--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
-			--dist loadgroup -n 8 -rA --cov-append --capture=tee-sys -v \
-			--durations=120 --doctest-modules app/ --cov-report=term \
-			--cov=mcpgateway --ignore=test.py tests/ || true"
+			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+			--durations=120 --cov-report=term --cov=mcpgateway \
+			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ || true"
 	@printf '\n## Coverage report\n\n' >> $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=app/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@echo "🔍  Generating annotated coverage files..."
