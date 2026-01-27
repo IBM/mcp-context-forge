@@ -810,7 +810,7 @@ class GlobalContext(BaseModel):
     """
 
     request_id: str
-    user: Optional[Union[str,dict[str, Any]]] = None
+    user: Optional[Union[str, dict[str, Any]]] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
     state: dict[str, Any] = Field(default_factory=dict)
