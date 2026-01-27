@@ -2486,6 +2486,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         capabilities, tools, resources, prompts = await self._initialize_gateway(
                             init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, auth_query_params=auth_query_params_decrypted
                         )
+                        
+                        # For OAuth authorization_code gateways, empty responses may indicate incomplete auth
+                        # Skip deletion if it's an auth_code gateway with no data
+                        is_auth_code_gateway = gateway.oauth_config and isinstance(gateway.oauth_config, dict) and gateway.oauth_config.get("grant_type") == "authorization_code"
+                        skip_deletion = is_auth_code_gateway and not tools and not resources and not prompts
+                        
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
@@ -2509,8 +2515,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # Count items before cleanup for logging
 
                         # Bulk delete tools that are no longer available from the gateway
-                        # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
-                        stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
+                        # Skip deletion for OAuth gateways that haven't been authorized yet
+                        stale_tool_ids = [] if skip_deletion else [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
                         if stale_tool_ids:
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_tool_ids), 500):
@@ -2520,7 +2526,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
 
                         # Bulk delete resources that are no longer available from the gateway
-                        stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
+                        stale_resource_ids = [] if skip_deletion else [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
                         if stale_resource_ids:
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_resource_ids), 500):
@@ -2531,7 +2537,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
 
                         # Bulk delete prompts that are no longer available from the gateway
-                        stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
+                        stale_prompt_ids = [] if skip_deletion else [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
                         if stale_prompt_ids:
                             # Delete child records first to avoid FK constraint violations
                             for i in range(0, len(stale_prompt_ids), 500):
