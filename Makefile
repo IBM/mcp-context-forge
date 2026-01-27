@@ -3085,23 +3085,27 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+	@RUST_ARG=""; PROFILING_ARG=""; \
+	if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building container WITH Rust plugins..."; \
-		$(CONTAINER_RUNTIME) build \
-			--platform=$(PLATFORM) \
-			-f $(CONTAINER_FILE) \
-			--build-arg ENABLE_RUST=true \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			.; \
+		RUST_ARG="--build-arg ENABLE_RUST=true"; \
 	else \
 		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
-		$(CONTAINER_RUNTIME) build \
-			--platform=$(PLATFORM) \
-			-f $(CONTAINER_FILE) \
-			--build-arg ENABLE_RUST=false \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			.; \
-	fi
+		RUST_ARG="--build-arg ENABLE_RUST=false"; \
+	fi; \
+	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
+		echo "📊 Building container WITH profiling tools (memray)..."; \
+		PROFILING_ARG="--build-arg ENABLE_PROFILING=true"; \
+	else \
+		PROFILING_ARG="--build-arg ENABLE_PROFILING=false"; \
+	fi; \
+	$(CONTAINER_RUNTIME) build \
+		--platform=$(PLATFORM) \
+		-f $(CONTAINER_FILE) \
+		$$RUST_ARG \
+		$$PROFILING_ARG \
+		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+		.
 	@echo "✅ Built image: $(call get_image_name)"
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
 
@@ -3632,6 +3636,7 @@ podman-top:
 # help: docker-dev           - Build development Docker image
 # help: docker               - Build production Docker image
 # help: docker-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
+# help: docker-prod-profiling - Build production image WITH profiling tools (memray, py-spy) for debugging
 # help: docker-run           - Run the container on HTTP  (port 4444)
 # help: docker-run-host      - Run the container on HTTP  (port 4444) with --network-host
 # help: docker-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
@@ -3640,7 +3645,7 @@ podman-top:
 # help: docker-test          - Quick curl smoke-test against the container
 # help: docker-logs          - Follow container logs (⌃C to quit)
 
-.PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-host docker-run-ssl \
+.PHONY: docker-dev docker docker-prod docker-prod-profiling docker-build docker-run docker-run-host docker-run-ssl \
 	docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
 	docker-top docker-shell
 
@@ -3652,6 +3657,17 @@ docker:
 
 docker-prod:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+
+# Build production image with profiling tools (memray) for performance debugging
+# Usage: make docker-prod-profiling
+# Then run with SYS_PTRACE capability:
+#   docker run --cap-add=SYS_PTRACE ...
+# Inside container:
+#   memray attach <PID> -o /tmp/profile.bin
+#   memray flamegraph /tmp/profile.bin -o flamegraph.html
+docker-prod-profiling:
+	@echo "📊 Building production image WITH profiling tools..."
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite ENABLE_PROFILING_BUILD=1
 
 docker-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker

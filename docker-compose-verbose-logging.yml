@@ -20,9 +20,6 @@ networks:
 volumes:                # Named volumes survive podman-compose down/up
   pgdata:
   # pgdata18:  # Enable for postgres 18+
-  mariadbdata:
-  mysqldata:
-  mongodata:
   pgadmindata:
   redisinsight_data:
   nginx_cache:
@@ -52,7 +49,7 @@ services:
         condition: service_healthy
     volumes:
       - nginx_cache:/var/cache/nginx    # Persistent cache storage
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      # - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
     # TCP kernel tuning for 3000 concurrent connections
     # Note: net.core.* sysctls are host-level and cannot be set per-container
     # Only net.ipv4.* sysctls that are network-namespace aware work here
@@ -109,8 +106,8 @@ services:
       # Choose Granian for:  load spike protection, bursty traffic (graceful degradation)
       # Both achieve same RPS when database is the bottleneck.
       # ═══════════════════════════════════════════════════════════════════════════
-      - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
-      # - HTTP_SERVER=gunicorn # Python-based, battle-tested, lower memory usage
+      # - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
+      - HTTP_SERVER=gunicorn # Python-based, battle-tested, lower memory usage
       - HOST=0.0.0.0
       - PORT=4444
       # Transport: sse, streamablehttp, http, or all (default: all)
@@ -122,10 +119,7 @@ services:
       # - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       # SQLAlchemy query logging (useful for N+1 detection; noisy under load)
       # NOTE: SQLALCHEMY_ECHO logs at INFO; set LOG_LEVEL=INFO/DEBUG to see output.
-      - SQLALCHEMY_ECHO=false
-      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
-      # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
-      # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
+      - SQLALCHEMY_ECHO=true
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
@@ -135,21 +129,30 @@ services:
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Redis Startup Resilience (prevents crash-loop on Redis outage)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # With exponential backoff: 2s, 4s, 8s, 16s, 30s (capped), 30s...
+      # 30 retries = ~5 minutes total wait before worker gives up
+      - REDIS_MAX_RETRIES=30             # Max attempts before worker exits (default: 30)
+      - REDIS_RETRY_INTERVAL_MS=2000     # Base interval, grows exponentially with jitter
+      - REDIS_MAX_BACKOFF_SECONDS=30     # Max backoff cap (jitter ±25% applied after)
       # Auth Cache Configuration (reduces DB queries per auth request from 3-4 to 0-1)
-      - AUTH_CACHE_ENABLED=true
+      - AUTH_CACHE_ENABLED=${AUTH_CACHE_ENABLED:-true}
       - AUTH_CACHE_USER_TTL=300
-      - AUTH_CACHE_REVOCATION_TTL=30
+      - AUTH_CACHE_REVOCATION_TTL=120
       - AUTH_CACHE_TEAM_TTL=300
       - AUTH_CACHE_ROLE_TTL=300
       - AUTH_CACHE_BATCH_QUERIES=true
+      - AUTH_CACHE_TEAMS_TTL=300
       # Registry Cache Configuration (reduces DB queries for list endpoints)
       - REGISTRY_CACHE_ENABLED=true
-      - REGISTRY_CACHE_TOOLS_TTL=60
-      - REGISTRY_CACHE_PROMPTS_TTL=60
-      - REGISTRY_CACHE_RESOURCES_TTL=60
-      - REGISTRY_CACHE_AGENTS_TTL=60
-      - REGISTRY_CACHE_SERVERS_TTL=60
-      - REGISTRY_CACHE_GATEWAYS_TTL=60
+      - REGISTRY_CACHE_TOOLS_TTL=300
+      - REGISTRY_CACHE_PROMPTS_TTL=300
+      - REGISTRY_CACHE_RESOURCES_TTL=300
+      - REGISTRY_CACHE_AGENTS_TTL=300
+      - REGISTRY_CACHE_SERVERS_TTL=300
+      - REGISTRY_CACHE_GATEWAYS_TTL=300
       - REGISTRY_CACHE_CATALOG_TTL=300
       # Admin Stats Cache Configuration (reduces aggregate queries for dashboard)
       - ADMIN_STATS_CACHE_ENABLED=true
@@ -189,6 +192,8 @@ services:
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
       - REQUIRE_TOKEN_EXPIRATION=false
+      - REQUIRE_JTI=${REQUIRE_JTI:-false}
+      - REQUIRE_USER_IN_DB=${REQUIRE_USER_IN_DB:-false}
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true
       # Security configuration (using defaults)
@@ -212,17 +217,17 @@ services:
       - TRUST_PROXY_AUTH=false
       # Logging configuration
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
-      - LOG_LEVEL=INFO  # Required for SQLALCHEMY_ECHO output during load testing
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}  # Required for SQLALCHEMY_ECHO output during load testing
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       # Template auto-reload disabled for performance (prevents re-parsing templates on each request)
       - TEMPLATES_AUTO_RELOAD=false
-      - STRUCTURED_LOGGING_DATABASE_ENABLED=true  # Disable DB logging for performance (use true only for debugging)
+      - STRUCTURED_LOGGING_DATABASE_ENABLED=false  # Disable DB logging for performance (use true only for debugging)
       # Audit trail logging - disabled by default for performance
       # WARNING: Causes a DB write on EVERY API request - can generate millions of rows during load testing!
       - AUDIT_TRAIL_ENABLED=false  # Set to true for compliance requirements (SOC2, HIPAA, etc.)
       # Security event logging - disabled by default for performance
       # WARNING: "all" level logs every request and causes massive DB write load
-      - SECURITY_LOGGING_ENABLED=true  # Set to true to enable security event logging
+      - SECURITY_LOGGING_ENABLED=false  # Set to true to enable security event logging
       - SECURITY_LOGGING_LEVEL=failures_only  # Options: all, failures_only, high_severity
       # Performance optimizations - disable CPU-intensive middlewares
       # NOTE: Keep compression enabled when running without nginx that already has compression
@@ -231,8 +236,8 @@ services:
       # Disable optional middlewares for maximum throughput
       - VALIDATION_MIDDLEWARE_ENABLED=true
       - CORRELATION_ID_ENABLED=false
-      - OBSERVABILITY_ENABLED=true
       - LLMCHAT_ENABLED=true
+      - OBSERVABILITY_ENABLED=false
       # ═══════════════════════════════════════════════════════════════════════════
       # Database Connection Pool Configuration
       # ═══════════════════════════════════════════════════════════════════════════
@@ -251,6 +256,14 @@ services:
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
       - DB_POOL_RECYCLE=60             # Recycle before PgBouncer CLIENT_IDLE_TIMEOUT (half of 120s)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Database Startup Resilience (prevents crash-loop on DB outage)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # With exponential backoff: 2s, 4s, 8s, 16s, 30s (capped), 30s...
+      # 30 retries = ~5 minutes total wait before worker gives up
+      - DB_MAX_RETRIES=30              # Max attempts before worker exits (default: 30)
+      - DB_RETRY_INTERVAL_MS=2000      # Base interval, grows exponentially with jitter
+      - DB_MAX_BACKOFF_SECONDS=30      # Max backoff cap (jitter ±25% applied after)
       # Tool configuration for high-concurrency load testing
       - TOOL_TIMEOUT=60               # Seconds before tool invocation times out
       - MAX_TOOL_RETRIES=3            # Retry attempts for failed tool invocations
@@ -271,8 +284,17 @@ services:
       - HTTPX_POOL_TIMEOUT=10.0             # Wait for available connection (seconds)
       - HTTPX_HTTP2_ENABLED=false           # HTTP/2 support (requires server support)
       - HTTPX_ADMIN_READ_TIMEOUT=30.0       # Admin UI/health check timeout (seconds)
-      # Worker and server tuning for high-concurrency load testing
-      - GUNICORN_WORKERS=16
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Gunicorn Configuration (used when HTTP_SERVER=gunicorn)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - GUNICORN_WORKERS=24                    # Worker processes (match CPU cores)
+      - GUNICORN_TIMEOUT=120                   # Worker timeout in seconds
+      - GUNICORN_GRACEFUL_TIMEOUT=60           # Grace period for worker shutdown
+      - GUNICORN_KEEP_ALIVE=30                 # Keep-alive timeout (matches SSE keepalive)
+      # Worker recycling cleans up MCP SDK stuck task groups (anyio#695 workaround)
+      - GUNICORN_MAX_REQUESTS=1000000          # Recycle workers after 1M requests
+      - GUNICORN_MAX_REQUESTS_JITTER=100000    # ±100000 jitter prevents thundering herd
+      - GUNICORN_BACKLOG=4096                  # Connection queue depth
       # ═══════════════════════════════════════════════════════════════════════════
       # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -285,6 +307,22 @@ services:
       - GRANIAN_BACKPRESSURE=128
       - GRANIAN_HTTP1_BUFFER_SIZE=524288
       - GRANIAN_RESPAWN_FAILED=true
+      # ───────────────────────────────────────────────────────────────────────
+      # Granian Worker Lifecycle (recycling to prevent resource leaks)
+      # ───────────────────────────────────────────────────────────────────────
+      # Workaround for granian issue where SSE connections may not be properly
+      # closed after client disconnect, causing CPU spin loops. See:
+      # - https://github.com/emmett-framework/granian/issues/286
+      # - https://github.com/IBM/mcp-context-forge/issues/2357
+      #
+      # GRANIAN_WORKERS_LIFETIME: Restart workers after this duration (min 60s)
+      # GRANIAN_WORKERS_MAX_RSS: Restart workers exceeding this memory (MiB)
+      #
+      # Using both provides natural jitter - workers hit memory limits at
+      # different times based on load, with lifetime as a backstop.
+      # - GRANIAN_WORKERS_LIFETIME=3600    # 1 hour max worker lifetime
+      # - GRANIAN_WORKERS_MAX_RSS=512      # 512 MiB max RSS per worker
+      # ───────────────────────────────────────────────────────────────────────
       # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
       # - nginx sits in front and downgrades to HTTP/1.1 for upstream connections
       # - nginx open-source doesn't support HTTP/2 to backends (only nginx Plus does)
@@ -309,6 +347,45 @@ services:
       - MCP_SESSION_POOL_IDLE_EVICTION=600.0      # Evict idle pool keys after (default: 600)
       - MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30.0   # Timeout for all HTTP operations (default: 30)
       - MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=false  # Force RPC on health checks (default: false)
+      # Configurable health check chain - ordered list of methods to try (JSON array)
+      # Options: ping, list_tools, list_prompts, list_resources, skip
+      # - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["ping", "skip"]  # Try ping, skip if unsupported
+      - MCP_SESSION_POOL_HEALTH_CHECK_METHODS=["skip"]  # skip, highest performance
+      - MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0               # Timeout per health check attempt
+      # ═══════════════════════════════════════════════════════════════════════════
+      # CPU Spin Loop Mitigation (Issue #2360, anyio#695)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # These settings mitigate CPU spin loops that can occur when SSE/MCP connections
+      # are cancelled and internal tasks don't respond to CancelledError. The spin
+      # happens in anyio's _deliver_cancellation method.
+      #
+      # See documentation: docs/docs/operations/cpu-spin-loop-mitigation.md
+      # GitHub Issue: https://github.com/IBM/mcp-context-forge/issues/2360
+      # Upstream Issue: https://github.com/agronholm/anyio/issues/695
+      #
+      # ─────────────────────────────────────────────────────────────────────────
+      # Layer 1: SSE Connection Protection
+      # ─────────────────────────────────────────────────────────────────────────
+      # Detect and close dead SSE connections before they cause spin loops.
+      - SSE_SEND_TIMEOUT=30.0                                   # ASGI send() timeout (default: 30.0)
+      - SSE_RAPID_YIELD_WINDOW_MS=1000                          # Detection window in ms (default: 1000)
+      - SSE_RAPID_YIELD_MAX=50                                  # Max yields before disconnect (default: 50, 0=disabled)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Layer 2: Cleanup Timeouts
+      # ─────────────────────────────────────────────────────────────────────────
+      # Limit how long cleanup waits for stuck tasks. Short timeouts (0.5s) reduce
+      # CPU waste during cancelled connection cleanup. Only affects cleanup, not
+      # normal operation.
+      - MCP_SESSION_POOL_CLEANUP_TIMEOUT=0.5                    # Session __aexit__ timeout (default: 5.0)
+      - SSE_TASK_GROUP_CLEANUP_TIMEOUT=0.5                      # SSE task group timeout (default: 5.0)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Layer 3: EXPERIMENTAL - anyio Monkey-Patch
+      # ─────────────────────────────────────────────────────────────────────────
+      # Last resort: patches anyio to limit _deliver_cancellation iterations.
+      # Enable only if Layers 1-2 don't fully resolve the issue.
+      # WARNING: May be removed when anyio/MCP SDK fix upstream issue.
+      - ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true              # Enable workaround - TESTING
+      - ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS=500              # Max iterations before giving up (~60ms recovery)
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Execution Metrics Recording
@@ -317,7 +394,7 @@ services:
       # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=true
+      - DB_METRICS_RECORDING_ENABLED=false
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration
@@ -354,6 +431,16 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Profiling Support (py-spy, memray)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SYS_PTRACE capability required for py-spy and memray to attach to running processes
+    # Usage:
+    #   py-spy: sudo py-spy top --pid $(docker inspect --format '{{.State.Pid}}' mcp-context-forge-gateway-1)
+    #   memray: docker exec -it mcp-context-forge-gateway-1 memray attach <PID> -o /tmp/profile.bin
+    cap_add:
+      - SYS_PTRACE
 
     depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
       pgbouncer:
@@ -426,6 +513,10 @@ services:
 
   postgres:
     image: postgres:18
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
     ports:
       - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (3000 sustained users)
@@ -487,41 +578,40 @@ services:
       # After enabling, run in psql:
       #   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
       #   SELECT * FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 10;
-      # - "-c"
-      # - "shared_preload_libraries=pg_stat_statements"
-      # - "shared_preload_libraries=pg_stat_statements,auto_explain"  # Use this line to enable both
-      # - "-c"
-      # - "pg_stat_statements.track=all"
-      # - "-c"
-      #- "pg_stat_statements.max=10000"
-      # AUTO_EXPLAIN settings (uncomment if using combined shared_preload_libraries above)
-      # - "-c"
-      # - "auto_explain.log_min_duration=1000"
-      # - "-c"
-      # - "auto_explain.log_analyze=on"
-      # === ROLLBACK DEBUGGING (disabled for performance) ===
-      # - "-c"
-      # - "log_min_error_statement=error"
-      # - "-c"
-      # - "log_min_messages=warning"
-      # - "-c"
-      # - "log_error_verbosity=verbose"
-      # - "-c"
-      # - "log_line_prefix=%t [%p]: user=%u,db=%d,app=%a,client=%h "
-      # - "-c"
-      # - "log_lock_waits=on"
-      # - "-c"
-      # - "deadlock_timeout=1s"
-      # - "-c"
-      # - "log_temp_files=0"
-      # - "-c"
-      # - "log_checkpoints=on"
-      # - "-c"
-      # - "log_connections=on"
-      # - "-c"
-      # - "log_disconnections=on"
-      # - "-c"
-      # - "idle_in_transaction_session_timeout=60s"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements,auto_explain"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "pg_stat_statements.max=10000"
+      # AUTO_EXPLAIN settings - logs EXPLAIN ANALYZE for slow queries
+      - "-c"
+      - "auto_explain.log_min_duration=100"
+      - "-c"
+      - "auto_explain.log_analyze=on"
+      # === ROLLBACK/QUERY DEBUGGING ===
+      - "-c"
+      - "log_min_error_statement=error"
+      - "-c"
+      - "log_min_messages=warning"
+      - "-c"
+      - "log_error_verbosity=verbose"
+      - "-c"
+      - "log_line_prefix=%t [%p]: user=%u,db=%d,app=%a,client=%h "
+      - "-c"
+      - "log_lock_waits=on"
+      - "-c"
+      - "deadlock_timeout=1s"
+      - "-c"
+      - "log_temp_files=0"
+      - "-c"
+      - "log_checkpoints=on"
+      - "-c"
+      - "log_connections=on"
+      - "-c"
+      - "log_disconnections=on"
+      - "-c"
+      - "log_statement=all"
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword
@@ -554,6 +644,10 @@ services:
     image: edoburu/pgbouncer:latest
     restart: unless-stopped
     networks: [mcpnet]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       - "6432:6432"    # PgBouncer port (optional external access)
     environment:
@@ -582,14 +676,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with pool_recycle)
+      - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (2x DB_POOL_RECYCLE)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (allows slow admin page rendering)
+      - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (aligned with CLIENT_IDLE_TIMEOUT)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -610,62 +704,6 @@ services:
           cpus: '0.5'
           memory: 128M
 
-  # mariadb:
-  #   image: mariadb:10.6
-  #   environment:
-  #     MARIADB_ROOT_PASSWORD: mysecretpassword
-  #     MARIADB_DATABASE: mcp
-  #     MARIADB_USER: mariadb
-  #     MARIADB_PASSWORD: mysecretpassword
-  #   volumes:
-  #     - mariadbdata:/var/lib/mysql
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-  #     interval: 30s
-  #     timeout: 5s
-  #     retries: 5
-  #     start_period: 20s
-
-  # mariadb:
-  #   image: mariadb:11
-  #   environment:
-  #     - MARIADB_ROOT_PASSWORD=mysecretpassword
-  #     - MARIADB_DATABASE=mcp
-  #     - MARIADB_USER=admin
-  #     - MARIADB_PASSWORD=changeme
-  #   volumes: [mariadbdata:/var/lib/mysql]
-  #   networks: [mcpnet]
-
-  # mariadb:
-  #   image: registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
-  #   environment:
-  #     - MYSQL_ROOT_PASSWORD=mysecretpassword
-  #     - MYSQL_DATABASE=mcp
-  #     - MYSQL_USER=mysql
-  #     - MYSQL_PASSWORD=changeme
-  #   volumes: ["mariadbdata:/var/lib/mysql"]
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "3306:3306"
-  #   healthcheck:
-  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysecretpassword"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 30s
-
-  # mongodb:
-  #   image: mongo:7
-  #   environment:
-  #     - MONGO_INITDB_ROOT_USERNAME=admin
-  #     - MONGO_INITDB_ROOT_PASSWORD=changeme
-  #     - MONGO_INITDB_DATABASE=mcp
-  #   volumes: [mongodata:/data/db]
-  #   networks: [mcpnet]
-
   # migration:
   #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
   #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
@@ -685,6 +723,10 @@ services:
 ###############################################################################
   redis:
     image: redis:latest
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     # Performance tuning for 1000+ RPS high-concurrency load testing
     command:
       - "redis-server"
@@ -910,6 +952,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
   # Redis Commander - a web-based Redis GUI
@@ -927,6 +970,7 @@ services:
       - REDIS_HOSTS=local:redis:6379
       - HTTP_USER=admin
       - HTTP_PASSWORD=changeme
+    profiles: ["monitoring"]
 
   # # ──────────────────────────────────────────────────────────────────────
   # # Redis Insight - a powerful Redis GUI (recently updated)
@@ -974,45 +1018,20 @@ services:
   #     - RI_APP_PORT=5540             # <- UI port (container-side)
 
 
-  # mongo_express:         # 🔧 MongoDB GUI (works if mongodb service is enabled)
-  #   image: mongo-express:1
-  #   environment:
-  #     - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
-  #     - ME_CONFIG_MONGODB_ADMINPASSWORD=changeme
-  #     - ME_CONFIG_MONGODB_SERVER=mongodb
-  #   ports:
-  #     - "8082:8081"    # http://localhost:8082
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     mongodb:
-  #       condition: service_started
-
-  # phpmyadmin:            # 🔧 MySQL / MariaDB GUI
-  #   image: phpmyadmin:latest
-  #   environment:
-  #     - PMA_HOST=mysql   # or mariadb
-  #     - PMA_USER=mysql
-  #     - PMA_PASSWORD=changeme
-  #     - PMA_ARBITRARY=1  # allow login to any host if you switch DBs
-  #   ports:
-  #     - "8083:80"      # http://localhost:8083
-  #   networks: [mcpnet]
-  #   depends_on:
-  #     mysql:
-  #       condition: service_started
-
-
 ###############################################################################
 #  OPTIONAL MCP SERVERS - drop-in helpers the Gateway can call
 ###############################################################################
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
-  # emulation may not work properly.
+  # Uses pre-built image by default. On ARM64, build locally:
+  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ghcr.io/ibm/fast-time-server:latest
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/fast-time-server:latest}
+    build:
+      context: ./mcp-servers/go/fast-time-server
+      dockerfile: Dockerfile
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -1484,27 +1503,3 @@ services:
         print(f'✅ Registration complete: {registered}/{server_count} benchmark servers')
         "
     profiles: ["benchmark"]
-
-  ###############################################################################
-  # Hashicorp Terraform MCP Server
-  # https://hub.docker.com/r/hashicorp/terraform-mcp-server
-  # https://github.com/hashicorp/terraform-mcp-server/blob/main/README.md
-  ###############################################################################
-  # terraform-mcp-server:
-  #   image: docker.io/hashicorp/terraform-mcp-server:dev
-  #   container_name: terraform-mcp-server
-  #   networks: [mcpnet]
-  #   ports:
-  #     - "8001:8080"    # Map host port 8888 to container port 8080
-  #   restart: unless-stopped
-  #   environment:
-  #     - TRANSPORT_MODE=streamable-http
-  #     - TRANSPORT_HOST=0.0.0.0
-  #     - TRANSPORT_PORT=8080
-  #     - MCP_CORS_MODE=disabled
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 5
-  #     start_period: 20s

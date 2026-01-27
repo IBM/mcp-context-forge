@@ -2583,12 +2583,9 @@ class ToolService:
             if not server_match:
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
-        # Check if this is an A2A tool and route to A2A service
+        # Extract A2A-related data from annotations (will be used after db.close() if A2A tool)
         tool_annotations = tool_payload.get("annotations") or {}
         tool_integration_type = tool_payload.get("integration_type")
-        if tool_integration_type == "A2A" and tool_annotations and "a2a_agent_id" in tool_annotations:
-            tool_stub = tool if tool is not None else SimpleNamespace(name=tool_payload.get("name", name), annotations=tool_annotations)
-            return await self._invoke_a2a_tool(db=db, tool=tool_stub, arguments=arguments)
 
         # Get passthrough headers from in-memory cache (Issue #1715)
         # This eliminates 42,000+ redundant DB queries under load
@@ -2662,6 +2659,42 @@ class ToolService:
                     gateway_metadata = self._pydantic_gateway_from_payload(gateway_payload)
 
         tool_for_validation = tool if tool is not None else SimpleNamespace(output_schema=tool_output_schema, name=tool_name_computed)
+
+        # ═══════════════════════════════════════════════════════════════════════════
+        # A2A Agent Data Extraction (must happen before db.close())
+        # Extract all A2A agent data to local variables so HTTP call can happen after db.close()
+        # ═══════════════════════════════════════════════════════════════════════════
+        a2a_agent_name: Optional[str] = None
+        a2a_agent_endpoint_url: Optional[str] = None
+        a2a_agent_type: Optional[str] = None
+        a2a_agent_protocol_version: Optional[str] = None
+        a2a_agent_auth_type: Optional[str] = None
+        a2a_agent_auth_value: Optional[str] = None
+        a2a_agent_auth_query_params: Optional[Dict[str, str]] = None
+
+        if tool_integration_type == "A2A" and "a2a_agent_id" in tool_annotations:
+            a2a_agent_id = tool_annotations.get("a2a_agent_id")
+            if not a2a_agent_id:
+                raise ToolNotFoundError(f"A2A tool '{name}' missing agent ID in annotations")
+
+            # Query for the A2A agent
+            agent_query = select(DbA2AAgent).where(DbA2AAgent.id == a2a_agent_id)
+            a2a_agent = db.execute(agent_query).scalar_one_or_none()
+
+            if not a2a_agent:
+                raise ToolNotFoundError(f"A2A agent not found for tool '{name}' (agent ID: {a2a_agent_id})")
+
+            if not a2a_agent.enabled:
+                raise ToolNotFoundError(f"A2A agent '{a2a_agent.name}' is disabled")
+
+            # Extract all needed data to local variables before db.close()
+            a2a_agent_name = a2a_agent.name
+            a2a_agent_endpoint_url = a2a_agent.endpoint_url
+            a2a_agent_type = a2a_agent.agent_type
+            a2a_agent_protocol_version = a2a_agent.protocol_version
+            a2a_agent_auth_type = a2a_agent.auth_type
+            a2a_agent_auth_value = a2a_agent.auth_value
+            a2a_agent_auth_query_params = a2a_agent.auth_query_params
 
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
@@ -3202,6 +3235,79 @@ class ToolService:
                     tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                     success = not is_err
                     logger.debug(f"Final tool_result: {tool_result}")
+                elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
+                    # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())
+                    headers = {"Content-Type": "application/json"}
+
+                    # Plugin hook: tool pre-invoke for A2A
+                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+                        if tool_metadata:
+                            global_context.metadata[TOOL_METADATA] = tool_metadata
+                        pre_result, context_table = await self._plugin_manager.invoke_hook(
+                            ToolHookType.TOOL_PRE_INVOKE,
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            global_context=global_context,
+                            local_contexts=context_table,
+                            violations_as_exceptions=True,
+                        )
+                        if pre_result.modified_payload:
+                            payload = pre_result.modified_payload
+                            name = payload.name
+                            arguments = payload.args
+                            if payload.headers is not None:
+                                headers = payload.headers.model_dump()
+
+                    # Build request data based on agent type
+                    endpoint_url = a2a_agent_endpoint_url
+                    if a2a_agent_type in ["generic", "jsonrpc"] or endpoint_url.endswith("/"):
+                        # JSONRPC agents: Convert flat query to nested message structure
+                        params = None
+                        if isinstance(arguments, dict) and "query" in arguments and isinstance(arguments["query"], str):
+                            message_id = f"admin-test-{int(time.time())}"
+                            params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": arguments["query"]}]}}
+                            method = arguments.get("method", "message/send")
+                        else:
+                            params = arguments.get("params", arguments) if isinstance(arguments, dict) else arguments
+                            method = arguments.get("method", "message/send") if isinstance(arguments, dict) else "message/send"
+                        request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
+                    else:
+                        # Custom agents: Pass parameters directly
+                        params = arguments if isinstance(arguments, dict) else {}
+                        request_data = {"interaction_type": params.get("interaction_type", "query"), "parameters": params, "protocol_version": a2a_agent_protocol_version}
+
+                    # Add authentication
+                    if a2a_agent_auth_type == "api_key" and a2a_agent_auth_value:
+                        headers["Authorization"] = f"Bearer {a2a_agent_auth_value}"
+                    elif a2a_agent_auth_type == "bearer" and a2a_agent_auth_value:
+                        headers["Authorization"] = f"Bearer {a2a_agent_auth_value}"
+                    elif a2a_agent_auth_type == "query_param" and a2a_agent_auth_query_params:
+                        auth_query_params_decrypted: dict[str, str] = {}
+                        for param_key, encrypted_value in a2a_agent_auth_query_params.items():
+                            if encrypted_value:
+                                try:
+                                    decrypted = decode_auth(encrypted_value)
+                                    auth_query_params_decrypted[param_key] = decrypted.get(param_key, "")
+                                except Exception:
+                                    logger.debug(f"Failed to decrypt query param for key '{param_key}'")
+                        if auth_query_params_decrypted:
+                            endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
+
+                    # Make HTTP request
+                    logger.info(f"Calling A2A agent '{a2a_agent_name}' at {endpoint_url}")
+                    http_response = await self._http_client.post(endpoint_url, json=request_data, headers=headers)
+
+                    if http_response.status_code == 200:
+                        response_data = http_response.json()
+                        if isinstance(response_data, dict) and "response" in response_data:
+                            content = [TextContent(type="text", text=str(response_data["response"]))]
+                        else:
+                            content = [TextContent(type="text", text=str(response_data))]
+                        tool_result = ToolResult(content=content, is_error=False)
+                        success = True
+                    else:
+                        error_message = f"HTTP {http_response.status_code}: {http_response.text}"
+                        content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
+                        tool_result = ToolResult(content=content, is_error=True)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
@@ -4108,9 +4214,21 @@ class ToolService:
         if not agent.enabled:
             raise ToolNotFoundError(f"A2A agent '{agent.name}' is disabled")
 
+        # Force-load all attributes needed by _call_a2a_agent before detaching
+        # (accessing them ensures they're loaded into the object's __dict__)
+        _ = (agent.name, agent.endpoint_url, agent.agent_type, agent.protocol_version, agent.auth_type, agent.auth_value, agent.auth_query_params)
+
+        # Detach agent from session so its loaded data remains accessible after close
+        db.expunge(agent)
+
+        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
+        # This prevents "idle in transaction" connection pool exhaustion under load
+        db.commit()
+        db.close()
+
         # Prepare parameters for A2A invocation
         try:
-            # Make the A2A agent call
+            # Make the A2A agent call (agent is now detached but data is loaded)
             response_data = await self._call_a2a_agent(agent, arguments)
 
             # Convert A2A response to MCP ToolResult format
