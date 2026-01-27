@@ -983,7 +983,7 @@ async def get_overview_partial(
             "uptime_seconds": uptime_seconds,
         }
 
-        return request.app.state.templates.TemplateResponse("overview_partial.html", context)
+        return request.app.state.templates.TemplateResponse(request, "overview_partial.html", context)
 
     except Exception as e:
         LOGGER.error(f"Error rendering overview partial: {e}")
@@ -1658,6 +1658,7 @@ async def admin_servers_partial_html(
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
+            request,
             "pagination_controls.html",
             {
                 "request": request,
@@ -1672,6 +1673,7 @@ async def admin_servers_partial_html(
 
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
+            request,
             "servers_selector_items.html",
             {
                 "request": request,
@@ -1682,6 +1684,7 @@ async def admin_servers_partial_html(
         )
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "servers_partial.html",
         {
             "request": request,
@@ -3560,7 +3563,7 @@ async def admin_login_page(request: Request) -> Response:
 
     # Use external template file
     return request.app.state.templates.TemplateResponse(
-        "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped}
+        request, "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped}
     )
 
 
@@ -3712,8 +3715,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
 
 
-@admin_router.api_route("/logout", methods=["GET", "POST"])
-async def admin_logout(request: Request) -> Response:
+async def _admin_logout(request: Request) -> Response:
     """
     Handle admin logout by clearing authentication cookies.
 
@@ -3743,7 +3745,7 @@ async def admin_logout(request: Request) -> Response:
         >>>
         >>> import asyncio
         >>> async def test_logout_post():
-        ...     response = await admin_logout(mock_request)
+        ...     response = await _admin_logout(mock_request)
         ...     return isinstance(response, RedirectResponse) and response.status_code == 303
         >>>
         >>> asyncio.run(test_logout_post())
@@ -3752,7 +3754,7 @@ async def admin_logout(request: Request) -> Response:
         >>> # Mock GET request (front-channel logout)
         >>> mock_request.method = "GET"
         >>> async def test_logout_get():
-        ...     response = await admin_logout(mock_request)
+        ...     response = await _admin_logout(mock_request)
         ...     return response.status_code == 200
         >>>
         >>> asyncio.run(test_logout_get())
@@ -3774,6 +3776,18 @@ async def admin_logout(request: Request) -> Response:
     response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
 
     return response
+
+
+@admin_router.get("/logout", operation_id="admin_logout_get")
+async def admin_logout_get(request: Request) -> Response:
+    """GET logout endpoint for OIDC front-channel logout."""
+    return await _admin_logout(request)
+
+
+@admin_router.post("/logout", operation_id="admin_logout_post")
+async def admin_logout_post(request: Request) -> Response:
+    """POST logout endpoint for user-initiated UI logout."""
+    return await _admin_logout(request)
 
 
 @admin_router.get("/change-password-required", response_class=HTMLResponse)
@@ -3818,6 +3832,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     root_path = request.scope.get("root_path", "")
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "change-password-required.html",
         {
             "request": request,
@@ -4421,6 +4436,7 @@ async def admin_teams_partial_html(
     if render == "controls":
         # Return only pagination controls
         return request.app.state.templates.TemplateResponse(
+            request,
             "pagination_controls.html",
             {
                 "request": request,
@@ -4447,6 +4463,7 @@ async def admin_teams_partial_html(
             query_params_dict["q"] = q
 
         return request.app.state.templates.TemplateResponse(
+            request,
             "teams_selector_items.html",
             {
                 "request": request,
@@ -4500,6 +4517,7 @@ async def admin_teams_partial_html(
         query_params_dict["visibility"] = visibility
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "teams_partial.html",
         {
             "request": request,
@@ -4593,6 +4611,7 @@ async def admin_list_teams(
 
         # Render template
         return request.app.state.templates.TemplateResponse(
+            request,
             "teams_partial.html",
             {
                 "request": request,
@@ -6324,6 +6343,7 @@ async def admin_users_partial_html(
 
         if render == "selector":
             return request.app.state.templates.TemplateResponse(
+                request,
                 "team_members_selector.html",
                 {
                     "request": request,
@@ -6341,6 +6361,7 @@ async def admin_users_partial_html(
         if render == "controls":
             base_url = f"{settings.app_root_path}/admin/users/partial"
             return request.app.state.templates.TemplateResponse(
+                request,
                 "pagination_controls.html",
                 {
                     "request": request,
@@ -6356,6 +6377,7 @@ async def admin_users_partial_html(
 
         # Render template with paginated data
         return request.app.state.templates.TemplateResponse(
+            request,
             "users_partial.html",
             {
                 "request": request,
@@ -6431,6 +6453,7 @@ async def admin_team_members_partial_html(
         root_path = request.scope.get("root_path", "")
         next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         return request.app.state.templates.TemplateResponse(
+            request,
             "team_users_selector.html",
             {
                 "request": request,
@@ -6510,6 +6533,7 @@ async def admin_team_non_members_partial_html(
         root_path = request.scope.get("root_path", "")
         next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
         return request.app.state.templates.TemplateResponse(
+            request,
             "team_users_selector.html",
             {
                 "request": request,
@@ -7296,6 +7320,7 @@ async def admin_tools_partial_html(
     # If render=controls, return only pagination controls
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
+            request,
             "pagination_controls.html",
             {
                 "request": request,
@@ -7311,6 +7336,7 @@ async def admin_tools_partial_html(
     # If render=selector, return tool selector items for infinite scroll
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
+            request,
             "tools_selector_items.html",
             {
                 "request": request,
@@ -7323,6 +7349,7 @@ async def admin_tools_partial_html(
 
     # Render template with paginated data
     return request.app.state.templates.TemplateResponse(
+        request,
         "tools_partial.html",
         {
             "request": request,
@@ -7431,6 +7458,7 @@ async def admin_tool_ops_partial(
     db.commit()
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "toolops_partial.html",
         {
             "request": request,
@@ -7798,6 +7826,7 @@ async def admin_prompts_partial_html(
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
+            request,
             "pagination_controls.html",
             {
                 "request": request,
@@ -7812,6 +7841,7 @@ async def admin_prompts_partial_html(
 
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
+            request,
             "prompts_selector_items.html",
             {
                 "request": request,
@@ -7823,6 +7853,7 @@ async def admin_prompts_partial_html(
         )
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "prompts_partial.html",
         {
             "request": request,
@@ -7959,6 +7990,7 @@ async def admin_gateways_partial_html(
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
+            request,
             "pagination_controls.html",
             {
                 "request": request,
@@ -7973,11 +8005,13 @@ async def admin_gateways_partial_html(
 
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
+            request,
             "gateways_selector_items.html",
             {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
         )
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "gateways_partial.html",
         {
             "request": request,
@@ -8464,6 +8498,7 @@ async def admin_resources_partial_html(
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
+            request,
             "pagination_controls.html",
             {
                 "request": request,
@@ -8478,6 +8513,7 @@ async def admin_resources_partial_html(
 
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
+            request,
             "resources_selector_items.html",
             {
                 "request": request,
@@ -8489,6 +8525,7 @@ async def admin_resources_partial_html(
         )
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "resources_partial.html",
         {
             "request": request,
@@ -9028,6 +9065,7 @@ async def admin_a2a_partial_html(
 
     if render == "controls":
         return request.app.state.templates.TemplateResponse(
+            request,
             "pagination_controls.html",
             {
                 "request": request,
@@ -9042,6 +9080,7 @@ async def admin_a2a_partial_html(
 
     if render == "selector":
         return request.app.state.templates.TemplateResponse(
+            request,
             "agents_selector_items.html",
             {
                 "request": request,
@@ -9053,6 +9092,7 @@ async def admin_a2a_partial_html(
         )
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "agents_partial.html",
         {
             "request": request,
@@ -12369,6 +12409,7 @@ async def admin_metrics_partial_html(
 
     # Render template
     return request.app.state.templates.TemplateResponse(
+        request,
         "metrics_top_performers_partial.html",
         {
             "request": request,
@@ -15384,7 +15425,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": request.scope.get("root_path", "")}
 
         # Render the partial template
-        return request.app.state.templates.TemplateResponse("plugins_partial.html", context)
+        return request.app.state.templates.TemplateResponse(request, "plugins_partial.html", context)
 
     except Exception as e:
         LOGGER.error(f"Error rendering plugins partial: {e}")
@@ -15922,7 +15963,7 @@ async def catalog_partial(
         "filter_params": filter_params,
     }
 
-    return request.app.state.templates.TemplateResponse("mcp_registry_partial.html", context)
+    return request.app.state.templates.TemplateResponse(request, "mcp_registry_partial.html", context)
 
 
 # ===================================
@@ -15979,6 +16020,7 @@ async def get_system_stats(
         if request.headers.get("hx-request"):
             # Return HTML partial for HTMX
             return request.app.state.templates.TemplateResponse(
+                request,
                 "metrics_partial.html",
                 {
                     "request": request,
@@ -16117,6 +16159,7 @@ async def get_maintenance_partial(
     }
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "maintenance_partial.html",
         {"request": request, "payload": payload, "root_path": root_path},
     )
@@ -16140,7 +16183,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
         HTMLResponse: Rendered observability dashboard template
     """
     root_path = request.scope.get("root_path", "")
-    return request.app.state.templates.TemplateResponse("observability_partial.html", {"request": request, "root_path": root_path})
+    return request.app.state.templates.TemplateResponse(request, "observability_partial.html", {"request": request, "root_path": root_path})
 
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
@@ -16156,7 +16199,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
         HTMLResponse: Rendered metrics dashboard template
     """
     root_path = request.scope.get("root_path", "")
-    return request.app.state.templates.TemplateResponse("observability_metrics.html", {"request": request, "root_path": root_path})
+    return request.app.state.templates.TemplateResponse(request, "observability_metrics.html", {"request": request, "root_path": root_path})
 
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
@@ -16194,7 +16237,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
             "avg_duration_ms": float(result.avg_duration_ms or 0),
         }
 
-        return request.app.state.templates.TemplateResponse("observability_stats.html", {"request": request, "stats": stats})
+        return request.app.state.templates.TemplateResponse(request, "observability_stats.html", {"request": request, "stats": stats})
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -16293,7 +16336,7 @@ async def get_observability_traces(
         traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
 
         root_path = request.scope.get("root_path", "")
-        return request.app.state.templates.TemplateResponse("observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
+        return request.app.state.templates.TemplateResponse(request, "observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -16326,7 +16369,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
             raise HTTPException(status_code=404, detail="Trace not found")
 
         root_path = request.scope.get("root_path", "")
-        return request.app.state.templates.TemplateResponse("observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
+        return request.app.state.templates.TemplateResponse(request, "observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
     finally:
         # Ensure close() always runs even if commit() fails
         try:
@@ -17663,6 +17706,7 @@ async def get_tools_partial(
     """
     root_path = request.scope.get("root_path", "")
     return request.app.state.templates.TemplateResponse(
+        request,
         "observability_tools.html",
         {
             "request": request,
@@ -17876,6 +17920,7 @@ async def get_prompts_partial(
     """
     root_path = request.scope.get("root_path", "")
     return request.app.state.templates.TemplateResponse(
+        request,
         "observability_prompts.html",
         {
             "request": request,
@@ -18089,6 +18134,7 @@ async def get_resources_partial(
     """
     root_path = request.scope.get("root_path", "")
     return request.app.state.templates.TemplateResponse(
+        request,
         "observability_resources.html",
         {
             "request": request,
@@ -18149,6 +18195,7 @@ async def get_performance_stats(
         if request.headers.get("hx-request"):
             root_path = request.scope.get("root_path", "")
             return request.app.state.templates.TemplateResponse(
+                request,
                 "performance_partial.html",
                 {
                     "request": request,

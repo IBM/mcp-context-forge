@@ -583,6 +583,9 @@ testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
   "ignore:Passing 'msg' argument to .*\\.cancel\\(\\) is deprecated:DeprecationWarning", # From 3rd party libraries
+  "ignore:Use `streamable_http_client` instead\\.:DeprecationWarning",
+  "ignore:'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated\\.:DeprecationWarning",
+  "ignore:coroutine 'AsyncMockMixin\\._execute_mock_call' was never awaited:RuntimeWarning",
 ]
 
 # Set environment variables for all tests

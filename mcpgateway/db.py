@@ -598,7 +598,7 @@ def reset_connection_on_checkin(dbapi_connection, _connection_record):
 
 
 @event.listens_for(engine, "reset")
-def reset_connection_on_reset(dbapi_connection, _connection_record):
+def reset_connection_on_reset(dbapi_connection, _connection_record, _reset_state):
     """Reset connection state when the pool resets a connection.
 
     This handles the case where a connection is being reset before reuse.

@@ -139,9 +139,8 @@ class SSLKeyManager:
         if self._temp_key_file and self._temp_key_file.exists():
             try:
                 self._temp_key_file.unlink()
-                logger.info(f"Cleaned up temporary key file: {self._temp_key_file}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up temporary key file: {e}")
+            except Exception:
+                pass
             finally:
                 self._temp_key_file = None
 
