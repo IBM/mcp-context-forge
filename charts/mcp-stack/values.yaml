@@ -835,7 +835,7 @@ migration:
   # Migration command configuration
   command:
     waitForDb: "python3 /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
-    migrate: "alembic upgrade head"
+    migrate: "python3 -m mcpgateway.bootstrap_db"
 
 ########################################################################
 # POSTGRES DATABASE
