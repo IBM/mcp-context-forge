@@ -572,6 +572,10 @@ async def get_current_user(
 
                 if request and global_context:
                     request.state.plugin_global_context = global_context
+
+                if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                    _inject_userinfo_instate(request, user)
+
                 return user
             # If continue_processing=True (no payload), fall through to standard auth
 
@@ -678,6 +682,10 @@ async def get_current_user(
                                     detail="User not found in database",
                                     headers={"WWW-Authenticate": "Bearer"},
                                 )
+
+                        if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                            _inject_userinfo_instate(request, _user_from_cached_dict(cached_ctx.user))
+
                         return _user_from_cached_dict(cached_ctx.user)
 
                     # User not in cache but context was (shouldn't happen, but handle it)
@@ -779,6 +787,9 @@ async def get_current_user(
                             detail="User not found",
                             headers={"WWW-Authenticate": "Bearer"},
                         )
+
+                if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+                    _inject_userinfo_instate(request, _batched_user)
 
                 return _batched_user
 
@@ -918,4 +929,48 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if plugin_manager and plugin_manager.config.plugin_settings.include_user_info:
+        _inject_userinfo_instate(request, user)
+
     return user
+
+
+def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[EmailUser] = None) -> None:
+    """This function injects user related information into the plugin_global_context, if the config has
+    include_user_info key set as true.
+
+    Args:
+        request: Optional request object for plugin hooks
+        user: User related information
+    """
+
+    logger = logging.getLogger(__name__)
+    # Get request ID from correlation ID context (set by CorrelationIDMiddleware)
+    request_id = get_correlation_id()
+    if not request_id:
+        # Fallback chain for safety
+        if request and hasattr(request, "state") and hasattr(request.state, "request_id"):
+            request_id = request.state.request_id
+        else:
+            request_id = uuid.uuid4().hex
+            logger.debug(f"Generated fallback request ID in get_current_user: {request_id}")
+
+    # Get plugin contexts from request state if available
+    global_context = getattr(request.state, "plugin_global_context", None) if request else None
+    if not global_context:
+        # Create global context
+        global_context = GlobalContext(
+            request_id=request_id,
+            server_id=None,
+            tenant_id=None,
+        )
+
+    if user:
+        if not global_context.user:
+            global_context.user = {}
+        global_context.user["email"] = user.email
+        global_context.user["is_admin"] = user.is_admin
+        global_context.user["full_name"] = user.full_name
+
+    if request and global_context:
+        request.state.plugin_global_context = global_context
