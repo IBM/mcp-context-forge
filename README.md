@@ -2302,6 +2302,43 @@ MCP Gateway uses Alembic for database migrations. Common commands:
 | `RETRY_MAX_DELAY`             | Maximum delay between retries (seconds)          | `60`                  | int > 0 |
 | `RETRY_JITTER_MAX`            | Maximum jitter fraction of base delay            | `0.5`                 | float 0-1 |
 
+### CPU Spin Loop Mitigation (Issue #2360)
+
+These settings mitigate CPU spin loops that can occur when SSE/MCP connections are cancelled and internal tasks don't respond to `CancelledError`. The spin happens in anyio's `_deliver_cancellation` method.
+
+> 📖 **Full Documentation**: See [CPU Spin Loop Mitigation Guide](https://ibm.github.io/mcp-context-forge/operations/cpu-spin-loop-mitigation/) for detailed explanation and tuning advice.
+>
+> 🐛 **Related Issues**: [Issue #2360](https://github.com/IBM/mcp-context-forge/issues/2360), [anyio#695](https://github.com/agronholm/anyio/issues/695)
+
+**Layer 1: SSE Connection Protection** - Detect and close dead connections early
+
+| Setting                    | Description                                              | Default | Options     |
+| -------------------------- | -------------------------------------------------------- | ------- | ----------- |
+| `SSE_SEND_TIMEOUT`         | ASGI send() timeout - protects against hung connections | `30.0`  | float (0=disabled) |
+| `SSE_RAPID_YIELD_WINDOW_MS`| Time window for rapid yield detection (milliseconds)    | `1000`  | int > 0     |
+| `SSE_RAPID_YIELD_MAX`      | Max yields per window before assuming client dead       | `50`    | int (0=disabled) |
+
+**Layer 2: Cleanup Timeouts** - Limit how long cleanup waits for stuck tasks
+
+| Setting                          | Description                                        | Default | Options |
+| -------------------------------- | -------------------------------------------------- | ------- | ------- |
+| `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | Session `__aexit__` timeout (seconds)            | `5.0`   | float > 0 |
+| `SSE_TASK_GROUP_CLEANUP_TIMEOUT`   | SSE task group cleanup timeout (seconds)         | `5.0`   | float > 0 |
+
+**Layer 3: EXPERIMENTAL - anyio Monkey-Patch** - Last resort for stubborn spin loops
+
+| Setting                                  | Description                                                   | Default | Options |
+| ---------------------------------------- | ------------------------------------------------------------- | ------- | ------- |
+| `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED`    | Enable anyio `_deliver_cancellation` iteration limit          | `false` | bool    |
+| `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS`   | Max iterations before forcing termination                     | `100`   | int > 0 |
+
+> ⚠️ **Layer 3 Warning**: The monkey-patch is experimental and may be removed when upstream fixes become available. Only enable if Layers 1-2 don't fully resolve the issue.
+>
+> 🔧 **Tuning Tips**:
+> - **Aggressive** (faster recovery): Set cleanup timeouts to `0.5`-`2.0` seconds
+> - **Conservative** (reliable cleanup): Keep defaults at `5.0` seconds
+> - Worker recycling (`GUNICORN_MAX_REQUESTS`) provides additional protection
+
 </details>
 
 ---

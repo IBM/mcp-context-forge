@@ -14,13 +14,16 @@ import asyncio
 from collections import deque
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, Optional
 import uuid
 
 # Third-Party
+import anyio
+from anyio._backends._asyncio import CancelScope
 from fastapi import Request
 import orjson
-from sse_starlette.sse import EventSourceResponse
+from sse_starlette.sse import EventSourceResponse as BaseEventSourceResponse
+from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
@@ -30,6 +33,235 @@ from mcpgateway.transports.base import Transport
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+# =============================================================================
+# EXPERIMENTAL WORKAROUND: anyio _deliver_cancellation spin loop (anyio#695)
+# =============================================================================
+# anyio's _deliver_cancellation can spin at 100% CPU when tasks don't respond
+# to CancelledError. This optional monkey-patch adds a max iteration limit to
+# prevent indefinite spinning. After the limit is reached, we give up delivering
+# cancellation and let the scope exit (tasks will be orphaned but won't spin).
+#
+# This workaround is DISABLED by default. Enable via:
+#   ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true
+#
+# Trade-offs:
+# - Prevents indefinite CPU spin (good)
+# - May leave some tasks uncancelled after max iterations (usually harmless)
+# - Worker recycling (GUNICORN_MAX_REQUESTS) cleans up orphaned tasks
+#
+# This workaround may be removed when anyio or MCP SDK fix the underlying issue.
+# See: https://github.com/agronholm/anyio/issues/695
+# =============================================================================
+
+# Store original for potential restoration and for the patch to call
+_original_deliver_cancellation = CancelScope._deliver_cancellation  # type: ignore[attr-defined]  # pylint: disable=protected-access
+_patch_applied = False  # pylint: disable=invalid-name
+
+
+def _create_patched_deliver_cancellation(max_iterations: int):  # noqa: C901
+    """Create a patched _deliver_cancellation with configurable max iterations.
+
+    Args:
+        max_iterations: Maximum iterations before giving up cancellation delivery.
+
+    Returns:
+        Patched function that limits cancellation delivery iterations.
+    """
+
+    def _patched_deliver_cancellation(self: CancelScope, origin: CancelScope) -> bool:  # pylint: disable=protected-access
+        """Patched _deliver_cancellation with max iteration limit to prevent spin.
+
+        This wraps anyio's original _deliver_cancellation to track iteration count
+        and give up after a maximum number of attempts. This prevents the CPU spin
+        loop that occurs when tasks don't respond to CancelledError.
+
+        Args:
+            self: The cancel scope being processed.
+            origin: The cancel scope that originated the cancellation.
+
+        Returns:
+            True if delivery should be retried, False if done or max iterations reached.
+        """
+        # Track iteration count on the origin scope (the one that initiated cancel)
+        if not hasattr(origin, "_delivery_iterations"):
+            origin._delivery_iterations = 0  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+        origin._delivery_iterations += 1  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+        # Check if we've exceeded the maximum iterations
+        if origin._delivery_iterations > max_iterations:  # type: ignore[attr-defined]  # pylint: disable=protected-access
+            # Log warning and give up - this prevents indefinite spin
+            logger.warning(
+                "anyio cancel delivery exceeded %d iterations - giving up to prevent CPU spin. "
+                "Some tasks may not have been properly cancelled. "
+                "Disable with ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false if this causes issues.",
+                max_iterations,
+            )
+            # Clear the cancel handle to stop further retries
+            if hasattr(self, "_cancel_handle") and self._cancel_handle is not None:  # pylint: disable=protected-access
+                self._cancel_handle = None  # pylint: disable=protected-access
+            return False  # Don't retry
+
+        # Call the original implementation
+        return _original_deliver_cancellation(self, origin)
+
+    return _patched_deliver_cancellation
+
+
+def apply_anyio_cancel_delivery_patch() -> bool:
+    """Apply the anyio _deliver_cancellation monkey-patch if enabled in config.
+
+    This function is idempotent - calling it multiple times has no additional effect.
+
+    Returns:
+        True if patch was applied (or already applied), False if disabled.
+    """
+    global _patch_applied  # pylint: disable=global-statement
+
+    if _patch_applied:
+        return True
+
+    try:
+        if not settings.anyio_cancel_delivery_patch_enabled:
+            logger.debug("anyio _deliver_cancellation patch DISABLED. Enable with ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=true if you experience CPU spin loops.")
+            return False
+
+        max_iterations = settings.anyio_cancel_delivery_max_iterations
+        patched_func = _create_patched_deliver_cancellation(max_iterations)
+        CancelScope._deliver_cancellation = patched_func  # type: ignore[method-assign]  # pylint: disable=protected-access
+        _patch_applied = True
+
+        logger.info(
+            "anyio _deliver_cancellation patch ENABLED (max_iterations=%d). "
+            "This is an experimental workaround for anyio#695. "
+            "Disable with ANYIO_CANCEL_DELIVERY_PATCH_ENABLED=false if it causes issues.",
+            max_iterations,
+        )
+        return True
+
+    except Exception as e:
+        logger.warning("Failed to apply anyio _deliver_cancellation patch: %s", e)
+        return False
+
+
+def remove_anyio_cancel_delivery_patch() -> bool:
+    """Remove the anyio _deliver_cancellation monkey-patch.
+
+    Restores the original anyio implementation.
+
+    Returns:
+        True if patch was removed, False if it wasn't applied.
+    """
+    global _patch_applied  # pylint: disable=global-statement
+
+    if not _patch_applied:
+        return False
+
+    try:
+        CancelScope._deliver_cancellation = _original_deliver_cancellation  # type: ignore[method-assign]  # pylint: disable=protected-access
+        _patch_applied = False
+        logger.info("anyio _deliver_cancellation patch removed - restored original implementation")
+        return True
+    except Exception as e:
+        logger.warning("Failed to remove anyio _deliver_cancellation patch: %s", e)
+        return False
+
+
+# Apply patch at module load time if enabled
+apply_anyio_cancel_delivery_patch()
+
+
+def _get_sse_cleanup_timeout() -> float:
+    """Get SSE task group cleanup timeout from config.
+
+    This timeout controls how long to wait for SSE task group tasks to respond
+    to cancellation before forcing cleanup. Prevents CPU spin loops in anyio's
+    _deliver_cancellation when tasks don't properly handle CancelledError.
+
+    Returns:
+        Cleanup timeout in seconds (default: 5.0)
+    """
+    try:
+        return settings.sse_task_group_cleanup_timeout
+    except Exception:
+        return 5.0  # Fallback default
+
+
+class EventSourceResponse(BaseEventSourceResponse):
+    """Patched EventSourceResponse with CPU spin detection.
+
+    This mitigates a CPU spin loop issue (anyio#695) where _deliver_cancellation
+    spins at 100% CPU when tasks in the SSE task group don't respond to
+    cancellation.
+
+    Instead of trying to timeout the task group (which would affect normal
+    SSE connections), we copy the __call__ method and add a deadline to
+    the cancel scope to ensure cleanup doesn't hang indefinitely.
+
+    See:
+    - https://github.com/agronholm/anyio/issues/695
+    - https://github.com/anthropics/claude-agent-sdk-python/issues/378
+    """
+
+    def enable_compression(self, force: bool = False) -> None:  # noqa: ARG002
+        """Enable compression (no-op for SSE streams).
+
+        SSE streams don't support compression as per sse_starlette.
+        This override prevents NotImplementedError from parent class.
+
+        Args:
+            force: Ignored - compression not supported for SSE.
+        """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Handle SSE request with cancel scope deadline to prevent spin.
+
+        This method is copied from sse_starlette with one key modification:
+        the task group's cancel_scope gets a deadline set when cancellation
+        starts, preventing indefinite spinning if tasks don't respond.
+
+        Args:
+            scope: ASGI scope dictionary.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        # Copy of sse_starlette.sse.EventSourceResponse.__call__ with deadline fix
+        async with anyio.create_task_group() as task_group:
+            # Add deadline to cancel scope to prevent indefinite spin on cleanup
+            # The deadline is set far in the future initially, and only becomes
+            # relevant if the scope is cancelled and cleanup takes too long
+
+            async def cancel_on_finish(coro: Callable[[], Awaitable[None]]) -> None:
+                """Execute coroutine then cancel task group with bounded deadline.
+
+                This wrapper runs the given coroutine and, upon completion, cancels
+                the parent task group with a deadline to prevent indefinite spinning
+                if other tasks don't respond to cancellation (anyio#695 mitigation).
+
+                Args:
+                    coro: Async callable to execute before triggering cancellation.
+                """
+                await coro()
+                # When cancelling, set a deadline to prevent indefinite spin
+                # if other tasks don't respond to cancellation
+                task_group.cancel_scope.deadline = anyio.current_time() + _get_sse_cleanup_timeout()
+                task_group.cancel_scope.cancel()
+
+            task_group.start_soon(cancel_on_finish, lambda: self._stream_response(send))
+            task_group.start_soon(cancel_on_finish, lambda: self._ping(send))
+            task_group.start_soon(cancel_on_finish, self._listen_for_exit_signal)
+
+            if self.data_sender_callable:
+                task_group.start_soon(self.data_sender_callable)
+
+            # Wait for the client to disconnect last
+            task_group.start_soon(cancel_on_finish, lambda: self._listen_for_disconnect(receive))
+
+        if self.background is not None:
+            await self.background()
+
 
 # Pre-computed SSE frame components for performance
 _SSE_EVENT_PREFIX = b"event: "
@@ -388,11 +620,17 @@ class SSETransport(Transport):
         """
         return self._connected
 
-    async def create_sse_response(self, request: Request) -> EventSourceResponse:
+    async def create_sse_response(
+        self,
+        request: Request,
+        on_disconnect_callback: Callable[[], Awaitable[None]] | None = None,
+    ) -> EventSourceResponse:
         """Create SSE response for streaming.
 
         Args:
             request: FastAPI request (used for disconnection detection)
+            on_disconnect_callback: Optional async callback to run when client disconnects.
+                Used for defensive cleanup (e.g., cancelling respond tasks).
 
         Returns:
             SSE response object
@@ -532,11 +770,25 @@ class SSETransport(Transport):
             finally:
                 logger.info("SSE event generator completed: %s", self._session_id)
                 self._client_gone.set()  # Always set client_gone on exit to clean up
+                # CRITICAL: Also invoke disconnect callback on generator end (Finding 3)
+                # This covers server-initiated close, errors, and cancellation - not just client close
+                if on_disconnect_callback:
+                    try:
+                        await on_disconnect_callback()
+                    except Exception as e:
+                        logger.warning("Disconnect callback in finally failed for %s: %s", self._session_id, e)
 
         async def on_client_close(_scope: dict) -> None:
             """Handle client close event from sse_starlette."""
             logger.info("SSE client close handler called: %s", self._session_id)
             self._client_gone.set()
+
+            # Defensive cleanup via callback (if provided)
+            if on_disconnect_callback:
+                try:
+                    await on_disconnect_callback()
+                except Exception as e:
+                    logger.warning("Disconnect callback failed for %s: %s", self._session_id, e)
 
         return EventSourceResponse(
             event_generator(),

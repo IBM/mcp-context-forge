@@ -128,13 +128,13 @@ from urllib.parse import urlencode
 import uuid
 
 # Third-Party
+import anyio
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from mcp.server import Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 import orjson
-from sse_starlette.sse import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
@@ -149,6 +149,9 @@ except ImportError:
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.translate_header_utils import extract_env_vars_from_headers, NormalizedMappings, parse_header_mappings
+
+# Use patched EventSourceResponse with CPU spin protection (anyio#695 fix)
+from mcpgateway.transports.sse_transport import EventSourceResponse
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 # Initialize logging service first
@@ -2144,9 +2147,26 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         await server.serve()
     finally:
         await _shutdown()
-        # Clean up streamable HTTP context
+        # Clean up streamable HTTP context with timeout to prevent spin loop
+        # if tasks don't respond to cancellation (anyio _deliver_cancellation issue)
         if streamable_context:
-            await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+            # Get cleanup timeout from config (with fallback for standalone usage)
+            try:
+                # First-Party
+                from mcpgateway.config import settings as cfg  # pylint: disable=import-outside-toplevel
+
+                cleanup_timeout = cfg.mcp_session_pool_cleanup_timeout
+            except Exception:
+                cleanup_timeout = 5.0
+            # Use anyio.move_on_after instead of asyncio.wait_for to properly propagate
+            # cancellation through anyio's cancel scope system (prevents orphaned spinning tasks)
+            with anyio.move_on_after(cleanup_timeout) as cleanup_scope:
+                try:
+                    await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+                except Exception as e:
+                    LOGGER.debug(f"Error cleaning up streamable HTTP context: {e}")
+            if cleanup_scope.cancelled_caught:
+                LOGGER.warning("Streamable HTTP context cleanup timed out - proceeding anyway")
 
 
 async def _simple_sse_pump(client: "Any", url: str, max_retries: int, initial_retry_delay: float) -> None:

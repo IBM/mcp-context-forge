@@ -298,8 +298,171 @@ class SessionRegistry(SessionBackend):
         super().__init__(backend=backend, redis_url=redis_url, database_url=database_url, session_ttl=session_ttl, message_ttl=message_ttl)
         self._sessions: Dict[str, Any] = {}  # Local transport cache
         self._client_capabilities: Dict[str, Dict[str, Any]] = {}  # Client capabilities by session_id
+        self._respond_tasks: Dict[str, asyncio.Task] = {}  # Track respond tasks for cancellation
+        self._stuck_tasks: Dict[str, asyncio.Task] = {}  # Tasks that couldn't be cancelled (for monitoring)
+        self._closing_sessions: set[str] = set()  # Sessions being closed - respond loop should exit
         self._lock = asyncio.Lock()
         self._cleanup_task: Task | None = None
+        self._stuck_task_reaper: Task | None = None  # Reaper for stuck tasks
+
+    def register_respond_task(self, session_id: str, task: asyncio.Task) -> None:
+        """Register a respond task for later cancellation.
+
+        Associates an asyncio Task with a session_id so it can be cancelled
+        when the session is removed. This prevents orphaned tasks that cause
+        CPU spin loops.
+
+        Args:
+            session_id: Session identifier the task belongs to.
+            task: The asyncio Task to track.
+        """
+        self._respond_tasks[session_id] = task
+        logger.debug(f"Registered respond task for session {session_id}")
+
+    async def _cancel_respond_task(self, session_id: str, timeout: float = 5.0) -> None:
+        """Cancel and await a respond task with timeout.
+
+        Safely cancels the respond task associated with a session. Uses a timeout
+        to prevent hanging if the task doesn't respond to cancellation.
+
+        If initial cancellation times out, escalates by force-disconnecting the
+        transport to unblock the task, then retries cancellation (Finding 1 fix).
+
+        Args:
+            session_id: Session identifier whose task should be cancelled.
+            timeout: Maximum seconds to wait for task cancellation. Default 5.0.
+        """
+        task = self._respond_tasks.get(session_id)
+        if task is None:
+            return
+
+        if task.done():
+            # Task already finished - safe to remove from tracking
+            self._respond_tasks.pop(session_id, None)
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Respond task for {session_id} failed with: {e}")
+            return
+
+        task.cancel()
+        logger.debug(f"Cancelling respond task for session {session_id}")
+
+        try:
+            await asyncio.wait_for(task, timeout=timeout)
+            # Cancellation successful - remove from tracking
+            self._respond_tasks.pop(session_id, None)
+            logger.debug(f"Respond task cancelled for session {session_id}")
+        except asyncio.TimeoutError:
+            # ESCALATION (Finding 1): Force-disconnect transport to unblock the task
+            logger.warning(f"Respond task cancellation timed out for {session_id}, " f"escalating with transport disconnect")
+
+            # Force-disconnect the transport to unblock any pending I/O
+            transport = self._sessions.get(session_id)
+            if transport and hasattr(transport, "disconnect"):
+                try:
+                    await transport.disconnect()
+                    logger.debug(f"Force-disconnected transport for {session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to force-disconnect transport for {session_id}: {e}")
+
+            # Retry cancellation with shorter timeout
+            if not task.done():
+                try:
+                    await asyncio.wait_for(task, timeout=2.0)
+                    self._respond_tasks.pop(session_id, None)
+                    logger.info(f"Respond task cancelled after escalation for {session_id}")
+                except asyncio.TimeoutError:
+                    # Still stuck - move to stuck_tasks for monitoring (Finding 2 fix)
+                    self._respond_tasks.pop(session_id, None)
+                    self._stuck_tasks[session_id] = task
+                    logger.error(f"Respond task for {session_id} still stuck after escalation, " f"moved to stuck_tasks for monitoring (total stuck: {len(self._stuck_tasks)})")
+                except asyncio.CancelledError:
+                    self._respond_tasks.pop(session_id, None)
+                    logger.info(f"Respond task cancelled after escalation for {session_id}")
+                except Exception as e:
+                    self._respond_tasks.pop(session_id, None)
+                    logger.warning(f"Error during retry cancellation for {session_id}: {e}")
+            else:
+                self._respond_tasks.pop(session_id, None)
+                logger.debug(f"Respond task completed during escalation for {session_id}")
+
+        except asyncio.CancelledError:
+            # Cancellation successful - remove from tracking
+            self._respond_tasks.pop(session_id, None)
+            logger.debug(f"Respond task cancelled for session {session_id}")
+        except Exception as e:
+            # Remove from tracking on unexpected error - task state unknown
+            self._respond_tasks.pop(session_id, None)
+            logger.warning(f"Error during respond task cancellation for {session_id}: {e}")
+
+    async def _reap_stuck_tasks(self) -> None:
+        """Periodically clean up stuck tasks that have completed.
+
+        This reaper runs every 30 seconds and:
+        1. Removes completed tasks from _stuck_tasks
+        2. Retries cancellation for tasks that are still running
+        3. Logs warnings for tasks that remain stuck
+
+        This prevents memory leaks from tasks that eventually complete after
+        being moved to _stuck_tasks during escalation.
+        """
+        reap_interval = 30.0  # seconds
+        retry_timeout = 2.0  # seconds for retry cancellation
+
+        while True:
+            try:
+                await asyncio.sleep(reap_interval)
+
+                if not self._stuck_tasks:
+                    continue
+
+                # Collect completed and still-stuck tasks
+                completed = []
+                still_stuck = []
+
+                for session_id, task in list(self._stuck_tasks.items()):
+                    if task.done():
+                        completed.append(session_id)
+                        try:
+                            task.result()  # Consume result to avoid warnings
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    else:
+                        still_stuck.append((session_id, task))
+
+                # Remove completed tasks
+                for session_id in completed:
+                    self._stuck_tasks.pop(session_id, None)
+
+                if completed:
+                    logger.info(f"Reaped {len(completed)} completed stuck tasks")
+
+                # Retry cancellation for still-stuck tasks
+                for session_id, task in still_stuck:
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=retry_timeout)
+                        self._stuck_tasks.pop(session_id, None)
+                        logger.info(f"Stuck task {session_id} finally cancelled during reap")
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Task {session_id} still stuck after reap retry")
+                    except asyncio.CancelledError:
+                        self._stuck_tasks.pop(session_id, None)
+                        logger.info(f"Stuck task {session_id} cancelled during reap")
+                    except Exception as e:
+                        logger.warning(f"Error during stuck task reap for {session_id}: {e}")
+
+                if self._stuck_tasks:
+                    logger.warning(f"Stuck tasks remaining: {len(self._stuck_tasks)}")
+
+            except asyncio.CancelledError:
+                logger.debug("Stuck task reaper cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in stuck task reaper: {e}")
 
     async def initialize(self) -> None:
         """Initialize the registry with async setup.
@@ -344,6 +507,10 @@ class SessionRegistry(SessionBackend):
             self._cleanup_task = asyncio.create_task(self._memory_cleanup_task())
             logger.info("Memory cleanup task started")
 
+        # Start stuck task reaper for all backends
+        self._stuck_task_reaper = asyncio.create_task(self._reap_stuck_tasks())
+        logger.info("Stuck task reaper started")
+
     async def shutdown(self) -> None:
         """Shutdown the registry and clean up resources.
 
@@ -370,10 +537,56 @@ class SessionRegistry(SessionBackend):
             except asyncio.CancelledError:
                 pass
 
+        # Cancel stuck task reaper
+        if self._stuck_task_reaper:
+            self._stuck_task_reaper.cancel()
+            try:
+                await self._stuck_task_reaper
+            except asyncio.CancelledError:
+                pass
+
+        # CRITICAL: Cancel ALL respond tasks to prevent CPU spin loops
+        if self._respond_tasks:
+            logger.info(f"Cancelling {len(self._respond_tasks)} respond tasks")
+            tasks_to_cancel = list(self._respond_tasks.values())
+            self._respond_tasks.clear()
+
+            for task in tasks_to_cancel:
+                if not task.done():
+                    task.cancel()
+
+            if tasks_to_cancel:
+                try:
+                    await asyncio.wait_for(asyncio.gather(*tasks_to_cancel, return_exceptions=True), timeout=10.0)
+                    logger.info("All respond tasks cancelled successfully")
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout waiting for respond tasks to cancel")
+
+        # Also cancel any stuck tasks (tasks that previously couldn't be cancelled)
+        if self._stuck_tasks:
+            logger.warning(f"Attempting final cancellation of {len(self._stuck_tasks)} stuck tasks")
+            stuck_to_cancel = list(self._stuck_tasks.values())
+            self._stuck_tasks.clear()
+
+            for task in stuck_to_cancel:
+                if not task.done():
+                    task.cancel()
+
+            if stuck_to_cancel:
+                try:
+                    await asyncio.wait_for(asyncio.gather(*stuck_to_cancel, return_exceptions=True), timeout=5.0)
+                    logger.info("Stuck tasks cancelled during shutdown")
+                except asyncio.TimeoutError:
+                    logger.error("Some stuck tasks could not be cancelled during shutdown")
+
         # Close Redis pubsub (but not the shared client)
+        # Use timeout to prevent blocking if pubsub doesn't close cleanly
+        cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
         if self._backend == "redis" and getattr(self, "_pubsub", None):
             try:
-                await self._pubsub.aclose()
+                await asyncio.wait_for(self._pubsub.aclose(), timeout=cleanup_timeout)
+            except asyncio.TimeoutError:
+                logger.warning("Redis pubsub close timed out - proceeding anyway")
             except Exception as e:
                 logger.error(f"Error closing Redis pubsub: {e}")
             # Don't close self._redis - it's the shared client managed by redis_client.py
@@ -607,15 +820,27 @@ class SessionRegistry(SessionBackend):
         if self._backend == "none":
             return
 
-        # Clean up local transport
-        transport = None
-        async with self._lock:
-            if session_id in self._sessions:
-                transport = self._sessions.pop(session_id)
-            # Also clean up client capabilities
-            if session_id in self._client_capabilities:
-                self._client_capabilities.pop(session_id)
-                logger.debug(f"Removed capabilities for session {session_id}")
+        # Mark session as closing FIRST so respond loop can exit early
+        # This allows the loop to exit without waiting for cancellation to complete
+        self._closing_sessions.add(session_id)
+
+        try:
+            # CRITICAL: Cancel respond task before any cleanup
+            # This prevents orphaned tasks that cause CPU spin loops
+            await self._cancel_respond_task(session_id)
+
+            # Clean up local transport
+            transport = None
+            async with self._lock:
+                if session_id in self._sessions:
+                    transport = self._sessions.pop(session_id)
+                # Also clean up client capabilities
+                if session_id in self._client_capabilities:
+                    self._client_capabilities.pop(session_id)
+                    logger.debug(f"Removed capabilities for session {session_id}")
+        finally:
+            # Always remove from closing set
+            self._closing_sessions.discard(session_id)
 
         # Disconnect transport if found
         if transport:
@@ -856,6 +1081,9 @@ class SessionRegistry(SessionBackend):
             session_id: Session identifier to respond for.
             base_url: Base URL for API calls (used for RPC endpoints).
 
+        Raises:
+            asyncio.CancelledError: When the respond task is cancelled (e.g., on session removal).
+
         Examples:
             >>> import asyncio
             >>> from mcpgateway.cache.session_registry import SessionRegistry
@@ -890,10 +1118,36 @@ class SessionRegistry(SessionBackend):
             pubsub = self._redis.pubsub()
             await pubsub.subscribe(session_id)
 
+            # Use timeout-based polling instead of infinite listen() to allow exit checks
+            # This is critical for allowing cancellation to work (Finding 2)
+            poll_timeout = 1.0  # Check every second if session still exists
+
             try:
-                async for msg in pubsub.listen():
-                    if msg["type"] != "message":
+                while True:
+                    # Check if session still exists or is closing - exit early
+                    if session_id not in self._sessions or session_id in self._closing_sessions:
+                        logger.info(f"Session {session_id} removed or closing, exiting Redis respond loop")
+                        break
+
+                    # Use get_message with timeout instead of blocking listen()
+                    try:
+                        msg = await asyncio.wait_for(
+                            pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout), timeout=poll_timeout + 0.5  # Slightly longer to account for Redis timeout
+                        )
+                    except asyncio.TimeoutError:
+                        # No message, loop back to check session existence
                         continue
+
+                    if msg is None:
+                        # CRITICAL: Sleep to prevent tight loop when get_message returns immediately
+                        # This can happen in certain Redis states after disconnects
+                        await asyncio.sleep(0.1)
+                        continue
+                    if msg["type"] != "message":
+                        # Sleep on non-message types to prevent spin in edge cases
+                        await asyncio.sleep(0.1)
+                        continue
+
                     data = orjson.loads(msg["data"])
                     message = data.get("message", {})
                     transport = self.get_session_sync(session_id)
@@ -901,13 +1155,30 @@ class SessionRegistry(SessionBackend):
                         await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
+                raise  # Re-raise to properly complete cancellation
+            except Exception as e:
+                logger.error(f"PubSub listener error for session {session_id}: {e}")
             finally:
-                await pubsub.unsubscribe(session_id)
+                # Pubsub cleanup first - use timeouts to prevent blocking
+                cleanup_timeout = settings.mcp_session_pool_cleanup_timeout
                 try:
-                    await pubsub.aclose()
-                except AttributeError:
-                    await pubsub.close()
+                    await asyncio.wait_for(pubsub.unsubscribe(session_id), timeout=cleanup_timeout)
+                except asyncio.TimeoutError:
+                    logger.debug(f"Pubsub unsubscribe timed out for session {session_id}")
+                except Exception as e:
+                    logger.debug(f"Error unsubscribing pubsub for session {session_id}: {e}")
+                try:
+                    try:
+                        await asyncio.wait_for(pubsub.aclose(), timeout=cleanup_timeout)
+                    except AttributeError:
+                        await asyncio.wait_for(pubsub.close(), timeout=cleanup_timeout)
+                except asyncio.TimeoutError:
+                    logger.debug(f"Pubsub close timed out for session {session_id}")
+                except Exception as e:
+                    logger.debug(f"Error closing pubsub for session {session_id}: {e}")
                 logger.info(f"Cleaned up pubsub for session {session_id}")
+                # Clean up task reference LAST (idempotent - may already be removed by _cancel_respond_task)
+                self._respond_tasks.pop(session_id, None)
 
         elif self._backend == "database":
 
@@ -1039,6 +1310,9 @@ class SessionRegistry(SessionBackend):
                 Args:
                     session_id (str): Unique identifier of the session to monitor.
 
+                Raises:
+                    asyncio.CancelledError: When the polling loop is cancelled.
+
                 Examples
                 --------
                 Adaptive backoff when no messages are present:
@@ -1075,43 +1349,65 @@ class SessionRegistry(SessionBackend):
                 poll_interval = settings.poll_interval  # start fast
                 max_interval = settings.max_interval  # cap at configured maximum
                 backoff_factor = settings.backoff_factor
-                while True:
-                    session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
+                try:
+                    while True:
+                        # Check if session is closing before querying DB
+                        if session_id in self._closing_sessions:
+                            logger.debug("Session %s closing, stopping poll loop early", session_id)
+                            break
 
-                    # session gone → stop polling
-                    if not session:
-                        logger.debug("Session %s no longer exists, stopping poll loop", session_id)
-                        break
+                        session, record = await asyncio.to_thread(_db_read_session_and_message, session_id)
 
-                    if record:
-                        poll_interval = settings.poll_interval  # reset on activity
+                        # session gone → stop polling
+                        if not session:
+                            logger.debug("Session %s no longer exists, stopping poll loop", session_id)
+                            break
 
-                        data = orjson.loads(record.message)
-                        if isinstance(data, dict) and "message" in data:
-                            message = data["message"]
+                        if record:
+                            poll_interval = settings.poll_interval  # reset on activity
+
+                            data = orjson.loads(record.message)
+                            if isinstance(data, dict) and "message" in data:
+                                message = data["message"]
+                            else:
+                                message = data
+
+                            transport = self.get_session_sync(session_id)
+                            if transport:
+                                logger.info("Ready to respond")
+                                await self.generate_response(
+                                    message=message,
+                                    transport=transport,
+                                    server_id=server_id,
+                                    user=user,
+                                    base_url=base_url,
+                                )
+
+                                await asyncio.to_thread(_db_remove, session_id, record.message)
                         else:
-                            message = data
+                            # no message → backoff
+                            # update polling interval with backoff factor
+                            poll_interval = min(poll_interval * backoff_factor, max_interval)
 
-                        transport = self.get_session_sync(session_id)
-                        if transport:
-                            logger.info("Ready to respond")
-                            await self.generate_response(
-                                message=message,
-                                transport=transport,
-                                server_id=server_id,
-                                user=user,
-                                base_url=base_url,
-                            )
+                        await asyncio.sleep(poll_interval)
+                except asyncio.CancelledError:
+                    logger.info(f"Message check loop cancelled for session {session_id}")
+                    raise  # Re-raise to properly complete cancellation
+                except Exception as e:
+                    logger.error(f"Message check loop error for session {session_id}: {e}")
 
-                            await asyncio.to_thread(_db_remove, session_id, record.message)
-                    else:
-                        # no message → backoff
-                        # update polling interval with backoff factor
-                        poll_interval = min(poll_interval * backoff_factor, max_interval)
-
-                    await asyncio.sleep(poll_interval)
-
-            asyncio.create_task(message_check_loop(session_id))
+            # CRITICAL: Await instead of fire-and-forget
+            # This ensures CancelledError propagates from outer respond() task to inner loop
+            # The outer task (registered from main.py) now runs until message_check_loop exits
+            try:
+                await message_check_loop(session_id)
+            except asyncio.CancelledError:
+                logger.info(f"Database respond cancelled for session {session_id}")
+                raise
+            finally:
+                # Clean up task reference on ANY exit (normal, cancelled, or error)
+                # Prevents stale done tasks from accumulating in _respond_tasks
+                self._respond_tasks.pop(session_id, None)
 
     async def _refresh_redis_sessions(self) -> None:
         """Refresh TTLs for Redis sessions and clean up disconnected sessions.
