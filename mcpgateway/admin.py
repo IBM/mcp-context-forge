@@ -11386,7 +11386,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     error_message = None
     try:
         await resource_service.delete_resource(
-            user["db"] if isinstance(user, dict) else db,
+            db,  # Use endpoint's db session (user["db"] is now closed early)
             resource_id,
             user_email=user_email,
             purge_metrics=purge_metrics,

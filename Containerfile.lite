@@ -216,6 +216,7 @@ RUN chown -R 1001:0 /app \
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1769090502 AS runtime
 
 ARG PYTHON_VERSION=3.12
+ARG ENABLE_PROFILING=false
 
 # ----------------------------------------------------------------------------
 # OCI image metadata
@@ -232,6 +233,7 @@ LABEL maintainer="Mihai Criveti" \
 # - ca-certificates for HTTPS
 # - procps-ng for process management (ps command)
 # - shadow-utils for useradd command
+# - gdb for memray attach (only when ENABLE_PROFILING=true)
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
@@ -241,6 +243,19 @@ RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
     shadow-utils \
     && microdnf clean all \
     && rm -rf /var/cache/yum
+
+# ----------------------------------------------------------------------------
+# Install profiling dependencies (only when ENABLE_PROFILING=true)
+# - gdb: Required for memray attach to running processes
+# ----------------------------------------------------------------------------
+# hadolint ignore=DL3041
+RUN if [ "$ENABLE_PROFILING" = "true" ]; then \
+        echo "📊 Installing profiling dependencies (gdb)..."; \
+        microdnf install -y --nodocs --setopt=install_weak_deps=0 gdb && \
+        microdnf clean all && \
+        rm -rf /var/cache/yum && \
+        echo "✓ gdb installed for memray attach support"; \
+    fi
 
 # ----------------------------------------------------------------------------
 # Create python3 symlink
