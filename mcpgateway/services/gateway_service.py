@@ -1317,47 +1317,73 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Count items before cleanup for logging
 
-            # Bulk delete tools that are no longer available from the gateway
+            # Mark tools as unreachable instead of deleting them to preserve virtual server associations
             # Use chunking to avoid SQLite's 999 parameter limit for IN clauses
             stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names]
             if stale_tool_ids:
-                # Delete child records first to avoid FK constraint violations
+                # Delete metrics but preserve the tool record and associations
                 for i in range(0, len(stale_tool_ids), 500):
                     chunk = stale_tool_ids[i : i + 500]
                     db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+                    # Do NOT delete server_tool_association - preserve virtual server associations
+                    # Do NOT delete DbTool - preserve tool IDs for when they reappear
+                
+                # Mark tools as unreachable instead of deleting them
+                for tool_id in stale_tool_ids:
+                    tool = db.execute(select(DbTool).where(DbTool.id == tool_id)).scalar_one_or_none()
+                    if tool:
+                        tool.reachable = False
+                        tool.updated_at = datetime.now(timezone.utc)
+                
+                logger.info(f"Marked {len(stale_tool_ids)} tools as unreachable (preserved associations)")
 
-            # Bulk delete resources that are no longer available from the gateway
+            # Mark resources as unreachable instead of deleting them to preserve virtual server associations
             stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris]
             if stale_resource_ids:
-                # Delete child records first to avoid FK constraint violations
+                # Delete metrics but preserve the resource record and associations
                 for i in range(0, len(stale_resource_ids), 500):
                     chunk = stale_resource_ids[i : i + 500]
                     db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                    db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
                     db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                    db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                    # Do NOT delete server_resource_association - preserve virtual server associations
+                    # Do NOT delete DbResource - preserve resource IDs for when they reappear
+                
+                # Mark resources as unreachable instead of deleting them
+                for resource_id in stale_resource_ids:
+                    resource = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+                    if resource:
+                        resource.reachable = False
+                        resource.updated_at = datetime.now(timezone.utc)
+                
+                logger.info(f"Marked {len(stale_resource_ids)} resources as unreachable (preserved associations)")
 
-            # Bulk delete prompts that are no longer available from the gateway
+            # Mark prompts as unreachable instead of deleting them to preserve virtual server associations
             stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names]
             if stale_prompt_ids:
-                # Delete child records first to avoid FK constraint violations
+                # Delete metrics but preserve the prompt record and associations
                 for i in range(0, len(stale_prompt_ids), 500):
                     chunk = stale_prompt_ids[i : i + 500]
                     db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                    db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                    db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                    # Do NOT delete server_prompt_association - preserve virtual server associations
+                    # Do NOT delete DbPrompt - preserve prompt IDs for when they reappear
+                
+                # Mark prompts as unreachable instead of deleting them
+                for prompt_id in stale_prompt_ids:
+                    prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id)).scalar_one_or_none()
+                    if prompt:
+                        prompt.reachable = False
+                        prompt.updated_at = datetime.now(timezone.utc)
+                
+                logger.info(f"Marked {len(stale_prompt_ids)} prompts as unreachable (preserved associations)")
 
-            # Expire gateway to clear cached relationships after bulk deletes
-            # This prevents SQLAlchemy from trying to re-delete already-deleted items
+            # Expire gateway to clear cached relationships after marking items unreachable
+            # This prevents SQLAlchemy from using stale cached data
             if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
                 db.expire(gateway)
 
-            # Update gateway relationships to reflect deletions
-            gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]
-            gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]
-            gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]
+            # DO NOT filter gateway relationships - we want to keep unreachable items
+            # This preserves the associations in server_tool_association, etc.
+            # The items are marked as unreachable but remain associated with the gateway
 
             # Log cleanup results
             tools_removed = len(stale_tool_ids)
@@ -2426,11 +2452,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Update status if it's different
             if (gateway.enabled != activate) or (gateway.reachable != reachable):
+                logger.info("I am here")
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
                 # Update tracking
                 if activate and reachable:
+                    logger.info("2nd if")
                     self._active_gateways.add(gateway.url)
 
                     # Initialize empty lists in case initialization fails
@@ -2589,6 +2617,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     tools_result = db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable != reachable).values(reachable=reachable, updated_at=now))
                 else:
                     # Update both enabled and reachable
+                    # When activating (activate=True), we want to enable all tools
+                    # The reachable flag for stale tools was already set above in the try block
                     tools_result = db.execute(
                         update(DbTool)
                         .where(DbTool.gateway_id == gateway_id)
@@ -4361,8 +4391,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     # Check authentication and visibility changes
                     auth_fields_changed = existing_tool.auth_type != gateway.auth_type or existing_tool.auth_value != gateway.auth_value or existing_tool.visibility != gateway.visibility
+                    
+                    # Check if tool was previously marked as unreachable
+                    reachability_changed = not existing_tool.reachable
 
-                    if basic_fields_changed or schema_fields_changed or auth_fields_changed:
+                    if basic_fields_changed or schema_fields_changed or auth_fields_changed or reachability_changed:
                         fields_to_update = True
                     if fields_to_update:
                         existing_tool.url = gateway.url
@@ -4376,7 +4409,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_tool.auth_type = gateway.auth_type
                         existing_tool.auth_value = gateway.auth_value
                         existing_tool.visibility = gateway.visibility
-                        logger.debug(f"Updated existing tool: {tool.name}")
+                        existing_tool.reachable = True  # Mark as reachable again
+                        existing_tool.updated_at = datetime.now(timezone.utc)
+                        logger.debug(f"Updated existing tool: {tool.name} (reachable={existing_tool.reachable})")
                 else:
                     # Create new tool if it doesn't exist
                     db_tool = self._create_db_tool(
@@ -4440,6 +4475,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         or existing_resource.mime_type != resource.mime_type
                         or existing_resource.uri_template != resource.uri_template
                         or existing_resource.visibility != gateway.visibility
+                        or not existing_resource.reachable  # Check if resource was previously marked as unreachable
                     ):
                         fields_to_update = True
 
@@ -4449,7 +4485,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_resource.mime_type = resource.mime_type
                         existing_resource.uri_template = resource.uri_template
                         existing_resource.visibility = gateway.visibility
-                        logger.debug(f"Updated existing resource: {resource.uri}")
+                        existing_resource.reachable = True  # Mark as reachable again
+                        existing_resource.updated_at = datetime.now(timezone.utc)
+                        logger.debug(f"Updated existing resource: {resource.uri} (reachable={existing_resource.reachable})")
                 else:
                     # Create new resource if it doesn't exist
                     db_resource = DbResource(
@@ -4514,6 +4552,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_prompt.description != prompt.description
                         or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
                         or existing_prompt.visibility != gateway.visibility
+                        or not existing_prompt.reachable  # Check if prompt was previously marked as unreachable
                     ):
                         fields_to_update = True
 
@@ -4521,7 +4560,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_prompt.description = prompt.description
                         existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
                         existing_prompt.visibility = gateway.visibility
-                        logger.debug(f"Updated existing prompt: {prompt.name}")
+                        existing_prompt.reachable = True  # Mark as reachable again
+                        existing_prompt.updated_at = datetime.now(timezone.utc)
+                        logger.debug(f"Updated existing prompt: {prompt.name} (reachable={existing_prompt.reachable})")
                 else:
                     # Create new prompt if it doesn't exist
                     db_prompt = DbPrompt(
@@ -4769,16 +4810,29 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             mcp_created_via_values = {"MCP", "federation", "health_check", "manual_refresh", "oauth", "update"}
 
             # Find and remove stale tools (only MCP-discovered ones)
+            # IMPORTANT: Do NOT delete tools that will be recreated - this preserves tool IDs and associations
             stale_tool_ids = [tool.id for tool in gateway.tools if tool.original_name not in new_tool_names and tool.created_via in mcp_created_via_values]
             if stale_tool_ids:
+                # Only delete metrics and associations, but keep the tool record itself for now
+                # This prevents breaking virtual server associations when tools temporarily disappear
                 for i in range(0, len(stale_tool_ids), 500):
                     chunk = stale_tool_ids[i : i + 500]
+                    # Delete metrics but preserve the tool record
                     db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
-                    db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
-                    db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+                    # Do NOT delete server_tool_association - preserve virtual server associations
+                    # Do NOT delete DbTool - preserve tool IDs for when they reappear
+                
+                # Mark tools as unreachable instead of deleting them
+                for tool_id in stale_tool_ids:
+                    tool = db.execute(select(DbTool).where(DbTool.id == tool_id)).scalar_one_or_none()
+                    if tool:
+                        tool.reachable = False
+                        tool.updated_at = datetime.now(timezone.utc)
+                
                 result["tools_removed"] = len(stale_tool_ids)
+                logger.info(f"Marked {len(stale_tool_ids)} tools as unreachable (preserved associations)")
 
-            # Find and remove stale resources (only MCP-discovered ones, only if resources were fetched)
+            # Mark stale resources as unreachable (only MCP-discovered ones, only if resources were fetched)
             stale_resource_ids = []
             if new_resource_uris is not None:
                 stale_resource_ids = [resource.id for resource in gateway.resources if resource.uri not in new_resource_uris and resource.created_via in mcp_created_via_values]
@@ -4786,12 +4840,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     for i in range(0, len(stale_resource_ids), 500):
                         chunk = stale_resource_ids[i : i + 500]
                         db.execute(delete(ResourceMetric).where(ResourceMetric.resource_id.in_(chunk)))
-                        db.execute(delete(server_resource_association).where(server_resource_association.c.resource_id.in_(chunk)))
                         db.execute(delete(ResourceSubscription).where(ResourceSubscription.resource_id.in_(chunk)))
-                        db.execute(delete(DbResource).where(DbResource.id.in_(chunk)))
+                        # Do NOT delete server_resource_association - preserve virtual server associations
+                        # Do NOT delete DbResource - preserve resource IDs for when they reappear
+                    
+                    # Mark resources as unreachable instead of deleting them
+                    for resource_id in stale_resource_ids:
+                        resource = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+                        if resource:
+                            resource.reachable = False
+                            resource.updated_at = datetime.now(timezone.utc)
+                    
                     result["resources_removed"] = len(stale_resource_ids)
+                    logger.info(f"Marked {len(stale_resource_ids)} resources as unreachable (preserved associations)")
 
-            # Find and remove stale prompts (only MCP-discovered ones, only if prompts were fetched)
+            # Mark stale prompts as unreachable (only MCP-discovered ones, only if prompts were fetched)
             stale_prompt_ids = []
             if new_prompt_names is not None:
                 stale_prompt_ids = [prompt.id for prompt in gateway.prompts if prompt.original_name not in new_prompt_names and prompt.created_via in mcp_created_via_values]
@@ -4799,9 +4862,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     for i in range(0, len(stale_prompt_ids), 500):
                         chunk = stale_prompt_ids[i : i + 500]
                         db.execute(delete(PromptMetric).where(PromptMetric.prompt_id.in_(chunk)))
-                        db.execute(delete(server_prompt_association).where(server_prompt_association.c.prompt_id.in_(chunk)))
-                        db.execute(delete(DbPrompt).where(DbPrompt.id.in_(chunk)))
+                        # Do NOT delete server_prompt_association - preserve virtual server associations
+                        # Do NOT delete DbPrompt - preserve prompt IDs for when they reappear
+                    
+                    # Mark prompts as unreachable instead of deleting them
+                    for prompt_id in stale_prompt_ids:
+                        prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id)).scalar_one_or_none()
+                        if prompt:
+                            prompt.reachable = False
+                            prompt.updated_at = datetime.now(timezone.utc)
+                    
                     result["prompts_removed"] = len(stale_prompt_ids)
+                    logger.info(f"Marked {len(stale_prompt_ids)} prompts as unreachable (preserved associations)")
 
             # Expire gateway if stale items were deleted
             if stale_tool_ids or stale_resource_ids or stale_prompt_ids:
