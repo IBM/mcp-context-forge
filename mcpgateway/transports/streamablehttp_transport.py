@@ -532,7 +532,14 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
             # Helper to convert gateway Annotations to dict for MCP SDK compatibility
             # (mcpgateway.common.models.Annotations != mcp.types.Annotations)
             def _convert_annotations(ann: Any) -> dict[str, Any] | None:
-                """Convert gateway Annotations to dict for MCP SDK compatibility."""
+                """Convert gateway Annotations to dict for MCP SDK compatibility.
+
+                Args:
+                    ann: Gateway Annotations object, dict, or None.
+
+                Returns:
+                    Dict representation of annotations, or None.
+                """
                 if ann is None:
                     return None
                 if isinstance(ann, dict):
@@ -542,7 +549,14 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 return None
 
             def _convert_meta(meta: Any) -> dict[str, Any] | None:
-                """Convert gateway meta to dict for MCP SDK compatibility."""
+                """Convert gateway meta to dict for MCP SDK compatibility.
+
+                Args:
+                    meta: Gateway meta object, dict, or None.
+
+                Returns:
+                    Dict representation of meta, or None.
+                """
                 if meta is None:
                     return None
                 if isinstance(meta, dict):
