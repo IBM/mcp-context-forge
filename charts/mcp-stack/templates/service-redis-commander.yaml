@@ -1,7 +1,7 @@
 {{- /*
 Redis-Commander Service
 */ -}}
-{{- if .Values.redisCommander.enabled }}
+{{- if and .Values.redisCommander.enabled (or .Values.redis.enabled .Values.redis.external.enabled) }}
 apiVersion: v1
 kind: Service
 metadata:

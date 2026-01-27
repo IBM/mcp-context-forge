@@ -32,14 +32,14 @@ spec:
 
               # Wait for PostgreSQL to be ready
               echo "Waiting for PostgreSQL 18 to be ready..."
-              until pg_isready -h {{ include "mcp-stack.fullname" . }}-postgres -U {{ .Values.postgres.credentials.user }}; do
+              until pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER"; do
                 sleep 2
               done
 
               # Run a simple query to verify the database is working
-              RESULT=$(psql -h {{ include "mcp-stack.fullname" . }}-postgres \
-                         -U {{ .Values.postgres.credentials.user }} \
-                         -d {{ .Values.postgres.credentials.database }} \
+              RESULT=$(psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+                         -U "$POSTGRES_USER" \
+                         -d "$POSTGRES_DB" \
                          -t -c "SELECT version();" 2>/dev/null || echo "ERROR")
 
               if [[ $RESULT == *"ERROR"* ]] || [[ -z "$RESULT" ]]; then
@@ -54,6 +54,20 @@ spec:
                 echo "Migration to PostgreSQL 18 completed successfully"
               fi
           env:
+            - name: POSTGRES_HOST
+              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+            - name: POSTGRES_PORT
+              value: "{{ .Values.postgres.service.port }}"
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
             - name: PGUSER
               valueFrom:
                 secretKeyRef:

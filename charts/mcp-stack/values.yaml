@@ -145,7 +145,8 @@ mcpContextForge:
 
     redis:
       # host is auto-generated as <release>-mcp-stack-redis
-      # host: redis             # uncomment to override the generated name
+      # set to override the generated name or point at external Redis
+      host: ""
       port: 6379
 
   ####################################################################
@@ -780,13 +781,9 @@ mcpContextForge:
 
 
   ####################################################################
-  # Names of ConfigMap / Secret are resolved by templates; leave as-is.
+  # envFrom is managed by the chart (gateway secret + configmap).
+  # Use extraEnvFrom to add additional sources.
   ####################################################################
-  envFrom:
-    - secretRef:
-        name: mcp-gateway-secret
-    - configMapRef:
-        name: mcp-gateway-config
 
   ## -- Additional environment variables from secrets or configmaps
   ## Example:
@@ -838,7 +835,7 @@ migration:
   # Migration command configuration
   command:
     waitForDb: "python3 /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
-    migrate: "alembic upgrade head || echo '⚠️ Migration check failed'"
+    migrate: "alembic upgrade head"
 
 ########################################################################
 # POSTGRES DATABASE
@@ -1006,6 +1003,7 @@ pgbouncer:
 ########################################################################
 redis:
   enabled: true
+  # Note: if redis.external.enabled=true, in-cluster Redis resources are skipped.
 
   image:
     repository: redis
@@ -1015,6 +1013,20 @@ redis:
   service:
     type: ClusterIP
     port: 6379
+
+  # ─── External Redis Configuration ───
+  # If enabled, skips the in-cluster Redis deployment and uses these settings.
+  external:
+    enabled: false
+    # Secret containing REDIS_URL (recommended for auth)
+    existingSecret: ""
+    urlKey: "REDIS_URL"
+    # Direct Redis URL override (if not using existingSecret)
+    url: ""
+    # Optional host/port if building REDIS_URL automatically
+    host: ""
+    port: 6379
+    db: 0
 
   # ─── Resource limits & requests ───
   resources:
@@ -1075,6 +1087,10 @@ pgadmin:
   service:
     type: ClusterIP
     port: 80
+
+  # Use existing Secret for PgAdmin credentials (optional)
+  existingSecret: ""
+  passwordKey: "PGADMIN_DEFAULT_PASSWORD"
 
   env:
     email: admin@example.com
@@ -1213,9 +1229,15 @@ mcpFastTimeServer:
   # Ingress example (leave as-is if you already have it)
   ingress:
     enabled: true
+    className: nginx
+    host: gateway.local
     path: /fast-time
     pathType: Prefix
     servicePort: 80
+    annotations: {}
+    tls:
+      enabled: false
+      secretName: ""
 
   # ─── Health & readiness probes ───
   probes:
