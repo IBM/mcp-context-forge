@@ -1111,6 +1111,7 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
 # help: load-test-stress      - Stress test (500 users, 60s, minimal wait)
+# help: load-test-spin-detector - CPU spin loop detector (spike/drop pattern, issue #2360)
 # help: load-test-report      - Show last load test HTML report
 # help: load-test-compose     - Light load test for compose stack (port 4444)
 # help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
@@ -1236,6 +1237,63 @@ load-test-stress:                          ## Stress test (500 users, 60s)
 	else \
 		echo "❌ Cancelled"; \
 	fi
+
+SPIN_DETECTOR_RUN_TIME ?= 300m
+SPIN_DETECTOR_WORKERS ?= $(LOADTEST_PROCESSES)
+
+load-test-spin-detector:                   ## CPU spin loop detector (spike/drop pattern, issue #2360)
+	@echo "🔄 CPU SPIN LOOP DETECTOR (Escalating load pattern)"
+	@echo "   Issue: https://github.com/IBM/mcp-context-forge/issues/2360"
+	@echo ""
+	@echo "   ESCALATING PATTERN (1000/s spawn rate):"
+	@echo "   ┌─────────┬─────────┬────────────┬────────────┐"
+	@echo "   │ Wave    │ Users   │ Duration   │ Pause      │"
+	@echo "   ├─────────┼─────────┼────────────┼────────────┤"
+	@echo "   │ 1       │  4,000  │ 30 seconds │ 10 seconds │"
+	@echo "   │ 2       │  6,000  │ 45 seconds │ 15 seconds │"
+	@echo "   │ 3       │  8,000  │ 60 seconds │ 20 seconds │"
+	@echo "   │ 4       │ 10,000  │ 75 seconds │ 30 seconds │"
+	@echo "   │ 5       │ 10,000  │ 90 seconds │ 30 seconds │"
+	@echo "   └─────────┴─────────┴────────────┴────────────┘"
+	@echo "   → Repeats until timeout (Ctrl+C to stop early)"
+	@echo ""
+	@echo "   🎯 Target: $(LOADTEST_HOST)"
+	@echo "   ⏱️  Runtime: $(SPIN_DETECTOR_RUN_TIME) (override: SPIN_DETECTOR_RUN_TIME=60m)"
+	@echo "   👷 Workers: $(SPIN_DETECTOR_WORKERS) (-1 = auto-detect CPUs)"
+	@echo "   📊 Shows RPS + Failure % during load phases"
+	@echo "   🔐 Authentication: JWT (auto-generated from .env settings)"
+	@echo "   🔇 Verbose logs off (set LOCUST_VERBOSE=1 to enable)"
+	@echo ""
+	@echo "   💡 Prerequisites:"
+	@echo "      docker compose up -d   # Gateway on port 8080 (via nginx)"
+	@echo ""
+	@echo "   📈 MONITORING (run in another terminal):"
+	@echo "      watch -n 2 'docker stats --no-stream | grep gateway'"
+	@echo ""
+	@echo "   ✅ PASS: CPU drops to <10% during pause phases"
+	@echo "   ❌ FAIL: CPU stays at 100%+ per worker during pauses"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@echo "Starting in 3 seconds... (Ctrl+C to cancel)"
+	@sleep 3
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		cd tests/loadtest && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
+		LOCUST_WORKERS=$(SPIN_DETECTOR_WORKERS) \
+		locust -f locustfile_spin_detector.py \
+			--host=$(LOADTEST_HOST) \
+			--headless \
+			--run-time=$(SPIN_DETECTOR_RUN_TIME) \
+			--processes=$(SPIN_DETECTOR_WORKERS) \
+			--html=../../reports/spin_detector_report.html \
+			--csv=../../reports/spin_detector \
+			--only-summary"
+	@echo ""
+	@echo "📄 HTML Report: reports/spin_detector_report.html"
+	@echo "📋 Log file: /tmp/spin_detector.log"
+	@echo "   Monitor: tail -f /tmp/spin_detector.log"
 
 load-test-report:                          ## Show last load test HTML report
 	@if [ -f "$(LOADTEST_HTML_REPORT)" ]; then \
