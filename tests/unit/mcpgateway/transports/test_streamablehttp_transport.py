@@ -2177,3 +2177,101 @@ async def test_call_tool_resource_link_preserves_all_fields(monkeypatch):
     assert resource_link.description == "A large binary file"
     assert resource_link.mimeType == "application/octet-stream"
     assert resource_link.size == 10485760  # CRITICAL: size must not be dropped
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_gateway_model_annotations(monkeypatch):
+    """Regression test: Gateway model Annotations must be converted to dict for MCP SDK compatibility.
+
+    mcpgateway.common.models.Annotations is a different class from mcp.types.Annotations.
+    Passing gateway Annotations directly to mcp.types.TextContent raises a ValidationError.
+    This test uses the actual gateway model types to verify the conversion works.
+    """
+    # First-Party
+    from mcpgateway.common.models import Annotations as GatewayAnnotations
+    from mcpgateway.common.models import TextContent as GatewayTextContent
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+
+    # Create actual gateway model content with gateway Annotations (not a dict!)
+    gateway_annotations = GatewayAnnotations(audience=["user"], priority=0.8)
+    gateway_content = GatewayTextContent(
+        type="text",
+        text="Content with gateway annotations",
+        annotations=gateway_annotations,
+        meta={"source": "test"},
+    )
+
+    mock_result.content = [gateway_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    # This should NOT raise a ValidationError - the fix converts annotations to dict
+    result = await call_tool("gateway_annotations_tool", {})
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.TextContent)
+    assert result[0].text == "Content with gateway annotations"
+
+    # Verify annotations were converted and preserved
+    assert result[0].annotations is not None
+    assert isinstance(result[0].annotations, types.Annotations)  # MCP SDK type, not gateway type
+    assert result[0].annotations.audience == ["user"]
+    assert result[0].annotations.priority == 0.8
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_gateway_model_image_annotations(monkeypatch):
+    """Regression test: Gateway ImageContent with Annotations must be converted correctly."""
+    # First-Party
+    from mcpgateway.common.models import Annotations as GatewayAnnotations
+    from mcpgateway.common.models import ImageContent as GatewayImageContent
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+
+    # Create actual gateway model content with gateway Annotations
+    gateway_annotations = GatewayAnnotations(audience=["assistant"], priority=0.5)
+    gateway_content = GatewayImageContent(
+        type="image",
+        data="base64imagedata",
+        mime_type="image/png",
+        annotations=gateway_annotations,
+    )
+
+    mock_result.content = [gateway_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    # This should NOT raise a ValidationError
+    result = await call_tool("gateway_image_tool", {})
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert isinstance(result[0], types.ImageContent)
+    assert result[0].data == "base64imagedata"
+    assert result[0].mimeType == "image/png"
+
+    # Verify annotations were converted
+    assert result[0].annotations is not None
+    assert isinstance(result[0].annotations, types.Annotations)
+    assert result[0].annotations.audience == ["assistant"]
+    assert result[0].annotations.priority == 0.5

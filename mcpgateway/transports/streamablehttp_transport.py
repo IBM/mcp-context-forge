@@ -529,6 +529,26 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 return []
 
             # Normalize unstructured content to MCP SDK types, preserving metadata (annotations, _meta, size)
+            # Helper to convert gateway Annotations to dict for MCP SDK compatibility
+            # (mcpgateway.common.models.Annotations != mcp.types.Annotations)
+            def _convert_annotations(ann: Any) -> dict[str, Any] | None:
+                if ann is None:
+                    return None
+                if isinstance(ann, dict):
+                    return ann
+                if hasattr(ann, "model_dump"):
+                    return ann.model_dump(by_alias=True, mode="json")
+                return None
+
+            def _convert_meta(meta: Any) -> dict[str, Any] | None:
+                if meta is None:
+                    return None
+                if isinstance(meta, dict):
+                    return meta
+                if hasattr(meta, "model_dump"):
+                    return meta.model_dump(by_alias=True, mode="json")
+                return None
+
             unstructured: list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource] = []
             for content in result.content:
                 if content.type == "text":
@@ -536,8 +556,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                         types.TextContent(
                             type="text",
                             text=content.text,
-                            annotations=getattr(content, "annotations", None),
-                            _meta=getattr(content, "meta", None),
+                            annotations=_convert_annotations(getattr(content, "annotations", None)),
+                            _meta=_convert_meta(getattr(content, "meta", None)),
                         )
                     )
                 elif content.type == "image":
@@ -546,8 +566,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                             type="image",
                             data=content.data,
                             mimeType=content.mime_type,
-                            annotations=getattr(content, "annotations", None),
-                            _meta=getattr(content, "meta", None),
+                            annotations=_convert_annotations(getattr(content, "annotations", None)),
+                            _meta=_convert_meta(getattr(content, "meta", None)),
                         )
                     )
                 elif content.type == "audio":
@@ -556,8 +576,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                             type="audio",
                             data=content.data,
                             mimeType=content.mime_type,
-                            annotations=getattr(content, "annotations", None),
-                            _meta=getattr(content, "meta", None),
+                            annotations=_convert_annotations(getattr(content, "annotations", None)),
+                            _meta=_convert_meta(getattr(content, "meta", None)),
                         )
                     )
                 elif content.type == "resource_link":
@@ -569,7 +589,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                             description=getattr(content, "description", None),
                             mimeType=getattr(content, "mime_type", None),
                             size=getattr(content, "size", None),
-                            _meta=getattr(content, "meta", None),
+                            _meta=_convert_meta(getattr(content, "meta", None)),
                         )
                     )
                 elif content.type == "resource":
