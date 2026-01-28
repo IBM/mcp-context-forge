@@ -305,7 +305,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\-\\s]+$"` |  |
 | mcpContextForge.config.VALIDATION_SAFE_URI_PATTERN | string | `"^[a-zA-Z0-9_\\-.:/?=&%{}]+$"` |  |
 | mcpContextForge.config.VALIDATION_TOOL_METHOD_PATTERN | string | `"^[a-zA-Z][a-zA-Z0-9_\\./-]*$"` |  |
-| mcpContextForge.config.VALIDATION_TOOL_NAME_PATTERN | string | `"^[a-zA-Z][a-zA-Z0-9._-]*$"` |  |
+| mcpContextForge.config.VALIDATION_TOOL_NAME_PATTERN | string | `"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"` |  |
 | mcpContextForge.config.VALIDATION_UNSAFE_URI_PATTERN | string | `"[<>\"'\\\\]"` |  |
 | mcpContextForge.config.WEBSOCKET_PING_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.WELL_KNOWN_CACHE_MAX_AGE | string | `"3600"` |  |
