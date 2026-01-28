@@ -62,7 +62,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, get_current_user
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -1490,26 +1490,41 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             username = None
 
             if jwt_token:
-                # JWT authentication path
-                payload = await verify_jwt_token(jwt_token)
-                username = payload.get("sub") or payload.get("email")
+                # Try JWT authentication first
+                try:
+                    payload = await verify_jwt_token(jwt_token)
+                    username = payload.get("sub") or payload.get("email")
 
-                if not username:
-                    return ORJSONResponse(status_code=401, content={"detail": "Invalid token"})
+                    if not username:
+                        return ORJSONResponse(status_code=401, content={"detail": "Invalid token"})
 
-                # Check if token is revoked (if JTI exists)
-                jti = payload.get("jti")
-                if jti:
-                    try:
-                        is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
-                        if is_revoked:
-                            logger.warning(f"Admin access denied for revoked token: {username}")
-                            return self._error_response(request, root_path, 401, "Token has been revoked", "token_revoked")
-                    except Exception as revoke_error:
-                        logger.warning(f"Token revocation check failed: {revoke_error}")
-                        # Continue - don't fail auth if revocation check fails
+                    # Check if token is revoked (if JTI exists)
+                    jti = payload.get("jti")
+                    if jti:
+                        try:
+                            is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                            if is_revoked:
+                                logger.warning(f"Admin access denied for revoked token: {username}")
+                                return self._error_response(request, root_path, 401, "Token has been revoked", "token_revoked")
+                        except Exception as revoke_error:
+                            logger.warning(f"Token revocation check failed: {revoke_error}")
+                            # Continue - don't fail auth if revocation check fails
+                except Exception:
+                    # JWT validation failed, try API token
+                    import hashlib
 
-            elif settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+                    token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
+                    api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
+
+                    if api_token_info:
+                        if api_token_info.get("expired"):
+                            return ORJSONResponse(status_code=401, content={"detail": "API token expired"})
+                        if api_token_info.get("revoked"):
+                            return ORJSONResponse(status_code=401, content={"detail": "API token has been revoked"})
+                        username = api_token_info["user_email"]
+                        logger.debug(f"Admin auth via API token: {username}")
+
+            if not username and settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
                 # Proxy authentication path (when MCP client auth is disabled and proxy auth is trusted)
                 proxy_user = request.headers.get(settings.proxy_user_header)
                 if proxy_user:
@@ -1525,14 +1540,23 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             try:
                 auth_service = EmailAuthService(db)
                 user = await auth_service.get_user_by_email(username)
+
                 if not user:
-                    return ORJSONResponse(status_code=401, content={"detail": "User not found"})
-                if not user.is_active:
-                    logger.warning(f"Admin access denied for disabled user: {username}")
-                    return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
-                if not user.is_admin:
-                    logger.warning(f"Admin access denied for non-admin user: {username}")
-                    return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
+                    # Platform admin bootstrap (when REQUIRE_USER_IN_DB=false)
+                    platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+                    if not settings.require_user_in_db and username == platform_admin_email:
+                        logger.info(f"Platform admin bootstrap authentication for {username}")
+                        # Allow platform admin through - they have implicit admin privileges
+                    else:
+                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
+                else:
+                    # User exists in DB - check active and admin status
+                    if not user.is_active:
+                        logger.warning(f"Admin access denied for disabled user: {username}")
+                        return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
+                    if not user.is_admin:
+                        logger.warning(f"Admin access denied for non-admin user: {username}")
+                        return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
             finally:
                 db.close()
 

@@ -127,17 +127,38 @@ async def list_sso_providers(
     return [SSOProviderResponse(id=provider.id, name=provider.name, display_name=provider.display_name) for provider in providers]
 
 
-def _validate_redirect_uri(redirect_uri: str, request_host: str | None = None) -> bool:
+def _normalize_origin(scheme: str, host: str, port: int | None) -> str:
+    """Normalize an origin to scheme://host:port format.
+
+    Args:
+        scheme: URL scheme (http/https)
+        host: Hostname
+        port: Port number (None uses default for scheme)
+
+    Returns:
+        Normalized origin string
+    """
+    # Use default ports for scheme if not specified
+    default_ports = {"http": 80, "https": 443}
+    if port is None or port == default_ports.get(scheme):
+        return f"{scheme}://{host}"
+    return f"{scheme}://{host}:{port}"
+
+
+def _validate_redirect_uri(redirect_uri: str, request: Request | None = None) -> bool:
     """Validate redirect_uri to prevent open redirect attacks.
+
+    Validates against a server-side allowlist (settings.allowed_origins and settings.app_domain).
+    Does NOT trust the Host header to prevent spoofing attacks.
 
     Allows:
     - Relative URIs (no scheme/host)
-    - Same-origin URIs (matching request host)
-    - URIs from allowed origins (configured in settings.allowed_origins)
+    - URIs matching configured allowed_origins (full origin including scheme and port)
+    - URIs matching app_domain (if configured)
 
     Args:
         redirect_uri: The redirect URI to validate
-        request_host: The host header from the request (optional)
+        request: The FastAPI request object (unused, kept for API compatibility)
 
     Returns:
         True if the redirect_uri is safe, False otherwise
@@ -148,19 +169,40 @@ def _validate_redirect_uri(redirect_uri: str, request_host: str | None = None) -
     if not parsed.scheme and not parsed.netloc:
         return True
 
-    # Allow same-origin if request_host is provided
-    if request_host:
-        request_host_normalized = request_host.split(":")[0]  # Remove port
-        redirect_host_normalized = parsed.netloc.split(":")[0]
-        if redirect_host_normalized == request_host_normalized:
-            return True
+    # For absolute URIs, validate against server-side allowlist only
+    # Extract full origin components from redirect_uri
+    redirect_scheme = parsed.scheme.lower()
+    redirect_host = parsed.hostname.lower() if parsed.hostname else ""
+    redirect_port = parsed.port
 
-    # Allow configured origins
+    # Normalize the redirect origin
+    redirect_origin = _normalize_origin(redirect_scheme, redirect_host, redirect_port)
+
+    # Check against app_domain (if configured)
+    if hasattr(settings, "app_domain") and settings.app_domain:
+        # app_domain is typically just a hostname, allow both http and https
+        app_domain = settings.app_domain.lower()
+        if redirect_host == app_domain:
+            # Only allow HTTPS in production, or HTTP for localhost
+            if redirect_scheme == "https" or (redirect_scheme == "http" and app_domain in ("localhost", "127.0.0.1")):
+                return True
+
+    # Check against allowed_origins (full origin match including scheme and port)
     if hasattr(settings, "allowed_origins") and settings.allowed_origins:
         for origin in settings.allowed_origins:
-            origin_parsed = urlparse(origin)
-            origin_host = origin_parsed.netloc or origin
-            if parsed.netloc == origin_host or parsed.netloc.split(":")[0] == origin_host.split(":")[0]:
+            origin = origin.strip()
+            if not origin:
+                continue
+
+            # Parse the allowed origin
+            origin_parsed = urlparse(origin if "://" in origin else f"https://{origin}")
+            origin_scheme = origin_parsed.scheme.lower() if origin_parsed.scheme else "https"
+            origin_host = origin_parsed.hostname.lower() if origin_parsed.hostname else origin.lower()
+            origin_port = origin_parsed.port
+
+            # Normalize and compare full origins
+            allowed_origin = _normalize_origin(origin_scheme, origin_host, origin_port)
+            if redirect_origin == allowed_origin:
                 return True
 
     return False
@@ -201,12 +243,12 @@ async def initiate_sso_login(
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
     # Validate redirect_uri to prevent open redirect attacks
-    request_host = request.headers.get("host")
-    if not _validate_redirect_uri(redirect_uri, request_host):
-        logger.warning(f"SSO login rejected - invalid redirect_uri: {redirect_uri} (host: {request_host})")
+    # Uses server-side allowlist (allowed_origins, app_domain) - does NOT trust Host header
+    if not _validate_redirect_uri(redirect_uri, request):
+        logger.warning(f"SSO login rejected - invalid redirect_uri: {redirect_uri}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid redirect_uri. Must be a relative path or same-origin URL.",
+            detail="Invalid redirect_uri. Must be a relative path or URL matching allowed origins.",
         )
 
     sso_service = SSOService(db)
