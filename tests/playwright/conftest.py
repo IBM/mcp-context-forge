@@ -9,13 +9,12 @@ This assumes environment variables are loaded by the Makefile.
 """
 
 # Standard
-import base64
 import os
 import re
-from typing import Generator
+from typing import Generator, Optional
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, Page, Playwright
+from playwright.sync_api import APIRequestContext, Page, Playwright, expect
 import pytest
 
 # First-Party
@@ -23,11 +22,13 @@ from mcpgateway.config import Settings
 
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
-API_TOKEN = os.getenv("MCP_AUTH", "test-token")
+API_TOKEN = os.getenv("MCP_AUTH", "")
 
-# Basic Auth credentials - these MUST be set in environment
-BASIC_AUTH_USER = os.getenv("BASIC_AUTH_USER", "admin")
-BASIC_AUTH_PASSWORD = os.getenv("BASIC_AUTH_PASSWORD", "changeme")
+# Email login credentials (admin user)
+ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
+ADMIN_PASSWORD = os.getenv("PLATFORM_ADMIN_PASSWORD", "changeme")
+ADMIN_NEW_PASSWORD = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "changeme123")
+ADMIN_ACTIVE_PASSWORD = [ADMIN_PASSWORD]
 
 # Ensure UI/Admin are enabled for tests
 os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
@@ -40,19 +41,38 @@ def base_url() -> str:
     return BASE_URL
 
 
-@pytest.fixture(scope="session")
-def api_request_context(
-    playwright: Playwright,
-) -> Generator[APIRequestContext, None, None]:
-    """Create API request context with Basic Auth."""
-    # Create basic auth header
-    credentials = f"{BASIC_AUTH_USER}:{BASIC_AUTH_PASSWORD}"
-    basic_auth = base64.b64encode(credentials.encode()).decode()
+def _format_auth_header(token: str) -> Optional[str]:
+    """Normalize auth header value for API requests."""
+    if not token:
+        return None
+    if token.lower().startswith(("bearer ", "basic ")):
+        return token
+    return f"Bearer {token}"
 
-    headers = {
-        "Accept": "application/json",
-        "Authorization": f"Basic {basic_auth}",
-    }
+
+def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -> None:
+    """Wait for admin-related navigation after login actions."""
+    page.wait_for_load_state("domcontentloaded")
+    if previous_url and page.url == previous_url:
+        page.wait_for_timeout(500)
+
+
+def _wait_for_login_response(page: Page) -> Optional[int]:
+    """Wait for the login POST response and return its status code."""
+    try:
+        response = page.wait_for_response(lambda resp: "/admin/login" in resp.url and resp.request.method == "POST", timeout=10000)
+    except Exception:
+        return None
+    return response.status
+
+
+@pytest.fixture(scope="session")
+def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
+    """Create API request context with optional bearer token."""
+    headers = {"Accept": "application/json"}
+    auth_header = _format_auth_header(API_TOKEN)
+    if auth_header:
+        headers["Authorization"] = auth_header
 
     request_context = playwright.request.new_context(
         base_url=BASE_URL,
@@ -64,15 +84,8 @@ def api_request_context(
 
 @pytest.fixture
 def page(browser) -> Generator[Page, None, None]:
-    """Create page with Basic Auth credentials."""
-    context = browser.new_context(
-        base_url=BASE_URL,
-        http_credentials={
-            "username": BASIC_AUTH_USER,
-            "password": BASIC_AUTH_PASSWORD,
-        },
-        ignore_https_errors=True,
-    )
+    """Create page for UI tests."""
+    context = browser.new_context(base_url=BASE_URL, ignore_https_errors=True)
     page = context.new_page()
     yield page
     context.close()
@@ -89,15 +102,51 @@ def authenticated_page(page: Page) -> Page:
 def admin_page(page: Page):
     """Provide a logged-in admin page for UI tests."""
     settings = Settings()
-    # Go directly to admin - HTTP Basic Auth is handled by the page fixture
+    admin_email = settings.platform_admin_email or ADMIN_EMAIL
+    # Go directly to admin - session login handled here if needed
     page.goto("/admin")
-    # Handle login page redirect if auth is required
-    if re.search(r"login", page.url):
-        page.fill('[name="email"]', settings.basic_auth_user)
-        page.fill('[name="password"]', settings.basic_auth_password.get_secret_value())
+    login_form_visible = page.locator('input[name="email"]').count() > 0
+    if re.search(r"/admin/change-password-required", page.url):
+        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
+        page.fill('input[name="current_password"]', current_password)
+        page.fill('input[name="new_password"]', ADMIN_NEW_PASSWORD)
+        page.fill('input[name="confirm_password"]', ADMIN_NEW_PASSWORD)
+        previous_url = page.url
         page.click('button[type="submit"]')
+        ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+        _wait_for_admin_transition(page, previous_url)
+    # Handle login page redirect if auth is required
+    if re.search(r"login", page.url) or login_form_visible:
+        page.wait_for_selector('input[name="email"]')
+        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
+        page.fill('input[name="email"]', admin_email)
+        page.fill('input[name="password"]', current_password)
+        previous_url = page.url
+        page.click('button[type="submit"]')
+        status = _wait_for_login_response(page)
+        if status is not None and status >= 400:
+            raise AssertionError(f"Login failed with status {status}")
+        _wait_for_admin_transition(page, previous_url)
+        if re.search(r"/admin/change-password-required", page.url):
+            page.fill('input[name="current_password"]', current_password)
+            page.fill('input[name="new_password"]', ADMIN_NEW_PASSWORD)
+            page.fill('input[name="confirm_password"]', ADMIN_NEW_PASSWORD)
+            previous_url = page.url
+            page.click('button[type="submit"]')
+            ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+            _wait_for_admin_transition(page, previous_url)
+        if re.search(r"error=invalid_credentials", page.url) and ADMIN_NEW_PASSWORD != current_password:
+            page.fill('input[name="email"]', admin_email)
+            page.fill('input[name="password"]', ADMIN_NEW_PASSWORD)
+            previous_url = page.url
+            page.click('button[type="submit"]')
+            status = _wait_for_login_response(page)
+            if status is not None and status >= 400:
+                raise AssertionError(f"Login failed with status {status}")
+            ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+            _wait_for_admin_transition(page, previous_url)
     # Verify we're on the admin page
-    page.wait_for_url(re.compile(r".*admin"))
+    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
     return page
 
 
