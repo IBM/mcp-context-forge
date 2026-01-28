@@ -616,16 +616,21 @@ class TestSessionAffinityE2E:
 
             with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_session_affinity_ttl = 3600
 
-                await pool.register_session_mapping(session_id, url, gateway_id, transport_type)
+                user_email = "user@example.com"
+                await pool.register_session_mapping(session_id, url, gateway_id, transport_type, user_email)
 
                 # Verify mapping was stored
                 mapping_key = (session_id, url, transport_type, gateway_id)
                 assert mapping_key in pool._mcp_session_mapping
 
-                # Verify pool key uses session_id hash for identity
+                # Verify pool key uses session_id hash for identity and hashed user email
                 pool_key = pool._mcp_session_mapping[mapping_key]
-                assert pool_key[0] == "anonymous"  # user_identity
+                import hashlib
+
+                expected_user_hash = hashlib.sha256(user_email.encode()).hexdigest()
+                assert pool_key[0] == expected_user_hash  # user_identity (hashed email)
                 assert pool_key[1] == url
                 # pool_key[2] is identity_hash derived from session_id
                 assert pool_key[3] == transport_type
@@ -642,14 +647,16 @@ class TestSessionAffinityE2E:
             with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
                 with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
                     mock_settings.mcpgateway_session_affinity_enabled = True
+                    mock_settings.mcpgateway_session_affinity_ttl = 3600
 
                     # Pre-register session mapping
                     session_id = "downstream-session-456"
                     url = "http://upstream:8080/mcp"
                     gateway_id = "gateway-xyz"
                     transport_type = "sse"
+                    user_email = "testuser@example.com"
 
-                    await pool.register_session_mapping(session_id, url, gateway_id, transport_type)
+                    await pool.register_session_mapping(session_id, url, gateway_id, transport_type, user_email)
 
                     # Create mock session
                     def create_session_factory(url, headers, transport_type, httpx_client_factory, timeout=None, gateway_id=None):
@@ -675,11 +682,12 @@ class TestSessionAffinityE2E:
                         url,
                         headers=headers,
                         transport_type=TransportType.SSE,
+                        user_identity=user_email,
                         gateway_id=gateway_id,
                     )
                     await pool.release(s1)
 
-                    # Acquire again with DIFFERENT JWT but SAME session_id
+                    # Acquire again with DIFFERENT JWT but SAME session_id and SAME user
                     headers2 = {
                         "Authorization": "Bearer rotating-jwt-token-2",  # Different JWT
                         "x-mcp-session-id": session_id,  # Same session ID
@@ -689,6 +697,7 @@ class TestSessionAffinityE2E:
                         url,
                         headers=headers2,
                         transport_type=TransportType.SSE,
+                        user_identity=user_email,  # Same user
                         gateway_id=gateway_id,
                     )
                     await pool.release(s2)
@@ -713,7 +722,7 @@ class TestSessionAffinityE2E:
             with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
                 mock_settings.mcpgateway_session_affinity_enabled = False
 
-                await pool.register_session_mapping(session_id, url, gateway_id, transport_type)
+                await pool.register_session_mapping(session_id, url, gateway_id, transport_type, "user@test.com")
 
                 # Mapping should NOT be stored when disabled
                 mapping_key = (session_id, url, transport_type, gateway_id)
@@ -730,17 +739,20 @@ class TestSessionAffinityE2E:
             with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
                 with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
                     mock_settings.mcpgateway_session_affinity_enabled = True
+                    mock_settings.mcpgateway_session_affinity_ttl = 3600
 
                     url = "http://upstream:8080/mcp"
                     gateway_id = "gateway-multi"
                     transport_type = "streamablehttp"
 
-                    # Register two different session mappings
+                    # Register two different session mappings for different users
                     session_id_1 = "session-user-A"
                     session_id_2 = "session-user-B"
+                    user_email_1 = "userA@example.com"
+                    user_email_2 = "userB@example.com"
 
-                    await pool.register_session_mapping(session_id_1, url, gateway_id, transport_type)
-                    await pool.register_session_mapping(session_id_2, url, gateway_id, transport_type)
+                    await pool.register_session_mapping(session_id_1, url, gateway_id, transport_type, user_email_1)
+                    await pool.register_session_mapping(session_id_2, url, gateway_id, transport_type, user_email_2)
 
                     # Verify different pool keys
                     mapping_key_1 = (session_id_1, url, transport_type, gateway_id)
@@ -801,18 +813,21 @@ class TestSessionRegistryAffinityE2E:
                 mock_pool = MagicMock()
                 mock_pool.register_session_mapping = AsyncMock()
 
+                user_email = "testuser@example.com"
+
                 with patch.dict("sys.modules", {"mcpgateway.cache.tool_lookup_cache": MagicMock(tool_lookup_cache=mock_cache)}):
                     with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
                         with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
-                            # Call _register_session_mapping directly (broadcast calls this)
-                            await registry._register_session_mapping(session_id, message)
+                            # Call _register_session_mapping with user_email (simulates respond() call)
+                            await registry._register_session_mapping(session_id, message, user_email)
 
-                            # Verify register_session_mapping was called with correct args
+                            # Verify register_session_mapping was called with correct args including user_email
                             mock_pool.register_session_mapping.assert_called_once_with(
                                 session_id,
                                 "http://mcp-server:9000/sse",
                                 "gw-123",
                                 "sse",
+                                user_email,
                             )
         finally:
             await registry.shutdown()
@@ -928,18 +943,15 @@ class TestSessionRegistryAffinityE2E:
 
                 with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
                     with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
-                        # Call broadcast (which internally calls _register_session_mapping)
+                        # Call broadcast (which no longer calls _register_session_mapping)
+                        # In production, registration happens in respond()
                         await registry.broadcast(session_id, message)
 
-                        # Verify session mapping was registered
-                        mock_pool.register_session_mapping.assert_called_once_with(
-                            session_id,
-                            "http://full-test:8080/mcp",
-                            "gw-full",
-                            "streamablehttp",
-                        )
+                        # Verify session mapping was NOT registered from broadcast()
+                        # (it should be registered from respond() instead)
+                        mock_pool.register_session_mapping.assert_not_called()
 
-                        # Verify message was also stored (memory backend behavior)
+                        # Verify message was stored (memory backend behavior)
                         assert registry._session_message is not None
                         assert registry._session_message["session_id"] == session_id
         finally:

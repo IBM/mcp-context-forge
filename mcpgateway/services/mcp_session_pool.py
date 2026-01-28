@@ -486,10 +486,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         url: str,
         gateway_id: str,
         transport_type: str,
+        user_email: Optional[str] = None,
     ) -> None:
         """Pre-register session mapping for session affinity.
 
-        Called by broadcast() to set up mapping BEFORE acquire() is called.
+        Called from respond() to set up mapping BEFORE acquire() is called.
         This ensures acquire() can find the correct pool key for session affinity.
 
         The mapping stores the relationship between an incoming MCP session ID
@@ -497,25 +498,65 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         enables session affinity even when JWT tokens rotate (different jti values
         per request).
 
+        For multi-worker deployments, the mapping is also stored in Redis with TTL
+        so that any worker can look it up during acquire().
+
         Args:
             mcp_session_id: The downstream MCP session ID from x-mcp-session-id header.
             url: The upstream MCP server URL.
             gateway_id: The gateway ID.
             transport_type: The transport type (sse, streamablehttp).
+            user_email: The email of the authenticated user (or "system" for unauthenticated).
         """
         if not settings.mcpgateway_session_affinity_enabled:
             return
+
+        # Use user email for user_identity, or "anonymous" if not provided
+        user_identity = user_email or "anonymous"
 
         mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type, gateway_id)
 
         # Compute what the pool_key will be for this session
         # Use mcp_session_id as the identity basis for affinity
         identity_hash = hashlib.sha256(mcp_session_id.encode()).hexdigest()
-        pool_key: PoolKey = ("anonymous", url, identity_hash, transport_type, gateway_id)
 
+        # Hash user identity for privacy (unless it's "anonymous")
+        if user_identity == "anonymous":
+            user_hash = "anonymous"
+        else:
+            user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
+
+        pool_key: PoolKey = (user_hash, url, identity_hash, transport_type, gateway_id)
+
+        # Store in local memory
         async with self._mcp_session_mapping_lock:
             self._mcp_session_mapping[mapping_key] = pool_key
-            logger.debug(f"Session affinity pre-registered: {mcp_session_id[:8]}... → {url}")
+            logger.debug(f"Session affinity pre-registered (local): {mcp_session_id[:8]}... → {url}, user={user_identity}")
+
+        # Store in Redis for multi-worker support
+        try:
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if redis:
+                # Redis key: session_mapping:{mcp_session_id}:{url}:{transport}:{gateway_id}
+                redis_key = f"mcpgw:session_mapping:{mcp_session_id}:{url}:{transport_type}:{gateway_id}"
+
+                # Store pool_key as JSON for easy deserialization
+                import orjson  # pylint: disable=import-outside-toplevel
+
+                pool_key_data = {
+                    "user_hash": user_hash,
+                    "url": url,
+                    "identity_hash": identity_hash,
+                    "transport_type": transport_type,
+                    "gateway_id": gateway_id,
+                }
+                await redis.setex(redis_key, settings.mcpgateway_session_affinity_ttl, orjson.dumps(pool_key_data))  # TTL from config
+                logger.debug(f"Session affinity pre-registered (Redis): {mcp_session_id[:8]}... TTL={settings.mcpgateway_session_affinity_ttl}s")
+        except Exception as e:
+            # Redis failure is non-fatal - local mapping still works for same-worker requests
+            logger.debug(f"Failed to store session mapping in Redis: {e}")
 
     async def acquire(
         self,
@@ -562,16 +603,44 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         user_id = user_identity or "anonymous"
         pool_key: Optional[PoolKey] = None
 
-        # Check pre-registered mapping first (set by broadcast for session affinity)
+        # Check pre-registered mapping first (set by respond() for session affinity)
         if settings.mcpgateway_session_affinity_enabled and headers:
             headers_lower = {k.lower(): v for k, v in headers.items()}
             mcp_session_id = headers_lower.get("x-mcp-session-id")
             if mcp_session_id:
                 mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type.value, gateway_id or "")
+
+                # Check local memory first (fast path - same worker)
                 async with self._mcp_session_mapping_lock:
                     pool_key = self._mcp_session_mapping.get(mapping_key)
                     if pool_key:
-                        logger.debug(f"Session affinity hit (pre-registered): {mcp_session_id[:8]}...")
+                        logger.debug(f"Session affinity hit (local): {mcp_session_id[:8]}...")
+
+                # If not in local memory, check Redis (multi-worker support)
+                if pool_key is None:
+                    try:
+                        from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+                        redis = await get_redis_client()
+                        if redis:
+                            redis_key = f"mcpgw:session_mapping:{mcp_session_id}:{url}:{transport_type.value}:{gateway_id or ''}"
+                            pool_key_data = await redis.get(redis_key)
+                            if pool_key_data:
+                                # Deserialize pool_key from JSON
+                                data = orjson.loads(pool_key_data)
+                                pool_key = (
+                                    data["user_hash"],
+                                    data["url"],
+                                    data["identity_hash"],
+                                    data["transport_type"],
+                                    data["gateway_id"],
+                                )
+                                # Cache in local memory for future requests
+                                async with self._mcp_session_mapping_lock:
+                                    self._mcp_session_mapping[mapping_key] = pool_key
+                                logger.debug(f"Session affinity hit (Redis): {mcp_session_id[:8]}...")
+                    except Exception as e:
+                        logger.debug(f"Failed to check Redis for session mapping: {e}")
 
         # Fallback to normal pool key computation
         if pool_key is None:
