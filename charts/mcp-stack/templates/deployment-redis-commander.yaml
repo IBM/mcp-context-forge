@@ -1,7 +1,7 @@
 {{- /*
 Redis-Commander Deployment
 */ -}}
-{{- if .Values.redisCommander.enabled }}
+{{- if and .Values.redisCommander.enabled (or .Values.redis.enabled .Values.redis.external.enabled) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,12 +53,20 @@ spec:
 {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
           {{- end }}
 
-          # Point Redis-Commander at the in-cluster Redis service
+          # Point Redis-Commander at the Redis service (internal or external)
           env:
             - name: REDIS_HOST
-              value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) }}
+              {{- if .Values.redis.external.enabled }}
+              value: {{ .Values.redis.external.host | quote }}
+              {{- else }}
+              value: {{ .Values.mcpContextForge.env.redis.host | default (printf "%s-redis" (include "mcp-stack.fullname" .)) | quote }}
+              {{- end }}
             - name: REDIS_PORT
+              {{- if .Values.redis.external.enabled }}
+              value: "{{ .Values.redis.external.port }}"
+              {{- else }}
               value: "{{ .Values.redis.service.port }}"
+              {{- end }}
 
           # ─── Resource limits & requests ───
           {{- with .Values.redisCommander.resources }}
