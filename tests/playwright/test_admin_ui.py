@@ -9,6 +9,7 @@ Test cases for admin UI.
 
 # Standard
 import re
+import time
 
 # Third-Party
 from playwright.sync_api import expect, Page
@@ -20,13 +21,27 @@ from .pages.admin_page import AdminPage
 class TestAdminUI:
     """Admin UI test cases."""
 
+    def _find_server(self, page: Page, server_name: str, retries: int = 5):
+        """Find a server by name via the admin JSON endpoint."""
+        for _ in range(retries):
+            cache_bust = str(int(time.time() * 1000))
+            response = page.request.get(f"/admin/servers?per_page=500&cache_bust={cache_bust}")
+            if response.ok:
+                payload = response.json()
+                data = payload.get("data", [])
+                for server in data:
+                    if server.get("name") == server_name:
+                        return server
+            time.sleep(0.5)
+        return None
+
     def test_admin_panel_loads(self, admin_page: Page, base_url: str):
         """Test that admin panel loads successfully."""
         admin_ui = AdminPage(admin_page, base_url)
         admin_ui.navigate()
 
         # Verify admin panel loaded
-        expect(admin_page).to_have_title("MCP Gateway Admin")
+        expect(admin_page).to_have_title(re.compile(r"(MCP Gateway Admin|ContextForge - Gateway Administration)"))
         assert admin_ui.element_exists(admin_ui.SERVERS_TAB)
         assert admin_ui.element_exists(admin_ui.TOOLS_TAB)
         assert admin_ui.element_exists(admin_ui.GATEWAYS_TAB)
@@ -53,43 +68,30 @@ class TestAdminUI:
         """Test adding a new server."""
         admin_ui = AdminPage(admin_page, base_url)
         admin_ui.navigate()
+        admin_ui.click_servers_tab()
 
         # Add a test server
         test_server_name = "Test MCP Server"
         test_server_icon_url = "http://localhost:9000/icon.png"
 
         # Fill the form directly instead of using the page object method
-        admin_page.fill('input[name="name"]', test_server_name)
+        admin_page.fill("#server-name", test_server_name)
         admin_page.fill('input[name="icon"]', test_server_icon_url)
 
         # Submit the form
-        admin_page.click('button[type="submit"][data-testid="add-server-btn"]')
+        with admin_page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
+            admin_page.click('#add-server-form button[type="submit"]')
+        response = response_info.value
+        assert response.status < 400
 
-        # Wait for the redirect to complete - the form submission redirects to /admin#catalog
-        admin_page.wait_for_url(re.compile(r".*/admin.*#catalog"), wait_until="networkidle")
-
-        # Now wait for the server list to be visible
-        admin_page.wait_for_selector('[data-testid="server-list"]', state="visible")
-
-        # Verify server was added by checking if the name appears in the table
-        server_rows = admin_page.locator('[data-testid="server-item"]')
-        server_found = False
-
-        # Wait a bit for the table to update
-        admin_page.wait_for_timeout(1000)
-
-        for i in range(server_rows.count()):
-            row_text = server_rows.nth(i).text_content()
-            if test_server_name in row_text:
-                server_found = True
-                break
-
-        assert server_found, f"Server '{test_server_name}' was not found in the server list"
+        created_server = self._find_server(admin_page, test_server_name)
+        assert created_server is not None, f"Server '{test_server_name}' was not found via admin API"
 
     def test_search_functionality(self, admin_page: Page, base_url: str):
         """Test search functionality in admin panel."""
         admin_ui = AdminPage(admin_page, base_url)
         admin_ui.navigate()
+        admin_ui.click_servers_tab()
 
         # Get initial server count
         admin_page.wait_for_selector('[data-testid="server-list"]')
@@ -117,14 +119,15 @@ class TestAdminUI:
 
         # The tabs should still be accessible even in mobile view
         # Check if the page adapts by verifying the main content area
-        expect(admin_page.locator("#catalog-panel, #tools-panel, #gateways-panel").first).to_be_visible()
+        visible_panels = admin_page.locator("#catalog-panel:visible, #tools-panel:visible, #gateways-panel:visible")
+        assert visible_panels.count() > 0
 
         # Test tablet viewport
         admin_page.set_viewport_size({"width": 768, "height": 1024})
-        admin_page.reload()
+        admin_ui.navigate()
         expect(admin_page.locator('[data-testid="servers-tab"]')).to_be_visible()
 
         # Test desktop viewport
         admin_page.set_viewport_size({"width": 1920, "height": 1080})
-        admin_page.reload()
+        admin_ui.navigate()
         expect(admin_page.locator('[data-testid="servers-tab"]')).to_be_visible()

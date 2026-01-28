@@ -14,7 +14,7 @@ import re
 from typing import Generator, Optional
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, Page, Playwright
+from playwright.sync_api import APIRequestContext, Page, Playwright, expect
 import pytest
 
 # First-Party
@@ -57,6 +57,15 @@ def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -
         page.wait_for_timeout(500)
 
 
+def _wait_for_login_response(page: Page) -> Optional[int]:
+    """Wait for the login POST response and return its status code."""
+    try:
+        response = page.wait_for_response(lambda resp: "/admin/login" in resp.url and resp.request.method == "POST", timeout=10000)
+    except Exception:
+        return None
+    return response.status
+
+
 @pytest.fixture(scope="session")
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Create API request context with optional bearer token."""
@@ -96,6 +105,7 @@ def admin_page(page: Page):
     admin_email = settings.platform_admin_email or ADMIN_EMAIL
     # Go directly to admin - session login handled here if needed
     page.goto("/admin")
+    login_form_visible = page.locator('input[name="email"]').count() > 0
     if re.search(r"/admin/change-password-required", page.url):
         current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
         page.fill('input[name="current_password"]', current_password)
@@ -106,13 +116,16 @@ def admin_page(page: Page):
         ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
         _wait_for_admin_transition(page, previous_url)
     # Handle login page redirect if auth is required
-    if re.search(r"login", page.url):
+    if re.search(r"login", page.url) or login_form_visible:
         page.wait_for_selector('input[name="email"]')
         current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
         page.fill('input[name="email"]', admin_email)
         page.fill('input[name="password"]', current_password)
         previous_url = page.url
         page.click('button[type="submit"]')
+        status = _wait_for_login_response(page)
+        if status is not None and status >= 400:
+            raise AssertionError(f"Login failed with status {status}")
         _wait_for_admin_transition(page, previous_url)
         if re.search(r"/admin/change-password-required", page.url):
             page.fill('input[name="current_password"]', current_password)
@@ -127,10 +140,13 @@ def admin_page(page: Page):
             page.fill('input[name="password"]', ADMIN_NEW_PASSWORD)
             previous_url = page.url
             page.click('button[type="submit"]')
+            status = _wait_for_login_response(page)
+            if status is not None and status >= 400:
+                raise AssertionError(f"Login failed with status {status}")
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page, previous_url)
     # Verify we're on the admin page
-    page.wait_for_url(re.compile(r".*/admin(?!/login).*"))
+    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
     return page
 
 
