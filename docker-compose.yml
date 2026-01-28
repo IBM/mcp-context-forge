@@ -43,13 +43,15 @@ services:
     restart: unless-stopped
     ports:
       - "8080:80"                   # HTTP caching proxy (public-facing)
+      # - "8443:443"                  # HTTPS caching proxy (public-facing)
     networks: [mcpnet]
     depends_on:
       gateway:
         condition: service_healthy
     volumes:
       - nginx_cache:/var/cache/nginx    # Persistent cache storage
-      # - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      # - ./certs:/app/certs:ro           # Mount SSL certs for HTTPS backend verification
     # TCP kernel tuning for 3000 concurrent connections
     # Note: net.core.* sysctls are host-level and cannot be set per-container
     # Only net.ipv4.* sysctls that are network-namespace aware work here
@@ -209,11 +211,13 @@ services:
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
-      ## Uncomment to enable HTTPS
+      ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
-      # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}  # Optional: Set in .env for passphrase-protected keys
+      # For passphrase-protected keys: run `make certs-passphrase` and use:
+      # - KEY_FILE=/app/certs/key-encrypted.pem
+      # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
       # Uncomment to enable catalog
@@ -454,9 +458,9 @@ services:
     healthcheck:
       ## Uncomment for HTTP healthcheck
       test: ["CMD", "python3", "-c", "import urllib.request; import json; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); data = json.loads(resp.read()); exit(0 if data.get('status') == 'healthy' else 1)"]
-      ## Uncomment for HTTPS healthcheck
+      ## Uncomment for HTTPS healthcheck (requires valid SSL cert)
       # test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
-      ## Uncomment to skip SSL validation (self-signed certs)
+      # HTTPS healthcheck with SSL validation skipped (self-signed certs)
       # test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
       interval: 30s
       timeout: 10s
@@ -490,7 +494,7 @@ services:
     # Uncomment to mount catalog configuration and SSL certificates
     # volumes:
     #   - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
-    #   - ./certs:/app/mcpgateway/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
+      # - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # SSL/TLS Certificate Setup:
     # 1. Generate certificates:

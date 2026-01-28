@@ -257,7 +257,13 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1"; \
 		echo "✅  TLS certificate written to ./certs"; \
 	fi
-	chmod 640 certs/key.pem
+	@echo "🔐  Setting file permissions for container access..."
+	@chmod 644 certs/cert.pem  # Public certificate - world-readable is OK
+	@chmod 640 certs/key.pem   # Private key - owner+group only, no world access
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key.pem certs/cert.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key.pem certs/cert.pem")
 
 certs-passphrase:                ## Generate self-signed cert with passphrase-protected key
 	@if [ -f certs/cert.pem ] && [ -f certs/key-encrypted.pem ]; then \
@@ -271,20 +277,28 @@ certs-passphrase:                ## Generate self-signed cert with passphrase-pr
 			echo "❌  Passphrases do not match!"; \
 			exit 1; \
 		fi; \
-		openssl req -x509 -newkey rsa:4096 -sha256 -days 365 \
-			-keyout certs/key-encrypted.pem -out certs/cert.pem \
+		openssl genrsa -aes256 -passout pass:"$$PASSPHRASE" -out certs/key-encrypted.pem 4096; \
+		openssl req -x509 -sha256 -days 365 \
+			-key certs/key-encrypted.pem \
+			-passin pass:"$$PASSPHRASE" \
+			-out certs/cert.pem \
 			-subj "/CN=localhost" \
-			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
-			-passout pass:"$$PASSPHRASE"; \
-		echo "✅  Passphrase-protected certificate created"; \
-		echo "📁  Certificate: ./certs/cert.pem"; \
-		echo "📁  Encrypted Key: ./certs/key-encrypted.pem"; \
-		echo ""; \
-		echo "💡  To use this certificate:"; \
-		echo "   1. Set KEY_FILE_PASSWORD environment variable"; \
-		echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"; \
+			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1"; \
+		echo "✅  Passphrase-protected certificate created (AES-256)"; \
 	fi
-	@chmod 600 certs/key-encrypted.pem
+	@echo "🔐  Setting file permissions for container access..."
+	@chmod 644 certs/cert.pem          # Public certificate - world-readable is OK
+	@chmod 640 certs/key-encrypted.pem # Private key - owner+group only, no world access
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key-encrypted.pem certs/cert.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key-encrypted.pem certs/cert.pem")
+	@echo "📁  Certificate: ./certs/cert.pem"
+	@echo "📁  Encrypted Key: ./certs/key-encrypted.pem"
+	@echo ""
+	@echo "💡  To use this certificate:"
+	@echo "   1. Set KEY_FILE_PASSWORD environment variable"
+	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"
 
 certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
 	@if [ ! -f certs/key-encrypted.pem ]; then \
@@ -294,7 +308,11 @@ certs-remove-passphrase:         ## Remove passphrase from encrypted key (create
 	fi
 	@echo "🔓  Removing passphrase from private key..."
 	@openssl rsa -in certs/key-encrypted.pem -out certs/key.pem
-	@chmod 600 certs/key.pem
+	@chmod 640 certs/key.pem
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key.pem")
 	@echo "✅  Passphrase removed - unencrypted key saved to certs/key.pem"
 	@echo "⚠️   Keep this file secure! It contains your unencrypted private key."
 
