@@ -3780,13 +3780,27 @@ async def _admin_logout(request: Request) -> Response:
 
 @admin_router.get("/logout", operation_id="admin_logout_get")
 async def admin_logout_get(request: Request) -> Response:
-    """GET logout endpoint for OIDC front-channel logout."""
+    """GET logout endpoint for OIDC front-channel logout.
+
+    Args:
+        request (Request): FastAPI request object.
+
+    Returns:
+        Response: Logout response for front-channel requests.
+    """
     return await _admin_logout(request)
 
 
 @admin_router.post("/logout", operation_id="admin_logout_post")
 async def admin_logout_post(request: Request) -> Response:
-    """POST logout endpoint for user-initiated UI logout."""
+    """POST logout endpoint for user-initiated UI logout.
+
+    Args:
+        request (Request): FastAPI request object.
+
+    Returns:
+        Response: Logout response for UI-initiated requests.
+    """
     return await _admin_logout(request)
 
 
