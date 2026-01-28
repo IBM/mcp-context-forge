@@ -1220,6 +1220,7 @@ For detailed upgrade instructions, troubleshooting, and rollback procedures, see
 > ⚠️ If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
 
 You can get started by copying the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and making the necessary edits to fit your environment.
+The template keeps **required security-sensitive values** active plus a small **project defaults** block (batteries-included overrides). Everything else is commented and falls back to `mcpgateway/config.py` defaults. The template also includes a **Non-Settings** section (runtime/launcher envs and auxiliary tools) which are not part of Pydantic Settings. A **Performance Tuning (quick reference)** section near the top groups TTLs, pools, and timeouts for faster tuning. Uncomment settings when you need to override defaults.
 
 <details>
 <summary><strong>🔧 Environment Configuration Variables</strong></summary>
@@ -2346,7 +2347,7 @@ These settings mitigate CPU spin loops that can occur when SSE/MCP connections a
 
 ### Complete Settings Reference (authoritative)
 
-The list below is generated from `mcpgateway/config.py` (Pydantic Settings). Use `.env.example` for descriptions, defaults, and examples.
+The list below is generated from `mcpgateway/config.py` (Pydantic Settings). Use `.env.example` for descriptions, defaults, examples, and non-Settings envs.
 
 <details>
 <summary><strong>📜 Full Settings env list (alphabetical)</strong></summary>

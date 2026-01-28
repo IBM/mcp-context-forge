@@ -188,6 +188,9 @@ mcpContextForge:
     HOST: 0.0.0.0                    # address the server binds to
     PORT: "4444"                     # internal container port
     APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
+    CLIENT_MODE: "false"             # gateway-as-client mode (true/false)
+    TEMPLATES_DIR: "/app/mcpgateway/templates" # override templates path (leave as default)
+    STATIC_DIR: "/app/mcpgateway/static"       # override static path (leave as default)
 
     # ─ Connection pooling ─
     # With PgBouncer enabled: smaller pools (PgBouncer handles connection multiplexing)
@@ -269,7 +272,7 @@ mcpContextForge:
     METRICS_CACHE_TTL_SECONDS: "60"          # Cache TTL in seconds (1-300)
 
     # ─ Protocol & feature toggles ─
-    PROTOCOL_VERSION: 2025-03-26
+    PROTOCOL_VERSION: 2025-06-18
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
     MCPGATEWAY_UI_AIRGAPPED: "false"  # serve vendored CSS/JS files locally (air-gapped mode)
     MCPGATEWAY_ADMIN_API_ENABLED: "true" # toggle Admin API endpoints
@@ -316,7 +319,7 @@ mcpContextForge:
     DEFAULT_ROOTS: "[]"                 # default roots configuration (JSON array)
 
     # ─ Security & CORS ─
-    ENVIRONMENT: development         # deployment environment (development/production)
+    ENVIRONMENT: development         # deployment environment (development/staging/production)
     APP_DOMAIN: http://localhost            # domain for production CORS origins
     CORS_ENABLED: "true"             # enable CORS processing in gateway
     CORS_ALLOW_CREDENTIALS: "true"   # allow credentials in CORS requests
@@ -435,6 +438,7 @@ mcpContextForge:
     GATEWAY_HEALTH_CHECK_TIMEOUT: "5.0" # per-check timeout to bound total time of one gateway health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
     GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
+    MAX_CONCURRENT_HEALTH_CHECKS: "10" # maximum concurrent health checks per worker
     AUTO_REFRESH_SERVERS: "false"      # automatic tools/prompts/resources refresh from the mcp servers during gateway health checks
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
 
@@ -457,6 +461,7 @@ mcpContextForge:
     # Options: ping, list_tools, list_prompts, list_resources, skip
     MCP_SESSION_POOL_HEALTH_CHECK_METHODS: '["ping", "skip"]' # try ping, skip if unsupported
     MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT: "5.0"              # timeout per health check attempt
+    MCP_SESSION_POOL_IDENTITY_HEADERS: '["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie"]' # headers used for session pool identity hashing
 
     # ═══════════════════════════════════════════════════════════════════════════
     # CPU Spin Loop Mitigation (Issue #2360, anyio#695)
@@ -523,18 +528,25 @@ mcpContextForge:
       # MCP Gateway is a private API gateway
       # Public crawling is disabled by default
     WELL_KNOWN_SECURITY_TXT: ""      # security.txt content (RFC 9116)
+    WELL_KNOWN_SECURITY_TXT_ENABLED: "false" # enable security.txt endpoint (auto-enabled when content provided)
     WELL_KNOWN_CUSTOM_FILES: "{}"    # additional custom well-known files (JSON)
     WELL_KNOWN_CACHE_MAX_AGE: "3600" # cache control for well-known files (seconds)
 
     # ─ Plugin Configuration ─
     PLUGINS_ENABLED: "false"         # enable the plugin framework
     PLUGIN_CONFIG_FILE: "plugins/config.yaml" # path to main plugin configuration file
-    PLUGINS_MTLS_CA_BUNDLE: ""               # default CA bundle for external plugins (optional)
-    PLUGINS_MTLS_CLIENT_CERT: ""             # gateway client certificate for plugin mTLS
-    PLUGINS_MTLS_CLIENT_KEY: ""              # gateway client key for plugin mTLS (optional)
-    PLUGINS_MTLS_CLIENT_KEY_PASSWORD: ""     # password for the plugin client key (optional)
-    PLUGINS_MTLS_VERIFY: "true"              # verify remote plugin certificates
-    PLUGINS_MTLS_CHECK_HOSTNAME: "true"      # enforce hostname verification when verifying certs
+    PLUGINS_CLIENT_MTLS_CA_BUNDLE: ""        # default CA bundle for external plugins (optional)
+    PLUGINS_CLIENT_MTLS_CERTFILE: ""         # gateway client certificate for plugin mTLS
+    PLUGINS_CLIENT_MTLS_KEYFILE: ""          # gateway client key for plugin mTLS (optional)
+    PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD: "" # password for the plugin client key (optional)
+    PLUGINS_CLIENT_MTLS_VERIFY: "true"       # verify remote plugin certificates
+    PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME: "true" # enforce hostname verification when verifying certs
+    PLUGINS_SERVER_SSL_ENABLED: "false"      # enable TLS when exposing plugins over HTTP
+    PLUGINS_SERVER_SSL_KEYFILE: ""           # plugin server private key
+    PLUGINS_SERVER_SSL_CERTFILE: ""          # plugin server certificate
+    PLUGINS_SERVER_SSL_CA_CERTS: ""          # CA bundle for client cert verification
+    PLUGINS_SERVER_SSL_CERT_REQS: "2"        # client cert requirement (0=NONE,1=OPTIONAL,2=REQUIRED)
+    PLUGINS_SERVER_SSL_KEYFILE_PASSWORD: ""  # password for plugin server key (optional)
     PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
     PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
 
@@ -609,6 +621,135 @@ mcpContextForge:
     PAGINATION_INCLUDE_LINKS: "true" # enable pagination links in API responses
     PAGINATION_BASE_URL: "" # base URL for pagination links (defaults to request URL if empty)
 
+    # ─ Additional Settings (defaults from config.py) ─
+    # Validation & sanitization
+    EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
+    VALIDATION_MIDDLEWARE_ENABLED: "false" # enable validation middleware for all requests
+    VALIDATION_STRICT: "true" # reject requests with validation failures
+    SANITIZE_OUTPUT: "true" # strip control characters from responses
+    ALLOWED_ROOTS: "[]" # allowed root paths (JSON array)
+    MAX_PATH_DEPTH: "10" # maximum allowed path depth
+    MAX_PARAM_LENGTH: "10000" # maximum parameter length (characters)
+    DANGEROUS_PATTERNS: '["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]' # dangerous input patterns (JSON array)
+    ALLOWED_MIME_TYPES: '["text/plain","text/markdown","text/html","application/json","application/xml","image/png","image/jpeg","image/gif"]' # allowed MIME types (JSON array)
+
+    # Compression
+    COMPRESSION_ENABLED: "true" # enable response compression
+    COMPRESSION_MINIMUM_SIZE: "500" # minimum response size to compress (bytes)
+    COMPRESSION_GZIP_LEVEL: "6" # gzip compression level (1-9)
+    COMPRESSION_BROTLI_QUALITY: "4" # brotli quality (0-11)
+    COMPRESSION_ZSTD_LEVEL: "3" # zstd level (1-22)
+
+    # Correlation IDs
+    CORRELATION_ID_ENABLED: "true" # enable correlation IDs
+    CORRELATION_ID_HEADER: X-Correlation-ID # header name to read
+    CORRELATION_ID_PRESERVE: "true" # preserve incoming header
+    CORRELATION_ID_RESPONSE_HEADER: "true" # emit correlation ID in response
+
+    # Startup / refresh behavior
+    SLUG_REFRESH_BATCH_SIZE: "1000" # batch size for slug refresh at startup
+    GATEWAY_AUTO_REFRESH_INTERVAL: "300" # seconds between gateway/tool refresh checks
+    GATEWAY_MAX_REDIRECTS: "5" # max redirects for upstream calls
+
+    # Session polling backoff (CACHE_TYPE=database)
+    POLL_INTERVAL: "1.0" # base poll interval (seconds)
+    MAX_INTERVAL: "5.0" # max backoff interval (seconds)
+    BACKOFF_FACTOR: "1.5" # backoff multiplier
+
+    # A2A stats cache
+    A2A_STATS_CACHE_TTL: "30" # A2A stats cache TTL in seconds
+
+    # Database advanced settings
+    DB_POOL_CLASS: "auto" # pool class: auto, null, queue
+    DB_POOL_PRE_PING: "auto" # pre-ping setting: auto, true, false
+    DB_DRIVER: "mariadb+mariadbconnector" # SQLAlchemy driver identifier
+    DB_PREPARE_THRESHOLD: "5" # psycopg server-side prepare threshold
+
+    # Redis parser
+    REDIS_PARSER: "auto" # redis parser: auto, hiredis, python
+
+    # DB query logging (advanced)
+    DB_QUERY_LOG_ENABLED: "false" # enable DB query logging
+    DB_QUERY_LOG_FILE: "logs/db-queries.log" # text log file path
+    DB_QUERY_LOG_JSON_FILE: "logs/db-queries.jsonl" # jsonl log file path
+    DB_QUERY_LOG_FORMAT: "both" # text/json/both
+    DB_QUERY_LOG_INCLUDE_PARAMS: "false" # include query params
+    DB_QUERY_LOG_MIN_QUERIES: "1" # minimum queries before logging
+    DB_QUERY_LOG_N1_THRESHOLD: "3" # threshold for N+1 detection
+    DB_QUERY_LOG_DETECT_N1: "true" # enable N+1 detection
+
+    # LLM Chat session storage
+    LLMCHAT_SESSION_TTL: "300" # active_session key TTL (seconds)
+    LLMCHAT_SESSION_LOCK_TTL: "30" # lock expiry (seconds)
+    LLMCHAT_SESSION_LOCK_RETRIES: "10" # lock retries
+    LLMCHAT_SESSION_LOCK_WAIT: "0.2" # seconds between lock polls
+    LLMCHAT_CHAT_HISTORY_TTL: "3600" # chat history TTL (seconds)
+    LLMCHAT_CHAT_HISTORY_MAX_MESSAGES: "50" # max messages per user
+
+    # Elicitation support
+    MCPGATEWAY_ELICITATION_ENABLED: "true" # enable elicitation
+    MCPGATEWAY_ELICITATION_TIMEOUT: "60" # elicitation timeout (seconds)
+    MCPGATEWAY_ELICITATION_MAX_CONCURRENT: "100" # max concurrent elicitations
+
+    # Tool cancellation
+    MCPGATEWAY_TOOL_CANCELLATION_ENABLED: "true" # enable tool cancellation
+
+    # gRPC support (experimental)
+    MCPGATEWAY_GRPC_ENABLED: "false" # enable gRPC
+    MCPGATEWAY_GRPC_TIMEOUT: "30" # gRPC timeout (seconds)
+    MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE: "4194304" # max message size (bytes)
+    MCPGATEWAY_GRPC_REFLECTION_ENABLED: "true" # enable gRPC reflection
+    MCPGATEWAY_GRPC_TLS_ENABLED: "false" # enable gRPC TLS
+
+    # Performance tracking (internal)
+    PERFORMANCE_TRACKING_ENABLED: "true" # enable performance tracking
+    PERFORMANCE_THRESHOLD_DATABASE_QUERY_MS: "100.0" # DB query threshold (ms)
+    PERFORMANCE_THRESHOLD_RESOURCE_READ_MS: "1000.0" # resource read threshold (ms)
+    PERFORMANCE_THRESHOLD_TOOL_INVOCATION_MS: "2000.0" # tool invocation threshold (ms)
+    PERFORMANCE_THRESHOLD_HTTP_REQUEST_MS: "500.0" # HTTP request threshold (ms)
+    PERFORMANCE_DEGRADATION_MULTIPLIER: "1.5" # alert multiplier vs baseline
+
+    # Performance monitoring (net/host)
+    MCPGATEWAY_PERFORMANCE_TRACKING: "false" # enable gateway performance tracking
+    MCPGATEWAY_PERFORMANCE_COLLECTION_INTERVAL: "10" # collection interval (seconds)
+    MCPGATEWAY_PERFORMANCE_MAX_SNAPSHOTS: "10000" # max snapshots retained
+    MCPGATEWAY_PERFORMANCE_RETENTION_DAYS: "90" # snapshot retention (days)
+    MCPGATEWAY_PERFORMANCE_RETENTION_HOURS: "24" # snapshot retention (hours)
+    MCPGATEWAY_PERFORMANCE_DISTRIBUTED: "false" # distributed mode
+    MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED: "true" # track net connections
+    MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_CACHE_TTL: "15" # net conn cache TTL (seconds)
+
+    # Metrics aggregation
+    METRICS_AGGREGATION_ENABLED: "true" # enable log aggregation
+    METRICS_AGGREGATION_AUTO_START: "false" # auto-start aggregation loop
+    METRICS_AGGREGATION_BACKFILL_HOURS: "6" # startup backfill window
+    METRICS_AGGREGATION_WINDOW_MINUTES: "5" # aggregation window (minutes)
+
+    # Security logging and thresholds
+    SECURITY_LOGGING_ENABLED: "false" # enable security event logging
+    SECURITY_LOGGING_LEVEL: "failures_only" # all, failures_only, high_severity
+    SECURITY_FAILED_AUTH_THRESHOLD: "5" # failed auth attempts before alert
+    SECURITY_THREAT_SCORE_ALERT: "0.7" # threat score threshold
+    SECURITY_RATE_LIMIT_WINDOW_MINUTES: "5" # rate limit window (minutes)
+
+    # Structured logging / external sinks
+    STRUCTURED_LOGGING_ENABLED: "true" # enable structured logging
+    STRUCTURED_LOGGING_EXTERNAL_ENABLED: "false" # enable external structured log sink
+    STRUCTURED_LOGGING_DATABASE_ENABLED: "false" # persist structured logs to DB
+    SYSLOG_ENABLED: "false" # enable syslog output
+    SYSLOG_HOST: "" # syslog host
+    SYSLOG_PORT: "514" # syslog port
+    ELASTICSEARCH_ENABLED: "false" # enable Elasticsearch logging
+    ELASTICSEARCH_URL: "" # Elasticsearch URL
+    ELASTICSEARCH_INDEX_PREFIX: "mcpgateway-logs" # index prefix
+    WEBHOOK_LOGGING_ENABLED: "false" # enable webhook logging
+    WEBHOOK_LOGGING_URLS: "[]" # webhook URLs (JSON array)
+
+    # Log search / masking
+    LOG_RETENTION_DAYS: "30" # retention in days
+    LOG_SEARCH_MAX_RESULTS: "1000" # max results per search
+    MASKED_AUTH_VALUE: "*****" # masked auth value placeholder
+
   ####################################################################
   # SENSITIVE SETTINGS
   # Rendered into an Opaque Secret.  NO $(VAR) expansion here.
@@ -636,6 +777,7 @@ mcpContextForge:
     PLATFORM_ADMIN_EMAIL: admin@example.com # email for bootstrap platform admin user
     PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
     PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin
+    DEFAULT_USER_PASSWORD: changeme       # default password for new users (bootstrap)
 
     # ─ Password Hashing & Security ─
     ARGON2ID_TIME_COST: "3"                # Argon2id time cost (iterations)
@@ -646,6 +788,13 @@ mcpContextForge:
     PASSWORD_REQUIRE_LOWERCASE: "false"    # require lowercase letters in passwords
     PASSWORD_REQUIRE_NUMBERS: "false"      # require numbers in passwords
     PASSWORD_REQUIRE_SPECIAL: "false"      # require special characters in passwords
+    PASSWORD_CHANGE_ENFORCEMENT_ENABLED: "true" # enable password change enforcement checks
+    ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap
+    DETECT_DEFAULT_PASSWORD_ON_LOGIN: "true" # detect default passwords on login
+    REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD: "true" # require change for default password
+    PASSWORD_POLICY_ENABLED: "true"         # enable password policy enforcement
+    PASSWORD_PREVENT_REUSE: "true"          # prevent reuse of recent passwords
+    PASSWORD_MAX_AGE_DAYS: "90"             # maximum password age in days
     MAX_FAILED_LOGIN_ATTEMPTS: "5"         # maximum failed login attempts before lockout
     ACCOUNT_LOCKOUT_DURATION_MINUTES: "30" # account lockout duration in minutes
     MIN_PASSWORD_LENGTH: "12"              # minimum password length for validation
@@ -732,6 +881,11 @@ mcpContextForge:
     SSO_ENTRA_CLIENT_ID: ""                # Microsoft Entra ID client ID
     SSO_ENTRA_CLIENT_SECRET: ""            # Microsoft Entra ID client secret
     SSO_ENTRA_TENANT_ID: ""                # Microsoft Entra ID tenant ID
+    SSO_ENTRA_GROUPS_CLAIM: "groups"       # EntraID groups claim (JWT)
+    SSO_ENTRA_ADMIN_GROUPS: "[]"           # groups granting platform_admin role (JSON)
+    SSO_ENTRA_ROLE_MAPPINGS: "{}"          # map groups to roles (JSON)
+    SSO_ENTRA_DEFAULT_ROLE: ""             # default role for unmapped users
+    SSO_ENTRA_SYNC_ROLES_ON_LOGIN: "true"  # sync roles on each login
 
     # ─ Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.) ─
     SSO_GENERIC_ENABLED: "false"           # enable generic OIDC provider authentication
@@ -756,7 +910,9 @@ mcpContextForge:
     # ─ Ed25519 Certificate Signing ─
     ENABLE_ED25519_SIGNING: "false"        # enable Ed25519 signing for certificates
     ED25519_PRIVATE_KEY: ""                # Ed25519 private key for signing (PEM format)
+    ED25519_PUBLIC_KEY: ""                 # Ed25519 public key (optional, derived if private key set)
     PREV_ED25519_PRIVATE_KEY: ""           # previous Ed25519 private key for key rotation
+    PREV_ED25519_PUBLIC_KEY: ""            # previous Ed25519 public key (optional)
 
     # ─ OpenTelemetry Endpoints (Optional/Sensitive) ─
     OTEL_EXPORTER_OTLP_ENDPOINT: ""        # OTLP endpoint (e.g., http://localhost:4317)
