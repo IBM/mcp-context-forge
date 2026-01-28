@@ -20,7 +20,8 @@ class BasePage:
 
     def navigate_to(self, url: str) -> None:
         """Navigate to specified URL."""
-        self.page.goto(url, wait_until="networkidle")
+        # networkidle can hang on pages with long-polling/SSE; domcontentloaded is more reliable for admin UI
+        self.page.goto(url, wait_until="domcontentloaded")
 
     def wait_for_element(self, selector: str) -> None:
         """Wait for element to be visible."""
