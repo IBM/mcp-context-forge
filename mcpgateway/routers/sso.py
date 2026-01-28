@@ -10,9 +10,10 @@ Handles SSO login flows, provider configuration, and callback handling.
 
 # Standard
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -20,7 +21,12 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.sso_service import SSOService
+
+# Initialize logging
+logging_service = LoggingService()
+logger = logging_service.get_logger("mcpgateway.routers.sso")
 
 
 class SSOProviderCreateRequest(BaseModel):
@@ -121,17 +127,61 @@ async def list_sso_providers(
     return [SSOProviderResponse(id=provider.id, name=provider.name, display_name=provider.display_name) for provider in providers]
 
 
+def _validate_redirect_uri(redirect_uri: str, request_host: str | None = None) -> bool:
+    """Validate redirect_uri to prevent open redirect attacks.
+
+    Allows:
+    - Relative URIs (no scheme/host)
+    - Same-origin URIs (matching request host)
+    - URIs from allowed origins (configured in settings.allowed_origins)
+
+    Args:
+        redirect_uri: The redirect URI to validate
+        request_host: The host header from the request (optional)
+
+    Returns:
+        True if the redirect_uri is safe, False otherwise
+    """
+    parsed = urlparse(redirect_uri)
+
+    # Allow relative URIs (no scheme and no netloc)
+    if not parsed.scheme and not parsed.netloc:
+        return True
+
+    # Allow same-origin if request_host is provided
+    if request_host:
+        request_host_normalized = request_host.split(":")[0]  # Remove port
+        redirect_host_normalized = parsed.netloc.split(":")[0]
+        if redirect_host_normalized == request_host_normalized:
+            return True
+
+    # Allow configured origins
+    if hasattr(settings, "allowed_origins") and settings.allowed_origins:
+        for origin in settings.allowed_origins:
+            origin_parsed = urlparse(origin)
+            origin_host = origin_parsed.netloc or origin
+            if parsed.netloc == origin_host or parsed.netloc.split(":")[0] == origin_host.split(":")[0]:
+                return True
+
+    return False
+
+
 @sso_router.get("/login/{provider_id}", response_model=SSOLoginResponse)
 async def initiate_sso_login(
     provider_id: str,
+    request: Request,
     redirect_uri: str = Query(..., description="Callback URI after authentication"),
     scopes: Optional[str] = Query(None, description="Space-separated OAuth scopes"),
     db: Session = Depends(get_db),
 ) -> SSOLoginResponse:
     """Initiate SSO authentication flow.
 
+    Validates the redirect_uri to prevent open redirect attacks.
+    Only allows relative URIs, same-origin URIs, or URIs from configured allowed origins.
+
     Args:
         provider_id: SSO provider identifier (e.g., 'github', 'google')
+        request: FastAPI request object (used for same-origin validation)
         redirect_uri: Callback URI after successful authentication
         scopes: Optional custom OAuth scopes (space-separated)
         db: Database session
@@ -140,7 +190,7 @@ async def initiate_sso_login(
         Authorization URL and state parameter for redirect.
 
     Raises:
-        HTTPException: If SSO is disabled or provider not found
+        HTTPException: If SSO is disabled, provider not found, or redirect_uri is invalid
 
     Examples:
         >>> import asyncio
@@ -149,6 +199,15 @@ async def initiate_sso_login(
     """
     if not settings.sso_enabled:
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
+
+    # Validate redirect_uri to prevent open redirect attacks
+    request_host = request.headers.get("host")
+    if not _validate_redirect_uri(redirect_uri, request_host):
+        logger.warning(f"SSO login rejected - invalid redirect_uri: {redirect_uri} (host: {request_host})")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid redirect_uri. Must be a relative path or same-origin URL.",
+        )
 
     sso_service = SSOService(db)
     scope_list = scopes.split() if scopes else None

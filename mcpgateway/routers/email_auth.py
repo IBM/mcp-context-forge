@@ -334,6 +334,10 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 async def register(registration_request: EmailRegistrationRequest, request: Request, db: Session = Depends(get_db)):
     """Register a new user account.
 
+    This endpoint is controlled by the PUBLIC_REGISTRATION_ENABLED setting.
+    When disabled (default), returns 403 Forbidden and users can only be
+    created by administrators via the admin API.
+
     Args:
         registration_request: Registration information
         request: FastAPI request object
@@ -343,7 +347,7 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
         AuthenticationResponse: Access token and user info
 
     Raises:
-        HTTPException: If registration fails
+        HTTPException: If registration fails or is disabled
 
     Examples:
         Request JSON:
@@ -353,6 +357,14 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
               "full_name": "New User"
             }
     """
+    # Check if public registration is allowed
+    if not settings.public_registration_enabled:
+        logger.warning(f"Registration attempt rejected - public registration disabled: {registration_request.email}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public registration is disabled. Please contact an administrator to create an account.",
+        )
+
     auth_service = EmailAuthService(db)
     get_client_ip(request)
     get_user_agent(request)
