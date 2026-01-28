@@ -288,6 +288,13 @@ echo "   Log Level: ${GRANIAN_LOG_LEVEL}"
 SSL=${SSL:-false}
 CERT_FILE=${CERT_FILE:-certs/cert.pem}
 KEY_FILE=${KEY_FILE:-certs/key.pem}
+KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}
+CERT_PASSPHRASE=${CERT_PASSPHRASE:-}
+
+# Use CERT_PASSPHRASE if KEY_FILE_PASSWORD is not set (for compatibility)
+if [[ -z "${KEY_FILE_PASSWORD}" && -n "${CERT_PASSPHRASE}" ]]; then
+    KEY_FILE_PASSWORD="${CERT_PASSPHRASE}"
+fi
 
 if [[ "${SSL}" == "true" ]]; then
     echo "🔐  Configuring TLS/SSL..."
@@ -396,6 +403,9 @@ fi
 # SSL/TLS configuration
 if [[ "${SSL}" == "true" ]]; then
     cmd+=( --ssl-certificate "${CERT_FILE}" --ssl-keyfile "${KEY_FILE}" )
+    if [[ -n "${KEY_FILE_PASSWORD:-}" ]]; then
+        cmd+=( --ssl-keyfile-password "${KEY_FILE_PASSWORD}" )
+    fi
 fi
 
 # Add the application module (Granian uses module:app format)
