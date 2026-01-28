@@ -16,10 +16,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Third-Party
 from fastapi.testclient import TestClient
 import pytest
+import sqlalchemy as sa
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.main import app
+import mcpgateway.db as db_mod
 
 
 class TestConditionalPaths:
@@ -332,8 +334,34 @@ class TestUtilityFunctions:
 
 
 # Test fixtures
+@pytest.fixture(autouse=True)
+def reset_db(app_with_temp_db):
+    """Clear the temp DB between tests when using the module-scoped app."""
+    engine = db_mod.engine
+    if engine is None:
+        yield
+        return
+
+    with engine.begin() as conn:
+        if engine.dialect.name == "sqlite":
+            conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+
+        for table in reversed(db_mod.Base.metadata.sorted_tables):
+            conn.execute(table.delete())
+
+        if engine.dialect.name == "sqlite":
+            try:
+                conn.exec_driver_sql("DELETE FROM sqlite_sequence")
+            except sa.exc.DatabaseError:
+                pass
+            conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+    yield
+
+
+# Test fixtures
 @pytest.fixture
-def test_client(app):
+def test_client(app_with_temp_db):
     """Test client with auth override for testing protected endpoints."""
     # Standard
     from unittest.mock import MagicMock, patch
@@ -369,13 +397,13 @@ def test_client(app):
     patcher.start()
 
     # Override the core auth function used by RBAC system
-    app.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
+    app_with_temp_db.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
 
     # Override get_current_user_with_permissions for RBAC system
     def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None, db=None):
         return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "db": db}
 
-    app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
+    app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
     # Mock the permission service to always return True for tests
     # First-Party
@@ -399,15 +427,15 @@ def test_client(app):
     PermissionService.check_permission = mock_check_permission
 
     # Override require_auth for backward compatibility
-    app.dependency_overrides[require_auth] = lambda: "test_user"
+    app_with_temp_db.dependency_overrides[require_auth] = lambda: "test_user"
 
-    client = TestClient(app)
+    client = TestClient(app_with_temp_db)
     yield client
 
     # Clean up overrides and restore original methods
-    app.dependency_overrides.pop(require_auth, None)
-    app.dependency_overrides.pop(get_current_user, None)
-    app.dependency_overrides.pop(get_current_user_with_permissions, None)
+    app_with_temp_db.dependency_overrides.pop(require_auth, None)
+    app_with_temp_db.dependency_overrides.pop(get_current_user, None)
+    app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
     patcher.stop()  # Stop the require_auth_override patch
     sec_patcher.stop()  # Stop the security_logger patch
     if hasattr(PermissionService, "_original_check_permission"):

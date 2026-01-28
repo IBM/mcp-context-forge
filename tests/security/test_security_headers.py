@@ -296,6 +296,6 @@ class TestSecurityHeadersEdgeCases:
 
 
 @pytest.fixture
-def client(app):
+def client(app_with_temp_db):
     """Create a test client for the FastAPI app."""
-    return TestClient(app)
+    return TestClient(app_with_temp_db)
