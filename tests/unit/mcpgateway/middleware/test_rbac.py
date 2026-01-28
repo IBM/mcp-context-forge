@@ -6,6 +6,40 @@ from fastapi import HTTPException, Request, status
 from mcpgateway.middleware import rbac
 
 
+# ============================================================================
+# Shared test fixtures and helpers
+# ============================================================================
+
+
+@contextmanager
+def mock_fresh_db_session():
+    """Shared mock for fresh_db_session used across all RBAC tests."""
+    yield MagicMock()
+
+
+@pytest.fixture
+def patch_fresh_db_session(monkeypatch):
+    """Fixture to patch fresh_db_session for tests that need it."""
+    monkeypatch.setattr("mcpgateway.middleware.rbac.fresh_db_session", mock_fresh_db_session)
+
+
+@pytest.fixture
+def patch_plugin_manager_none():
+    """Fixture to patch plugin manager to return None."""
+    import importlib
+
+    plugin_framework = importlib.import_module("mcpgateway.plugins.framework")
+    original_get_pm = plugin_framework.get_plugin_manager
+    plugin_framework.get_plugin_manager = lambda: None
+    yield
+    plugin_framework.get_plugin_manager = original_get_pm
+
+
+# ============================================================================
+# Tests
+# ============================================================================
+
+
 @pytest.mark.asyncio
 async def test_get_permission_service_uses_fresh_session():
     """Test that get_permission_service creates a service with a fresh database session."""
@@ -71,12 +105,11 @@ async def test_get_current_user_with_permissions_auth_failure_redirect_html():
 
 
 @pytest.mark.asyncio
-async def test_require_permission_granted(monkeypatch):
+async def test_require_permission_granted(monkeypatch, patch_fresh_db_session):
     async def dummy_func(user=None):
         return "ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -87,12 +120,11 @@ async def test_require_permission_granted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_require_admin_permission_granted(monkeypatch):
+async def test_require_admin_permission_granted(monkeypatch, patch_fresh_db_session):
     async def dummy_func(user=None):
         return "admin-ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_admin_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -103,12 +135,11 @@ async def test_require_admin_permission_granted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_require_any_permission_granted(monkeypatch):
+async def test_require_any_permission_granted(monkeypatch, patch_fresh_db_session):
     async def dummy_func(user=None):
         return "any-ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.side_effect = [False, True]
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -119,9 +150,8 @@ async def test_require_any_permission_granted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_permission_checker_methods(monkeypatch):
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+async def test_permission_checker_methods(monkeypatch, patch_fresh_db_session):
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     mock_perm_service.check_admin_permission.return_value = True
@@ -149,7 +179,7 @@ async def test_permission_checker_methods(monkeypatch):
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypatch):
+async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypatch, patch_fresh_db_session):
     """Test that hook invocation is skipped when has_hooks_for returns False.
 
     This test verifies the optimization added in issue #1778: when plugin manager
@@ -161,8 +191,7 @@ async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypat
     async def dummy_func(user=None):
         return "ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -193,7 +222,7 @@ async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypat
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatch):
+async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatch, patch_fresh_db_session):
     """Test that hook invocation occurs when has_hooks_for returns True.
 
     This test verifies that when plugins ARE registered for the permission hook,
@@ -205,8 +234,7 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
     async def dummy_func(user=None):
         return "ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -244,7 +272,7 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch):
+async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch, patch_fresh_db_session):
     """Verify check_permission receives team_id from user_context when no team_id kwarg is passed.
 
     This tests the fix for issue #2183: when team_id is not in path/query parameters,
@@ -255,8 +283,7 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
     async def dummy_func(user=None):
         return "ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-123"}
+    mock_user = {"email": "user@example.com", "team_id": "team-123"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -276,15 +303,14 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
+async def test_require_permission_prefers_kwarg_team_id(monkeypatch, patch_fresh_db_session):
     """Verify kwarg team_id takes precedence over user_context.team_id."""
     import importlib
 
     async def dummy_func(user=None, team_id=None):
         return "ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-A"}
+    mock_user = {"email": "user@example.com", "team_id": "team-A"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -304,15 +330,14 @@ async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch):
+async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch, patch_fresh_db_session):
     """Verify require_any_permission uses user_context.team_id when no team_id kwarg."""
     import importlib
 
     async def dummy_func(user=None):
         return "any-ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-456"}
+    mock_user = {"email": "user@example.com", "team_id": "team-456"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -332,15 +357,14 @@ async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(mo
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
+async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch, patch_fresh_db_session):
     """Verify require_any_permission prefers kwarg team_id over user_context.team_id."""
     import importlib
 
     async def dummy_func(user=None, team_id=None):
         return "any-ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-A"}
+    mock_user = {"email": "user@example.com", "team_id": "team-A"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -359,15 +383,14 @@ async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_decorators_handle_none_user_context_team_id(monkeypatch):
+async def test_decorators_handle_none_user_context_team_id(monkeypatch, patch_fresh_db_session):
     """Verify decorators work when user_context.team_id is None."""
     import importlib
 
     async def dummy_func(user=None):
         return "ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -386,7 +409,7 @@ async def test_decorators_handle_none_user_context_team_id(monkeypatch):
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
+async def test_plugin_permission_hook_receives_token_team_id(monkeypatch, patch_fresh_db_session):
     """Test that plugin permission hook receives correct team_id from user_context.
 
     Scenario:
@@ -401,9 +424,8 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
     async def dummy_func(user=None):
         return "ok"
 
-    mock_db = MagicMock()
     # User context with team_id from JWT token
-    mock_user = {"email": "user@example.com", "db": mock_db, "team_id": "team-from-token"}
+    mock_user = {"email": "user@example.com", "team_id": "team-from-token"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
@@ -440,7 +462,7 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
 
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
-async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch):
+async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch, patch_fresh_db_session):
     """Test that RBAC falls back to PermissionService when plugin manager is None.
 
     This verifies the optimization handles the case where get_plugin_manager()
@@ -451,8 +473,7 @@ async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch)
     async def dummy_func(user=None):
         return "ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
+    mock_user = {"email": "user@example.com"}
     mock_perm_service = AsyncMock()
     mock_perm_service.check_permission.return_value = True
     monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
