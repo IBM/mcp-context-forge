@@ -316,6 +316,7 @@ if [[ "${SSL}" == "true" ]]; then
         echo "🔑  Passphrase-protected key detected"
         echo "   Note: Key will be decrypted by Python SSL key manager"
         # Export for Python to access
+        export KEY_FILE="${KEY_FILE}"
         export SSL_KEY_PASSWORD="${KEY_FILE_PASSWORD}"
     fi
 

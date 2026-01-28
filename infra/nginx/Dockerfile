@@ -27,8 +27,8 @@ COPY nginx.conf /etc/nginx/nginx.conf
 # DNS resolution of upstream servers (gateway:4444). Configuration is still
 # validated when nginx starts at runtime via CMD below.
 
-# Expose HTTP port
-EXPOSE 80
+# Expose HTTP and HTTPS ports
+EXPOSE 80 443
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
