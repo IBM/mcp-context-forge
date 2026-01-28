@@ -27,7 +27,6 @@ TODO: this test bails out on the first failed validation pattern, need to fix th
 from datetime import datetime
 import json
 import logging
-import time
 from unittest.mock import patch
 
 # Third-Party
