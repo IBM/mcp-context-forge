@@ -470,6 +470,9 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
 
         Logs and returns an empty list on failure.
 
+    Raises:
+        Exception: Re-raises exceptions encountered during tool invocation after logging.
+
     Examples:
         >>> # Test call_tool function signature
         >>> import inspect
