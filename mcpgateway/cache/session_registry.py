@@ -925,6 +925,7 @@ class SessionRegistry(SessionBackend):
                 return
 
             # Look up tool and gateway from cache
+            # First-Party
             from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
 
             cached = await tool_lookup_cache.get(tool_name)
@@ -946,6 +947,7 @@ class SessionRegistry(SessionBackend):
                 return
 
             # Register in mcp_session_pool with user email
+            # First-Party
             from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
             pool = get_mcp_session_pool()

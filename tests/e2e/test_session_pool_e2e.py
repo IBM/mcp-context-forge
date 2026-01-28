@@ -956,3 +956,189 @@ class TestSessionRegistryAffinityE2E:
                         assert registry._session_message["session_id"] == session_id
         finally:
             await registry.shutdown()
+
+
+class TestMultiWorkerSessionAffinityE2E:
+    """End-to-end tests for multi-worker session affinity via Redis pub/sub.
+
+    These tests verify the multi-worker session affinity pattern:
+    - Pool session ownership is tracked in Redis
+    - Requests are forwarded to the worker that owns the pool session
+    - Workers can execute forwarded requests and return responses
+    """
+
+    @pytest.mark.asyncio
+    async def test_worker_id_is_process_id(self):
+        """Verify WORKER_ID is set to the current process ID."""
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        assert WORKER_ID == str(os.getpid())
+
+    @pytest.mark.asyncio
+    async def test_register_pool_session_owner_disabled_when_affinity_off(self):
+        """Verify _register_pool_session_owner does nothing when affinity disabled."""
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-disabled"
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = False
+
+                # Should return immediately without calling Redis
+                await pool._register_pool_session_owner(mcp_session_id)
+                # No assertion needed - just verify it doesn't hang or crash
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_returns_none_when_affinity_disabled(self):
+        """Verify forward_request_to_owner returns None when affinity disabled."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = False
+
+                result = await pool.forward_request_to_owner(
+                    "test-session",
+                    {"method": "tools/call", "params": {"name": "test_tool"}}
+                )
+
+                assert result is None
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_returns_none_when_we_own_session(self):
+        """Verify forward_request_to_owner returns None when we own the session."""
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-local"
+
+            # Create a mock Redis that returns our worker ID
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=WORKER_ID.encode())
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    result = await pool.forward_request_to_owner(
+                        mcp_session_id,
+                        {"method": "tools/call", "params": {"name": "test_tool"}}
+                    )
+
+                    # Should return None (execute locally)
+                    assert result is None
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_returns_none_when_no_owner(self):
+        """Verify forward_request_to_owner returns None when no owner registered."""
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-no-owner"
+
+            # Create a mock Redis that returns None (no owner)
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=None)
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    result = await pool.forward_request_to_owner(
+                        mcp_session_id,
+                        {"method": "tools/call", "params": {"name": "test_tool"}}
+                    )
+
+                    # Should return None (execute locally - new session)
+                    assert result is None
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_returns_none_when_no_redis(self):
+        """Verify forward_request_to_owner returns None when Redis unavailable."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return None
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    result = await pool.forward_request_to_owner(
+                        "test-session",
+                        {"method": "tools/call", "params": {"name": "test_tool"}}
+                    )
+
+                    assert result is None
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_returns_error_for_unknown_method(self):
+        """Verify _execute_forwarded_request returns error for unknown methods."""
+        pool = MCPSessionPool()
+
+        try:
+            result = await pool._execute_forwarded_request({
+                "method": "unknown/method",
+                "params": {},
+                "headers": {},
+            })
+
+            assert "error" in result
+            assert result["error"]["code"] == -32601  # Method not found
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_returns_when_affinity_disabled(self):
+        """Verify start_rpc_listener returns immediately when affinity disabled."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = False
+
+                # Should return immediately without hanging
+                await pool.start_rpc_listener()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_returns_when_no_redis(self):
+        """Verify start_rpc_listener returns when Redis unavailable."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                async def mock_get_redis():
+                    return None
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    # Should return immediately without hanging
+                    await pool.start_rpc_listener()
+        finally:
+            await pool.close_all()

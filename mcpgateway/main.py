@@ -680,6 +680,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             await start_pool_notification_service(gateway_service)
 
+            # Start RPC listener for multi-worker session affinity
+            if settings.mcpgateway_session_affinity_enabled:
+                # First-Party
+                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+                pool = get_mcp_session_pool()
+                pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())
+                logger.info("Multi-worker session affinity RPC listener started")
+
         await root_service.initialize()
         await completion_service.initialize()
         await sampling_handler.initialize()
@@ -5661,6 +5670,31 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             meta_data = params.get("_meta", None)
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
+
+            # Multi-worker session affinity: check if we should forward to another worker
+            mcp_session_id = headers.get("x-mcp-session-id")
+            if settings.mcpgateway_session_affinity_enabled and mcp_session_id:
+                try:
+                    # First-Party
+                    from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+                    pool = get_mcp_session_pool()
+                    forwarded_response = await pool.forward_request_to_owner(
+                        mcp_session_id,
+                        {"method": method, "params": params, "headers": dict(headers)},
+                    )
+                    if forwarded_response is not None:
+                        # Request was handled by another worker
+                        if "error" in forwarded_response:
+                            raise JSONRPCError(
+                                forwarded_response["error"].get("code", -32603),
+                                forwarded_response["error"].get("message", "Forwarded request failed"),
+                            )
+                        result = forwarded_response.get("result", {})
+                        return {"jsonrpc": "2.0", "result": result, "id": req_id}
+                except RuntimeError:
+                    # Pool not initialized - execute locally
+                    pass
 
             # Get authorization context (same as tools/list)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)

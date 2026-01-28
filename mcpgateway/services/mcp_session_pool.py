@@ -32,8 +32,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import logging
+import os
 import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
+import uuid
 
 # Third-Party
 import anyio
@@ -44,13 +46,17 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.session import RequestResponder
 import mcp.types as mcp_types
 import orjson
-from mcpgateway.config import settings
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 # JSON-RPC standard error code for method not found
 METHOD_NOT_FOUND = -32601
+
+# Worker ID for multi-worker session affinity
+# Each gunicorn worker has its own process ID, used to track pool session ownership
+WORKER_ID = str(os.getpid())
 
 
 def _get_cleanup_timeout() -> float:
@@ -327,6 +333,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         self._mcp_session_mapping: Dict[SessionMappingKey, PoolKey] = {}
         self._mcp_session_mapping_lock = asyncio.Lock()
 
+        # Multi-worker session affinity via Redis pub/sub
+        # Track pending responses for forwarded RPC requests
+        self._rpc_listener_task: Optional[asyncio.Task[None]] = None
+        self._pending_responses: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
+
     async def __aenter__(self) -> "MCPSessionPool":
         """Async context manager entry.
 
@@ -535,6 +546,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         # Store in Redis for multi-worker support
         try:
+            # First-Party
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
             redis = await get_redis_client()
@@ -543,6 +555,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 redis_key = f"mcpgw:session_mapping:{mcp_session_id}:{url}:{transport_type}:{gateway_id}"
 
                 # Store pool_key as JSON for easy deserialization
+                # Third-Party
                 import orjson  # pylint: disable=import-outside-toplevel
 
                 pool_key_data = {
@@ -619,6 +632,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # If not in local memory, check Redis (multi-worker support)
                 if pool_key is None:
                     try:
+                        # First-Party
                         from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
                         redis = await get_redis_client()
@@ -705,6 +719,14 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             # Store identity components for key reconstruction
             pooled.identity_key = pool_key[2]
             pooled.user_identity = user_id
+
+            # Register pool session ownership for multi-worker affinity
+            # This tracks which worker owns this pool session in Redis
+            if settings.mcpgateway_session_affinity_enabled and headers:
+                headers_lower = {k.lower(): v for k, v in headers.items()}
+                mcp_session_id = headers_lower.get("x-mcp-session-id")
+                if mcp_session_id:
+                    await self._register_pool_session_owner(mcp_session_id)
 
             self._misses += 1
             self._record_success(url)
@@ -1124,7 +1146,220 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             self._locks.clear()
             self._semaphores.clear()
 
+        # Stop RPC listener if running
+        if self._rpc_listener_task and not self._rpc_listener_task.done():
+            self._rpc_listener_task.cancel()
+            try:
+                await self._rpc_listener_task
+            except asyncio.CancelledError:
+                pass
+            self._rpc_listener_task = None
+
         logger.info("All sessions closed")
+
+    async def _register_pool_session_owner(self, mcp_session_id: str) -> None:
+        """Register this worker as owner of a pool session in Redis.
+
+        This enables multi-worker session affinity by tracking which worker owns
+        which pool session. When a request with x-mcp-session-id arrives at a
+        different worker, it can forward the request to the owner worker.
+
+        Args:
+            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if redis:
+                key = f"mcpgw:pool_owner:{mcp_session_id}"
+                await redis.setex(key, settings.mcpgateway_session_affinity_ttl, WORKER_ID)
+                logger.debug(f"Registered pool session owner: {mcp_session_id[:8]}... → worker {WORKER_ID}")
+        except Exception as e:
+            # Redis failure is non-fatal - single worker mode still works
+            logger.debug(f"Failed to register pool session owner in Redis: {e}")
+
+    async def forward_request_to_owner(
+        self,
+        mcp_session_id: str,
+        request_data: Dict[str, Any],
+        timeout: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Forward RPC request to the worker that owns the pool session.
+
+        This method checks Redis to find which worker owns the pool session for
+        the given mcp_session_id. If owned by another worker, it forwards the
+        request via Redis pub/sub and waits for the response.
+
+        Args:
+            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+            request_data: The RPC request data to forward.
+            timeout: Optional timeout in seconds (default from config).
+
+        Returns:
+            The response from the owner worker, or None if we own the session
+            (caller should execute locally) or if Redis is unavailable.
+
+        Raises:
+            asyncio.TimeoutError: If the forwarded request times out.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return None
+
+        effective_timeout = timeout if timeout is not None else settings.mcpgateway_pool_rpc_forward_timeout
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if not redis:
+                return None  # Execute locally - no Redis
+
+            # Check who owns this session
+            owner = await redis.get(f"mcpgw:pool_owner:{mcp_session_id}")
+            if not owner:
+                return None  # No owner registered - execute locally (new session)
+
+            owner_id = owner.decode() if isinstance(owner, bytes) else owner
+            if owner_id == WORKER_ID:
+                return None  # We own it - execute locally
+
+            # Forward to owner worker via pub/sub
+            response_id = str(uuid.uuid4())
+            response_channel = f"mcpgw:pool_rpc_response:{response_id}"
+
+            # Subscribe to response channel
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(response_channel)
+
+            try:
+                # Prepare request with response channel
+                forward_data = {
+                    **request_data,
+                    "response_channel": response_channel,
+                    "mcp_session_id": mcp_session_id,
+                }
+
+                # Publish request to owner's channel
+                await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
+                logger.debug(f"Forwarded RPC request to worker {owner_id} for session {mcp_session_id[:8]}...")
+
+                # Wait for response
+                async with asyncio.timeout(effective_timeout):
+                    while True:
+                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                        if msg and msg["type"] == "message":
+                            return orjson.loads(msg["data"])
+            finally:
+                await pubsub.unsubscribe(response_channel)
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout forwarding request to owner for session {mcp_session_id[:8]}...")
+            raise
+        except Exception as e:
+            logger.debug(f"Error forwarding request to owner: {e}")
+            return None  # Execute locally on error
+
+    async def start_rpc_listener(self) -> None:
+        """Start listening for forwarded RPC requests on this worker's channel.
+
+        This method subscribes to a Redis pub/sub channel specific to this worker
+        and processes incoming forwarded RPC requests from other workers.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if not redis:
+                logger.debug("Redis not available, RPC listener not started")
+                return
+
+            channel = f"mcpgw:pool_rpc:{WORKER_ID}"
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(channel)
+            logger.info(f"RPC listener started for worker {WORKER_ID}")
+
+            while not self._closed:
+                try:
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if msg and msg["type"] == "message":
+                        request = orjson.loads(msg["data"])
+                        response_channel = request.get("response_channel")
+
+                        if response_channel:
+                            # Execute the forwarded request
+                            response = await self._execute_forwarded_request(request)
+
+                            # Publish response back
+                            await redis.publish(response_channel, orjson.dumps(response))
+                            logger.debug(f"Processed forwarded RPC request, response sent to {response_channel}")
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.warning(f"Error processing forwarded RPC request: {e}")
+
+            await pubsub.unsubscribe(channel)
+            logger.info(f"RPC listener stopped for worker {WORKER_ID}")
+
+        except Exception as e:
+            logger.warning(f"RPC listener failed: {e}")
+
+    async def _execute_forwarded_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a forwarded RPC request locally.
+
+        This method handles RPC requests that were forwarded from another worker.
+        It invokes the tool and returns the result.
+
+        Args:
+            request: The forwarded RPC request containing method, params, headers, etc.
+
+        Returns:
+            The result of the tool invocation or an error response.
+        """
+        try:
+            method = request.get("method")
+            params = request.get("params", {})
+            headers = request.get("headers", {})
+            request.get("mcp_session_id")
+
+            if method == "tools/call":
+                # Import here to avoid circular dependency
+                # First-Party
+                from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.tool_service import tool_service  # pylint: disable=import-outside-toplevel
+
+                name = params.get("name")
+                arguments = params.get("arguments", {})
+                meta_data = params.get("_meta")
+
+                # Get a database session
+                async with get_db() as db:
+                    result = await tool_service.invoke_tool(
+                        db=db,
+                        name=name,
+                        arguments=arguments,
+                        request_headers=headers,
+                        meta_data=meta_data,
+                    )
+
+                    if hasattr(result, "model_dump"):
+                        return {"result": result.model_dump(by_alias=True, exclude_none=True)}
+                    return {"result": result}
+            else:
+                return {"error": {"code": -32601, "message": f"Method not found: {method}"}}
+
+        except Exception as e:
+            logger.warning(f"Error executing forwarded request: {e}")
+            return {"error": {"code": -32603, "message": str(e)}}
 
     def get_metrics(self) -> Dict[str, Any]:
         """
