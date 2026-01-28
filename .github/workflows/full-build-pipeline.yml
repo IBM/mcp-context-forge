@@ -1,0 +1,125 @@
+# ===============================================================
+# 🏗️  Full Build Pipeline - End-to-End Verification
+# ===============================================================
+#
+# This workflow validates the complete build pipeline from setup
+# through production Docker image creation. It runs the exact
+# sequence documented in CLAUDE.md, ensuring that all integrated
+# steps work together correctly.
+#
+# Pipeline Steps:
+#   1. Environment setup (venv, dependencies)
+#   2. Code quality & formatting (autoflake, isort, black, pre-commit)
+#   3. Comprehensive testing & verification (doctest, test, lint-web,
+#      flake8, bandit, interrogate, pylint, verify)
+#   4. End-to-end smoke tests
+#   5. Production Docker build
+#
+# Triggers:
+#   - Every push / PR to `main`
+#   - Weekly scheduled run (Monday 06:00 UTC) to catch regressions
+# ---------------------------------------------------------------
+
+name: Full Build Pipeline
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  full-pipeline:
+    name: Complete Build Pipeline
+    runs-on: ubuntu-latest
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      # -------------------------------------------------------------
+      # 0️⃣  Checkout
+      # -------------------------------------------------------------
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      # -------------------------------------------------------------
+      # 1️⃣  Set-up Python
+      # -------------------------------------------------------------
+      - name: 🐍  Setup Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      # -------------------------------------------------------------
+      # 2️⃣  Install uv
+      # -------------------------------------------------------------
+      - name: ⚡ Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.2"
+          python-version: '3.11'
+
+      # -------------------------------------------------------------
+      # 3️⃣  Environment Setup
+      # -------------------------------------------------------------
+      - name: 🔧  Environment setup (venv, install, install-dev)
+        run: |
+          make venv install install-dev
+
+      # -------------------------------------------------------------
+      # 4️⃣  Code Quality & Formatting
+      # -------------------------------------------------------------
+      - name: 🎨  Code quality & formatting
+        run: |
+          make autoflake isort black
+        # pre-commit
+
+      # -------------------------------------------------------------
+      # 5️⃣  Comprehensive Testing & Verification
+      #      REMOVED `test` and `doctest` as they are verified identical
+      #      to other github workflows
+      # -------------------------------------------------------------
+      - name: 🧪  Comprehensive testing & verification
+        run: |
+          make lint-web flake8 bandit interrogate pylint verify
+
+      # -------------------------------------------------------------
+      # 6️⃣  Smoke Tests
+      # -------------------------------------------------------------
+      - name: 🔥  End-to-end smoke tests
+        run: |
+          make smoketest
+
+      # -------------------------------------------------------------
+      # 7️⃣  Production Docker Build
+      #     REMOVED as identical to another github workflow
+      # -------------------------------------------------------------
+      # - name: 🐳  Production Docker build
+      #   run: |
+      #     make docker-prod
+
+      # -------------------------------------------------------------
+      # 8️⃣  Summary
+      # -------------------------------------------------------------
+      - name: ✅  Pipeline complete
+        if: success()
+        run: |
+          echo "### ✅ Full Build Pipeline Successful" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "All pipeline steps completed successfully:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Environment setup" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Code quality & formatting" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Comprehensive testing & verification" >> "$GITHUB_STEP_SUMMARY"
+          echo "- End-to-end smoke tests" >> "$GITHUB_STEP_SUMMARY"
+          # echo "- Production Docker build" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The complete build pipeline is verified and production-ready." >> "$GITHUB_STEP_SUMMARY"

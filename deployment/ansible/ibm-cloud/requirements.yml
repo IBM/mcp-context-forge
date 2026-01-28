@@ -1,0 +1,9 @@
+collections:
+  - name: ibm.cloudcollection         # IBM Cloud wrapper modules
+    version: ">=1.0.0"
+  - name: kubernetes.core             # k8s + helm modules
+    version: ">=5.3.0"
+  - name: community.kubernetes        # alternative helm/k8s helpers
+    version: ">=1.2.1"
+  - name: community.general           # random-password lookup
+    version: ">=8.0.0"

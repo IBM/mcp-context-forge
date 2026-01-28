@@ -1,0 +1,885 @@
+<!-- htmlhint doctype-first:false -->
+<!-- Observability Dashboard Partial -->
+<script>
+// Dark mode aware Chart.js defaults - shared across all observability charts
+if (!window.getChartDefaults) {
+  window.getChartDefaults = function() {
+    const isDark = document.documentElement.classList.contains('dark');
+    return {
+      color: isDark ? '#e5e7eb' : '#374151',
+      gridColor: isDark ? '#374151' : '#e5e7eb',
+      titleColor: isDark ? '#f3f4f6' : '#1f2937',
+      tickColor: isDark ? '#d1d5db' : '#6b7280',
+    };
+  };
+}
+</script>
+<div class="observability-container" x-data="{
+    viewMode: 'traces',
+    selectedTrace: null,
+    timeRange: '24h',
+    statusFilter: 'all',
+    minDuration: '',
+    maxDuration: '',
+    httpMethod: '',
+    userEmail: '',
+    nameSearch: '',
+    attributeSearch: '',
+    toolName: '',
+    showAdvancedFilters: false,
+    loading: false,
+    stats: {},
+    tracesInterval: null,
+    statsInterval: null,
+    savedQueries: [],
+    selectedQueryId: '',
+    showSaveQueryModal: false,
+    saveQueryName: '',
+    saveQueryDescription: '',
+    saveQueryIsShared: false,
+    metricsLoaded: false,
+    toolsLoaded: false,
+    promptsLoaded: false,
+    resourcesLoaded: false,
+    metricsLoading: false,
+    toolsLoading: false,
+    promptsLoading: false,
+    resourcesLoading: false,
+    async loadMetricsView() {
+        // Only load once, but allow retry if previous load was interrupted
+        if (this.metricsLoaded) {
+            console.log('Metrics view already loaded, skipping fetch');
+            return;
+        }
+
+        // Prevent concurrent loads
+        if (this.metricsLoading) {
+            console.log('Metrics view already loading, skipping');
+            return;
+        }
+
+        this.metricsLoading = true;
+        console.log('Loading metrics view for the first time...');
+
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/metrics/partial');
+            if (response.ok) {
+                // Check if still on metrics view before rendering
+                if (this.viewMode !== 'metrics') {
+                    console.log('View changed during fetch, aborting metrics load');
+                    this.metricsLoading = false;
+                    return;
+                }
+
+                const html = await response.text();
+                const container = document.getElementById('metrics-container');
+                if (!container) {
+                    console.warn('Metrics container not found');
+                    this.metricsLoading = false;
+                    return;
+                }
+
+                container.innerHTML = html;
+
+                // Execute any script tags (innerHTML doesn't execute them)
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.head.appendChild(newScript);
+                });
+
+                // Wait for scripts to execute and charts to render
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Re-initialize Alpine.js
+                if (window.Alpine) {
+                    window.Alpine.initTree(container);
+                }
+
+                // Only mark as loaded if we're still on the metrics view
+                if (this.viewMode === 'metrics') {
+                    this.metricsLoaded = true;
+                    console.log('Metrics view loaded successfully');
+                } else {
+                    console.log('View changed after render, not marking as loaded');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load metrics view:', error);
+        } finally {
+            this.metricsLoading = false;
+        }
+    },
+    async loadToolsView() {
+        // Only load once, but allow retry if previous load was interrupted
+        if (this.toolsLoaded) {
+            console.log('Tools view already loaded, skipping fetch');
+            return;
+        }
+
+        // Prevent concurrent loads
+        if (this.toolsLoading) {
+            console.log('Tools view already loading, skipping');
+            return;
+        }
+
+        this.toolsLoading = true;
+        console.log('Loading tools view for the first time...');
+
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/tools/partial');
+            if (response.ok) {
+                // Check if still on tools view before rendering
+                if (this.viewMode !== 'tools') {
+                    console.log('View changed during fetch, aborting tools load');
+                    this.toolsLoading = false;
+                    return;
+                }
+
+                const html = await response.text();
+                const container = document.getElementById('tools-container');
+                if (!container) {
+                    console.warn('Tools container not found');
+                    this.toolsLoading = false;
+                    return;
+                }
+
+                container.innerHTML = html;
+
+                // Execute any script tags (innerHTML doesn't execute them)
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.head.appendChild(newScript);
+                });
+
+                // Wait for scripts to execute and charts to render
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Re-initialize Alpine.js
+                if (window.Alpine) {
+                    window.Alpine.initTree(container);
+                }
+
+                // Only mark as loaded if we're still on the tools view
+                if (this.viewMode === 'tools') {
+                    this.toolsLoaded = true;
+                    console.log('Tools view loaded successfully');
+                } else {
+                    console.log('View changed after render, not marking as loaded');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load tools view:', error);
+        } finally {
+            this.toolsLoading = false;
+        }
+    },
+    async loadPromptsView() {
+        // Only load once, but allow retry if previous load was interrupted
+        if (this.promptsLoaded) {
+            console.log('Prompts view already loaded, skipping fetch');
+            return;
+        }
+
+        // Prevent concurrent loads
+        if (this.promptsLoading) {
+            console.log('Prompts view already loading, skipping');
+            return;
+        }
+
+        this.promptsLoading = true;
+        console.log('Loading prompts view for the first time...');
+
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/prompts/partial');
+            if (response.ok) {
+                // Check if still on prompts view before rendering
+                if (this.viewMode !== 'prompts') {
+                    console.log('View changed during fetch, aborting prompts load');
+                    this.promptsLoading = false;
+                    return;
+                }
+
+                const html = await response.text();
+                const container = document.getElementById('prompts-container');
+                if (!container) {
+                    console.warn('Prompts container not found');
+                    this.promptsLoading = false;
+                    return;
+                }
+
+                container.innerHTML = html;
+
+                // Execute any script tags (innerHTML doesn't execute them)
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.head.appendChild(newScript);
+                });
+
+                // Wait for scripts to execute and charts to render
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Re-initialize Alpine.js
+                if (window.Alpine) {
+                    window.Alpine.initTree(container);
+                }
+
+                // Only mark as loaded if we're still on the prompts view
+                if (this.viewMode === 'prompts') {
+                    this.promptsLoaded = true;
+                    console.log('Prompts view loaded successfully');
+                } else {
+                    console.log('View changed after render, not marking as loaded');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load prompts view:', error);
+        } finally {
+            this.promptsLoading = false;
+        }
+    },
+    async loadResourcesView() {
+        // Only load once, but allow retry if previous load was interrupted
+        if (this.resourcesLoaded) {
+            console.log('Resources view already loaded, skipping fetch');
+            return;
+        }
+
+        // Prevent concurrent loads
+        if (this.resourcesLoading) {
+            console.log('Resources view already loading, skipping');
+            return;
+        }
+
+        this.resourcesLoading = true;
+        console.log('Loading resources view for the first time...');
+
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/resources/partial');
+            if (response.ok) {
+                // Check if still on resources view before rendering
+                if (this.viewMode !== 'resources') {
+                    console.log('View changed during fetch, aborting resources load');
+                    this.resourcesLoading = false;
+                    return;
+                }
+
+                const html = await response.text();
+                const container = document.getElementById('resources-container');
+                if (!container) {
+                    console.warn('Resources container not found');
+                    this.resourcesLoading = false;
+                    return;
+                }
+
+                container.innerHTML = html;
+
+                // Execute any script tags (innerHTML doesn't execute them)
+                const scripts = container.querySelectorAll('script');
+                scripts.forEach(script => {
+                    const newScript = document.createElement('script');
+                    if (script.src) {
+                        newScript.src = script.src;
+                    } else {
+                        newScript.textContent = script.textContent;
+                    }
+                    document.head.appendChild(newScript);
+                });
+
+                // Wait for scripts to execute
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                // Re-initialize Alpine.js
+                if (window.Alpine) {
+                    window.Alpine.initTree(container);
+                }
+
+                // Only mark as loaded if we're still on the resources view
+                if (this.viewMode === 'resources') {
+                    this.resourcesLoaded = true;
+                    console.log('Resources view loaded successfully');
+                } else {
+                    console.log('View changed after render, not marking as loaded');
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load resources view:', error);
+        } finally {
+            this.resourcesLoading = false;
+        }
+    },
+    refreshTraces() {
+        let url = `{{ root_path }}/admin/observability/traces?time_range=${this.timeRange}&status_filter=${this.statusFilter}&limit=50`;
+        if (this.minDuration) url += `&min_duration=${this.minDuration}`;
+        if (this.maxDuration) url += `&max_duration=${this.maxDuration}`;
+        if (this.httpMethod) url += `&http_method=${this.httpMethod}`;
+        if (this.userEmail) url += `&user_email=${encodeURIComponent(this.userEmail)}`;
+        if (this.nameSearch) url += `&name_search=${encodeURIComponent(this.nameSearch)}`;
+        if (this.attributeSearch) url += `&attribute_search=${encodeURIComponent(this.attributeSearch)}`;
+        if (this.toolName) url += `&tool_name=${encodeURIComponent(this.toolName)}`;
+        htmx.ajax('GET', url, {target: '#traces-list', swap: 'innerHTML'});
+    },
+    refreshStats() {
+        htmx.ajax('GET', '{{ root_path }}/admin/observability/stats', {target: '#stats-container', swap: 'innerHTML'});
+    },
+    startPolling() {
+        this.refreshTraces();
+        this.refreshStats();
+        this.tracesInterval = setInterval(() => this.refreshTraces(), 5000);
+        this.statsInterval = setInterval(() => this.refreshStats(), 30000);
+    },
+    stopPolling() {
+        if (this.tracesInterval) clearInterval(this.tracesInterval);
+        if (this.statsInterval) clearInterval(this.statsInterval);
+    },
+    applyFilters() {
+        this.stopPolling();
+        this.refreshTraces();
+        this.startPolling();
+    },
+    async loadSavedQueries() {
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/queries');
+            if (response.ok) {
+                this.savedQueries = await response.json();
+            }
+        } catch (e) {
+            console.error('Failed to load saved queries:', e);
+        }
+    },
+    async applySavedQuery() {
+        if (!this.selectedQueryId) return;
+        try {
+            const response = await fetch(`{{ root_path }}/admin/observability/queries/${this.selectedQueryId}`);
+            if (response.ok) {
+                const query = await response.json();
+                const config = query.filter_config;
+                this.timeRange = config.timeRange || '24h';
+                this.statusFilter = config.statusFilter || 'all';
+                this.minDuration = config.minDuration || '';
+                this.maxDuration = config.maxDuration || '';
+                this.toolName = config.toolName || '';
+                this.httpMethod = config.httpMethod || '';
+                this.userEmail = config.userEmail || '';
+                this.nameSearch = config.nameSearch || '';
+                this.attributeSearch = config.attributeSearch || '';
+                this.applyFilters();
+                // Track usage
+                await fetch(`{{ root_path }}/admin/observability/queries/${this.selectedQueryId}/use`, { method: 'POST' });
+            }
+        } catch (e) {
+            console.error('Failed to apply saved query:', e);
+        }
+    },
+    getCurrentFilterConfig() {
+        return {
+            timeRange: this.timeRange,
+            statusFilter: this.statusFilter,
+            minDuration: this.minDuration,
+            maxDuration: this.maxDuration,
+            httpMethod: this.httpMethod,
+            userEmail: this.userEmail,
+            nameSearch: this.nameSearch,
+            attributeSearch: this.attributeSearch,
+            toolName: this.toolName
+        };
+    },
+    async saveCurrentQuery() {
+        if (!this.saveQueryName) {
+            alert('Please enter a name for the query');
+            return;
+        }
+        try {
+            const response = await fetch('{{ root_path }}/admin/observability/queries', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: this.saveQueryName,
+                    description: this.saveQueryDescription,
+                    filter_config: this.getCurrentFilterConfig(),
+                    is_shared: this.saveQueryIsShared
+                })
+            });
+            if (response.ok) {
+                this.showSaveQueryModal = false;
+                this.saveQueryName = '';
+                this.saveQueryDescription = '';
+                this.saveQueryIsShared = false;
+                await this.loadSavedQueries();
+                alert('Query saved successfully!');
+            } else {
+                alert('Failed to save query');
+            }
+        } catch (e) {
+            console.error('Failed to save query:', e);
+            alert('Failed to save query');
+        }
+    },
+    async deleteSavedQuery(queryId) {
+        if (!confirm('Are you sure you want to delete this saved query?')) return;
+        try {
+            const response = await fetch(`{{ root_path }}/admin/observability/queries/${queryId}`, { method: 'DELETE' });
+            if (response.ok) {
+                await this.loadSavedQueries();
+                if (this.selectedQueryId == queryId) {
+                    this.selectedQueryId = '';
+                }
+            }
+        } catch (e) {
+            console.error('Failed to delete query:', e);
+        }
+    },
+    resetLoadedFlags() {
+        // Reset loaded flags so partials will reload when returning to the tab
+        this.metricsLoaded = false;
+        this.toolsLoaded = false;
+        this.promptsLoaded = false;
+        this.resourcesLoaded = false;
+        console.log('Observability loaded flags reset');
+    }
+}" x-init="
+    startPolling();
+    loadSavedQueries();
+    // Listen for tab leave event to reset state
+    document.addEventListener('observability:leave', () => resetLoadedFlags());
+    $watch('timeRange', () => applyFilters());
+    $watch('statusFilter', () => applyFilters());
+    $watch('minDuration', () => { if(minDuration) applyFilters(); });
+    $watch('maxDuration', () => { if(maxDuration) applyFilters(); });
+    $watch('httpMethod', () => applyFilters());
+    $watch('userEmail', () => { if(userEmail) applyFilters(); });
+    $watch('nameSearch', () => { if(nameSearch) applyFilters(); });
+    $watch('attributeSearch', () => { if(attributeSearch) applyFilters(); });
+    $watch('toolName', () => { if(toolName) applyFilters(); });
+    $watch('selectedQueryId', () => { if(selectedQueryId) applySavedQuery(); });
+">
+    <style>
+        /* Minimal styles for components that need precise positioning */
+        .span-timeline {
+            flex: 1;
+            height: 24px;
+            position: relative;
+            margin: 0 0.5rem;
+        }
+        .span-bar {
+            position: absolute;
+            height: 100%;
+            border-radius: 0.25rem;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .span-bar:hover {
+            opacity: 0.8;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .critical-path-bar {
+            box-shadow: 0 0 0 2px #f59e0b;
+        }
+        .time-marker {
+            position: absolute;
+            top: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+    </style>
+
+    <!-- Header -->
+    <div class="mb-8 pb-4 border-b-2 border-gray-200 dark:border-gray-700">
+        <!-- Title and Filters Row -->
+        <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
+            <h1 class="text-3xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span>🔍</span>
+                Observability Dashboard
+            </h1>
+            <div class="flex gap-4 items-center" x-show="viewMode === 'traces'">
+            <select
+                x-model="selectedQueryId"
+                class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
+                style="min-width: 200px;"
+            >
+                <option value="">📋 Saved Queries</option>
+                <template x-for="query in savedQueries" :key="query.id">
+                    <option :value="query.id" x-text="query.name + (query.is_shared ? ' (shared)' : '')"></option>
+                </template>
+            </select>
+            <button
+                class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
+                @click="showSaveQueryModal = true"
+                title="Save current filters as a query"
+            >
+                💾 Save Query
+            </button>
+            <select
+                x-model="timeRange"
+                class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
+            >
+                <option value="1h">Last Hour</option>
+                <option value="6h">Last 6 Hours</option>
+                <option value="24h" selected>Last 24 Hours</option>
+                <option value="7d">Last 7 Days</option>
+            </select>
+            <select
+                x-model="statusFilter"
+                class="px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
+            >
+                <option value="all" selected>All Status</option>
+                <option value="ok">Success Only</option>
+                <option value="error">Errors Only</option>
+            </select>
+            <button
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all dark:border-gray-600 dark:hover:bg-gray-600"
+                :class="showAdvancedFilters ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100'"
+                @click="showAdvancedFilters = !showAdvancedFilters"
+            >
+                ⚙️ Advanced Filters
+            </button>
+            <button
+                class="px-4 py-2 text-sm bg-blue-500 text-white rounded-md cursor-pointer font-medium transition-colors hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500"
+                @click="refreshStats(); refreshTraces();"
+            >
+                🔄 Refresh
+            </button>
+            </div>
+        </div>
+
+        <!-- View Mode Tabs Row -->
+        <div class="flex gap-2 flex-wrap">
+            <button
+                @click="viewMode = 'traces'"
+                :class="viewMode === 'traces' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
+            >
+                📋 Traces
+            </button>
+            <button
+                @click="viewMode = 'metrics'; loadMetricsView()"
+                :class="viewMode === 'metrics' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
+            >
+                📊 Advanced Metrics
+            </button>
+            <button
+                @click="viewMode = 'tools'; loadToolsView()"
+                :class="viewMode === 'tools' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
+            >
+                🔧 MCP Tools
+            </button>
+            <button
+                @click="viewMode = 'prompts'; loadPromptsView()"
+                :class="viewMode === 'prompts' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
+            >
+                💬 Prompts
+            </button>
+            <button
+                @click="viewMode = 'resources'; loadResourcesView()"
+                :class="viewMode === 'resources' ? 'bg-blue-500 text-white border-blue-500 dark:bg-blue-600 dark:border-blue-500' : 'bg-white border-gray-300 hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600'"
+                class="px-4 py-2 text-sm border rounded-md cursor-pointer transition-all"
+            >
+                📦 Resources
+            </button>
+        </div>
+    </div>
+
+    <!-- Traces View -->
+    <div x-show="viewMode === 'traces'">
+    <!-- Advanced Filters Panel -->
+    <div x-show="showAdvancedFilters"
+         x-transition
+         class="bg-white dark:bg-gray-800 rounded-lg p-6 mb-6 shadow-sm dark:shadow-gray-900/30">
+        <h3 class="m-0 mb-4 text-lg font-semibold text-gray-700 dark:text-gray-200">
+            🔧 Advanced Filters
+        </h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+            <!-- Duration Range -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Min Duration (ms)
+                </label>
+                <input
+                    type="number"
+                    x-model="minDuration"
+                    placeholder="e.g., 100"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
+                    @change="refreshTraces()"
+                />
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Max Duration (ms)
+                </label>
+                <input
+                    type="number"
+                    x-model="maxDuration"
+                    placeholder="e.g., 5000"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
+                    @change="refreshTraces()"
+                />
+            </div>
+
+            <!-- HTTP Method -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    HTTP Method
+                </label>
+                <select
+                    x-model="httpMethod"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600"
+                    @change="refreshTraces()"
+                >
+                    <option value="">All Methods</option>
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                    <option value="PUT">PUT</option>
+                    <option value="DELETE">DELETE</option>
+                    <option value="PATCH">PATCH</option>
+                </select>
+            </div>
+
+            <!-- User Email -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    User Email
+                </label>
+                <input
+                    type="text"
+                    x-model="userEmail"
+                    placeholder="admin@example.com"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
+                    @input.debounce.500ms="refreshTraces()"
+                />
+            </div>
+
+            <!-- Name Search -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Trace Name
+                </label>
+                <input
+                    type="text"
+                    x-model="nameSearch"
+                    placeholder="e.g., GET /api/tools"
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
+                    @input.debounce.500ms="refreshTraces()"
+                />
+            </div>
+
+            <!-- Attribute Search -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Attribute Search
+                </label>
+                <input
+                    type="text"
+                    x-model="attributeSearch"
+                    placeholder="Search in attributes..."
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
+                    @input.debounce.500ms="refreshTraces()"
+                />
+            </div>
+
+            <!-- Tool Name Filter -->
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    🔧 MCP Tool Name
+                </label>
+                <input
+                    type="text"
+                    x-model="toolName"
+                    placeholder="Filter by tool name..."
+                    class="w-full px-4 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:placeholder-gray-400"
+                    @input.debounce.500ms="refreshTraces()"
+                />
+            </div>
+        </div>
+
+        <!-- Clear Filters Button -->
+        <div class="mt-4 text-right">
+            <button
+                class="px-6 py-2 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600"
+                @click="minDuration=''; maxDuration=''; httpMethod=''; userEmail=''; nameSearch=''; attributeSearch=''; refreshTraces();"
+            >
+                🗑️ Clear All Filters
+            </button>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div id="stats-container">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm dark:shadow-gray-900/30 border-l-4 border-blue-500">
+                <div class="text-sm text-gray-600 dark:text-gray-400 mb-2">Loading statistics...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Traces Table -->
+    <div class="w-full bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 overflow-hidden">
+        <table class="w-full border-collapse">
+            <thead>
+                <tr>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Timestamp</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Method</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Endpoint</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Status</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Duration</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">User</th>
+                    <th class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="traces-list">
+                <tr>
+                    <td colspan="7" class="text-center py-8 text-gray-500 dark:text-gray-400">
+                        Loading traces...
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Trace Detail Modal (shown when trace is selected) -->
+    <div x-show="selectedTrace"
+         x-cloak
+         class="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-[1000]"
+         @click.self="selectedTrace = null">
+        <div class="bg-white dark:bg-gray-800 rounded-lg max-w-[90%] max-h-[90%] overflow-auto shadow-2xl" id="trace-detail-content">
+            <!-- Loaded via HTMX -->
+        </div>
+    </div>
+
+    <!-- Save Query Modal -->
+    <div x-show="showSaveQueryModal"
+         x-cloak
+         class="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-[1000]"
+         @click.self="showSaveQueryModal = false">
+        <div class="bg-white dark:bg-gray-800 rounded-lg max-w-2xl w-full mx-4 p-8 shadow-2xl">
+            <div class="flex justify-between items-center mb-6 pb-4 border-b border-gray-200 dark:border-gray-700">
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 m-0">💾 Save Query</h2>
+                <button @click="showSaveQueryModal = false" class="bg-transparent border-0 text-2xl cursor-pointer text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100">×</button>
+            </div>
+
+            <div class="flex flex-col gap-6">
+                <!-- Query Name -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        Query Name <span class="text-red-500">*</span>
+                    </label>
+                    <input
+                        x-model="saveQueryName"
+                        type="text"
+                        placeholder="e.g., Slow Requests Last Hour"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    />
+                </div>
+
+                <!-- Query Description -->
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        Description (optional)
+                    </label>
+                    <textarea
+                        x-model="saveQueryDescription"
+                        placeholder="What does this query help you find?"
+                        rows="3"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 resize-y focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    ></textarea>
+                </div>
+
+                <!-- Share with Team -->
+                <div class="flex items-center gap-2">
+                    <input
+                        x-model="saveQueryIsShared"
+                        type="checkbox"
+                        id="save-query-shared"
+                        class="w-4 h-4 text-blue-600 border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-blue-500 dark:bg-gray-700"
+                    />
+                    <label for="save-query-shared" class="text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+                        Share with team (visible to all users)
+                    </label>
+                </div>
+
+                <!-- Current Filters Preview -->
+                <div class="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+                    <p class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2 uppercase">Current Filters</p>
+                    <div class="grid grid-cols-2 gap-2 text-sm text-gray-700 dark:text-gray-300">
+                        <div x-show="timeRange"><strong>Time:</strong> <span x-text="timeRange"></span></div>
+                        <div x-show="statusFilter"><strong>Status:</strong> <span x-text="statusFilter"></span></div>
+                        <div x-show="minDuration"><strong>Min Duration:</strong> <span x-text="minDuration + 'ms'"></span></div>
+                        <div x-show="maxDuration"><strong>Max Duration:</strong> <span x-text="maxDuration + 'ms'"></span></div>
+                        <div x-show="httpMethod"><strong>HTTP Method:</strong> <span x-text="httpMethod"></span></div>
+                        <div x-show="userEmail"><strong>User:</strong> <span x-text="userEmail"></span></div>
+                        <div x-show="nameSearch" class="col-span-2"><strong>Name:</strong> <span x-text="nameSearch"></span></div>
+                        <div x-show="attributeSearch" class="col-span-2"><strong>Attributes:</strong> <span x-text="attributeSearch"></span></div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex justify-end gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <button
+                        @click="showSaveQueryModal = false"
+                        class="px-6 py-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md cursor-pointer font-medium hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        @click="saveCurrentQuery()"
+                        class="px-6 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-md cursor-pointer font-medium hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors"
+                    >
+                        Save Query
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div> <!-- End Traces View -->
+
+    <!-- Metrics View -->
+    <div x-show="viewMode === 'metrics'" id="metrics-container">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
+            Loading metrics dashboard...
+        </div>
+    </div>
+
+    <!-- Tools View -->
+    <div x-show="viewMode === 'tools'" id="tools-container">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
+            Loading tool metrics dashboard...
+        </div>
+    </div>
+
+    <!-- Prompts View -->
+    <div x-show="viewMode === 'prompts'" id="prompts-container">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
+            Loading prompt metrics dashboard...
+        </div>
+    </div>
+
+    <!-- Resources View -->
+    <div x-show="viewMode === 'resources'" id="resources-container">
+        <div class="p-8 text-center text-gray-600 dark:text-gray-400">
+            Loading resource metrics dashboard...
+        </div>
+    </div>
+</div>

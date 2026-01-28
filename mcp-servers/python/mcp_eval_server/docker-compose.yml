@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  mcp-eval-server:
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: mcp-eval-server
+    environment:
+      # OpenAI Configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+
+      # Azure OpenAI Configuration
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY:-}
+
+      # Server Configuration
+      - DEFAULT_JUDGE_MODEL=${DEFAULT_JUDGE_MODEL:-gpt-4}
+      - MCP_EVAL_CACHE_DIR=/app/data/cache
+      - MCP_EVAL_RESULTS_DB=/app/data/results/evaluation_results.db
+
+      # Logging
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+    volumes:
+      # Persist evaluation data and cache
+      - eval-cache:/app/data/cache
+      - eval-results:/app/data/results
+
+      # Optional: Mount custom configurations
+      - ./config:/app/config:ro
+
+    # For testing HTTP wrapper (optional)
+    ports:
+      - "8080:8080"
+
+    # Resource limits for evaluation workloads
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from mcp_eval_server.server import judge_tools; print('Health check:', len(judge_tools.get_available_judges()), 'judges')"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 120s
+
+    # Restart policy
+    restart: unless-stopped
+
+volumes:
+  eval-cache:
+    driver: local
+  eval-results:
+    driver: local
+
+# Optional: Add Redis for distributed caching
+# networks:
+#   eval-network:
+#     driver: bridge

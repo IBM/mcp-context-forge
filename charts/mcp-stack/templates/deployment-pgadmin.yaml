@@ -1,0 +1,72 @@
+{{- /*
+PgAdmin Deployment
+*/ -}}
+{{- if .Values.pgadmin.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-pgadmin
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: pgadmin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgadmin
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: pgadmin
+        release: {{ .Release.Name }}
+    spec:
+      # Image pull secrets
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: pgadmin
+          image: "{{ .Values.pgadmin.image.repository }}:{{ .Values.pgadmin.image.tag }}"
+          imagePullPolicy: {{ .Values.pgadmin.image.pullPolicy }}
+
+          # Expose HTTP port inside the pod
+          ports:
+            - name: http
+              containerPort: {{ .Values.pgadmin.service.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.pgadmin.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.pgadmin.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # Container environment
+          env:
+            - name: PGADMIN_DEFAULT_EMAIL
+              value: "{{ .Values.pgadmin.env.email }}"
+            - name: PGADMIN_DEFAULT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.pgadminSecretName" . | trim }}
+                  key: {{ .Values.pgadmin.passwordKey | default "PGADMIN_DEFAULT_PASSWORD" }}
+            - name: PGADMIN_LISTEN_PORT
+              value: "{{ .Values.pgadmin.service.port }}"
+
+          # ─── Resource limits & requests ───
+          {{- with .Values.pgadmin.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

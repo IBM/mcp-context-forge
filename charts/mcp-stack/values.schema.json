@@ -1,0 +1,2044 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/IBM/mcp-context-forge/charts/mcp-stack/values.schema.json",
+  "title": "MCP Stack Helm Chart Values",
+  "description": "JSON Schema for MCP Stack Helm Chart values.yaml",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Global settings applied across the entire Helm release",
+      "properties": {
+        "imagePullSecrets": {
+          "type": "array",
+          "description": "List of image pull secrets for private registries",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "nameOverride": {
+          "type": "string",
+          "description": "Short name applied to all resources (optional)",
+          "default": ""
+        },
+        "fullnameOverride": {
+          "type": "string",
+          "description": "Fully-qualified name override (optional)",
+          "default": ""
+        }
+      },
+      "additionalProperties": false
+    },
+    "serviceAccount": {
+      "type": "object",
+      "description": "ServiceAccount configuration for all pods in the release",
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create a ServiceAccount",
+          "default": false
+        },
+        "name": {
+          "type": "string",
+          "description": "ServiceAccount name (uses fullname if empty)",
+          "default": ""
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations for the ServiceAccount (e.g., IRSA, Workload Identity)",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean",
+          "description": "Mount the ServiceAccount token in pods",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpContextForge": {
+      "type": "object",
+      "description": "MCP Context-Forge Gateway configuration",
+      "properties": {
+        "replicaCount": {
+          "type": "integer",
+          "description": "Number of gateway replicas",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 2
+        },
+        "extraEnvFrom": {
+            "type": "array",
+            "description": "Additional environment variables from secrets or configmaps",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "secretRef": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" }
+                        },
+                        "required": ["name"]
+                    },
+                    "configMapRef": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" }
+                        },
+                        "required": ["name"]
+                    },
+                    "prefix": { "type": "string" }
+                }
+            },
+            "default": []
+        },
+        "extraEnv": {
+            "type": "array",
+            "description": "Additional environment variables",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "value": { "type": "string" },
+                    "valueFrom": {
+                        "type": "object",
+                        "properties": {
+                            "secretKeyRef": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "key": { "type": "string" }
+                                },
+                                "required": ["name", "key"]
+                            },
+                            "configMapKeyRef": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string" },
+                                    "key": { "type": "string" }
+                                },
+                                "required": ["name", "key"]
+                            },
+                            "fieldRef": {
+                                "type": "object",
+                                "properties": {
+                                    "fieldPath": { "type": "string" }
+                                },
+                                "required": ["fieldPath"]
+                            }
+                        }
+                    }
+                },
+                "required": ["name"]
+            },
+            "default": []
+        },
+        "hpa": {
+          "type": "object",
+          "description": "Horizontal Pod Autoscaler configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable horizontal pod autoscaling",
+              "default": true
+            },
+            "minReplicas": {
+              "type": "integer",
+              "description": "Minimum number of replicas",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 2
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "description": "Maximum number of replicas",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 10
+            },
+            "targetCPUUtilizationPercentage": {
+              "type": "integer",
+              "description": "Target CPU utilization percentage",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 90
+            },
+            "targetMemoryUtilizationPercentage": {
+              "type": "integer",
+              "description": "Target memory utilization percentage",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 90
+            }
+          },
+          "additionalProperties": false
+        },
+        "image": {
+          "type": "object",
+          "description": "Container image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "ghcr.io/ibm/mcp-context-forge"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "latest"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "description": "Image pull policy",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "default": "Always"
+            }
+          },
+          "required": ["repository", "tag"],
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "description": "Service configuration",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Service type",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"],
+              "default": "ClusterIP"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Service port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 80
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Service annotations (e.g., for AWS NLB, GCP load balancer configuration)",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            }
+          },
+          "additionalProperties": false
+        },
+        "containerPort": {
+          "type": "integer",
+          "description": "Container port",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 4444
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Metrics configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable metrics collection",
+              "default": true
+            },
+            "port": {
+              "type": "integer",
+              "description": "Metrics port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8000
+            },
+            "serviceMonitor": {
+              "type": "object",
+              "description": "ServiceMonitor configuration for Prometheus Operator",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable ServiceMonitor creation",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "customLabels": {
+              "type": "object",
+              "description": "Custom labels for metrics",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            }
+          },
+          "additionalProperties": false
+        },
+        "probes": {
+          "type": "object",
+          "description": "Health probe configuration",
+          "properties": {
+            "startup": {
+              "$ref": "#/$defs/probe",
+              "description": "Startup probe configuration"
+            },
+            "readiness": {
+              "$ref": "#/$defs/probe",
+              "description": "Readiness probe configuration"
+            },
+            "liveness": {
+              "$ref": "#/$defs/probe",
+              "description": "Liveness probe configuration"
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        },
+        "ingress": {
+          "type": "object",
+          "description": "Ingress configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable ingress",
+              "default": true
+            },
+            "className": {
+              "type": "string",
+              "description": "Ingress class name",
+              "default": "nginx"
+            },
+            "host": {
+              "type": "string",
+              "description": "Ingress host",
+              "default": "gateway.local"
+            },
+            "path": {
+              "type": "string",
+              "description": "Ingress path",
+              "default": "/"
+            },
+            "pathType": {
+              "type": "string",
+              "description": "Ingress path type",
+              "enum": ["Exact", "Prefix", "ImplementationSpecific"],
+              "default": "Prefix"
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Ingress annotations",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "tls": {
+              "type": "object",
+              "description": "TLS configuration for ingress",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable TLS for ingress",
+                  "default": false
+                },
+                "secretName": {
+                  "type": "string",
+                  "description": "Name of the TLS secret (optional, auto-generated if empty)",
+                  "default": ""
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+
+        "pluginConfig": {
+          "type": "object",
+          "description": "Plugin configuration via ConfigMap",
+          "properties": {
+            "enabled": {
+                "type": "boolean",
+                "description": "Enable plugin configuration loading via ConfigMap",
+                "default": false
+            },
+            "plugins": {
+              "type": "string",
+              "description": "Plugin configuration file contents (YAML)"
+            }
+          }
+        },
+        "env": {
+          "type": "object",
+          "description": "Environment configuration",
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "Host binding address",
+              "default": "0.0.0.0"
+            },
+            "postgres": {
+              "type": "object",
+              "description": "PostgreSQL connection configuration",
+              "properties": {
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "default": 5432
+                },
+                "db": {
+                  "type": "string",
+                  "default": "postgresdb"
+                },
+                "userKey": {
+                  "type": "string",
+                  "default": "POSTGRES_USER"
+                },
+                "passwordKey": {
+                  "type": "string",
+                  "default": "POSTGRES_PASSWORD"
+                }
+              },
+              "additionalProperties": false
+            },
+            "redis": {
+              "type": "object",
+              "description": "Redis connection configuration",
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "description": "Redis host override",
+                  "default": ""
+                },
+                "port": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 65535,
+                  "default": 6379
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "config": {
+          "type": "object",
+          "description": "Application configuration (non-secret)",
+          "properties": {
+            "GUNICORN_WORKERS": {
+              "type": "string",
+              "description": "Number of Gunicorn worker processes (auto = 2*CPU+1, capped at 16)",
+              "default": "auto"
+            },
+            "GUNICORN_TIMEOUT": {
+              "type": "string",
+              "description": "Gunicorn worker timeout in seconds",
+              "default": "600"
+            },
+            "GUNICORN_MAX_REQUESTS": {
+              "type": "string",
+              "description": "Max requests per worker before restart",
+              "default": "100000"
+            },
+            "GUNICORN_MAX_REQUESTS_JITTER": {
+              "type": "string",
+              "description": "Random jitter to avoid thundering herd",
+              "default": "100"
+            },
+            "GUNICORN_PRELOAD_APP": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Preload app code before forking workers",
+              "default": "true"
+            },
+            "GUNICORN_DEV_MODE": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Developer mode with hot reload (not for production)",
+              "default": "false"
+            },
+            "DISABLE_ACCESS_LOG": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Disable access logging for performance",
+              "default": "true"
+            },
+            "APP_NAME": {
+              "type": "string",
+              "description": "Application name",
+              "default": "MCP_Gateway"
+            },
+            "HOST": {
+              "type": "string",
+              "description": "Host binding address",
+              "default": "0.0.0.0"
+            },
+            "PORT": {
+              "type": "string",
+              "description": "Application port",
+              "default": "4444"
+            },
+            "APP_ROOT_PATH": {
+              "type": "string",
+              "description": "Application root path",
+              "default": ""
+            },
+            "DB_POOL_SIZE": {
+              "type": "string",
+              "description": "Database connection pool size",
+              "default": "200"
+            },
+            "DB_MAX_OVERFLOW": {
+              "type": "string",
+              "description": "Database max overflow connections",
+              "default": "10"
+            },
+            "DB_POOL_TIMEOUT": {
+              "type": "string",
+              "description": "Database pool timeout",
+              "default": "30"
+            },
+            "DB_POOL_RECYCLE": {
+              "type": "string",
+              "description": "Database pool recycle time",
+              "default": "3600"
+            },
+            "DB_SQLITE_BUSY_TIMEOUT": {
+              "type": "string",
+              "description": "SQLite lock wait timeout in milliseconds",
+              "default": "5000"
+            },
+            "CACHE_TYPE": {
+              "type": "string",
+              "description": "Cache backend type",
+              "enum": ["redis", "memory", "none", "database"],
+              "default": "redis"
+            },
+            "CACHE_PREFIX": {
+              "type": "string",
+              "description": "Cache key prefix",
+              "default": "mcpgw"
+            },
+            "SESSION_TTL": {
+              "type": "string",
+              "description": "Session TTL in seconds",
+              "default": "3600"
+            },
+            "MESSAGE_TTL": {
+              "type": "string",
+              "description": "Message TTL in seconds",
+              "default": "600"
+            },
+            "REDIS_MAX_RETRIES": {
+              "type": "string",
+              "description": "Max Redis connection retries at startup (uses exponential backoff with jitter)",
+              "default": "30"
+            },
+            "REDIS_RETRY_INTERVAL_MS": {
+              "type": "string",
+              "description": "Base retry interval in ms (doubles each attempt)",
+              "default": "2000"
+            },
+            "REDIS_MAX_BACKOFF_SECONDS": {
+              "type": "string",
+              "description": "Max backoff cap in seconds (jitter ±25% applied after)",
+              "default": "30"
+            },
+            "REDIS_MAX_CONNECTIONS": {
+              "type": "string",
+              "description": "Redis connection pool size per worker",
+              "default": "50"
+            },
+            "REDIS_SOCKET_TIMEOUT": {
+              "type": "string",
+              "description": "Redis socket read/write timeout in seconds",
+              "default": "2.0"
+            },
+            "REDIS_SOCKET_CONNECT_TIMEOUT": {
+              "type": "string",
+              "description": "Redis connection timeout in seconds",
+              "default": "2.0"
+            },
+            "REDIS_RETRY_ON_TIMEOUT": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Retry Redis commands on timeout",
+              "default": "true"
+            },
+            "REDIS_HEALTH_CHECK_INTERVAL": {
+              "type": "string",
+              "description": "Redis health check interval in seconds (0=disabled)",
+              "default": "30"
+            },
+            "REDIS_DECODE_RESPONSES": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Return strings instead of bytes from Redis",
+              "default": "true"
+            },
+            "REDIS_LEADER_TTL": {
+              "type": "string",
+              "description": "Redis leader election TTL in seconds",
+              "default": "15"
+            },
+            "REDIS_LEADER_KEY": {
+              "type": "string",
+              "description": "Redis leader election key name",
+              "default": "gateway_service_leader"
+            },
+            "REDIS_LEADER_HEARTBEAT_INTERVAL": {
+              "type": "string",
+              "description": "Redis leader heartbeat interval in seconds",
+              "default": "5"
+            },
+            "DB_MAX_RETRIES": {
+              "type": "string",
+              "description": "Max DB connection retries at startup (uses exponential backoff with jitter)",
+              "default": "30"
+            },
+            "DB_RETRY_INTERVAL_MS": {
+              "type": "string",
+              "description": "Base retry interval in ms (doubles each attempt)",
+              "default": "2000"
+            },
+            "DB_MAX_BACKOFF_SECONDS": {
+              "type": "string",
+              "description": "Max backoff cap in seconds (jitter ±25% applied after)",
+              "default": "30"
+            },
+            "PROTOCOL_VERSION": {
+              "type": "string",
+              "description": "MCP protocol version",
+              "default": "2025-03-26"
+            },
+            "MCPGATEWAY_UI_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable admin UI",
+              "default": "true"
+            },
+            "MCPGATEWAY_UI_AIRGAPPED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable air-gapped mode for UI assets (serve vendored CSS/JS files locally)",
+              "default": "false"
+            },
+            "MCPGATEWAY_ADMIN_API_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable admin API endpoints",
+              "default": "true"
+            },
+            "ENVIRONMENT": {
+              "type": "string",
+              "enum": ["development", "production"],
+              "description": "Deployment environment (affects security defaults)",
+              "default": "development"
+            },
+            "APP_DOMAIN": {
+              "type": "string",
+              "description": "Domain for production CORS origins",
+              "default": "localhost"
+            },
+            "CORS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable CORS processing",
+              "default": "true"
+            },
+            "CORS_ALLOW_CREDENTIALS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Allow credentials in CORS requests",
+              "default": "true"
+            },
+            "ALLOWED_ORIGINS": {
+              "type": "string",
+              "description": "JSON array of allowed origins",
+              "default": "[\"http://localhost\",\"http://localhost:4444\"]"
+            },
+            "SECURITY_HEADERS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable security headers middleware",
+              "default": "true"
+            },
+            "X_FRAME_OPTIONS": {
+              "type": "string",
+              "enum": ["DENY", "SAMEORIGIN", "ALLOW-ALL"],
+              "description": "X-Frame-Options header value",
+              "default": "DENY"
+            },
+            "X_CONTENT_TYPE_OPTIONS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable X-Content-Type-Options header",
+              "default": "true"
+            },
+            "X_XSS_PROTECTION_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable X-XSS-Protection header",
+              "default": "true"
+            },
+            "X_DOWNLOAD_OPTIONS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable X-Download-Options header",
+              "default": "true"
+            },
+            "HSTS_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable HSTS header",
+              "default": "true"
+            },
+            "HSTS_MAX_AGE": {
+              "type": "string",
+              "pattern": "^[0-9]+$",
+              "description": "HSTS max age in seconds",
+              "default": "31536000"
+            },
+            "HSTS_INCLUDE_SUBDOMAINS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Include subdomains in HSTS",
+              "default": "true"
+            },
+            "REMOVE_SERVER_HEADERS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Remove server identification headers",
+              "default": "true"
+            },
+            "SECURE_COOKIES": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Force secure cookie flags",
+              "default": "true"
+            },
+            "COOKIE_SAMESITE": {
+              "type": "string",
+              "enum": ["strict", "lax", "none"],
+              "description": "Cookie SameSite attribute",
+              "default": "lax"
+            },
+            "SKIP_SSL_VERIFY": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Skip SSL certificate verification",
+              "default": "false"
+            },
+            "LOG_LEVEL": {
+              "type": "string",
+              "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+              "description": "Log level",
+              "default": "INFO"
+            },
+            "LOG_FORMAT": {
+              "type": "string",
+              "enum": ["json", "text"],
+              "description": "Log format",
+              "default": "json"
+            },
+            "LOG_REQUESTS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable request payload logging with sensitive data masking",
+              "default": "false"
+            },
+            "LOG_DETAILED_MAX_BODY_SIZE": {
+              "type": "string",
+              "description": "Maximum request body size to log in detailed mode (bytes)",
+              "default": "16384"
+            },
+            "LOG_DETAILED_SKIP_ENDPOINTS": {
+              "type": "string",
+              "description": "Path prefixes to skip from detailed request logging (comma-separated)",
+              "default": ""
+            },
+            "LOG_DETAILED_SAMPLE_RATE": {
+              "type": "string",
+              "description": "Sampling rate for detailed request logging (0.0-1.0)",
+              "default": "1.0"
+            },
+            "LOG_RESOLVE_USER_IDENTITY": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable DB lookup for user identity during request logging",
+              "default": "false"
+            },
+            "TRANSPORT_TYPE": {
+              "type": "string",
+              "description": "Transport types (comma-separated)",
+              "default": "all"
+            },
+            "WEBSOCKET_PING_INTERVAL": {
+              "type": "string",
+              "description": "WebSocket ping interval in seconds",
+              "default": "30"
+            },
+            "SSE_RETRY_TIMEOUT": {
+              "type": "string",
+              "description": "SSE retry timeout in milliseconds",
+              "default": "5000"
+            },
+            "USE_STATEFUL_SESSIONS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Use stateful sessions",
+              "default": "false"
+            },
+            "JSON_RESPONSE_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable JSON responses",
+              "default": "true"
+            },
+            "FEDERATION_TIMEOUT": {
+              "type": "string",
+              "description": "HTTP timeout in seconds for gateway and MCP server requests (health checks, tool invocations)",
+              "default": "120"
+            },
+            "RESOURCE_CACHE_SIZE": {
+              "type": "string",
+              "description": "Resource cache size",
+              "default": "1000"
+            },
+            "RESOURCE_CACHE_TTL": {
+              "type": "string",
+              "description": "Resource cache TTL in seconds",
+              "default": "3600"
+            },
+            "MAX_RESOURCE_SIZE": {
+              "type": "string",
+              "description": "Maximum resource size in bytes",
+              "default": "10485760"
+            },
+            "TOOL_TIMEOUT": {
+              "type": "string",
+              "description": "Tool timeout in seconds",
+              "default": "60"
+            },
+            "MAX_TOOL_RETRIES": {
+              "type": "string",
+              "description": "Maximum tool retries",
+              "default": "3"
+            },
+            "TOOL_RATE_LIMIT": {
+              "type": "string",
+              "description": "Tool rate limit per minute",
+              "default": "100"
+            },
+            "TOOL_CONCURRENT_LIMIT": {
+              "type": "string",
+              "description": "Tool concurrent execution limit",
+              "default": "10"
+            },
+            "PROMPT_CACHE_SIZE": {
+              "type": "string",
+              "description": "Prompt cache size",
+              "default": "100"
+            },
+            "MAX_PROMPT_SIZE": {
+              "type": "string",
+              "description": "Maximum prompt size in bytes",
+              "default": "102400"
+            },
+            "PROMPT_RENDER_TIMEOUT": {
+              "type": "string",
+              "description": "Prompt render timeout in seconds",
+              "default": "10"
+            },
+            "HEALTH_CHECK_INTERVAL": {
+              "type": "string",
+              "description": "Health check interval in seconds",
+              "default": "60"
+            },
+            "HEALTH_CHECK_TIMEOUT": {
+              "type": "string",
+              "description": "Health check timeout in seconds",
+              "default": "10"
+            },
+            "GATEWAY_HEALTH_CHECK_TIMEOUT": {
+              "type": "string",
+              "description": "Per-check timeout to bound total time of one gateway health check (seconds)",
+              "default": "5.0"
+            },
+            "UNHEALTHY_THRESHOLD": {
+              "type": "string",
+              "description": "Unhealthy threshold",
+              "default": "3"
+            },
+            "AUTO_REFRESH_SERVERS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable automatic tools/prompts/resources refresh from the mcp servers during gateway health checks",
+              "default": "false"
+            },
+            "FILELOCK_NAME": {
+              "type": "string",
+              "description": "File lock path",
+              "default": "gateway_healthcheck_init.lock"
+            },
+            "DEV_MODE": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable development mode",
+              "default": "false"
+            },
+            "RELOAD": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable auto-reload",
+              "default": "false"
+            },
+            "TEMPLATES_AUTO_RELOAD": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Auto-reload Jinja2 templates on change (disable for production performance)",
+              "default": "false"
+            },
+            "DEBUG": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable debug mode",
+              "default": "false"
+            }
+          },
+          "additionalProperties": true
+        },
+        "secret": {
+          "type": "object",
+          "description": "Secret configuration",
+          "properties": {
+            "BASIC_AUTH_USER": {
+              "type": "string",
+              "description": "Basic auth username",
+              "default": "admin"
+            },
+            "BASIC_AUTH_PASSWORD": {
+              "type": "string",
+              "description": "Basic auth password",
+              "default": "changeme"
+            },
+            "AUTH_REQUIRED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Require authentication",
+              "default": "true"
+            },
+            "JWT_SECRET_KEY": {
+              "type": "string",
+              "description": "JWT secret key",
+              "default": "my-test-key"
+            },
+            "JWT_ALGORITHM": {
+              "type": "string",
+              "description": "JWT algorithm",
+              "default": "HS256"
+            },
+            "TOKEN_EXPIRY": {
+              "type": "string",
+              "description": "Token expiry in minutes",
+              "default": "10080"
+            },
+            "AUTH_ENCRYPTION_SECRET": {
+              "type": "string",
+              "description": "Auth encryption secret",
+              "default": "my-test-salt"
+            },
+            "ENABLE_ED25519_SIGNING": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable Ed25519 signing for certificates",
+              "default": "false"
+            },
+            "ED25519_PRIVATE_KEY": {
+              "type": "string",
+              "description": "Ed25519 private key for signing (PEM format)",
+              "default": ""
+            },
+            "PREV_ED25519_PRIVATE_KEY": {
+              "type": "string",
+              "description": "Previous Ed25519 private key for key rotation",
+              "default": ""
+            },
+            "DATABASE_URL": {
+              "type": "string",
+              "description": "Database URL override"
+            },
+            "REDIS_URL": {
+              "type": "string",
+              "description": "Redis URL override"
+            },
+            "METRICS_CACHE_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable metrics aggregation query caching (reduces full table scans)",
+              "default": "true"
+            },
+            "METRICS_CACHE_TTL_SECONDS": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,2}$",
+              "description": "TTL for cached metrics in seconds (1-300, default: 60)",
+              "default": "60"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "migration": {
+      "type": "object",
+      "description": "Database migration configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable database migrations",
+          "default": true
+        },
+        "restartPolicy": {
+          "type": "string",
+          "enum": ["Never", "OnFailure", "Always"],
+          "description": "Job restart policy",
+          "default": "Never"
+        },
+        "backoffLimit": {
+          "type": "integer",
+          "description": "Job backoff limit",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 3
+        },
+        "activeDeadlineSeconds": {
+          "type": "integer",
+          "description": "Job active deadline in seconds",
+          "minimum": 1,
+          "default": 600
+        },
+        "image": {
+          "type": "object",
+          "description": "Migration image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "ghcr.io/ibm/mcp-context-forge"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "latest"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Image pull policy",
+              "default": "Always"
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        },
+        "command": {
+          "type": "object",
+          "description": "Migration commands",
+          "properties": {
+            "waitForDb": {
+              "type": "string",
+              "description": "Wait for database command",
+              "default": "python3 /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
+            },
+            "migrate": {
+              "type": "string",
+              "description": "Migration command",
+              "default": "alembic upgrade head || echo '⚠️ Migration check failed'"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "postgres": {
+      "type": "object",
+      "description": "PostgreSQL database configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable PostgreSQL",
+          "default": true
+        },
+        "external": {
+          "type": "object",
+          "description": "External PostgreSQL configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable external PostgreSQL",
+              "default": false
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Secret containing connection details",
+              "default": ""
+            },
+            "host": { "type": "string" },
+            "hostKey": { "type": "string", "default": "host" },
+            "port": { "type": "integer", "default": 5432 },
+            "portKey": { "type": "string", "default": "port" },
+            "database": { "type": "string" },
+            "databaseKey": { "type": "string", "default": "dbname" },
+            "user": { "type": "string" },
+            "userKey": { "type": "string", "default": "user" },
+            "password": { "type": "string" },
+            "passwordKey": { "type": "string", "default": "password" }
+          },
+          "additionalProperties": false
+        },
+        "image": {
+          "type": "object",
+          "description": "PostgreSQL image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "postgres"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "17"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Image pull policy",
+              "default": "IfNotPresent"
+            }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "description": "PostgreSQL service configuration",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+              "description": "Service type",
+              "default": "ClusterIP"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Service port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 5432
+            },
+            "targetPort": {
+              "type": "integer",
+              "description": "Target port",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "additionalProperties": false
+        },
+        "persistence": {
+          "type": "object",
+          "description": "PostgreSQL persistence configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable persistence",
+              "default": true
+            },
+            "storageClassName": {
+              "type": "string",
+              "description": "Storage class name",
+              "default": "manual"
+            },
+            "accessModes": {
+              "type": "array",
+              "description": "Access modes",
+              "items": {
+                "type": "string",
+                "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"]
+              },
+              "default": ["ReadWriteMany"]
+            },
+            "size": {
+              "type": "string",
+              "description": "Storage size",
+              "pattern": "^[0-9]+[KMGTPE]i?$",
+              "default": "5Gi"
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Annotations for the PVC",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            },
+            "reclaimPolicy": {
+              "type": "string",
+              "enum": ["Retain", "Recycle", "Delete"],
+              "description": "Reclaim policy for the PVC",
+              "default": "Retain"
+            }
+          },
+          "additionalProperties": false
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing secret name",
+          "default": ""
+        },
+        "credentials": {
+          "type": "object",
+          "description": "PostgreSQL credentials",
+          "properties": {
+            "database": {
+              "type": "string",
+              "description": "Database name",
+              "default": "postgresdb"
+            },
+            "user": {
+              "type": "string",
+              "description": "Database user",
+              "default": "admin"
+            },
+            "password": {
+              "type": "string",
+              "description": "Database password",
+              "default": "test123"
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        },
+        "probes": {
+          "type": "object",
+          "description": "PostgreSQL health probes",
+          "properties": {
+            "readiness": {
+              "$ref": "#/$defs/probe",
+              "description": "Readiness probe"
+            },
+            "liveness": {
+              "$ref": "#/$defs/probe",
+              "description": "Liveness probe"
+            }
+          },
+          "additionalProperties": false
+        },
+        "upgrade": {
+          "type": "object",
+          "description": "PostgreSQL upgrade configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable PostgreSQL upgrade process",
+              "default": false
+            },
+            "targetVersion": {
+              "type": ["string", "number"],
+              "description": "Target PostgreSQL version for upgrade",
+              "default": "18"
+            },
+            "backupCompleted": {
+              "type": "boolean",
+              "description": "Flag to indicate if backup has been completed to prevent re-running",
+              "default": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "pgbouncer": {
+      "type": "object",
+      "description": "PgBouncer connection pooler configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable PgBouncer connection pooling",
+          "default": false
+        },
+        "image": {
+          "type": "object",
+          "description": "PgBouncer image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "edoburu/pgbouncer"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "latest"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Image pull policy",
+              "default": "IfNotPresent"
+            }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "description": "PgBouncer service configuration",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+              "description": "Service type",
+              "default": "ClusterIP"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Service port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 6432
+            }
+          },
+          "additionalProperties": false
+        },
+        "pool": {
+          "type": "object",
+          "description": "Pool configuration",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["transaction", "session", "statement"],
+              "description": "Pool mode",
+              "default": "transaction"
+            },
+            "maxClientConn": {
+              "type": "integer",
+              "description": "Max client connections",
+              "default": 3000
+            },
+            "defaultPoolSize": {
+              "type": "integer",
+              "description": "Default pool size",
+              "default": 120
+            },
+            "minPoolSize": {
+              "type": "integer",
+              "description": "Minimum pool size",
+              "default": 10
+            },
+            "reservePoolSize": {
+              "type": "integer",
+              "description": "Reserve pool size",
+              "default": 25
+            },
+            "reservePoolTimeout": {
+              "type": "integer",
+              "description": "Reserve pool timeout in seconds",
+              "default": 5
+            },
+            "maxDbConnections": {
+              "type": "integer",
+              "description": "Max database connections",
+              "default": 200
+            },
+            "maxUserConnections": {
+              "type": "integer",
+              "description": "Max user connections",
+              "default": 200
+            },
+            "serverLifetime": {
+              "type": "integer",
+              "description": "Server lifetime in seconds",
+              "default": 3600
+            },
+            "serverIdleTimeout": {
+              "type": "integer",
+              "description": "Server idle timeout in seconds",
+              "default": 600
+            }
+          },
+          "additionalProperties": false
+        },
+        "authType": {
+          "type": "string",
+          "description": "Authentication type",
+          "default": "scram-sha-256"
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        },
+        "probes": {
+          "type": "object",
+          "description": "PgBouncer health probes",
+          "properties": {
+            "readiness": {
+              "$ref": "#/$defs/probe",
+              "description": "Readiness probe"
+            },
+            "liveness": {
+              "$ref": "#/$defs/probe",
+              "description": "Liveness probe"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "redis": {
+      "type": "object",
+      "description": "Redis cache configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Redis",
+          "default": true
+        },
+        "image": {
+          "type": "object",
+          "description": "Redis image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "redis"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "latest"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Image pull policy",
+              "default": "IfNotPresent"
+            }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "description": "Redis service configuration",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+              "description": "Service type",
+              "default": "ClusterIP"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Service port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 6379
+            }
+          },
+          "additionalProperties": false
+        },
+        "external": {
+          "type": "object",
+          "description": "External Redis configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable external Redis",
+              "default": false
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Secret containing REDIS_URL",
+              "default": ""
+            },
+            "urlKey": {
+              "type": "string",
+              "description": "Secret key for REDIS_URL",
+              "default": "REDIS_URL"
+            },
+            "url": {
+              "type": "string",
+              "description": "Direct Redis URL override",
+              "default": ""
+            },
+            "host": {
+              "type": "string",
+              "description": "Redis host",
+              "default": ""
+            },
+            "port": {
+              "type": "integer",
+              "description": "Redis port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 6379
+            },
+            "db": {
+              "type": "integer",
+              "description": "Redis database index",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        },
+        "probes": {
+          "type": "object",
+          "description": "Redis health probes",
+          "properties": {
+            "readiness": {
+              "$ref": "#/$defs/probe",
+              "description": "Readiness probe"
+            },
+            "liveness": {
+              "$ref": "#/$defs/probe",
+              "description": "Liveness probe"
+            }
+          },
+          "additionalProperties": false
+        },
+        "persistence": {
+          "type": "object",
+          "description": "Redis persistence configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable persistence",
+              "default": false
+            },
+            "storageClassName": {
+              "type": "string",
+              "description": "Storage class name",
+              "default": ""
+            },
+            "accessModes": {
+              "type": "array",
+              "description": "Access modes",
+              "items": {
+                "type": "string",
+                "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"]
+              },
+              "default": ["ReadWriteOnce"]
+            },
+            "size": {
+              "type": "string",
+              "description": "Storage size",
+              "pattern": "^[0-9]+[KMGTPE]i?$",
+              "default": "1Gi"
+            },
+            "reclaimPolicy": {
+              "type": "string",
+              "enum": ["Retain", "Recycle", "Delete"],
+              "description": "Reclaim policy for the PVC",
+              "default": "Retain"
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Annotations for the PVC",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "pgadmin": {
+      "type": "object",
+      "description": "PgAdmin configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable PgAdmin",
+          "default": true
+        },
+        "image": {
+          "type": "object",
+          "description": "PgAdmin image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "dpage/pgadmin4"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "latest"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Image pull policy",
+              "default": "IfNotPresent"
+            }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "description": "PgAdmin service configuration",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+              "description": "Service type",
+              "default": "ClusterIP"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Service port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 80
+            }
+          },
+          "additionalProperties": false
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret name for PgAdmin credentials",
+          "default": ""
+        },
+        "passwordKey": {
+          "type": "string",
+          "description": "Secret key for PGADMIN_DEFAULT_PASSWORD",
+          "default": "PGADMIN_DEFAULT_PASSWORD"
+        },
+        "env": {
+          "type": "object",
+          "description": "PgAdmin environment variables",
+          "properties": {
+            "email": {
+              "type": "string",
+              "description": "Admin email",
+              "format": "email",
+              "default": "admin@example.com"
+            },
+            "password": {
+              "type": "string",
+              "description": "Admin password",
+              "default": "admin123"
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        },
+        "probes": {
+          "type": "object",
+          "description": "PgAdmin health probes",
+          "properties": {
+            "readiness": {
+              "$ref": "#/$defs/probe",
+              "description": "Readiness probe"
+            },
+            "liveness": {
+              "$ref": "#/$defs/probe",
+              "description": "Liveness probe"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "redisCommander": {
+      "type": "object",
+      "description": "Redis Commander configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Redis Commander",
+          "default": true
+        },
+        "image": {
+          "type": "object",
+          "description": "Redis Commander image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "rediscommander/redis-commander"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "latest"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Image pull policy",
+              "default": "IfNotPresent"
+            }
+          },
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "description": "Redis Commander service configuration",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+              "description": "Service type",
+              "default": "ClusterIP"
+            },
+            "port": {
+              "type": "integer",
+              "description": "Service port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8081
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        },
+        "probes": {
+          "type": "object",
+          "description": "Redis Commander health probes",
+          "properties": {
+            "readiness": {
+              "$ref": "#/$defs/probe",
+              "description": "Readiness probe"
+            },
+            "liveness": {
+              "$ref": "#/$defs/probe",
+              "description": "Liveness probe"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "minio": {
+      "type": "object",
+      "description": "Configuration for the MinIO S3-compatible object storage.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable to deploy MinIO."
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          }
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Name of an existing secret for MinIO credentials."
+        },
+        "credentials": {
+          "type": "object",
+          "properties": {
+            "rootUser": { "type": "string" },
+            "rootPassword": { "type": "string" }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "apiPort": { "type": "integer" },
+            "consolePort": { "type": "integer" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "storageClassName": { "type": "string" },
+            "accessModes": { "type": "array", "items": { "type": "string" } },
+            "size": { "type": "string" },
+            "reclaimPolicy": { "type": "string" }
+          }
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "CPU/Memory resource requests/limits."
+        }
+      }
+    },
+    "mcpFastTimeServer": {
+      "type": "object",
+      "description": "MCP Fast Time Server configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable Fast Time Server",
+          "default": true
+        },
+        "replicaCount": {
+          "type": "integer",
+          "description": "Number of replicas",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 2
+        },
+        "image": {
+          "type": "object",
+          "description": "Fast Time Server image configuration",
+          "properties": {
+            "repository": {
+              "type": "string",
+              "description": "Image repository",
+              "default": "ghcr.io/ibm/fast-time-server"
+            },
+            "tag": {
+              "type": "string",
+              "description": "Image tag",
+              "default": "0.9.0"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "description": "Image pull policy",
+              "default": "IfNotPresent"
+            }
+          },
+          "additionalProperties": false
+        },
+        "port": {
+          "type": "integer",
+          "description": "Container port",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8080
+        },
+        "ingress": {
+          "type": "object",
+          "description": "Fast Time Server ingress configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable ingress",
+              "default": true
+            },
+            "className": {
+              "type": "string",
+              "description": "Ingress class name",
+              "default": "nginx"
+            },
+            "host": {
+              "type": "string",
+              "description": "Ingress host",
+              "default": "gateway.local"
+            },
+            "path": {
+              "type": "string",
+              "description": "Ingress path",
+              "default": "/fast-time"
+            },
+            "pathType": {
+              "type": "string",
+              "enum": ["Exact", "Prefix", "ImplementationSpecific"],
+              "description": "Ingress path type",
+              "default": "Prefix"
+            },
+            "servicePort": {
+              "type": "integer",
+              "description": "Service port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 80
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Ingress annotations",
+              "additionalProperties": { "type": "string" },
+              "default": {}
+            },
+            "tls": {
+              "type": "object",
+              "description": "TLS configuration for ingress",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable TLS for ingress",
+                  "default": false
+                },
+                "secretName": {
+                  "type": "string",
+                  "description": "Name of the TLS secret (optional, auto-generated if empty)",
+                  "default": ""
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "probes": {
+          "type": "object",
+          "description": "Fast Time Server health probes",
+          "properties": {
+            "readiness": {
+              "$ref": "#/$defs/probe",
+              "description": "Readiness probe"
+            },
+            "liveness": {
+              "$ref": "#/$defs/probe",
+              "description": "Liveness probe"
+            }
+          },
+          "additionalProperties": false
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "Resource limits and requests"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "resources": {
+      "type": "object",
+      "description": "Kubernetes resource configuration",
+      "properties": {
+        "limits": {
+          "type": "object",
+          "description": "Resource limits",
+          "properties": {
+            "cpu": {
+              "type": "string",
+              "description": "CPU limit",
+              "pattern": "^[0-9]+m?$|^[0-9]*\\.?[0-9]+$"
+            },
+            "memory": {
+              "type": "string",
+              "description": "Memory limit",
+              "pattern": "^[0-9]+[KMGTPE]i?$"
+            }
+          },
+          "additionalProperties": false
+        },
+        "requests": {
+          "type": "object",
+          "description": "Resource requests",
+          "properties": {
+            "cpu": {
+              "type": "string",
+              "description": "CPU request",
+              "pattern": "^[0-9]+m?$|^[0-9]*\\.?[0-9]+$"
+            },
+            "memory": {
+              "type": "string",
+              "description": "Memory request",
+              "pattern": "^[0-9]+[KMGTPE]i?$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "probe": {
+      "type": "object",
+      "description": "Kubernetes probe configuration",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["http", "tcp", "exec"],
+          "description": "Probe type"
+        },
+        "path": {
+          "type": "string",
+          "description": "HTTP path (for http probes)"
+        },
+        "port": {
+          "type": "integer",
+          "description": "Port to probe",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "scheme": {
+          "type": "string",
+          "enum": ["HTTP", "HTTPS"],
+          "description": "HTTP scheme"
+        },
+        "command": {
+          "type": "array",
+          "description": "Command to execute (for exec probes)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "initialDelaySeconds": {
+          "type": "integer",
+          "description": "Initial delay in seconds",
+          "minimum": 0,
+          "default": 0
+        },
+        "periodSeconds": {
+          "type": "integer",
+          "description": "Period in seconds",
+          "minimum": 1,
+          "default": 10
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "description": "Timeout in seconds",
+          "minimum": 1,
+          "default": 1
+        },
+        "successThreshold": {
+          "type": "integer",
+          "description": "Success threshold",
+          "minimum": 1,
+          "default": 1
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "description": "Failure threshold",
+          "minimum": 1,
+          "default": 3
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

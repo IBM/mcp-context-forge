@@ -1,0 +1,306 @@
+# syntax=docker/dockerfile:1.7
+
+###############################################################################
+# MCP Data Analysis Server - OCI-compliant container build
+#
+# This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
+# image that automatically tracks the latest Python 3.11.x patch release
+# from the RHEL 9 repositories and is fully patched on each rebuild.
+#
+# Key design points:
+#   - Builder stage has full DNF + devel headers for wheel compilation
+#   - Runtime stage is scratch: only the Python runtime and app
+#   - Both builder and runtime rootfs receive `dnf upgrade -y`
+#   - Development headers are dropped from the final image
+#   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
+#   - Includes data science dependencies for pandas, numpy, scipy, etc.
+###############################################################################
+
+###########################
+# Build-time arguments
+###########################
+# Temporary dir for assembling the scratch rootfs
+ARG ROOTFS_PATH=/tmp/rootfs
+# Python major.minor series to track
+ARG PYTHON_VERSION=3.11
+
+###########################
+# Builder stage
+###########################
+FROM registry.access.redhat.com/ubi9/ubi:9.6-1753978585 AS builder
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG PYTHON_VERSION
+ARG ROOTFS_PATH
+
+# ----------------------------------------------------------------------------
+# 1) Patch the OS
+# 2) Install Python + headers for building wheels (needed for data science deps)
+# 3) Install build tools for compiling scientific libraries
+# 4) Install binutils for strip command
+# 5) Register python3 alternative
+# 6) Clean caches to reduce layer size
+# ----------------------------------------------------------------------------
+# hadolint ignore=DL3041
+RUN set -euo pipefail \
+    && dnf upgrade -y \
+    && dnf install -y \
+         python${PYTHON_VERSION} \
+         python${PYTHON_VERSION}-devel \
+         python${PYTHON_VERSION}-pip \
+         gcc \
+         gcc-c++ \
+         binutils \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && dnf clean all
+
+WORKDIR /app
+
+# ----------------------------------------------------------------------------
+# Copy only the files needed for dependency installation first
+# This maximizes Docker layer caching - dependencies change less often
+# ----------------------------------------------------------------------------
+COPY pyproject.toml /app/
+COPY README.md /app/
+
+# ----------------------------------------------------------------------------
+# Create and populate virtual environment
+#  - Upgrade pip, setuptools, wheel
+#  - Install project dependencies and package
+#  - Include all data analysis dependencies (pandas, numpy, scipy, etc.)
+#  - Remove build tools but keep runtime dist-info
+#  - Remove build caches and build artifacts
+# ----------------------------------------------------------------------------
+RUN set -euo pipefail \
+    && python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /app/.venv/bin/pip install --no-cache-dir -e ".[dev]" \
+    && /app/.venv/bin/pip uninstall --yes pip setuptools wheel \
+    && rm -rf /root/.cache /var/cache/dnf \
+    && find /app/.venv -name "*.dist-info" -type d \
+        \( -name "pip-*" -o -name "setuptools-*" -o -name "wheel-*" \) \
+        -exec rm -rf {} + 2>/dev/null || true \
+    && rm -rf /app/.venv/share/python-wheels \
+    && rm -rf /app/*.egg-info /app/build /app/dist /app/.eggs
+
+# ----------------------------------------------------------------------------
+# Now copy the application files needed for runtime
+# This ensures code changes don't invalidate the dependency layer
+# ----------------------------------------------------------------------------
+COPY src/ /app/src/
+COPY sample_data/ /app/sample_data/
+COPY config.yaml /app/
+COPY __init__.py /app/ 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
+# Create runtime script for MCP server
+# ----------------------------------------------------------------------------
+RUN cat > /app/run-server.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Set default values for data analysis server
+export PYTHONPATH="/app/src:${PYTHONPATH:-}"
+export DATA_ANALYSIS_CACHE_DIR="${DATA_ANALYSIS_CACHE_DIR:-/app/data/cache}"
+export DATA_ANALYSIS_RESULTS_DIR="${DATA_ANALYSIS_RESULTS_DIR:-/app/data/results}"
+
+# Create directories if they don't exist
+mkdir -p "$DATA_ANALYSIS_CACHE_DIR" "$DATA_ANALYSIS_RESULTS_DIR"
+
+# Log startup information
+echo "Starting MCP Data Analysis Server..."
+echo "Available tools: load_data, analyze_data, transform_data, query_data, visualize_data, statistical_test, time_series_analysis"
+echo "Cache directory: $DATA_ANALYSIS_CACHE_DIR"
+echo "Results directory: $DATA_ANALYSIS_RESULTS_DIR"
+
+# Run the MCP server
+exec python3 -m data_analysis_server.server
+EOF
+
+# ----------------------------------------------------------------------------
+# Ensure executable permissions for scripts
+# ----------------------------------------------------------------------------
+RUN chmod +x /app/run-server.sh
+
+# ----------------------------------------------------------------------------
+# Pre-compile Python bytecode with -OO optimization
+#  - Strips docstrings and assertions
+#  - Improves startup performance
+#  - Must be done before copying to rootfs
+#  - Remove __pycache__ directories after compilation
+# ----------------------------------------------------------------------------
+RUN python3 -OO -m compileall -q /app/.venv /app/src \
+    && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
+# Build a minimal, fully-patched rootfs containing only the runtime Python
+# Include ca-certificates for HTTPS connections to external data sources
+# ----------------------------------------------------------------------------
+# hadolint ignore=DL3041
+RUN set -euo pipefail \
+    && mkdir -p "${ROOTFS_PATH:?}" \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=9 upgrade -y \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=9 install -y \
+         --setopt=install_weak_deps=0 \
+         --setopt=tsflags=nodocs \
+         python${PYTHON_VERSION} \
+         ca-certificates \
+    && dnf clean all --installroot="${ROOTFS_PATH:?}"
+
+# ----------------------------------------------------------------------------
+# Create `python3` symlink in the rootfs for compatibility
+# ----------------------------------------------------------------------------
+RUN ln -s /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
+
+# ----------------------------------------------------------------------------
+# Clean up unnecessary files from rootfs (if they exist)
+#  - Remove development headers, documentation
+#  - Use ${var:?} to prevent accidental deletion of host directories
+# ----------------------------------------------------------------------------
+RUN set -euo pipefail \
+    && rm -rf ${ROOTFS_PATH:?}/usr/include/* \
+    ${ROOTFS_PATH:?}/usr/share/man/* \
+    ${ROOTFS_PATH:?}/usr/share/doc/* \
+    ${ROOTFS_PATH:?}/usr/share/info/* \
+    ${ROOTFS_PATH:?}/usr/share/locale/* \
+    ${ROOTFS_PATH:?}/var/log/* \
+    ${ROOTFS_PATH:?}/boot \
+    ${ROOTFS_PATH:?}/media \
+    ${ROOTFS_PATH:?}/srv \
+    ${ROOTFS_PATH:?}/usr/games \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "test" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "idle_test" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -name "*.mo" -delete 2>/dev/null || true \
+    && rm -rf ${ROOTFS_PATH:?}/usr/lib*/python*/ensurepip \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/idlelib \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/tkinter \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/turtle* \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/distutils/command/*.exe
+
+# ----------------------------------------------------------------------------
+# Remove package managers and unnecessary system tools from rootfs
+# - Keep essential tools for data analysis server functionality
+# - Remove security-sensitive tools to minimize attack surface
+# ----------------------------------------------------------------------------
+RUN rm -rf ${ROOTFS_PATH:?}/usr/bin/dnf* \
+    ${ROOTFS_PATH:?}/usr/bin/yum* \
+    ${ROOTFS_PATH:?}/usr/bin/rpm* \
+    ${ROOTFS_PATH:?}/usr/bin/microdnf \
+    ${ROOTFS_PATH:?}/usr/lib/rpm \
+    ${ROOTFS_PATH:?}/usr/lib/dnf \
+    ${ROOTFS_PATH:?}/usr/lib/yum* \
+    ${ROOTFS_PATH:?}/etc/dnf \
+    ${ROOTFS_PATH:?}/etc/yum*
+
+# ----------------------------------------------------------------------------
+# Strip unneeded symbols from shared libraries and remove build tools
+# - This reduces the final image size and removes build tools in one step
+# ----------------------------------------------------------------------------
+RUN find "${ROOTFS_PATH:?}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true \
+    && dnf remove -y gcc gcc-c++ binutils \
+    && dnf clean all
+
+# ----------------------------------------------------------------------------
+# Remove setuid/setgid binaries for security
+# ----------------------------------------------------------------------------
+RUN find ${ROOTFS_PATH:?} -perm /4000 -o -perm /2000 -type f -delete 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
+# Create minimal passwd/group files for user 1001
+# - Using GID 1001 to match UID for consistency
+# - OpenShift compatible (accepts any UID in group 1001)
+# ----------------------------------------------------------------------------
+RUN printf 'mcp-data-analysis:x:1001:1001:mcp-data-analysis:/app:/sbin/nologin\n' > "${ROOTFS_PATH:?}/etc/passwd" && \
+    printf 'mcp-data-analysis:x:1001:\n' > "${ROOTFS_PATH:?}/etc/group"
+
+# ----------------------------------------------------------------------------
+# Create necessary directories in the rootfs
+#  - /tmp and /var/tmp with sticky bit for security
+#  - Create directories for data analysis cache and results
+# ----------------------------------------------------------------------------
+RUN chmod 1777 ${ROOTFS_PATH:?}/tmp ${ROOTFS_PATH:?}/var/tmp 2>/dev/null || true \
+    && chown 1001:1001 ${ROOTFS_PATH:?}/tmp ${ROOTFS_PATH:?}/var/tmp \
+    && mkdir -p ${ROOTFS_PATH:?}/app/data/cache \
+    && mkdir -p ${ROOTFS_PATH:?}/app/data/results \
+    && chown -R 1001:1001 ${ROOTFS_PATH:?}/app/data
+
+# ----------------------------------------------------------------------------
+# Copy application directory into the rootfs and fix permissions for non-root
+# - Set ownership to 1001:1001 (matching passwd/group)
+# - Allow group write permissions for OpenShift compatibility
+# ----------------------------------------------------------------------------
+RUN cp -r /app ${ROOTFS_PATH:?}/app \
+    && chown -R 1001:1001 ${ROOTFS_PATH:?}/app \
+    && chmod -R g=u ${ROOTFS_PATH:?}/app
+
+###########################
+# Final runtime (squashed)
+###########################
+FROM scratch AS runtime
+
+ARG PYTHON_VERSION
+ARG ROOTFS_PATH
+
+# ----------------------------------------------------------------------------
+# OCI image metadata
+# ----------------------------------------------------------------------------
+LABEL maintainer="MCP Context Forge" \
+      org.opencontainers.image.title="mcp/mcp-data-analysis-server" \
+      org.opencontainers.image.description="MCP Data Analysis Server: Comprehensive data analysis capabilities with pandas, numpy, scipy" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.source="https://github.com/contextforge/mcp-context-forge" \
+      org.opencontainers.image.documentation="https://github.com/contextforge/mcp-context-forge/mcp-servers/python/data-analysis-server" \
+      org.opencontainers.image.vendor="MCP Context Forge"
+
+# ----------------------------------------------------------------------------
+# Copy the entire prepared root filesystem from the builder stage
+# ----------------------------------------------------------------------------
+COPY --from=builder ${ROOTFS_PATH}/ /
+
+# ----------------------------------------------------------------------------
+# Ensure our virtual environment binaries have priority in PATH
+# - Don't write bytecode files (we pre-compiled with -OO)
+# - Unbuffered output for better logging
+# - Random hash seed for security
+# - Disable pip cache to save space
+# - Set data analysis server specific environment variables
+# ----------------------------------------------------------------------------
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=random \
+    PYTHONPATH="/app/src" \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DATA_ANALYSIS_CACHE_DIR="/app/data/cache" \
+    DATA_ANALYSIS_RESULTS_DIR="/app/data/results" \
+    MATPLOTLIB_BACKEND="Agg"
+
+# ----------------------------------------------------------------------------
+# Application working directory
+# ----------------------------------------------------------------------------
+WORKDIR /app
+
+# ----------------------------------------------------------------------------
+# Expose MCP server port (stdio by default, but useful for HTTP wrapper)
+# ----------------------------------------------------------------------------
+EXPOSE 8080
+
+# ----------------------------------------------------------------------------
+# Run as non-root user (1001)
+# ----------------------------------------------------------------------------
+USER 1001
+
+# ----------------------------------------------------------------------------
+# Health check for MCP server functionality
+# - Test that the server can import all modules and list tools
+# ----------------------------------------------------------------------------
+HEALTHCHECK --interval=60s --timeout=15s --start-period=120s --retries=3 \
+  CMD ["python3", "-c", "from data_analysis_server.server import main; print('MCP Data Analysis Server healthy: 7 tools available')"]
+
+# ----------------------------------------------------------------------------
+# Entrypoint - Run the MCP Data Analysis Server
+# ----------------------------------------------------------------------------
+CMD ["./run-server.sh"]

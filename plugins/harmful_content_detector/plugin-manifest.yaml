@@ -1,0 +1,15 @@
+description: "Detects harmful content (self-harm, violence, hate) via lexicons; blocks or annotates."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["safety", "moderation"]
+available_hooks:
+  - "prompt_pre_fetch"
+  - "tool_post_invoke"
+default_config:
+  categories:
+    self_harm: ["\\bkill myself\\b", "\\bsuicide\\b", "\\bself-harm\\b", "\\bwant to die\\b"]
+    violence: ["\\bkill (?:him|her|them|someone)\\b", "\\bshoot (?:him|her|them|someone)\\b", "\\bstab (?:him|her|them|someone)\\b"]
+    hate: ["\\b(?:kill|eradicate) (?:[a-z]+) people\\b", "\\b(?:racial slur|hate speech)\\b"]
+  block_on: ["self_harm", "violence", "hate"]
+  redact: false
+  redaction_text: "[REDACTED]"

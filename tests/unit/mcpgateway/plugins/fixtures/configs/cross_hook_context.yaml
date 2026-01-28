@@ -1,0 +1,22 @@
+plugins:
+  - name: "CrossHookContextPlugin"
+    kind: "tests.unit.mcpgateway.plugins.fixtures.plugins.cross_hook_context.CrossHookContextPlugin"
+    description: "Test plugin that demonstrates cross-hook context sharing"
+    version: "1.0.0"
+    author: "Test Author"
+    hooks:
+      - "http_pre_request"
+      - "http_auth_check_permission"
+      - "tool_pre_invoke"
+      - "resource_pre_fetch"
+      - "prompt_pre_fetch"
+    tags: ["test", "cross-hook", "context-sharing"]
+    mode: "enforce"
+    priority: 50
+    config: {}
+
+plugin_settings:
+  parallel_execution_within_band: false
+  plugin_timeout: 30
+  fail_on_plugin_error: true
+  plugin_health_check_interval: 60

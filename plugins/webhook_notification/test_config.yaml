@@ -1,0 +1,144 @@
+# Test configuration for Webhook Notification Plugin
+# This file can be used for testing the webhook plugin in development
+
+plugins:
+  # PII Filter Plugin (will generate violations for testing)
+  - name: "PIIFilter"
+    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    hooks: ["tool_pre_invoke", "tool_post_invoke"]
+    mode: "permissive"  # Don't block, just detect
+    priority: 100
+    config:
+      detect_email: true
+      detect_phone: true
+      detect_ssn: true
+      default_mask_strategy: "partial"
+      block_on_detection: false
+      log_detections: true
+
+  # Rate Limiter Plugin (will generate rate limit violations)
+  - name: "RateLimiter"
+    kind: "plugins.rate_limiter.rate_limiter.RateLimiterPlugin"
+    hooks: ["tool_pre_invoke"]
+    mode: "permissive"  # Don't block for testing
+    priority: 200
+    config:
+      by_user: "5/m"  # Low limit for easy testing
+      by_tenant: "50/m"
+
+  # Webhook Notification Plugin (main plugin being tested)
+  - name: "WebhookNotification"
+    kind: "plugins.webhook_notification.webhook_notification.WebhookNotificationPlugin"
+    hooks: ["tool_pre_invoke", "tool_post_invoke", "prompt_post_fetch", "resource_post_fetch"]
+    mode: "permissive"
+    priority: 900  # Run after other plugins to capture their violations
+    config:
+      webhooks:
+        # Webhook for testing with ngrok or local server
+        - url: "http://localhost:3000/webhook"
+          events: ["violation", "tool_success", "tool_error", "rate_limit_exceeded", "pii_detected"]
+          authentication:
+            type: "none"
+          retry_attempts: 2
+          retry_delay: 1000
+          timeout: 10
+          enabled: true
+
+        # Webhook.site for easy testing (replace with your URL)
+        - url: "https://webhook.site/your-unique-url"
+          events: ["violation", "rate_limit_exceeded"]
+          authentication:
+            type: "bearer"
+            token: "test-token-123"
+          retry_attempts: 1
+          retry_delay: 500
+          timeout: 5
+          enabled: false  # Disabled by default - enable with your URL
+
+        # Example Slack webhook (replace with your webhook URL)
+        - url: "${env.SLACK_WEBHOOK_URL}"
+          events: ["violation", "pii_detected", "harmful_content"]
+          authentication:
+            type: "none"
+          retry_attempts: 3
+          retry_delay: 2000
+          timeout: 15
+          enabled: false  # Disabled by default - enable with env var
+
+      # Custom payload templates for different notification channels
+      payload_templates:
+        violation: |
+          {
+            "text": "🚨 MCP Gateway Violation Alert",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Violation:* {{violation.reason}}\n*Description:* {{violation.description}}\n*Code:* {{violation.code}}"
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*User:* {{user}}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Request ID:* {{request_id}}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Timestamp:* {{timestamp}}"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Plugin:* {{plugin_name}}"
+                  }
+                ]
+              }
+            ]
+          }
+
+        rate_limit_exceeded: |
+          {
+            "alert": "Rate Limit Exceeded",
+            "severity": "warning",
+            "message": "User {{user}} has exceeded their rate limit",
+            "timestamp": "{{timestamp}}",
+            "request_id": "{{request_id}}",
+            "details": {{violation.details}},
+            "reset_info": "Rate limit will reset in {{violation.details.reset_in}} seconds"
+          }
+
+        pii_detected: |
+          {
+            "alert": "PII Detection",
+            "severity": "high",
+            "message": "Personally identifiable information detected and masked",
+            "user": "{{user}}",
+            "timestamp": "{{timestamp}}",
+            "request_id": "{{request_id}}",
+            "detection_details": "PII was found and automatically processed according to policy"
+          }
+
+        tool_success: |
+          {
+            "event": "tool_execution_success",
+            "tool_name": "{{metadata.tool_name}}",
+            "user": "{{user}}",
+            "timestamp": "{{timestamp}}",
+            "request_id": "{{request_id}}"
+          }
+
+      # Include payload data for debugging (be careful in production)
+      include_payload_data: true
+      max_payload_size: 2000
+
+plugin_settings:
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+
+plugin_dirs: []

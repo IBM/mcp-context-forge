@@ -1,0 +1,26 @@
+employee_id,name,department,age,salary,years_experience,performance_rating,gender,education_level,location
+E001,John Smith,Engineering,32,75000,8,4.2,Male,Masters,New York
+E002,Sarah Johnson,Marketing,29,65000,5,4.5,Female,Bachelors,California
+E003,Michael Brown,Sales,35,70000,10,3.8,Male,Bachelors,Texas
+E004,Emily Davis,HR,28,55000,4,4.1,Female,Masters,New York
+E005,David Wilson,Engineering,30,80000,6,4.3,Male,PhD,California
+E006,Lisa Anderson,Finance,33,68000,9,4.0,Female,Masters,Florida
+E007,James Martinez,Sales,31,72000,7,4.2,Male,Bachelors,Texas
+E008,Jennifer Taylor,Marketing,27,58000,3,4.4,Female,Bachelors,New York
+E009,Robert Garcia,Engineering,36,85000,12,3.9,Male,Masters,California
+E010,Jessica Miller,HR,26,52000,2,4.0,Female,Bachelors,Florida
+E011,William Jones,Finance,34,71000,8,4.1,Male,Masters,Texas
+E012,Amanda Wilson,Sales,30,69000,6,4.3,Female,Bachelors,New York
+E013,Christopher Lee,Engineering,29,78000,5,4.5,Male,Masters,California
+E014,Michelle White,Marketing,32,63000,7,4.2,Female,Bachelors,Florida
+E015,Daniel Harris,Finance,35,73000,10,3.8,Male,PhD,Texas
+E016,Ashley Clark,HR,28,56000,4,4.1,Female,Masters,New York
+E017,Matthew Lewis,Sales,33,74000,9,4.0,Male,Bachelors,California
+E018,Stephanie Young,Engineering,31,82000,7,4.4,Female,Masters,Florida
+E019,Andrew King,Marketing,29,61000,5,4.2,Male,Bachelors,Texas
+E020,Nicole Scott,Finance,30,67000,6,4.3,Female,Masters,New York
+E021,Joshua Green,Sales,34,76000,8,3.9,Male,Bachelors,California
+E022,Megan Adams,HR,27,54000,3,4.1,Female,Bachelors,Florida
+E023,Kevin Baker,Engineering,32,79000,8,4.2,Male,Masters,Texas
+E024,Rachel Nelson,Marketing,28,59000,4,4.4,Female,Bachelors,New York
+E025,Brandon Hill,Finance,31,70000,7,4.0,Male,Masters,California

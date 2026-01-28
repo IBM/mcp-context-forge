@@ -1,0 +1,458 @@
+<!-- htmlhint doctype-first:false -->
+<div class="space-y-6">
+  <!-- Plugin Overview Card -->
+  <div
+    class="bg-gradient-to-r from-purple-500 to-indigo-600 rounded-lg shadow-lg p-6 text-white"
+  >
+    <h2 class="text-2xl font-bold mb-4 flex items-center">
+      <svg
+        class="h-8 w-8 mr-3"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+        />
+      </svg>
+      Plugin Management
+    </h2>
+
+    {% if not plugins_enabled %}
+    <div
+      class="bg-yellow-100 border-l-4 border-yellow-500 dark:text-purple-950 text-yellow-700 p-4 rounded mb-4"
+    >
+      <p class="font-bold">Plugins are currently disabled</p>
+      <p class="text-sm">
+        Set PLUGINS_ENABLED=true in your environment to enable plugin
+        functionality.
+      </p>
+    </div>
+    {% else %}
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ stats.total_plugins }}</div>
+        <div class="text-purple-100 text-sm">Total Plugins</div>
+      </div>
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ stats.enabled_plugins }}</div>
+        <div class="text-purple-100 text-sm">Enabled</div>
+      </div>
+      <div class="text-center">
+        <div class="text-3xl font-bold">{{ stats.disabled_plugins }}</div>
+        <div class="text-purple-100 text-sm">Disabled</div>
+      </div>
+      <div class="text-center">
+        <div class="text-3xl font-bold">
+          {{ stats.plugins_by_mode.enforce | default(0) }}
+        </div>
+        <div class="text-purple-100 text-sm">Enforce Mode</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if plugins_enabled %}
+  <!-- Plugin Statistics Cards -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <!-- Hooks Distribution -->
+    <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
+      <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
+        <svg
+          class="h-6 w-6 mr-2 text-indigo-600"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"
+          />
+        </svg>
+        Hook Points
+      </h3>
+      <div class="space-y-2">
+        <div
+          class="flex justify-between items-center p-2 bg-indigo-50 rounded dark:bg-indigo-900/20 cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors border border-indigo-200 dark:border-indigo-800"
+          onclick="filterByHook('')"
+        >
+          <span
+            class="text-sm font-medium text-indigo-700 dark:text-indigo-300"
+            >All Hooks</span
+          >
+          <span
+            class="bg-indigo-200 text-indigo-900 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-indigo-800 dark:text-indigo-100"
+          >
+            {{ stats.total_plugins }}
+          </span>
+        </div>
+        {% for hook, count in stats.plugins_by_hook.items() %}
+        <div
+          class="flex justify-between items-center p-2 bg-gray-50 rounded dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+          onclick="filterByHook('{{ hook }}')"
+        >
+          <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
+            >{{ hook.replace('_', ' ').title() }}</span
+          >
+          <span
+            class="bg-indigo-100 text-indigo-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-indigo-900 dark:text-indigo-200"
+          >
+            {{ count }}
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Top Tags -->
+    <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
+      <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
+        <svg
+          class="h-6 w-6 mr-2 text-indigo-600"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
+          />
+        </svg>
+        Popular Tags
+      </h3>
+      <div class="flex flex-wrap gap-2">
+        <span
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors border border-indigo-300 dark:border-indigo-700"
+          onclick="filterByTag('')"
+        >
+          All Tags
+          <span class="ml-1 text-xs text-indigo-600 dark:text-indigo-300"
+            >({{ stats.total_plugins }})</span
+          >
+        </span>
+        {% for tag, count in stats.plugins_by_tag.items() %}
+        <span
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          onclick="filterByTag('{{ tag }}')"
+        >
+          {{ tag }}
+          <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
+            >({{ count }})</span
+          >
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Authors -->
+    <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
+      <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
+        <svg
+          class="h-6 w-6 mr-2 text-indigo-600"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+          />
+        </svg>
+        Authors
+      </h3>
+      <div class="flex flex-wrap gap-2">
+        <span
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors border border-indigo-300 dark:border-indigo-700"
+          onclick="filterByAuthor('')"
+        >
+          All Authors
+          <span class="ml-1 text-xs text-indigo-600 dark:text-indigo-300"
+            >({{ stats.total_plugins }})</span
+          >
+        </span>
+        {% for author, count in stats.plugins_by_author.items() %}
+        <span
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          onclick="filterByAuthor('{{ author }}')"
+        >
+          {{ author }}
+          <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
+            >({{ count }})</span
+          >
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Search and Filter Controls -->
+  <div class="bg-white rounded-lg shadow p-4 dark:bg-gray-800">
+    <div class="flex flex-col md:flex-row gap-4">
+      <div class="flex-1">
+        <input
+          type="text"
+          id="plugin-search"
+          placeholder="Search plugins by name, description, or author..."
+          class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          oninput="filterPlugins()"
+        />
+      </div>
+      <div class="flex gap-2">
+        <select
+          id="plugin-mode-filter"
+          onchange="filterPlugins()"
+          class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        >
+          <option value="">All Modes</option>
+          <option value="enforce">Enforce</option>
+          <option value="permissive">Permissive</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <select
+          id="plugin-status-filter"
+          onchange="filterPlugins()"
+          class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        >
+          <option value="">All Status</option>
+          <option value="enabled">Enabled</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <select
+          id="plugin-hook-filter"
+          onchange="filterPlugins()"
+          class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        >
+          <option value="">All Hooks</option>
+        </select>
+        <select
+          id="plugin-tag-filter"
+          onchange="filterPlugins()"
+          class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        >
+          <option value="">All Tags</option>
+        </select>
+        <select
+          id="plugin-author-filter"
+          onchange="filterPlugins()"
+          class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        >
+          <option value="">All Authors</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Plugin Grid -->
+  <div
+    class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+    id="plugin-grid"
+  >
+    {% for plugin in plugins %}
+    <div
+      class="plugin-card bg-white rounded-lg shadow-lg p-6 hover:shadow-xl transition-shadow dark:bg-gray-800"
+      data-name="{{ plugin.name | lower }}"
+      data-description="{{ plugin.description | lower }}"
+      data-author="{{ plugin.author | lower }}"
+      data-mode="{{ plugin.mode }}"
+      data-status="{{ plugin.status }}"
+      data-hooks="{{ plugin.hooks | join(',') if plugin.hooks else '' }}"
+      data-tags="{{ plugin.tags | join(',') if plugin.tags else '' }}"
+    >
+      <!-- Plugin Header -->
+      <div class="flex justify-between items-start mb-3">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {{ plugin.name }}
+        </h3>
+        <span class="text-xs text-gray-500 dark:text-gray-400"
+          >v{{ plugin.version }}</span
+        >
+      </div>
+
+      <!-- Description -->
+      <p class="text-sm text-gray-600 dark:text-gray-300 mb-4 line-clamp-2">
+        {{ plugin.description[:100] }}{% if plugin.description|length > 100
+        %}...{% endif %}
+      </p>
+
+      <!-- Author and Priority -->
+      <div class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+        <div>Author: {{ plugin.author }}</div>
+        <div>Priority: {{ plugin.priority }}</div>
+      </div>
+
+      <!-- Status and Mode -->
+      <div class="flex items-center gap-2 mb-4 flex-wrap">
+        <!-- Status Indicator -->
+        <div class="flex items-center">
+          {% if plugin.status == 'enabled' %}
+          <span class="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
+          <span class="text-sm text-green-600 dark:text-green-400"
+            >Enabled</span
+          >
+          {% else %}
+          <span class="w-2 h-2 bg-gray-400 rounded-full mr-2"></span>
+          <span class="text-sm text-gray-500 dark:text-gray-400">Disabled</span>
+          {% endif %}
+        </div>
+
+        <!-- Mode Badge -->
+        {% if plugin.mode == 'enforce' %}
+        <span
+          class="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded dark:bg-red-900 dark:text-red-200"
+        >
+          Enforce
+        </span>
+        {% elif plugin.mode == 'permissive' %}
+        <span
+          class="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded dark:bg-blue-900 dark:text-blue-200"
+        >
+          Permissive
+        </span>
+        {% else %}
+        <span
+          class="px-2 py-1 bg-gray-100 text-gray-800 text-xs font-medium rounded dark:bg-gray-700 dark:text-gray-300"
+        >
+          Disabled
+        </span>
+        {% endif %}
+
+        <!-- Implementation Badge -->
+        {% if plugin.implementation == 'Rust' %}
+        <span
+          class="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded dark:bg-orange-900 dark:text-orange-200"
+          title="Rust-accelerated implementation (5-100x faster)"
+        >
+          🦀 Rust
+        </span>
+        {% elif plugin.implementation == 'Python' %}
+        <span
+          class="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded dark:bg-blue-900 dark:text-blue-200"
+          title="Pure Python implementation"
+        >
+          🐍 Python
+        </span>
+        {% endif %}
+      </div>
+
+      <!-- Tags -->
+      {% if plugin.tags %}
+      <div class="flex flex-wrap gap-1 mb-4">
+        {% for tag in plugin.tags[:3] %}
+        <span
+          class="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded dark:bg-gray-700 dark:text-gray-300"
+        >
+          {{ tag }}
+        </span>
+        {% endfor %} {% if plugin.tags|length > 3 %}
+        <span class="px-2 py-1 text-gray-500 text-xs">
+          +{{ plugin.tags|length - 3 }} more
+        </span>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <!-- Hooks -->
+      {% if plugin.hooks %}
+      <div class="text-xs text-gray-500 dark:text-gray-400 mb-4">
+        <div class="font-medium mb-1">Hooks:</div>
+        <div class="flex flex-wrap gap-1">
+          {% for hook in plugin.hooks[:2] %}
+          <span class="text-xs">{{ hook.replace('_', ' ') }}</span>
+          {% if not loop.last %}<span>,</span>{% endif %} {% endfor %} {% if
+          plugin.hooks|length > 2 %}
+          <span>... ({{ plugin.hooks|length }} total)</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Action Button -->
+      <button
+        onclick="showPluginDetails('{{ plugin.name }}')"
+        class="w-full mt-4 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
+      >
+        View Details →
+      </button>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if not plugins %}
+  <div class="bg-gray-50 rounded-lg p-8 text-center dark:bg-gray-800">
+    <svg
+      class="mx-auto h-12 w-12 text-gray-400"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="2"
+        d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"
+      />
+    </svg>
+    <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+      No plugins found
+    </h3>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      No plugins are currently loaded in the system.
+    </p>
+  </div>
+  {% endif %} {% endif %}
+</div>
+
+<!-- Plugin Details Modal (hidden by default) -->
+<div
+  id="plugin-details-modal"
+  class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
+>
+  <div
+    class="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white dark:bg-gray-800"
+  >
+    <div class="mt-3">
+      <div class="flex justify-between items-start mb-4">
+        <h3
+          class="text-lg font-medium text-gray-900 dark:text-gray-100"
+          id="modal-plugin-name"
+        >
+          Plugin Details
+        </h3>
+        <button
+          onclick="closePluginDetails()"
+          class="text-gray-400 hover:text-gray-500"
+        >
+          <svg
+            class="h-6 w-6"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
+        </button>
+      </div>
+      <div
+        id="modal-plugin-content"
+        class="mt-2 text-sm text-gray-500 dark:text-gray-400"
+      >
+        <!-- Content will be loaded here -->
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,39 @@
+<!-- htmlhint doctype-first:false -->
+{% if traces %}
+    {% for trace in traces %}
+    <tr hx-get="{{ root_path }}/admin/observability/trace/{{ trace.trace_id }}"
+        hx-target="#trace-detail-content"
+        hx-trigger="click"
+        @click="selectedTrace = '{{ trace.trace_id }}'">
+        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">{{ trace.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700"><strong>{{ trace.http_method or 'N/A' }}</strong></td>
+        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700"><code>{{ trace.name }}</code></td>
+        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
+            <span class="status-badge status-{{ trace.status }}">
+                {% if trace.status == 'ok' %}✓ {{ trace.http_status_code or 'OK' }}{% else %}✗ {{ trace.http_status_code or 'ERROR' }}{% endif %}
+            </span>
+        </td>
+        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
+            <span class="duration-badge {% if trace.duration_ms %}{% if trace.duration_ms < 100 %}duration-fast{% elif trace.duration_ms < 500 %}duration-medium{% else %}duration-slow{% endif %}{% endif %}">
+                {{ "%.2f"|format(trace.duration_ms) if trace.duration_ms else 'N/A' }} ms
+            </span>
+        </td>
+        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">{{ trace.user_email or 'anonymous' }}</td>
+        <td class="bg-gray-50 dark:bg-gray-700/50 px-4 py-3 text-left text-sm font-semibold text-gray-600 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700">
+            <button class="px-2 py-1 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 cursor-pointer transition-all dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600 dark:hover:bg-gray-600">
+                View Details →
+            </button>
+        </td>
+    </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="7">
+            <div class="empty-state">
+                <div class="empty-state-icon">📊</div>
+                <h3>No traces found</h3>
+                <p>Make some API requests to see observability data</p>
+            </div>
+        </td>
+    </tr>
+{% endif %}

@@ -1,0 +1,87 @@
+{{/* -------------------------------------------------------------------
+     DEPLOYMENT - Redis
+     -------------------------------------------------------------------
+     - Name + labels templated with <release>-mcp-stack-redis.
+     - Adds exec-based readiness & liveness probes (redis-cli PING).
+     - Adds resource requests / limits pulled from values.yaml.
+     ------------------------------------------------------------------- */}}
+
+{{- if and .Values.redis.enabled (not .Values.redis.external.enabled) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-redis
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-redis
+spec:
+  replicas: 1                   # single instance; swap for StatefulSet if HA
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-redis
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-redis
+    spec:
+      # Image pull secrets
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+
+          {{- if .Values.redis.persistence.enabled }}
+          # Use custom redis.conf with persistence settings
+          command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+          {{- end }}
+
+          # Expose Redis TCP port inside the pod
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.service.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.redis.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.redis.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Volume mounts for persistence ───
+          {{- if .Values.redis.persistence.enabled }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+            - name: redis-config
+              mountPath: /usr/local/etc/redis
+          {{- end }}
+
+          # ─── Resource limits & requests ───
+          {{- with .Values.redis.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+      volumes:
+        {{- if .Values.redis.persistence.enabled }}
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: {{ include "mcp-stack.fullname" . }}-redis-pvc
+        - name: redis-config
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-redis-config
+        {{- end }}
+{{- end }}

@@ -1,0 +1,78 @@
+plugins:
+    # Self-contained Search Replace Plugin
+  - name: "LLMGuardPluginInputFilter"
+    kind: "llmguardplugin.plugin.LLMGuardPlugin"
+    description: "A plugin for running input through llmguard scanners "
+    version: "0.1"
+    author: "ContextForge"
+    hooks: ["prompt_pre_fetch"]
+    tags: ["plugin", "guardrails", "llmguard", "pre-post", "filters"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 10
+    conditions:
+      # Apply to specific tools/servers
+      - prompts: ["test_prompt"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      input:
+        filters:
+          PromptInjection:
+            threshold: 0.8
+            use_onnx: false
+          Toxicity:
+            threshold: 0.5
+          TokenLimit:
+            limit: 4096
+          Regex:
+            patterns:
+              - 'Bearer [A-Za-z0-9-._~+/]+'
+            is_blocked: True
+            match_type: search
+            redact: False
+          policy: (PromptInjection and Toxicity) and TokenLimit
+    output:
+      filters:
+        Toxicity:
+          threshold: 0.5
+        Regex:
+          patterns:
+            - 'Bearer [A-Za-z0-9-._~+/]+'
+          is_blocked: True
+          redact: False
+        policy: Toxicity and Regex
+
+  # Self-contained Search Replace Plugin
+  - name: "LLMGuardPluginOutputFilter"
+    kind: "llmguardplugin.plugin.LLMGuardPlugin"
+    description: "A plugin for running input through llmguard scanners "
+    version: "0.1"
+    author: "ContextForge"
+    hooks: ["prompt_post_fetch"]
+    tags: ["plugin", "guardrails", "llmguard", "post", "filters"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 20
+    conditions:
+      # Apply to specific tools/servers
+      - prompts: ["test_prompt"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      output:
+        filters:
+          Toxicity:
+            threshold: 0.5
+          policy: Toxicity
+          policy_message: I'm sorry, I cannot allow this output.
+
+# Plugin directories to scan
+plugin_dirs:
+  - "llmguardplugin"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

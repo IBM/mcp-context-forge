@@ -1,0 +1,26 @@
+plugins:
+  - name: DemoPlugin
+    kind: test_hook_patterns.DemoPlugin
+    description: Demonstration plugin showing all three hook patterns
+    version: "1.0.0"
+    author: Demo
+    hooks:
+      - tool_pre_invoke
+      - tool_post_invoke
+      - email_pre_send
+    tags:
+      - demo
+      - test
+    mode: enforce
+    priority: 50
+
+# Plugin directories to scan (not needed for this demo)
+plugin_dirs: []
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: true
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

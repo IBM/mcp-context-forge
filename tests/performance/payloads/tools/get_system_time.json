@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "fast-time-get-system-time",
+    "arguments": {
+      "timezone": "America/New_York"
+    }
+  }
+}

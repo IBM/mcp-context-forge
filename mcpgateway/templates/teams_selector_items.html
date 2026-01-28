@@ -1,0 +1,42 @@
+<!-- htmlhint doctype-first:false -->
+<!-- Team selector items for infinite scroll in team dropdown -->
+{% for team in data %}
+<button
+  type="button"
+  class="team-selector-item w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between"
+  data-team-id="{{ team.id }}"
+  data-team-name="{{ team.name }}"
+  data-team-is-personal="{{ 'true' if team.is_personal else 'false' }}"
+  onclick="selectTeamFromSelector(this)"
+>
+  <span>
+    {% if team.is_personal %}👤{% else %}🏢{% endif %} {{ team.name }}
+  </span>
+  <span class="text-xs text-gray-500 dark:text-gray-400">{{ team.member_count|default(0) }} members</span>
+</button>
+{% endfor %}
+
+{% if not data %}
+<div class="px-4 py-2 text-sm text-gray-500 dark:text-gray-400 text-center">
+  No teams found
+</div>
+{% endif %}
+
+{% if pagination.has_next %}
+<!-- Infinite scroll trigger element -->
+<div
+  id="teams-selector-scroll-trigger-{{ pagination.page }}"
+  hx-get="{{ root_path }}/admin/teams/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if query_params.q %}&q={{ query_params.q|urlencode }}{% endif %}"
+  hx-trigger="intersect once"
+  hx-swap="outerHTML"
+  class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"
+>
+  <span class="inline-block">
+    <svg class="animate-spin h-4 w-4 text-indigo-600 dark:text-indigo-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    Loading more teams...
+  </span>
+</div>
+{% endif %}

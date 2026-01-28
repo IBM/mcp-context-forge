@@ -1,0 +1,14 @@
+description: "Injects a configurable license header into code outputs with language-appropriate comments."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["compliance", "license", "format"]
+available_hooks:
+  - "tool_post_invoke"
+  - "resource_post_fetch"
+default_config:
+  header_template: |
+    SPDX-License-Identifier: Apache-2.0
+    Copyright (c) 2025
+  languages: ["python", "javascript", "typescript", "go", "java", "c", "cpp", "shell"]
+  max_size_kb: 512
+  dedupe_marker: "SPDX-License-Identifier:"

@@ -1,0 +1,12 @@
+description: "Converts ISO-like timestamps between server and user timezones."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["localization", "timezone"]
+available_hooks:
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_config:
+  user_tz: "UTC"
+  server_tz: "UTC"
+  direction: "to_user"
+  fields: null

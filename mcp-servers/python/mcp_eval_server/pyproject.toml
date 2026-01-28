@@ -1,0 +1,189 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mcp-eval-server"
+version = "0.1.0"
+description = "MCP server for comprehensive agent and prompt evaluation using LLM-as-a-judge techniques"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Mihai Criveti", email = "redacted@ibm.com" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "aiofiles>=25.1.0",
+    "cachetools>=6.2.4",
+    "diskcache>=5.6.3",
+    "httpx>=0.28.1",
+    "mcp>=1.25.0",
+    "numpy>=2.4.1",
+    "openai>=2.15.0",
+    "orjson>=3.11.5",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "python-dotenv>=1.2.1",
+    "PyYAML>=6.0.3",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.0",
+    "tenacity>=9.1.2",
+    "textstat>=0.7.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=26.1.0",
+    "flake8>=7.3.0",
+    "isort>=7.0.0",
+    "mypy>=1.19.1",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+]
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.1",
+    "mkdocstrings[python]>=1.0.1",
+]
+benchmark = [
+    "locust>=2.43.1",
+    "memory-profiler>=0.61.0",
+    "psutil>=7.2.1",
+]
+anthropic = [
+    "anthropic>=0.76.0",
+]
+aws = [
+    "boto3>=1.42.34",
+    "botocore>=1.42.34",
+]
+ollama = [
+    "aiohttp>=3.13.3",
+]
+gemini = [
+    "google-generativeai>=0.8.6",
+]
+watsonx = [
+    "ibm-watsonx-ai>=1.5.0",
+]
+rest = [
+    "fastapi>=0.128.0",
+    "python-multipart>=0.0.21",
+    "uvicorn[standard]>=0.40.0",
+]
+all = [
+    "aiohttp>=3.13.3",
+    "anthropic>=0.76.0",
+    "boto3>=1.42.34",
+    "botocore>=1.42.34",
+    "fastapi>=0.128.0",
+    "google-generativeai>=0.8.6",
+    "ibm-watsonx-ai>=1.5.0",
+    "python-multipart>=0.0.21",
+    "uvicorn[standard]>=0.40.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/contextforge/mcp-context-forge"
+Documentation = "https://contextforge.github.io/mcp-eval-server"
+Repository = "https://github.com/contextforge/mcp-context-forge"
+Issues = "https://github.com/contextforge/mcp-context-forge/issues"
+
+[project.scripts]
+mcp-eval-server = "mcp_eval_server.server:main"
+mcp-eval-rest = "mcp_eval_server.rest_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_eval_server"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "textstat.*",
+    "cachetools.*",
+    "diskcache.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --cov=mcp_eval_server --cov-report=term-missing --cov-report=html"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["mcp_eval_server"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

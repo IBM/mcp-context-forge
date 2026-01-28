@@ -1,0 +1,15 @@
+description: "Normalizes AI artifacts: smart quotes, ligatures, dashes, ellipses; removes bidi/zero-width; collapses spacing."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["normalize", "unicode", "safety"]
+available_hooks:
+  - "prompt_pre_fetch"
+  - "resource_post_fetch"
+  - "tool_post_invoke"
+default_config:
+  replace_smart_quotes: true
+  replace_ligatures: true
+  remove_bidi_controls: true
+  collapse_spacing: true
+  normalize_dashes: true
+  normalize_ellipsis: true

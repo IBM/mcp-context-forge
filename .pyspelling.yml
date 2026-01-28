@@ -1,0 +1,28 @@
+matrix:
+- name: markdown
+  aspell:
+    lang: en
+    d: en_US
+    camel-case: true
+    mode: markdown
+  sources:
+  - "src/*|!CHANGELOG.md"
+  - "docs/*|!CHANGELOG.md"
+  - "*.md"
+  dictionary:
+    wordlists:
+    - .spellcheck-en.txt
+  pipeline:
+  - pyspelling.filters.context:
+      context_visible_first: true
+      escapes: '\\[\\`~]'
+      delimiters:
+      # Ignore multiline content between fences (fences can have 3 or more back ticks)
+      # ```language
+      # content
+      # ```
+      - open: '(?s)^(?P<open> *`{3,}).*$'
+        close: '^(?P=open)$'
+      # Ignore text between inline back ticks
+      - open: '(?P<open>`+)'
+        close: '(?P=open)'

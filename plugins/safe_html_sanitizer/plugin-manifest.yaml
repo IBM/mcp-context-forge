@@ -1,0 +1,51 @@
+description: "Sanitizes HTML to remove XSS vectors (dangerous tags, event handlers, bad URL schemes); optional text conversion."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["security", "html", "xss", "sanitize"]
+available_hooks:
+  - "resource_post_fetch"
+default_config:
+  allowed_tags:
+    [
+      "a",
+      "p",
+      "div",
+      "span",
+      "strong",
+      "em",
+      "code",
+      "pre",
+      "ul",
+      "ol",
+      "li",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "blockquote",
+      "img",
+      "br",
+      "hr",
+      "table",
+      "thead",
+      "tbody",
+      "tr",
+      "th",
+      "td",
+    ]
+  allowed_attrs:
+    "*": ["id", "class", "title", "alt"]
+    a: ["href", "rel", "target"]
+    img: ["src", "width", "height", "alt", "title"]
+    table: ["border", "cellpadding", "cellspacing", "summary"]
+    th: ["colspan", "rowspan"]
+    td: ["colspan", "rowspan"]
+  remove_comments: true
+  drop_unknown_tags: true
+  strip_event_handlers: true
+  sanitize_css: true
+  allow_data_images: false
+  remove_bidi_controls: true
+  to_text: false

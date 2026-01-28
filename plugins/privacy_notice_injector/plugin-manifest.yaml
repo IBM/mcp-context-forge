@@ -1,0 +1,10 @@
+description: "Injects a configurable privacy notice into rendered prompts (prepend/append or separate message)."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["compliance", "notice", "prompt"]
+available_hooks:
+  - "prompt_post_fetch"
+default_config:
+  notice_text: "Privacy notice: Do not include PII, secrets, or confidential information in prompts or outputs."
+  placement: "append"
+  marker: "[PRIVACY]"

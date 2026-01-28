@@ -1,0 +1,77 @@
+apiVersion: operator.knative.dev/v1beta1
+kind: KnativeServing
+metadata:
+  name: knative-serving
+  namespace: knative-serving
+spec:
+  # High availability configuration
+  high-availability:
+    replicas: 1
+
+  # Ingress configuration
+  # ingress:
+  #   kourier:
+  #     enabled: true
+
+  # Configuration for scale-to-zero
+  config:
+    autoscaler:
+      # Enable scale to zero
+      enable-scale-to-zero: "true"
+      # Time window for stable mode (default: 60s)
+      stable-window: "60s"
+      # Time window for panic mode (default: 6s)
+      panic-window: "6s"
+      # Target concurrency per pod (default: 100)
+      container-concurrency-target-default: "100"
+      # Percentage of target to maintain (default: 70)
+      container-concurrency-target-percentage: "70"
+      # Scale down delay after last request (default: 0s for immediate scale down)
+      scale-to-zero-grace-period: "30s"
+      # Pod retention time after scale to zero decision (default: 0s)
+      scale-to-zero-pod-retention-period: "0s"
+
+    deployment:
+      # Progress deadline for deployments
+      progress-deadline: "600s"
+      # QPS settings for Kubernetes API
+      qps-burst: "200"
+      qps: "100"
+
+    network:
+      # Ingress class - configure based on your ingress controller:
+      # - Kourier: "kourier.ingress.networking.knative.dev"
+      # - Istio: "istio.ingress.networking.knative.dev"
+      # - Contour: "contour.ingress.networking.knative.dev"
+      # OpenShift: Automatically configured by Serverless Operator
+      # Comment out or remove if using default ingress
+      # ingress-class: "kourier.ingress.networking.knative.dev"
+
+      # Domain template for routes
+      domain-template: "{{.Name}}-{{.Namespace}}.{{.Domain}}"
+      # Enable HTTP2
+      enable-http2: "true"
+      # Autocreate cluster domain claims
+      autocreate-cluster-domain-claims: "true"
+
+    observability:
+      # Enable request logging
+      logging.enable-request-log: "true"
+      # Request log template
+      logging.request-log-template: >-
+        {"httpRequest": {"requestMethod": "{{.Request.Method}}",
+        "requestUrl": "{{js .Request.RequestURI}}",
+        "requestSize": "{{.Request.ContentLength}}",
+        "status": {{.Response.Code}},
+        "responseSize": "{{.Response.Size}}",
+        "userAgent": "{{js .Request.UserAgent}}",
+        "remoteIp": "{{js .Request.RemoteAddr}}",
+        "serverIp": "{{.Revision.PodIP}}",
+        "referer": "{{js .Request.Referer}}",
+        "latency": "{{.Response.Latency}}s",
+        "protocol": "{{.Request.Proto}}"},
+        "traceId": "{{index .Request.Header "X-B3-Traceid"}}"}
+      # Metrics backend
+      metrics.backend-destination: "prometheus"
+      # Enable profiling
+      profiling.enable: "false"

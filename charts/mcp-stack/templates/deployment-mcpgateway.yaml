@@ -1,0 +1,249 @@
+########################################################################
+# DEPLOYMENT - MCP Context-Forge (Gateway)
+#
+# - Spins up the HTTP / WebSocket gateway pods.
+# - Injects release-scoped hosts for Postgres & Redis.
+# - Pulls ALL other environment variables from the dedicated
+#   ConfigMap + Secret via envFrom (mounted later in this file).
+# - DATABASE_URL and REDIS_URL are declared LAST so that every
+#   $(POSTGRES_*) / $(REDIS_*) placeholder is already defined.
+########################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # <release>-mcp-stack-mcpgateway
+  name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mcpContextForge.replicaCount }}
+
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+
+    spec:
+      # Image pull secrets
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: mcp-context-forge
+          image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
+          imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
+
+          # Gateway's internal port
+          ports:
+            - containerPort: {{ .Values.mcpContextForge.containerPort }}
+
+          ################################################################
+          # EXPLICIT ENV-VARS
+          # - DB/cache endpoints must be set here so they can be used as
+          #   placeholders in the derived URL variables declared below.
+          ################################################################
+          env:
+            # ---------- POSTGRES (via PgBouncer if enabled) ----------
+            - name: POSTGRES_HOST
+              {{- if .Values.pgbouncer.enabled }}
+              value: {{ printf "%s-pgbouncer" (include "mcp-stack.fullname" .) }}
+              {{- else if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.hostKey | default "host" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.host | quote }}
+              {{- end }}
+              {{- else }}
+              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              {{- end }}
+            - name: POSTGRES_PORT
+              {{- if .Values.pgbouncer.enabled }}
+              value: "{{ .Values.pgbouncer.service.port }}"
+              {{- else if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.portKey | default "port" }}
+              {{- else }}
+              value: "{{ .Values.postgres.external.port }}"
+              {{- end }}
+              {{- else }}
+              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              {{- end }}
+            - name: POSTGRES_DB
+              {{- if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: {{ .Values.postgres.external.databaseKey | default "dbname" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.database | quote }}
+              {{- end }}
+              {{- else }}
+              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+              {{- end }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.userKey | default "user" }}{{ else }}POSTGRES_USER{{ end }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
+
+            # ---------- REDIS ----------
+            {{- if .Values.redis.external.enabled }}
+            {{- if and (not .Values.redis.external.existingSecret) (not .Values.redis.external.url) }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.external.host | quote }}
+            - name: REDIS_PORT
+              value: "{{ .Values.redis.external.port }}"
+            {{- end }}
+            {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+            - name: REDIS_HOST
+              value: {{ .Values.mcpContextForge.env.redis.host | default (printf "%s-redis" (include "mcp-stack.fullname" .)) | quote }}
+            - name: REDIS_PORT
+              value: "{{ .Values.mcpContextForge.env.redis.port }}"
+            {{- else }}
+            - name: REDIS_HOST
+              value: ""
+            - name: REDIS_PORT
+              value: ""
+            {{- end }}
+
+            # ---------- METRICS ----------
+            {{- if .Values.mcpContextForge.metrics.enabled }}
+            - name: ENABLE_METRICS
+              value: "{{ .Values.mcpContextForge.metrics.enabled }}"
+            {{- if .Values.mcpContextForge.metrics.excludedHandlers }}
+            - name: METRICS_EXCLUDED_HANDLERS
+              value: "{{ .Values.mcpContextForge.metrics.excludedHandlers }}"
+            {{- end }}
+            {{- if .Values.mcpContextForge.metrics.customLabels }}
+            - name: METRICS_CUSTOM_LABELS
+              value: "{{ range $key, $value := .Values.mcpContextForge.metrics.customLabels }}{{ $key }}={{ $value }},{{ end }}"
+            {{- end }}
+            {{- else }}
+            - name: ENABLE_METRICS
+              value: "false"
+            {{- end }}
+
+            # ---------- DERIVED URLS ----------
+            # These MUST be placed *after* the concrete vars above so the
+            # $(...) placeholders are expanded correctly inside the pod.
+            - name: DATABASE_URL
+              value: >-
+                postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
+            - name: REDIS_URL
+              {{- if .Values.redis.external.enabled }}
+              {{- if .Values.redis.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.external.existingSecret }}
+                  key: {{ .Values.redis.external.urlKey | default "REDIS_URL" }}
+              {{- else if .Values.redis.external.url }}
+              value: {{ .Values.redis.external.url | quote }}
+              {{- else }}
+              value: "redis://$(REDIS_HOST):$(REDIS_PORT)/{{ .Values.redis.external.db }}"
+              {{- end }}
+              {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+              value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+              {{- else }}
+              value: ""
+              {{- end }}
+
+            # ---------- EXTRA ENV (user-defined) ----------
+            # Placed last so users can override any variable including derived URLs
+            {{- if .Values.mcpContextForge.extraEnv }}
+            {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}
+            {{- end }}
+
+          ################################################################
+          # BULK ENV-VARS - pulled from ConfigMap + Secret
+          ################################################################
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+            - configMapRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-config
+            {{- if .Values.mcpContextForge.extraEnvFrom }}
+            {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
+            {{- end }}
+
+          ################################################################
+          # HEALTH & READINESS PROBES
+          ################################################################
+          {{- if .Values.migration.enabled }}
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Check if migration check already passed
+                  if [ -f /tmp/migration_check_done ]; then
+                    exit 0
+                  fi
+                  # Wait for database to be ready (implies migration completed)
+                  python3 /app/mcpgateway/utils/db_isready.py --max-tries 1 --interval 1 --timeout 2 || exit 1
+                  # Mark check as done to avoid repeated database calls
+                  touch /tmp/migration_check_done
+                  exit 0
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 60    # Allow up to 5 minutes for migration to complete
+          {{- else }}
+          {{- with .Values.mcpContextForge.probes.startup }}
+          startupProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+          {{- end }}
+
+          {{- with .Values.mcpContextForge.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          {{- with .Values.mcpContextForge.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # Resource requests / limits
+          resources:
+{{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
+
+          {{- /* Plugins enabled need the plugins configuration */}}
+          {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+          volumeMounts:
+            - name: plugin-config-volume
+              mountPath: /app/{{ .Values.mcpContextForge.config.PLUGIN_CONFIG_FILE }}
+              subPath: config.yaml
+          {{- end }}
+{{- if .Values.mcpContextForge.pluginConfig.enabled }}
+      volumes:
+      - name: plugin-config-volume
+        configMap:
+          name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
+          items:
+          - key: config.yaml
+            path: config.yaml
+{{- end }}

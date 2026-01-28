@@ -1,0 +1,38 @@
+title: Decision Records
+nav:
+  - Overview: index.md
+  - 1 Adopt FastAPI + Pydantic: 001-adopt-fastapi-pydantic.md
+  - 2 Use Async SQLAlchemy ORM: 002-use-async-sqlalchemy-orm.md
+  - 3 Expose Multi-Transport Endpoints: 003-expose-multi-transport-endpoints.md
+  - 4 Combine JWT & Basic Auth: 004-combine-jwt-and-basic-auth.md
+  - 5 Structured JSON Logging: 005-structured-json-logging.md
+  - 5 VS Code Dev Container Support: 005-vscode-devcontainer-support.md
+  - 6 Gateway & Tool-Level Rate Limiting: 006-gateway-tool-rate-limiting.md
+  - 7 Pluggable Cache Backend: 007-pluggable-cache-backend.md
+  - 8 Federation & Auto-Discovery via DNS-SD: 008-federation-discovery.md
+  - 9 Built-in Health Checks: 009-built-in-health-checks.md
+  - 10 Observability via Prometheus: 010-observability-prometheus.md
+  - 11 Namespaced Tool Federation: 011-tool-federation.md
+  - 12 Drop-down tool selection: 012-dropdown-ui-tool-selection.md
+  - 13 APIs for server connection string: 013-APIs-for-server-connection-strings.md
+  - 14 Security Headers & CORS Middleware: 014-security-headers-cors-middleware.md
+  - 15 Well-known URI Handler: 015-well-known-uri-handler.md
+  - 16 Plugin Framework & AI Middleware: 016-plugin-framework-ai-middleware.md
+  - 17 Adopt orjson for High-Performance JSON: 017-adopt-orjson-json-serialization.md
+  - 18 Built-in Response Compression: 018-built-in-response-compression.md
+  - 19 Modular Architecture Split (14 Modules): 019-modular-architecture-split.md
+  - 20 Multi-Format Packaging Strategy: 020-multi-format-packaging-strategy.md
+  - 21 Built-in Proxy vs Service Mesh: 021-built-in-proxy-vs-service-mesh.md
+  - 22 Elicitation Passthrough Implementation: 022-elicitation-passthrough-implementation.md
+  - 23 One-Time Authentication Servers: 023-one-time-authentication-servers.md
+  - 24 Uvicorn Standard Extras: 024-uvicorn-standard-extras.md
+  - 25 Granian HTTP Server: 025-granian-http-server.md
+  - 26 Hiredis Redis Parser: 026-hiredis-redis-parser.md
+  - 27 Migrate Psycopg3: 027-migrate-psycopg3.md
+  - 28 Auth Caching: 028-auth-caching.md
+  - 29 Registry Admin Stats Caching: 029-registry-admin-stats-caching.md
+  - 30 Metrics Cleanup Rollup: 030-metrics-cleanup-rollup.md
+  - 31 Parallel Session Cleanup: 031-parallel-session-cleanup.md
+  - 32 MCP Session Pool: 032-mcp-session-pool.md
+  - 33 Tool Lookup Cache: 033-tool-lookup-cache.md
+  - 34 SSO Admin Sync & Config Precedence: 034-sso-admin-sync-config-precedence.md

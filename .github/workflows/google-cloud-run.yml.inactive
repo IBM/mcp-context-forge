@@ -1,0 +1,416 @@
+# ===============================================================
+# ☁️  MCP Gateway ▸ Deploy to Google Cloud Run (After All Checks)
+# ===============================================================
+# Maintainer: Mihai Criveti
+# Status: Active
+#
+# This workflow:
+#   - Waits for ALL security/quality checks to pass
+#   - Uses the pre-built image from ghcr.io (docker-image.yml)
+#   - Creates a proxy repository in Artifact Registry for ghcr.io
+#   - Deploys to Google Cloud Run with autoscale=1
+#
+# Dependency chain:
+#   1. docker-image.yml → Builds, scans, and pushes to ghcr.io
+#   2. bandit.yml → Python security analysis
+#   3. codeql.yml → Multi-language security analysis
+#   4. dependency-review.yml → License and vulnerability checks
+#   5. THIS WORKFLOW → Deploys only if all above pass
+#
+# ---------------------------------------------------------------
+# Prerequisites (one-time setup)
+# ---------------------------------------------------------------
+# 1. Create a Google Cloud project and enable billing
+#
+# 2. Set your project ID and enable required APIs:
+#    export PROJECT_ID="your-actual-project-id"
+#    gcloud services enable run.googleapis.com artifactregistry.googleapis.com iam.googleapis.com
+#
+# 3. Create the service account:
+#    gcloud iam service-accounts create github-mcpgateway \
+#      --display-name="GitHub Actions - MCP Gateway Deploy"
+#
+# 4. Create a minimal Cloud Run service (required before granting IAM):
+#    gcloud run deploy mcpgateway \
+#      --image=gcr.io/cloudrun/hello \
+#      --region=us-central1 \
+#      --allow-unauthenticated
+#
+# 5. Grant Cloud Run Developer permission to the service account:
+#    gcloud run services add-iam-policy-binding mcpgateway \
+#      --region=us-central1 \
+#      --member="serviceAccount:github-mcpgateway@${PROJECT_ID}.iam.gserviceaccount.com" \
+#      --role="roles/run.developer"
+#
+# 6. Create a remote repository that proxies ghcr.io:
+#    gcloud artifacts repositories create ghcr-remote \
+#      --repository-format=docker \
+#      --location=us-central1 \
+#      --mode=remote-repository \
+#      --remote-docker-repo=https://ghcr.io
+#
+# 7. Grant Artifact Registry Reader permission:
+#    gcloud artifacts repositories add-iam-policy-binding ghcr-remote \
+#      --location=us-central1 \
+#      --member="serviceAccount:github-mcpgateway@${PROJECT_ID}.iam.gserviceaccount.com" \
+#      --role="roles/artifactregistry.reader"
+#
+# 8. Create and download the service account key:
+#    gcloud iam service-accounts keys create github-mcpgateway-key.json \
+#      --iam-account=github-mcpgateway@${PROJECT_ID}.iam.gserviceaccount.com
+#
+# 9. Add the key to GitHub Secrets:
+#    - Go to Settings > Secrets and variables > Actions
+#    - Create secret named GCP_SERVICE_KEY
+#    - Paste the entire contents of github-mcpgateway-key.json
+#    - Delete the local key file: rm github-mcpgateway-key.json
+#
+# 10. Create Cloud SQL (PostgreSQL) and Memorystore (Redis) instances
+#     (see deployment documentation for detailed commands)
+#
+# ---------------------------------------------------------------
+# Required repository **secrets**
+# ---------------------------------------------------------------
+#  ┌────────────────────────┬─────────────────────────────────────────────────────────────────────┐
+#  │ Secret name            │ Description / Example value                                         │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ GCP_PROJECT_ID         │ Your Google Cloud project identifier                                │
+#  │                        │ Example: "my-gcp-project-123456"                                    │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ GCP_SERVICE_KEY        │ Service account JSON key for authentication to Google Cloud         │
+#  │                        │ Get from: IAM & Admin > Service Accounts > Keys > Add Key > JSON    │
+#  │                        │ Example: {"type": "service_account", "project_id": "my-project"...} │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ JWT_SECRET_KEY         │ Random secret for signing JWT authentication tokens                 │
+#  │                        │ Generate with: openssl rand -base64 32                              │
+#  │                        │ Example: "superlongrandomstringhere"                                │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ BASIC_AUTH_USER        │ Username for HTTP Basic Authentication                              │
+#  │                        │ Example: "admin"                                                    │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ BASIC_AUTH_PASSWORD    │ Password for HTTP Basic Authentication (fallback auth method)       │
+#  │                        │ Example: "changeme-to-something-secure"                             │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ DATABASE_URL           │ PostgreSQL connection string for Cloud SQL instance                 │
+#  │                        │ Format: postgresql://USER:PASS@IP:PORT/DATABASE                     │
+#  │                        │ Example: "postgresql://postgres:mypass@10.20.30.40:5432/mcpgw"      │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ REDIS_URL              │ Redis connection string for Memorystore instance                    │
+#  │                        │ Format: redis://IP:PORT/DB_NUMBER                                   │
+#  │                        │ Example: "redis://10.20.30.50:6379/0"                               │
+#  └────────────────────────┴─────────────────────────────────────────────────────────────────────┘
+#
+# ---------------------------------------------------------------
+# Required repository **variables**
+# ---------------------------------------------------------------
+#  ┌────────────────────────────┬─────────────────────────────────────────────────────────────────┐
+#  │ Variable name              │ Description / Example value                                     │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ GCP_REGION                 │ Google Cloud region for deployment                              │
+#  │                            │ Example: "us-central1" (or us-east1, europe-west1, etc.)        │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CLOUD_RUN_SERVICE          │ Name of the Cloud Run service                                   │
+#  │                            │ Example: "mcpgateway" or "mcp-gateway-prod"                     │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CLOUD_RUN_PORT             │ Port number the container listens on (numeric, no quotes)       │
+#  │                            │ Example: 4444                                                   │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CACHE_TYPE                 │ Cache backend type for MCP Gateway                              │
+#  │                            │ Example: "redis" (or "memory" for development)                  │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ HOST                       │ IP address to bind the service to (required for containers)     │
+#  │                            │ Must be: "0.0.0.0" (to listen on all interfaces)                │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ GUNICORN_WORKERS           │ Number of Gunicorn worker processes (numeric, no quotes)        │
+#  │                            │ Example: 1 (keep low for cost efficiency as it consumes RAM)    │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CLOUD_RUN_CPU              │ Number of vCPUs allocated (numeric, no quotes)                  │
+#  │                            │ Example: 1 (minimum 0.08, maximum 8 in increments of 0.01)      │
+#  │                            │ https://cloud.google.com/run/docs/configuring/services/cpu      │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CLOUD_RUN_MEMORY           │ Memory allocation for the service                               │
+#  │                            │ Example: "512Mi" (minimum is 128Mi, maximum is 32Gi)            │
+#  └────────────────────────────┴─────────────────────────────────────────────────────────────────┘
+#
+# ===============================================================
+
+name: Deploy to Google Cloud Run
+
+on:
+  # Trigger after ALL required workflows complete successfully
+  workflow_run:
+    workflows:
+      - "Secure Docker Build"    # Must complete successfully (builds & pushes to ghcr.io)
+      - "Bandit"                 # Python security analysis
+      - "CodeQL Advanced"        # Multi-language security analysis
+      - "Dependency Review"      # License and vulnerability checks
+    types:
+      - completed
+    branches: ["main"]
+
+  # Manual trigger with optional image override
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag to deploy (default: latest)'
+        required: false
+        default: 'latest'
+      skip_checks:
+        description: 'Skip workflow dependency checks (use with caution)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+  actions: read    # Required to check workflow run status
+
+env:
+  # ─── project & service configuration ─────────────
+  GCP_REGION:          ${{ vars.GCP_REGION }}
+  CLOUD_RUN_SERVICE:   ${{ vars.CLOUD_RUN_SERVICE }}
+  CLOUD_RUN_PORT:      ${{ vars.CLOUD_RUN_PORT }}
+
+  # ─── image location (from ghcr.io via proxy) ─────
+  # Format: REGION-docker.pkg.dev/PROJECT/ghcr-remote/OWNER/REPO:TAG
+  GHCR_IMAGE: ghcr.io/${{ github.repository }}
+  PROXY_IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ghcr-remote/${{ github.repository }}
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || 'latest' }}
+
+  # ─── app configuration (non-secret) ──────────────
+  CACHE_TYPE:          ${{ vars.CACHE_TYPE }}
+  HOST:                ${{ vars.HOST }}
+  GUNICORN_WORKERS:    ${{ vars.GUNICORN_WORKERS }}
+  CLOUD_RUN_CPU:       ${{ vars.CLOUD_RUN_CPU }}
+  CLOUD_RUN_MEMORY:    ${{ vars.CLOUD_RUN_MEMORY }}
+
+  # ─── secrets ─────────────────────────────────────
+  GCP_PROJECT_ID:      ${{ secrets.GCP_PROJECT_ID }}
+  JWT_SECRET_KEY:      ${{ secrets.JWT_SECRET_KEY }}
+  BASIC_AUTH_USER:     ${{ secrets.BASIC_AUTH_USER }}
+  BASIC_AUTH_PASSWORD: ${{ secrets.BASIC_AUTH_PASSWORD }}
+  DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+  REDIS_URL:           ${{ secrets.REDIS_URL }}
+
+jobs:
+  # ===============================================================
+  # Check Dependencies - Ensure all workflows passed
+  # ===============================================================
+  check-dependencies:
+    name: 🔍 Check Workflow Dependencies
+    runs-on: ubuntu-latest
+    outputs:
+      all_passed: ${{ steps.check.outputs.all_passed }}
+      docker_build_passed: ${{ steps.check.outputs.docker_build_passed }}
+
+    steps:
+      - name: 🔍 Check if all dependencies passed
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # For manual runs with skip_checks=true
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.skip_checks }}" == "true" ]]; then
+            echo "⚠️  Skipping dependency checks (manual override)"
+            echo "all_passed=true" >> $GITHUB_OUTPUT
+            echo "docker_build_passed=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # For workflow_run events, check the triggering workflow
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            WORKFLOW_NAME="${{ github.event.workflow.name }}"
+            WORKFLOW_CONCLUSION="${{ github.event.workflow_run.conclusion }}"
+
+            echo "📊 Triggered by: $WORKFLOW_NAME"
+            echo "📊 Conclusion: $WORKFLOW_CONCLUSION"
+
+            # Only proceed if the triggering workflow succeeded
+            if [[ "$WORKFLOW_CONCLUSION" != "success" ]]; then
+              echo "❌ Workflow '$WORKFLOW_NAME' did not succeed"
+              echo "all_passed=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            # Check if it was the Docker build workflow
+            if [[ "$WORKFLOW_NAME" == "Secure Docker Build" ]]; then
+              echo "docker_build_passed=true" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+          # Check all required workflows
+          echo "🔍 Checking all required workflows..."
+
+          REQUIRED_WORKFLOWS=(
+            "Secure Docker Build"
+            "Bandit"
+            "CodeQL Advanced"
+            "Dependency Review"
+          )
+
+          ALL_PASSED=true
+          DOCKER_BUILD_PASSED=false
+
+          for WORKFLOW in "${REQUIRED_WORKFLOWS[@]}"; do
+            echo -n "Checking $WORKFLOW... "
+
+            # Get the latest run for this workflow on main branch
+            LATEST_RUN=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/workflows" \
+              | jq -r ".workflows[] | select(.name == \"$WORKFLOW\") | .id" \
+              | head -1)
+
+            if [[ -z "$LATEST_RUN" ]]; then
+              echo "❓ Workflow not found"
+              continue
+            fi
+
+            # Get the latest run status
+            RUN_STATUS=$(gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/workflows/$LATEST_RUN/runs?branch=main&per_page=1" \
+              | jq -r '.workflow_runs[0].conclusion')
+
+            if [[ "$RUN_STATUS" == "success" ]]; then
+              echo "✅ Passed"
+              if [[ "$WORKFLOW" == "Secure Docker Build" ]]; then
+                DOCKER_BUILD_PASSED=true
+              fi
+            else
+              echo "❌ Failed or not run (status: $RUN_STATUS)"
+              ALL_PASSED=false
+            fi
+          done
+
+          echo "all_passed=$ALL_PASSED" >> $GITHUB_OUTPUT
+          echo "docker_build_passed=$DOCKER_BUILD_PASSED" >> $GITHUB_OUTPUT
+
+          if [[ "$ALL_PASSED" != "true" ]]; then
+            echo "❌ Not all required workflows have passed"
+            exit 1
+          fi
+
+  # ===============================================================
+  # Deploy to Google Cloud Run
+  # ===============================================================
+  deploy:
+    name: 🚀 Deploy to Cloud Run
+    runs-on: ubuntu-latest
+    needs: check-dependencies
+    if: needs.check-dependencies.outputs.all_passed == 'true'
+    environment: google-cloud-run-production
+
+    steps:
+      # -----------------------------------------------------------
+      # 1️⃣  Authenticate to Google Cloud
+      # -----------------------------------------------------------
+      - name: 🔐 Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_KEY }}
+
+      - name: 🧰 Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      # -----------------------------------------------------------
+      # 2️⃣  Create ghcr.io proxy repository (if not exists)
+      # -----------------------------------------------------------
+      - name: 🔧 Ensure ghcr.io proxy repository exists
+        run: |
+          # Check if repository exists
+          if ! gcloud artifacts repositories describe ghcr-remote \
+            --location="${{ env.GCP_REGION }}" \
+            --quiet 2>/dev/null; then
+
+            echo "📦 Creating ghcr.io proxy repository..."
+            gcloud artifacts repositories create ghcr-remote \
+              --repository-format=docker \
+              --location="${{ env.GCP_REGION }}" \
+              --description="Proxy for GitHub Container Registry" \
+              --mode=remote-repository \
+              --remote-docker-repo=https://ghcr.io
+          else
+            echo "✅ Proxy repository already exists"
+          fi
+
+      # -----------------------------------------------------------
+      # 3️⃣  Verify image exists in ghcr.io
+      # -----------------------------------------------------------
+      - name: 🔍 Verify image availability
+        run: |
+          echo "🔍 Checking for image: ${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}"
+
+          # For public images, we can check with curl
+          IMAGE_URL="https://ghcr.io/v2/${{ github.repository }}/manifests/${{ env.IMAGE_TAG }}"
+
+          if curl -s -o /dev/null -w "%{http_code}" "$IMAGE_URL" | grep -q "200\|401"; then
+            echo "✅ Image found in ghcr.io"
+          else
+            echo "❌ Image not found! Make sure the Docker build workflow completed successfully."
+            echo "   Expected: ${{ env.GHCR_IMAGE }}:${{ env.IMAGE_TAG }}"
+            exit 1
+          fi
+
+      # -----------------------------------------------------------
+      # 4️⃣  Deploy to Cloud Run using proxied image
+      # -----------------------------------------------------------
+      - name: 🚀 Deploy to Cloud Run
+        run: |
+          # Build the full proxy image path
+          DEPLOY_IMAGE="${{ env.PROXY_IMAGE }}:${{ env.IMAGE_TAG }}"
+
+          echo "🚀 Deploying image: $DEPLOY_IMAGE"
+
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --image "$DEPLOY_IMAGE" \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --port "$CLOUD_RUN_PORT" \
+            --cpu "$CLOUD_RUN_CPU" \
+            --memory "$CLOUD_RUN_MEMORY" \
+            --max-instances 1 \
+            --set-env-vars "JWT_SECRET_KEY=$JWT_SECRET_KEY" \
+            --set-env-vars "BASIC_AUTH_USER=$BASIC_AUTH_USER" \
+            --set-env-vars "BASIC_AUTH_PASSWORD=$BASIC_AUTH_PASSWORD" \
+            --set-env-vars "AUTH_REQUIRED=true" \
+            --set-env-vars "DATABASE_URL=$DATABASE_URL" \
+            --set-env-vars "REDIS_URL=$REDIS_URL" \
+            --set-env-vars "CACHE_TYPE=$CACHE_TYPE" \
+            --set-env-vars "HOST=$HOST" \
+            --set-env-vars "GUNICORN_WORKERS=$GUNICORN_WORKERS"
+
+      # -----------------------------------------------------------
+      # 5️⃣  Show deployment status
+      # -----------------------------------------------------------
+      - name: 📈 Display deployment status
+        run: |
+          URL=$(gcloud run services describe "$CLOUD_RUN_SERVICE" --region "$GCP_REGION" --format "value(status.url)")
+          echo "🎉 Service deployed to: $URL"
+          echo "🏷️  Deployed image: ${{ env.PROXY_IMAGE }}:${{ env.IMAGE_TAG }}"
+          echo "📊 Service details:"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --region "$GCP_REGION"
+
+  # ===============================================================
+  # Notify on Failure
+  # ===============================================================
+  notify-failure:
+    name: 📢 Notify Deployment Blocked
+    runs-on: ubuntu-latest
+    needs: check-dependencies
+    if: needs.check-dependencies.outputs.all_passed != 'true'
+
+    steps:
+      - name: ❌ Deployment blocked notification
+        run: |
+          echo "❌ Deployment to Google Cloud Run was blocked"
+          echo ""
+          echo "One or more required workflows have not passed:"
+          echo "  - Secure Docker Build"
+          echo "  - Bandit"
+          echo "  - CodeQL Advanced"
+          echo "  - Dependency Review"
+          echo ""
+          echo "Please check the workflow runs and fix any issues before deployment."

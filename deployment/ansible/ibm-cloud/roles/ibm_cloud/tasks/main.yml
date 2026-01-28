@@ -1,0 +1,78 @@
+# 1️⃣  Resource-group - ibm.cloudcollection.ibm_resource_group
+- name: Ensure resource-group
+  ibm.cloudcollection.ibm_resource_group:
+    name: "{{ prefix }}-rg"
+    state: present
+  register: rg
+
+# 2️⃣  VPC-based IKS cluster - ibm_container_vpc_cluster
+- name: Create / verify IKS cluster
+  ibm.cloudcollection.ibm_container_vpc_cluster:
+    name: "{{ prefix }}-iks"
+    kube_version: "{{ kube_version }}"
+    flavor: "{{ cluster_flavor }}"
+    worker_count: "{{ k8s_workers }}"
+    entitlement: cloud_pak
+    wait_till_ready: true
+    state: present
+  register: cluster
+
+# 3️⃣  PostgreSQL & Redis - ibm_resource_instance
+- name: PostgreSQL instance
+  ibm.cloudcollection.ibm_resource_instance:
+    name: "{{ prefix }}-pg"
+    service: databases-for-postgresql
+    plan: standard
+    location: "{{ region }}"
+    parameters: { version: "{{ postgres_version }}" }
+    state: present
+  register: pg_inst
+
+- name: Redis instance
+  ibm.cloudcollection.ibm_resource_instance:
+    name: "{{ prefix }}-redis"
+    service: databases-for-redis
+    plan: standard
+    location: "{{ region }}"
+    parameters: { version: "{{ redis_version }}" }
+    state: present
+  register: redis_inst
+
+# 4️⃣  Service-keys
+- name: PostgreSQL key
+  ibm.cloudcollection.ibm_resource_key:
+    name: "{{ prefix }}-pg-key"
+    role: Administrator
+    resource_instance_id: "{{ pg_inst.resource.id }}"
+    state: present
+  register: pg_key
+
+- name: Redis key
+  ibm.cloudcollection.ibm_resource_key:
+    name: "{{ prefix }}-redis-key"
+    role: Administrator
+    resource_instance_id: "{{ redis_inst.resource.id }}"
+    state: present
+  register: redis_key
+
+# 5️⃣  Convenience facts for later templates
+- name: Extract DB connection strings
+  set_fact:
+    pg_conn: "{{ pg_key.resource.connection[0].postgres.composed[0] }}"
+    redis_conn: "{{ redis_key.resource.connection[0].rediss.composed[0] }}"
+
+# 6️⃣  Fetch kubeconfig (CLI) - simplest universal path
+- name: Grab kubeconfig for subsequent deployment/k8s/helm modules
+  command: ibmcloud ks cluster config --cluster {{ cluster.resource.id }} --export --json
+  register: kube_json
+  changed_when: false
+
+- name: Write kubeconfig to disk
+  copy:
+    dest: "./kubeconfig_{{ prefix }}"
+    content: "{{ (kube_json.stdout | from_json).file }}"
+  register: kube_path
+
+- name: Set global fact with kubeconfig path
+  set_fact:
+    kubeconfig_path: "{{ kube_path.dest }}"

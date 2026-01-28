@@ -1,0 +1,34 @@
+plugins:
+  - name: MessageFilterAgent
+    kind: tests.unit.mcpgateway.plugins.fixtures.plugins.agent_plugins.MessageFilterAgentPlugin
+    description: An agent plugin that filters blocked words
+    version: "1.0.0"
+    author: Test Suite
+    hooks:
+      - agent_pre_invoke
+      - agent_post_invoke
+    tags:
+      - test
+      - agent
+      - filter
+    mode: enforce
+    priority: 50
+    config:
+      blocked_words:
+        - spam
+        - malware
+        - phishing
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"      # Built-in plugins
+  - "plugins/custom"      # Custom organization plugins
+  - "/etc/mcpgateway/plugins"  # System-wide plugins
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: true
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

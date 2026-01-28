@@ -1,0 +1,68 @@
+{{- /*
+Ingress
+- Gateway and Fast-Time Server ingress are rendered independently so they can be enabled separately.
+*/ -}}
+{{- if .Values.mcpContextForge.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-ingress
+  annotations:
+    {{- range $key, $value := .Values.mcpContextForge.ingress.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.mcpContextForge.ingress.className }}
+  {{- if .Values.mcpContextForge.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.mcpContextForge.ingress.host }}
+      {{- if .Values.mcpContextForge.ingress.tls.secretName }}
+      secretName: {{ .Values.mcpContextForge.ingress.tls.secretName }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.mcpContextForge.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.mcpContextForge.ingress.path }}
+            pathType: {{ .Values.mcpContextForge.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+                port:
+                  number: {{ .Values.mcpContextForge.service.port }}
+{{- end }}
+
+{{- if and .Values.mcpFastTimeServer.enabled .Values.mcpFastTimeServer.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-fast-time-ingress
+  annotations:
+    {{- range $key, $value := .Values.mcpFastTimeServer.ingress.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.mcpFastTimeServer.ingress.className }}
+  {{- if .Values.mcpFastTimeServer.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.mcpFastTimeServer.ingress.host }}
+      {{- if .Values.mcpFastTimeServer.ingress.tls.secretName }}
+      secretName: {{ .Values.mcpFastTimeServer.ingress.tls.secretName }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.mcpFastTimeServer.ingress.host }}
+      http:
+        paths:
+          - path: {{ .Values.mcpFastTimeServer.ingress.path }}
+            pathType: {{ .Values.mcpFastTimeServer.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+                port:
+                  number: {{ .Values.mcpFastTimeServer.ingress.servicePort }}
+{{- end }}

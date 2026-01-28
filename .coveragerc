@@ -1,0 +1,20 @@
+[run]
+branch = True
+omit =
+    mcpgateway/alembic/*
+    */__init__.py
+    mcpgateway/tools/builder/common.py
+    mcpgateway/tools/builder/dagger_deploy.py
+    mcpgateway/tools/builder/python_deploy.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug
+    raise AssertionError
+    raise NotImplentedError
+    if 0:
+    if __name__ == .__main__.:
+
+ignore_errors = True

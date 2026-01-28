@@ -1,0 +1,7 @@
+nav:
+  - index.md
+  - lifecycle.md
+  - plugins.md
+  - http-auth-hooks.md
+  - mtls.md
+  - rust-plugins.md

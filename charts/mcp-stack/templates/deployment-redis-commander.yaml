@@ -1,0 +1,75 @@
+{{- /*
+Redis-Commander Deployment
+*/ -}}
+{{- if and .Values.redisCommander.enabled (or .Values.redis.enabled .Values.redis.external.enabled) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-redis-commander
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: redis-commander
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-commander
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: redis-commander
+        release: {{ .Release.Name }}
+    spec:
+      # Image pull secrets
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: redis-commander
+          image: "{{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}"
+          imagePullPolicy: {{ .Values.redisCommander.image.pullPolicy }}
+
+          # Expose HTTP port inside the pod
+          ports:
+            - name: http
+              containerPort: {{ .Values.redisCommander.service.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.redisCommander.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.redisCommander.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # Point Redis-Commander at the Redis service (internal or external)
+          env:
+            - name: REDIS_HOST
+              {{- if .Values.redis.external.enabled }}
+              value: {{ .Values.redis.external.host | quote }}
+              {{- else }}
+              value: {{ .Values.mcpContextForge.env.redis.host | default (printf "%s-redis" (include "mcp-stack.fullname" .)) | quote }}
+              {{- end }}
+            - name: REDIS_PORT
+              {{- if .Values.redis.external.enabled }}
+              value: "{{ .Values.redis.external.port }}"
+              {{- else }}
+              value: "{{ .Values.redis.service.port }}"
+              {{- end }}
+
+          # ─── Resource limits & requests ───
+          {{- with .Values.redisCommander.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

@@ -1,0 +1,14 @@
+extends: relaxed        # start from the built-in relaxed preset
+rules:
+  line-length:
+    max: 400            # allow lines up to 400 chars
+    level: warning      # keep it a warning (default); use "error" to fail
+
+# Ignore every YAML (and *.tpl) file under the Helm chart directory.
+ignore: |
+  node_modules/**
+  charts/mcp-stack/**/*.yaml
+  charts/mcp-stack/**/*.tpl      # templates using .tpl files
+  charts/mcp-stack/**/values.yaml
+  charts/mcp-stack/**/Chart.yaml
+  charts/mcpgateway/templates/*.yaml

@@ -1,0 +1,221 @@
+# ──────────────────────────────────────────────────────────────
+# MANIFEST.in - source-distribution contents for mcpgateway
+# ──────────────────────────────────────────────────────────────
+
+# Core project files that SDists/Wheels should always carry
+include LICENSE
+include README.md
+include plugins/README.md
+include pyproject.toml
+include gunicorn.config.py
+include Containerfile
+include Containerfile.lite
+include Containerfile.scratch
+include __init__
+include alembic.ini
+include tox.ini
+include alembic/README
+
+# Top-level config, examples and helper scripts
+include *.py
+include *.md
+include *.example
+include *.properties
+include *.toml
+include *.yaml
+include *.yml
+include *.json
+include *.sh
+include *.txt
+include *.lua
+recursive-include tests/async *.py
+recursive-include tests/async *.yaml
+recursive-include examples *.yaml
+recursive-include plugin_templates *
+recursive-include mcpgateway/toolops *.md
+
+# Tooling/lint configuration dot-files (explicit so they're not lost)
+include .env.make
+include .env.example
+include .interrogaterc
+include .jshintrc
+include whitesource.config
+include .darglint
+include .dockerignore
+include .flake8
+include .htmlhintrc
+include .pycodestyle
+include .pylintrc
+include .whitesource
+include .coveragerc
+# include .gitignore            # purely optional but many projects ship it
+include .bumpversion.cfg
+include .yamllint
+include .editorconfig
+include .snyk
+
+# Runtime data that lives *inside* the package at import time
+recursive-include mcpgateway/templates *.html
+recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
+recursive-include mcpgateway *.pyi py.typed
+recursive-include mcpgateway *.ico
+recursive-include alembic *.mako
+recursive-include alembic *.md
+recursive-include alembic *.py
+
+# Infrastructure configuration (nginx, monitoring)
+recursive-include infra *.conf
+recursive-include infra *.json
+recursive-include infra *.md
+recursive-include infra *.sh
+recursive-include infra *.yaml
+recursive-include infra *.yml
+include infra/nginx/Dockerfile
+
+# Export/Import functionality (explicitly include new files)
+include mcpgateway/cli_export_import.py
+include mcpgateway/services/export_service.py
+include mcpgateway/services/import_service.py
+
+# 📦 Migration scripts (v0.7.0 multitenancy migration tools)
+recursive-include scripts *.py
+recursive-include scripts *.sh
+
+# 🧪 Testing documentation and plans
+recursive-include tests/manual *.py *.md
+
+# recursive-include deployment *
+# recursive-include mcp-servers *
+recursive-include plugins *.py
+recursive-include plugins *.sh
+recursive-include plugins *.yaml
+recursive-include plugins *.md
+
+# Rust plugins (optional - exclude build artifacts)
+recursive-include plugins_rust *.rs
+recursive-include plugins_rust *.toml
+include plugins_rust/Makefile
+include plugins_rust/README.md
+include plugins_rust/QUICKSTART.md
+prune plugins_rust/target
+prune plugins_rust/benchmarks
+
+# 5️⃣  (Optional) include MKDocs-based docs in the sdist
+# graft docs
+
+# 6️⃣  Never publish caches, compiled or build outputs, deployment, agent_runtimes, etc.
+global-exclude __pycache__ *.py[cod] *.so *.dylib
+prune build
+prune dist
+prune .eggs
+prune *.egg-info
+prune charts
+prune k8s
+prune .devcontainer
+exclude CLAUDE.*
+exclude llms-full.txt
+exclude AGENTS.md
+
+# Exclude deployment, mcp-servers, agent_runtimes and llms
+prune deployment
+prune mcp-servers
+prune agent_runtimes
+prune llms
+
+# Development and CI/CD artifacts
+prune .github
+prune .hypothesis
+prune .benchmarks
+prune .claude
+prune todo
+prune reports
+prune logs
+
+# Testing caches
+prune .pytest_cache
+prune .ruff_cache
+prune .mypy_cache
+prune htmlcov
+
+# Virtual environments (including nested in plugins)
+prune venv
+prune .venv
+prune env
+prune node_modules
+prune plugins/external/opa/.venv
+prune plugins/external/llmguard/.venv
+prune plugins/external/cedar/.venv
+global-exclude **/.venv/*
+
+# Environment files (security sensitive!)
+exclude .env
+exclude .env.backup
+exclude .env.ce.example
+exclude cookies.txt
+
+# Database and runtime files
+exclude *.db
+exclude *.sqlite
+exclude *.log
+
+# Lock files (including nested in plugins)
+exclude uv.lock
+global-exclude **/uv.lock
+
+# Coverage data
+exclude .coverage
+exclude .coverage.*
+
+# Additional development config files not needed in package
+exclude .travis.yml
+exclude .eslintrc.json
+exclude eslint.config.js
+exclude .stylelintrc.json
+exclude .markdownlint-cli2.yaml
+exclude .spellcheck-en.txt
+exclude .pyspelling.yml
+exclude .prospector.yaml
+exclude .hadolint.yaml
+exclude .ruff.toml
+exclude .pre-commit-config.yaml
+
+# Backup and temporary files
+global-exclude *~
+global-exclude *.bak
+global-exclude *.swp
+global-exclude *.swo
+global-exclude *.orig
+global-exclude *.rej
+
+# OS files
+global-exclude .DS_Store
+global-exclude Thumbs.db
+global-exclude desktop.ini
+
+# Exclude opa
+exclude plugins/external/opa/.dockerignore
+exclude plugins/external/opa/.env.template
+exclude plugins/external/opa/.ruff.toml
+exclude plugins/external/opa/Containerfile
+exclude plugins/external/opa/MANIFEST.in
+exclude plugins/external/opa/opaserver/rego/policy.rego
+exclude plugins/external/opa/pyproject.toml
+exclude plugins/external/opa/run-server.sh
+
+# Exclude llmguard
+exclude  plugins/external/llmguard/.dockerignore
+exclude plugins/external/llmguard/.env.template
+exclude plugins/external/llmguard/.ruff.toml
+exclude plugins/external/llmguard/Containerfile
+exclude plugins/external/llmguard/MANIFEST.in
+exclude plugins/external/llmguard/pyproject.toml
+exclude plugins/external/llmguard/run-server.sh
+
+# Exclude cedar
+
+exclude plugins/external/cedar/.dockerignore
+exclude plugins/external/cedar/.env.template
+exclude plugins/external/cedar/.ruff.toml
+exclude plugins/external/cedar/Containerfile
+exclude plugins/external/cedar/MANIFEST.in
+exclude plugins/external/cedar/pyproject.toml

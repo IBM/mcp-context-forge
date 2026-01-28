@@ -1,0 +1,9 @@
+description: "Injects custom HTTP headers for resource fetch requests via payload metadata."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["enhancement", "headers", "network"]
+available_hooks:
+  - "resource_pre_fetch"
+default_config:
+  headers: {}
+  uri_prefixes: null

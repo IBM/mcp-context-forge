@@ -1,0 +1,4 @@
+nav:
+  - Overview: observability.md
+  - Internal Observability: internal-observability.md
+  - Phoenix Integration: phoenix.md

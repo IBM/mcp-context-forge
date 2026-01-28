@@ -1,0 +1,30 @@
+{
+  "name": "mcpgateway-devcontainer",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "features": {},
+  "postCreateCommand": ".devcontainer/postCreateCommand.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "terminal.integrated.profiles.linux": {
+          "bash-venv": {
+            "path": "/bin/bash",
+            "args": ["-c", "source ~/.venv/mcpgateway/bin/activate && exec bash"]
+          }
+        },
+        "terminal.integrated.defaultProfile.linux": "bash-venv"
+      }
+    }
+  },
+  "remoteEnv": {
+    "MCPGATEWAY_DEV_MODE": "true",
+    "VENV_DIR": "$HOME/.venv/mcpgateway"
+  }
+}

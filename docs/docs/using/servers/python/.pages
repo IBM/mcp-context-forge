@@ -1,0 +1,17 @@
+title: Python Servers
+nav:
+  - chunker-server.md
+  - code-splitter-server.md
+  - csv-pandas-chat-server.md
+  - data-analysis-server.md
+  - docx-server.md
+  - eval-server.md
+  - graphviz-server.md
+  - latex-server.md
+  - libreoffice-server.md
+  - mermaid-server.md
+  - plotly-server.md
+  - pptx-server.md
+  - python-sandbox-server.md
+  - url-to-markdown-server.md
+  - xlsx-server.md

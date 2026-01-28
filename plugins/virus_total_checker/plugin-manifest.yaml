@@ -1,0 +1,48 @@
+description: "Integrates with VirusTotal v3 to check URLs/domains/IPs before fetching"
+author: "Mihai Criveti"
+version: "0.1.0"
+available_hooks:
+  - "resource_pre_fetch"
+  - "resource_post_fetch"
+  - "prompt_post_fetch"
+  - "tool_post_invoke"
+default_configs:
+  enabled: true
+  api_key_env: "VT_API_KEY"
+  base_url: "https://www.virustotal.com/api/v3"
+  timeout_seconds: 8.0
+  check_url: true
+  check_domain: true
+  check_ip: true
+  scan_if_unknown: false
+  wait_for_analysis: false
+  max_wait_seconds: 8
+  poll_interval_seconds: 1.0
+  block_on_verdicts: ["malicious"]
+  min_malicious: 1
+  cache_ttl_seconds: 300
+  # Retry client configuration
+  max_retries: 3
+  base_backoff: 0.5
+  max_delay: 8.0
+  jitter_max: 0.2
+  # File checks
+  enable_file_checks: true
+  file_hash_alg: "sha256"
+  upload_if_unknown: false
+  upload_max_bytes: 10485760
+  # Output scanning
+  scan_tool_outputs: true
+  max_urls_per_call: 5
+  url_pattern: "https?://[\\w\\-\\._~:/%#\\[\\]@!\\$&'\\(\\)\\*\\+,;=]+"
+  # Policy extras
+  min_harmless_ratio: 0.0
+  scan_prompt_outputs: true
+  scan_resource_contents: true
+  allow_url_patterns: []
+  deny_url_patterns: []
+  allow_domains: []
+  deny_domains: []
+  allow_ip_cidrs: []
+  deny_ip_cidrs: []
+  override_precedence: "deny_over_allow"

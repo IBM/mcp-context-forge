@@ -1,0 +1,3362 @@
+{
+  "description": "MCP Gateway configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'MCP_Gateway'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True",
+  "properties": {
+    "app_name": {
+      "default": "MCP_Gateway",
+      "title": "App Name",
+      "type": "string"
+    },
+    "host": {
+      "default": "127.0.0.1",
+      "title": "Host",
+      "type": "string"
+    },
+    "port": {
+      "default": 4444,
+      "exclusiveMinimum": 0,
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Port",
+      "type": "integer"
+    },
+    "client_mode": {
+      "default": false,
+      "title": "Client Mode",
+      "type": "boolean"
+    },
+    "docs_allow_basic_auth": {
+      "default": false,
+      "title": "Docs Allow Basic Auth",
+      "type": "boolean"
+    },
+    "database_url": {
+      "default": "sqlite:///./mcp.db",
+      "description": "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. For PostgreSQL with custom schema, use the 'options' query parameter: postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name (See Issue #1535 for details)",
+      "title": "Database Url",
+      "type": "string"
+    },
+    "templates_dir": {
+      "format": "path",
+      "title": "Templates Dir",
+      "type": "string"
+    },
+    "static_dir": {
+      "format": "path",
+      "title": "Static Dir",
+      "type": "string"
+    },
+    "templates_auto_reload": {
+      "default": false,
+      "description": "Auto-reload Jinja2 templates on change (enable for development)",
+      "title": "Templates Auto Reload",
+      "type": "boolean"
+    },
+    "app_root_path": {
+      "default": "",
+      "title": "App Root Path",
+      "type": "string"
+    },
+    "protocol_version": {
+      "default": "2025-06-18",
+      "title": "Protocol Version",
+      "type": "string"
+    },
+    "basic_auth_user": {
+      "default": "admin",
+      "title": "Basic Auth User",
+      "type": "string"
+    },
+    "basic_auth_password": {
+      "default": "**********",
+      "format": "password",
+      "title": "Basic Auth Password",
+      "type": "string",
+      "writeOnly": true
+    },
+    "jwt_algorithm": {
+      "default": "HS256",
+      "title": "Jwt Algorithm",
+      "type": "string"
+    },
+    "jwt_secret_key": {
+      "default": "**********",
+      "format": "password",
+      "title": "Jwt Secret Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "jwt_public_key_path": {
+      "default": "",
+      "title": "Jwt Public Key Path",
+      "type": "string"
+    },
+    "jwt_private_key_path": {
+      "default": "",
+      "title": "Jwt Private Key Path",
+      "type": "string"
+    },
+    "jwt_audience": {
+      "default": "mcpgateway-api",
+      "title": "Jwt Audience",
+      "type": "string"
+    },
+    "jwt_issuer": {
+      "default": "mcpgateway",
+      "title": "Jwt Issuer",
+      "type": "string"
+    },
+    "jwt_audience_verification": {
+      "default": true,
+      "title": "Jwt Audience Verification",
+      "type": "boolean"
+    },
+    "jwt_issuer_verification": {
+      "default": true,
+      "title": "Jwt Issuer Verification",
+      "type": "boolean"
+    },
+    "auth_required": {
+      "default": true,
+      "title": "Auth Required",
+      "type": "boolean"
+    },
+    "token_expiry": {
+      "default": 10080,
+      "title": "Token Expiry",
+      "type": "integer"
+    },
+    "require_token_expiration": {
+      "default": false,
+      "description": "Require all JWT tokens to have expiration claims",
+      "title": "Require Token Expiration",
+      "type": "boolean"
+    },
+    "require_jti": {
+      "default": false,
+      "description": "Require JTI (JWT ID) claim in all tokens for revocation support",
+      "title": "Require Jti",
+      "type": "boolean"
+    },
+    "require_user_in_db": {
+      "default": false,
+      "description": "Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
+      "title": "Require User In Db",
+      "type": "boolean"
+    },
+    "embed_environment_in_tokens": {
+      "default": false,
+      "description": "Embed environment claim in gateway-issued JWTs for environment isolation",
+      "title": "Embed Environment In Tokens",
+      "type": "boolean"
+    },
+    "validate_token_environment": {
+      "default": false,
+      "description": "Reject tokens with mismatched environment claim (tokens without env claim are allowed)",
+      "title": "Validate Token Environment",
+      "type": "boolean"
+    },
+    "sso_enabled": {
+      "default": false,
+      "description": "Enable Single Sign-On authentication",
+      "title": "Sso Enabled",
+      "type": "boolean"
+    },
+    "sso_github_enabled": {
+      "default": false,
+      "description": "Enable GitHub OAuth authentication",
+      "title": "Sso Github Enabled",
+      "type": "boolean"
+    },
+    "sso_github_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "GitHub OAuth client ID",
+      "title": "Sso Github Client Id"
+    },
+    "sso_github_client_secret": {
+      "anyOf": [
+        {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "GitHub OAuth client secret",
+      "title": "Sso Github Client Secret"
+    },
+    "sso_google_enabled": {
+      "default": false,
+      "description": "Enable Google OAuth authentication",
+      "title": "Sso Google Enabled",
+      "type": "boolean"
+    },
+    "sso_google_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Google OAuth client ID",
+      "title": "Sso Google Client Id"
+    },
+    "sso_google_client_secret": {
+      "anyOf": [
+        {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Google OAuth client secret",
+      "title": "Sso Google Client Secret"
+    },
+    "sso_ibm_verify_enabled": {
+      "default": false,
+      "description": "Enable IBM Security Verify OIDC authentication",
+      "title": "Sso Ibm Verify Enabled",
+      "type": "boolean"
+    },
+    "sso_ibm_verify_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "IBM Security Verify client ID",
+      "title": "Sso Ibm Verify Client Id"
+    },
+    "sso_ibm_verify_client_secret": {
+      "anyOf": [
+        {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "IBM Security Verify client secret",
+      "title": "Sso Ibm Verify Client Secret"
+    },
+    "sso_ibm_verify_issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "IBM Security Verify OIDC issuer URL",
+      "title": "Sso Ibm Verify Issuer"
+    },
+    "sso_okta_enabled": {
+      "default": false,
+      "description": "Enable Okta OIDC authentication",
+      "title": "Sso Okta Enabled",
+      "type": "boolean"
+    },
+    "sso_okta_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Okta client ID",
+      "title": "Sso Okta Client Id"
+    },
+    "sso_okta_client_secret": {
+      "anyOf": [
+        {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Okta client secret",
+      "title": "Sso Okta Client Secret"
+    },
+    "sso_okta_issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Okta issuer URL",
+      "title": "Sso Okta Issuer"
+    },
+    "sso_keycloak_enabled": {
+      "default": false,
+      "description": "Enable Keycloak OIDC authentication",
+      "title": "Sso Keycloak Enabled",
+      "type": "boolean"
+    },
+    "sso_keycloak_base_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak base URL (e.g., https://keycloak.example.com)",
+      "title": "Sso Keycloak Base Url"
+    },
+    "sso_keycloak_realm": {
+      "default": "master",
+      "description": "Keycloak realm name",
+      "title": "Sso Keycloak Realm",
+      "type": "string"
+    },
+    "sso_keycloak_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak client ID",
+      "title": "Sso Keycloak Client Id"
+    },
+    "sso_keycloak_client_secret": {
+      "anyOf": [
+        {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak client secret",
+      "title": "Sso Keycloak Client Secret"
+    },
+    "sso_keycloak_map_realm_roles": {
+      "default": true,
+      "description": "Map Keycloak realm roles to gateway teams",
+      "title": "Sso Keycloak Map Realm Roles",
+      "type": "boolean"
+    },
+    "sso_keycloak_map_client_roles": {
+      "default": false,
+      "description": "Map Keycloak client roles to gateway RBAC",
+      "title": "Sso Keycloak Map Client Roles",
+      "type": "boolean"
+    },
+    "sso_keycloak_username_claim": {
+      "default": "preferred_username",
+      "description": "JWT claim for username",
+      "title": "Sso Keycloak Username Claim",
+      "type": "string"
+    },
+    "experimental_validate_io": {
+      "default": false,
+      "description": "Enable experimental input validation and output sanitization",
+      "title": "Experimental Validate Io",
+      "type": "boolean"
+    },
+    "validation_middleware_enabled": {
+      "default": false,
+      "description": "Enable validation middleware for all requests",
+      "title": "Validation Middleware Enabled",
+      "type": "boolean"
+    },
+    "validation_strict": {
+      "default": true,
+      "description": "Strict validation mode - reject on violations",
+      "title": "Validation Strict",
+      "type": "boolean"
+    },
+    "sanitize_output": {
+      "default": true,
+      "description": "Sanitize output to remove control characters",
+      "title": "Sanitize Output",
+      "type": "boolean"
+    },
+    "allowed_roots": {
+      "description": "Allowed root paths for resource access",
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Roots",
+      "type": "array"
+    },
+    "max_path_depth": {
+      "default": 10,
+      "description": "Maximum allowed path depth",
+      "title": "Max Path Depth",
+      "type": "integer"
+    },
+    "max_param_length": {
+      "default": 10000,
+      "description": "Maximum parameter length",
+      "title": "Max Param Length",
+      "type": "integer"
+    },
+    "dangerous_patterns": {
+      "description": "Regex patterns for dangerous input",
+      "items": {
+        "type": "string"
+      },
+      "title": "Dangerous Patterns",
+      "type": "array"
+    },
+    "sso_keycloak_email_claim": {
+      "default": "email",
+      "description": "JWT claim for email",
+      "title": "Sso Keycloak Email Claim",
+      "type": "string"
+    },
+    "sso_keycloak_groups_claim": {
+      "default": "groups",
+      "description": "JWT claim for groups/roles",
+      "title": "Sso Keycloak Groups Claim",
+      "type": "string"
+    },
+    "sso_entra_enabled": {
+      "default": false,
+      "description": "Enable Microsoft Entra ID OIDC authentication",
+      "title": "Sso Entra Enabled",
+      "type": "boolean"
+    },
+    "sso_entra_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client ID",
+      "title": "Sso Entra Client Id"
+    },
+    "sso_entra_client_secret": {
+      "anyOf": [
+        {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client secret",
+      "title": "Sso Entra Client Secret"
+    },
+    "sso_entra_tenant_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID tenant ID",
+      "title": "Sso Entra Tenant Id"
+    },
+    "sso_entra_groups_claim": {
+      "default": "groups",
+      "description": "JWT claim for EntraID groups (groups/roles)",
+      "title": "Sso Entra Groups Claim",
+      "type": "string"
+    },
+    "sso_entra_admin_groups": {
+      "description": "EntraID groups granting platform_admin role (CSV/JSON)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Entra Admin Groups",
+      "type": "array"
+    },
+    "sso_entra_role_mappings": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Map EntraID groups to Context Forge roles (JSON: {group_id: role_name})",
+      "title": "Sso Entra Role Mappings",
+      "type": "object"
+    },
+    "sso_entra_default_role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Default role for EntraID users without group mapping (None = no role assigned)",
+      "title": "Sso Entra Default Role"
+    },
+    "sso_entra_sync_roles_on_login": {
+      "default": true,
+      "description": "Synchronize role assignments on each login",
+      "title": "Sso Entra Sync Roles On Login",
+      "type": "boolean"
+    },
+    "sso_generic_enabled": {
+      "default": false,
+      "description": "Enable generic OIDC provider (Keycloak, Auth0, etc.)",
+      "title": "Sso Generic Enabled",
+      "type": "boolean"
+    },
+    "sso_generic_provider_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Provider ID (e.g., 'keycloak', 'auth0', 'authentik')",
+      "title": "Sso Generic Provider Id"
+    },
+    "sso_generic_display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Display name shown on login page",
+      "title": "Sso Generic Display Name"
+    },
+    "sso_generic_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generic OIDC client ID",
+      "title": "Sso Generic Client Id"
+    },
+    "sso_generic_client_secret": {
+      "anyOf": [
+        {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generic OIDC client secret",
+      "title": "Sso Generic Client Secret"
+    },
+    "sso_generic_authorization_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Authorization endpoint URL",
+      "title": "Sso Generic Authorization Url"
+    },
+    "sso_generic_token_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Token endpoint URL",
+      "title": "Sso Generic Token Url"
+    },
+    "sso_generic_userinfo_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Userinfo endpoint URL",
+      "title": "Sso Generic Userinfo Url"
+    },
+    "sso_generic_issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OIDC issuer URL",
+      "title": "Sso Generic Issuer"
+    },
+    "sso_generic_scope": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "openid profile email",
+      "description": "OAuth scopes (space-separated)",
+      "title": "Sso Generic Scope"
+    },
+    "sso_auto_create_users": {
+      "default": true,
+      "description": "Automatically create users from SSO providers",
+      "title": "Sso Auto Create Users",
+      "type": "boolean"
+    },
+    "sso_trusted_domains": {
+      "description": "Trusted email domains (CSV or JSON list)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Trusted Domains",
+      "type": "array"
+    },
+    "sso_preserve_admin_auth": {
+      "default": true,
+      "description": "Preserve local admin authentication when SSO is enabled",
+      "title": "Sso Preserve Admin Auth",
+      "type": "boolean"
+    },
+    "sso_auto_admin_domains": {
+      "description": "Admin domains (CSV or JSON list)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Auto Admin Domains",
+      "type": "array"
+    },
+    "sso_github_admin_orgs": {
+      "description": "GitHub orgs granting admin (CSV/JSON)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Github Admin Orgs",
+      "type": "array"
+    },
+    "sso_google_admin_domains": {
+      "description": "Google admin domains (CSV/JSON)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Google Admin Domains",
+      "type": "array"
+    },
+    "sso_require_admin_approval": {
+      "default": false,
+      "description": "Require admin approval for new SSO registrations",
+      "title": "Sso Require Admin Approval",
+      "type": "boolean"
+    },
+    "mcp_client_auth_enabled": {
+      "default": true,
+      "description": "Enable JWT authentication for MCP client operations",
+      "title": "Mcp Client Auth Enabled",
+      "type": "boolean"
+    },
+    "mcp_require_auth": {
+      "default": false,
+      "description": "Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. If true, all /mcp requests must include a valid Bearer token.",
+      "title": "Mcp Require Auth",
+      "type": "boolean"
+    },
+    "trust_proxy_auth": {
+      "default": false,
+      "description": "Trust proxy authentication headers (required when mcp_client_auth_enabled=false)",
+      "title": "Trust Proxy Auth",
+      "type": "boolean"
+    },
+    "proxy_user_header": {
+      "default": "X-Authenticated-User",
+      "description": "Header containing authenticated username from proxy",
+      "title": "Proxy User Header",
+      "type": "string"
+    },
+    "auth_encryption_secret": {
+      "default": "**********",
+      "format": "password",
+      "title": "Auth Encryption Secret",
+      "type": "string",
+      "writeOnly": true
+    },
+    "insecure_allow_queryparam_auth": {
+      "default": false,
+      "description": "Enable query parameter authentication for gateway peers. WARNING: API keys may appear in proxy logs. See CWE-598.",
+      "title": "Insecure Allow Queryparam Auth",
+      "type": "boolean"
+    },
+    "insecure_queryparam_auth_allowed_hosts": {
+      "description": "Allowlist of hosts permitted to use query parameter auth. Empty list allows any host when feature is enabled. Format: ['mcp.tavily.com', 'api.example.com']",
+      "items": {
+        "type": "string"
+      },
+      "title": "Insecure Queryparam Auth Allowed Hosts",
+      "type": "array"
+    },
+    "oauth_request_timeout": {
+      "default": 30,
+      "description": "OAuth request timeout in seconds",
+      "title": "Oauth Request Timeout",
+      "type": "integer"
+    },
+    "oauth_max_retries": {
+      "default": 3,
+      "description": "Maximum retries for OAuth token requests",
+      "title": "Oauth Max Retries",
+      "type": "integer"
+    },
+    "oauth_default_timeout": {
+      "default": 3600,
+      "description": "Default OAuth token timeout in seconds",
+      "title": "Oauth Default Timeout",
+      "type": "integer"
+    },
+    "dcr_enabled": {
+      "default": true,
+      "description": "Enable Dynamic Client Registration (RFC 7591) - gateway acts as DCR client",
+      "title": "Dcr Enabled",
+      "type": "boolean"
+    },
+    "dcr_auto_register_on_missing_credentials": {
+      "default": true,
+      "description": "Automatically register with AS when gateway has issuer but no client_id",
+      "title": "Dcr Auto Register On Missing Credentials",
+      "type": "boolean"
+    },
+    "dcr_default_scopes": {
+      "default": [
+        "mcp:read"
+      ],
+      "description": "Default MCP scopes to request during DCR",
+      "items": {
+        "type": "string"
+      },
+      "title": "Dcr Default Scopes",
+      "type": "array"
+    },
+    "dcr_allowed_issuers": {
+      "description": "Optional allowlist of issuer URLs for DCR (empty = allow any)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Dcr Allowed Issuers",
+      "type": "array"
+    },
+    "dcr_token_endpoint_auth_method": {
+      "default": "client_secret_basic",
+      "description": "Token endpoint auth method for DCR (client_secret_basic or client_secret_post)",
+      "title": "Dcr Token Endpoint Auth Method",
+      "type": "string"
+    },
+    "dcr_metadata_cache_ttl": {
+      "default": 3600,
+      "description": "AS metadata cache TTL in seconds (RFC 8414 discovery)",
+      "title": "Dcr Metadata Cache Ttl",
+      "type": "integer"
+    },
+    "dcr_client_name_template": {
+      "default": "MCP Gateway ({gateway_name})",
+      "description": "Template for client_name in DCR requests",
+      "title": "Dcr Client Name Template",
+      "type": "string"
+    },
+    "dcr_request_refresh_token_when_unsupported": {
+      "default": false,
+      "description": "Request refresh_token even when AS metadata omits grant_types_supported. Enable for AS servers that support refresh tokens but don't advertise it.",
+      "title": "Dcr Request Refresh Token When Unsupported",
+      "type": "boolean"
+    },
+    "oauth_discovery_enabled": {
+      "default": true,
+      "description": "Enable OAuth AS metadata discovery (RFC 8414)",
+      "title": "Oauth Discovery Enabled",
+      "type": "boolean"
+    },
+    "oauth_preferred_code_challenge_method": {
+      "default": "S256",
+      "description": "Preferred PKCE code challenge method (S256 or plain)",
+      "title": "Oauth Preferred Code Challenge Method",
+      "type": "string"
+    },
+    "email_auth_enabled": {
+      "default": true,
+      "description": "Enable email-based authentication",
+      "title": "Email Auth Enabled",
+      "type": "boolean"
+    },
+    "platform_admin_email": {
+      "default": "admin@example.com",
+      "description": "Platform administrator email address",
+      "title": "Platform Admin Email",
+      "type": "string"
+    },
+    "platform_admin_password": {
+      "default": "**********",
+      "description": "Platform administrator password",
+      "format": "password",
+      "title": "Platform Admin Password",
+      "type": "string",
+      "writeOnly": true
+    },
+    "default_user_password": {
+      "default": "**********",
+      "description": "Default password for new users",
+      "format": "password",
+      "title": "Default User Password",
+      "type": "string",
+      "writeOnly": true
+    },
+    "platform_admin_full_name": {
+      "default": "Platform Administrator",
+      "description": "Platform administrator full name",
+      "title": "Platform Admin Full Name",
+      "type": "string"
+    },
+    "argon2id_time_cost": {
+      "default": 3,
+      "description": "Argon2id time cost (number of iterations)",
+      "title": "Argon2Id Time Cost",
+      "type": "integer"
+    },
+    "argon2id_memory_cost": {
+      "default": 65536,
+      "description": "Argon2id memory cost in KiB",
+      "title": "Argon2Id Memory Cost",
+      "type": "integer"
+    },
+    "argon2id_parallelism": {
+      "default": 1,
+      "description": "Argon2id parallelism (number of threads)",
+      "title": "Argon2Id Parallelism",
+      "type": "integer"
+    },
+    "password_min_length": {
+      "default": 8,
+      "description": "Minimum password length",
+      "title": "Password Min Length",
+      "type": "integer"
+    },
+    "password_require_uppercase": {
+      "default": true,
+      "description": "Require uppercase letters in passwords",
+      "title": "Password Require Uppercase",
+      "type": "boolean"
+    },
+    "password_require_lowercase": {
+      "default": true,
+      "description": "Require lowercase letters in passwords",
+      "title": "Password Require Lowercase",
+      "type": "boolean"
+    },
+    "password_require_numbers": {
+      "default": false,
+      "description": "Require numbers in passwords",
+      "title": "Password Require Numbers",
+      "type": "boolean"
+    },
+    "password_require_special": {
+      "default": true,
+      "description": "Require special characters in passwords",
+      "title": "Password Require Special",
+      "type": "boolean"
+    },
+    "password_change_enforcement_enabled": {
+      "default": true,
+      "description": "Master switch for password change enforcement checks",
+      "title": "Password Change Enforcement Enabled",
+      "type": "boolean"
+    },
+    "admin_require_password_change_on_bootstrap": {
+      "default": true,
+      "description": "Force admin to change password after bootstrap",
+      "title": "Admin Require Password Change On Bootstrap",
+      "type": "boolean"
+    },
+    "detect_default_password_on_login": {
+      "default": true,
+      "description": "Detect default password during login and mark user for change",
+      "title": "Detect Default Password On Login",
+      "type": "boolean"
+    },
+    "require_password_change_for_default_password": {
+      "default": true,
+      "description": "Require password change when user is created with the default password",
+      "title": "Require Password Change For Default Password",
+      "type": "boolean"
+    },
+    "password_policy_enabled": {
+      "default": true,
+      "description": "Enable password complexity validation for new/changed passwords",
+      "title": "Password Policy Enabled",
+      "type": "boolean"
+    },
+    "password_prevent_reuse": {
+      "default": true,
+      "description": "Prevent reusing the current password when changing",
+      "title": "Password Prevent Reuse",
+      "type": "boolean"
+    },
+    "password_max_age_days": {
+      "default": 90,
+      "description": "Password maximum age in days before expiry forces a change",
+      "title": "Password Max Age Days",
+      "type": "integer"
+    },
+    "max_failed_login_attempts": {
+      "default": 5,
+      "description": "Maximum failed login attempts before account lockout",
+      "title": "Max Failed Login Attempts",
+      "type": "integer"
+    },
+    "account_lockout_duration_minutes": {
+      "default": 30,
+      "description": "Account lockout duration in minutes",
+      "title": "Account Lockout Duration Minutes",
+      "type": "integer"
+    },
+    "auto_create_personal_teams": {
+      "default": true,
+      "description": "Enable automatic personal team creation for new users",
+      "title": "Auto Create Personal Teams",
+      "type": "boolean"
+    },
+    "personal_team_prefix": {
+      "default": "personal",
+      "description": "Personal team naming prefix",
+      "title": "Personal Team Prefix",
+      "type": "string"
+    },
+    "max_teams_per_user": {
+      "default": 50,
+      "description": "Maximum number of teams a user can belong to",
+      "title": "Max Teams Per User",
+      "type": "integer"
+    },
+    "max_members_per_team": {
+      "default": 100,
+      "description": "Maximum number of members per team",
+      "title": "Max Members Per Team",
+      "type": "integer"
+    },
+    "invitation_expiry_days": {
+      "default": 7,
+      "description": "Number of days before team invitations expire",
+      "title": "Invitation Expiry Days",
+      "type": "integer"
+    },
+    "require_email_verification_for_invites": {
+      "default": true,
+      "description": "Require email verification for team invitations",
+      "title": "Require Email Verification For Invites",
+      "type": "boolean"
+    },
+    "mcpgateway_ui_enabled": {
+      "default": false,
+      "title": "Mcpgateway Ui Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_admin_api_enabled": {
+      "default": false,
+      "title": "Mcpgateway Admin Api Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_ui_airgapped": {
+      "default": false,
+      "description": "Use local CDN assets instead of external CDNs for airgapped deployments",
+      "title": "Mcpgateway Ui Airgapped",
+      "type": "boolean"
+    },
+    "mcpgateway_bulk_import_enabled": {
+      "default": true,
+      "title": "Mcpgateway Bulk Import Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_bulk_import_max_tools": {
+      "default": 200,
+      "title": "Mcpgateway Bulk Import Max Tools",
+      "type": "integer"
+    },
+    "mcpgateway_bulk_import_rate_limit": {
+      "default": 10,
+      "title": "Mcpgateway Bulk Import Rate Limit",
+      "type": "integer"
+    },
+    "mcpgateway_ui_tool_test_timeout": {
+      "default": 60000,
+      "description": "Tool test timeout in milliseconds for the admin UI",
+      "title": "Mcpgateway Ui Tool Test Timeout",
+      "type": "integer"
+    },
+    "mcpgateway_tool_cancellation_enabled": {
+      "default": true,
+      "description": "Enable gateway-authoritative tool execution cancellation with REST API endpoints",
+      "title": "Mcpgateway Tool Cancellation Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_a2a_enabled": {
+      "default": true,
+      "title": "Mcpgateway A2A Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_a2a_max_agents": {
+      "default": 100,
+      "title": "Mcpgateway A2A Max Agents",
+      "type": "integer"
+    },
+    "mcpgateway_a2a_default_timeout": {
+      "default": 30,
+      "title": "Mcpgateway A2A Default Timeout",
+      "type": "integer"
+    },
+    "mcpgateway_a2a_max_retries": {
+      "default": 3,
+      "title": "Mcpgateway A2A Max Retries",
+      "type": "integer"
+    },
+    "mcpgateway_a2a_metrics_enabled": {
+      "default": true,
+      "title": "Mcpgateway A2A Metrics Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_grpc_enabled": {
+      "default": false,
+      "description": "Enable gRPC to MCP translation support (experimental feature)",
+      "title": "Mcpgateway Grpc Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_grpc_reflection_enabled": {
+      "default": true,
+      "description": "Enable gRPC server reflection by default",
+      "title": "Mcpgateway Grpc Reflection Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_grpc_max_message_size": {
+      "default": 4194304,
+      "description": "Maximum gRPC message size in bytes (4MB)",
+      "title": "Mcpgateway Grpc Max Message Size",
+      "type": "integer"
+    },
+    "mcpgateway_grpc_timeout": {
+      "default": 30,
+      "description": "Default gRPC call timeout in seconds",
+      "title": "Mcpgateway Grpc Timeout",
+      "type": "integer"
+    },
+    "mcpgateway_grpc_tls_enabled": {
+      "default": false,
+      "description": "Enable TLS for gRPC connections by default",
+      "title": "Mcpgateway Grpc Tls Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_performance_tracking": {
+      "default": false,
+      "description": "Enable performance tracking tab in admin UI",
+      "title": "Mcpgateway Performance Tracking",
+      "type": "boolean"
+    },
+    "mcpgateway_performance_collection_interval": {
+      "default": 10,
+      "description": "Metric collection interval in seconds",
+      "maximum": 300,
+      "minimum": 1,
+      "title": "Mcpgateway Performance Collection Interval",
+      "type": "integer"
+    },
+    "mcpgateway_performance_retention_hours": {
+      "default": 24,
+      "description": "Snapshot retention period in hours",
+      "maximum": 168,
+      "minimum": 1,
+      "title": "Mcpgateway Performance Retention Hours",
+      "type": "integer"
+    },
+    "mcpgateway_performance_retention_days": {
+      "default": 90,
+      "description": "Aggregate retention period in days",
+      "maximum": 365,
+      "minimum": 1,
+      "title": "Mcpgateway Performance Retention Days",
+      "type": "integer"
+    },
+    "mcpgateway_performance_max_snapshots": {
+      "default": 10000,
+      "description": "Maximum performance snapshots to retain",
+      "maximum": 1000000,
+      "minimum": 100,
+      "title": "Mcpgateway Performance Max Snapshots",
+      "type": "integer"
+    },
+    "mcpgateway_performance_distributed": {
+      "default": false,
+      "description": "Enable distributed mode metrics aggregation via Redis",
+      "title": "Mcpgateway Performance Distributed",
+      "type": "boolean"
+    },
+    "mcpgateway_performance_net_connections_enabled": {
+      "default": true,
+      "description": "Enable network connections counting (can be CPU intensive)",
+      "title": "Mcpgateway Performance Net Connections Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_performance_net_connections_cache_ttl": {
+      "default": 15,
+      "description": "Cache TTL for net_connections in seconds",
+      "maximum": 300,
+      "minimum": 1,
+      "title": "Mcpgateway Performance Net Connections Cache Ttl",
+      "type": "integer"
+    },
+    "mcpgateway_catalog_enabled": {
+      "default": true,
+      "description": "Enable MCP server catalog feature",
+      "title": "Mcpgateway Catalog Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_catalog_file": {
+      "default": "mcp-catalog.yml",
+      "description": "Path to catalog configuration file",
+      "title": "Mcpgateway Catalog File",
+      "type": "string"
+    },
+    "mcpgateway_catalog_auto_health_check": {
+      "default": true,
+      "description": "Automatically health check catalog servers",
+      "title": "Mcpgateway Catalog Auto Health Check",
+      "type": "boolean"
+    },
+    "mcpgateway_catalog_cache_ttl": {
+      "default": 3600,
+      "description": "Catalog cache TTL in seconds",
+      "title": "Mcpgateway Catalog Cache Ttl",
+      "type": "integer"
+    },
+    "mcpgateway_catalog_page_size": {
+      "default": 100,
+      "description": "Number of catalog servers per page",
+      "title": "Mcpgateway Catalog Page Size",
+      "type": "integer"
+    },
+    "mcpgateway_elicitation_enabled": {
+      "default": true,
+      "description": "Enable elicitation passthrough support (MCP 2025-06-18)",
+      "title": "Mcpgateway Elicitation Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_elicitation_timeout": {
+      "default": 60,
+      "description": "Default timeout for elicitation requests in seconds",
+      "title": "Mcpgateway Elicitation Timeout",
+      "type": "integer"
+    },
+    "mcpgateway_elicitation_max_concurrent": {
+      "default": 100,
+      "description": "Maximum concurrent elicitation requests",
+      "title": "Mcpgateway Elicitation Max Concurrent",
+      "type": "integer"
+    },
+    "skip_ssl_verify": {
+      "default": false,
+      "description": "Skip SSL certificate verification for ALL outbound HTTPS requests (federation, MCP servers, LLM providers, A2A agents). WARNING: Only enable in dev environments with self-signed certificates.",
+      "title": "Skip Ssl Verify",
+      "type": "boolean"
+    },
+    "cors_enabled": {
+      "default": true,
+      "title": "Cors Enabled",
+      "type": "boolean"
+    },
+    "environment": {
+      "default": "development",
+      "enum": [
+        "development",
+        "staging",
+        "production"
+      ],
+      "title": "Environment",
+      "type": "string"
+    },
+    "app_domain": {
+      "default": "http://localhost:4444/",
+      "format": "uri",
+      "maxLength": 2083,
+      "minLength": 1,
+      "title": "App Domain",
+      "type": "string"
+    },
+    "secure_cookies": {
+      "default": true,
+      "title": "Secure Cookies",
+      "type": "boolean"
+    },
+    "cookie_samesite": {
+      "default": "lax",
+      "title": "Cookie Samesite",
+      "type": "string"
+    },
+    "cors_allow_credentials": {
+      "default": true,
+      "title": "Cors Allow Credentials",
+      "type": "boolean"
+    },
+    "security_headers_enabled": {
+      "default": true,
+      "title": "Security Headers Enabled",
+      "type": "boolean"
+    },
+    "x_frame_options": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "DENY",
+      "title": "X Frame Options"
+    },
+    "x_content_type_options_enabled": {
+      "default": true,
+      "title": "X Content Type Options Enabled",
+      "type": "boolean"
+    },
+    "x_xss_protection_enabled": {
+      "default": true,
+      "title": "X Xss Protection Enabled",
+      "type": "boolean"
+    },
+    "x_download_options_enabled": {
+      "default": true,
+      "title": "X Download Options Enabled",
+      "type": "boolean"
+    },
+    "hsts_enabled": {
+      "default": true,
+      "title": "Hsts Enabled",
+      "type": "boolean"
+    },
+    "hsts_max_age": {
+      "default": 31536000,
+      "title": "Hsts Max Age",
+      "type": "integer"
+    },
+    "hsts_include_subdomains": {
+      "default": true,
+      "title": "Hsts Include Subdomains",
+      "type": "boolean"
+    },
+    "remove_server_headers": {
+      "default": true,
+      "title": "Remove Server Headers",
+      "type": "boolean"
+    },
+    "compression_enabled": {
+      "default": true,
+      "description": "Enable response compression (Brotli, Zstd, GZip)",
+      "title": "Compression Enabled",
+      "type": "boolean"
+    },
+    "compression_minimum_size": {
+      "default": 500,
+      "description": "Minimum response size in bytes to compress (0 = compress all)",
+      "minimum": 0,
+      "title": "Compression Minimum Size",
+      "type": "integer"
+    },
+    "compression_gzip_level": {
+      "default": 6,
+      "description": "GZip compression level (1=fastest, 9=best compression)",
+      "maximum": 9,
+      "minimum": 1,
+      "title": "Compression Gzip Level",
+      "type": "integer"
+    },
+    "compression_brotli_quality": {
+      "default": 4,
+      "description": "Brotli compression quality (0-3=fast, 4-9=balanced, 10-11=max)",
+      "maximum": 11,
+      "minimum": 0,
+      "title": "Compression Brotli Quality",
+      "type": "integer"
+    },
+    "compression_zstd_level": {
+      "default": 3,
+      "description": "Zstd compression level (1-3=fast, 4-9=balanced, 10+=slow)",
+      "maximum": 22,
+      "minimum": 1,
+      "title": "Compression Zstd Level",
+      "type": "integer"
+    },
+    "allowed_origins": {
+      "default": [
+        "http://localhost:4444",
+        "http://localhost"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Origins",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "min_secret_length": {
+      "default": 32,
+      "title": "Min Secret Length",
+      "type": "integer"
+    },
+    "min_password_length": {
+      "default": 12,
+      "title": "Min Password Length",
+      "type": "integer"
+    },
+    "require_strong_secrets": {
+      "default": false,
+      "title": "Require Strong Secrets",
+      "type": "boolean"
+    },
+    "llmchat_enabled": {
+      "default": false,
+      "description": "Enable LLM Chat feature",
+      "title": "Llmchat Enabled",
+      "type": "boolean"
+    },
+    "toolops_enabled": {
+      "default": false,
+      "description": "Enable ToolOps feature",
+      "title": "Toolops Enabled",
+      "type": "boolean"
+    },
+    "poll_interval": {
+      "default": 1.0,
+      "description": "Initial polling interval in seconds for checking new session messages",
+      "title": "Poll Interval",
+      "type": "number"
+    },
+    "max_interval": {
+      "default": 5.0,
+      "description": "Maximum polling interval in seconds when the session is idle",
+      "title": "Max Interval",
+      "type": "number"
+    },
+    "backoff_factor": {
+      "default": 1.5,
+      "description": "Multiplier used to gradually increase the polling interval during inactivity",
+      "title": "Backoff Factor",
+      "type": "number"
+    },
+    "llmchat_session_ttl": {
+      "default": 300,
+      "description": "Seconds for active_session key TTL",
+      "title": "Llmchat Session Ttl",
+      "type": "integer"
+    },
+    "llmchat_session_lock_ttl": {
+      "default": 30,
+      "description": "Seconds for lock expiry",
+      "title": "Llmchat Session Lock Ttl",
+      "type": "integer"
+    },
+    "llmchat_session_lock_retries": {
+      "default": 10,
+      "description": "How many times to poll while waiting",
+      "title": "Llmchat Session Lock Retries",
+      "type": "integer"
+    },
+    "llmchat_session_lock_wait": {
+      "default": 0.2,
+      "description": "Seconds between polls",
+      "title": "Llmchat Session Lock Wait",
+      "type": "number"
+    },
+    "llmchat_chat_history_ttl": {
+      "default": 3600,
+      "description": "Seconds for chat history expiry",
+      "title": "Llmchat Chat History Ttl",
+      "type": "integer"
+    },
+    "llmchat_chat_history_max_messages": {
+      "default": 50,
+      "description": "Maximum message history to store per user",
+      "title": "Llmchat Chat History Max Messages",
+      "type": "integer"
+    },
+    "llm_api_prefix": {
+      "default": "/v1",
+      "description": "API prefix for internal LLM endpoints",
+      "title": "Llm Api Prefix",
+      "type": "string"
+    },
+    "llm_request_timeout": {
+      "default": 120,
+      "description": "Request timeout in seconds for LLM API calls",
+      "title": "Llm Request Timeout",
+      "type": "integer"
+    },
+    "llm_streaming_enabled": {
+      "default": true,
+      "description": "Enable streaming responses for LLM Chat",
+      "title": "Llm Streaming Enabled",
+      "type": "boolean"
+    },
+    "llm_health_check_interval": {
+      "default": 300,
+      "description": "Provider health check interval in seconds",
+      "title": "Llm Health Check Interval",
+      "type": "integer"
+    },
+    "retry_max_attempts": {
+      "default": 3,
+      "title": "Retry Max Attempts",
+      "type": "integer"
+    },
+    "retry_base_delay": {
+      "default": 1.0,
+      "title": "Retry Base Delay",
+      "type": "number"
+    },
+    "retry_max_delay": {
+      "default": 60,
+      "title": "Retry Max Delay",
+      "type": "integer"
+    },
+    "retry_jitter_max": {
+      "default": 0.5,
+      "title": "Retry Jitter Max",
+      "type": "number"
+    },
+    "httpx_max_connections": {
+      "default": 200,
+      "description": "Maximum total concurrent HTTP connections (global, not per-host). Increase for high-traffic deployments with many outbound calls.",
+      "maximum": 1000,
+      "minimum": 10,
+      "title": "Httpx Max Connections",
+      "type": "integer"
+    },
+    "httpx_max_keepalive_connections": {
+      "default": 100,
+      "description": "Maximum idle keepalive connections to retain (typically 50% of max_connections)",
+      "maximum": 500,
+      "minimum": 1,
+      "title": "Httpx Max Keepalive Connections",
+      "type": "integer"
+    },
+    "httpx_keepalive_expiry": {
+      "default": 30.0,
+      "description": "Seconds before idle keepalive connections are closed",
+      "maximum": 300.0,
+      "minimum": 5.0,
+      "title": "Httpx Keepalive Expiry",
+      "type": "number"
+    },
+    "httpx_connect_timeout": {
+      "default": 5.0,
+      "description": "Timeout in seconds for establishing new connections (5s for LAN, increase for WAN)",
+      "maximum": 60.0,
+      "minimum": 1.0,
+      "title": "Httpx Connect Timeout",
+      "type": "number"
+    },
+    "httpx_read_timeout": {
+      "default": 120.0,
+      "description": "Timeout in seconds for reading response data (set high for slow MCP tool calls)",
+      "maximum": 600.0,
+      "minimum": 1.0,
+      "title": "Httpx Read Timeout",
+      "type": "number"
+    },
+    "httpx_write_timeout": {
+      "default": 30.0,
+      "description": "Timeout in seconds for writing request data",
+      "maximum": 600.0,
+      "minimum": 1.0,
+      "title": "Httpx Write Timeout",
+      "type": "number"
+    },
+    "httpx_pool_timeout": {
+      "default": 10.0,
+      "description": "Timeout in seconds waiting for a connection from the pool (fail fast on exhaustion)",
+      "maximum": 120.0,
+      "minimum": 1.0,
+      "title": "Httpx Pool Timeout",
+      "type": "number"
+    },
+    "httpx_http2_enabled": {
+      "default": false,
+      "description": "Enable HTTP/2 (requires h2 package; enable only if upstreams support HTTP/2)",
+      "title": "Httpx Http2 Enabled",
+      "type": "boolean"
+    },
+    "httpx_admin_read_timeout": {
+      "default": 30.0,
+      "description": "Read timeout for admin UI operations (model fetching, health checks). Shorter than httpx_read_timeout to fail fast on admin pages.",
+      "maximum": 120.0,
+      "minimum": 1.0,
+      "title": "Httpx Admin Read Timeout",
+      "type": "number"
+    },
+    "log_level": {
+      "default": "ERROR",
+      "enum": [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL"
+      ],
+      "title": "Log Level",
+      "type": "string"
+    },
+    "log_requests": {
+      "default": false,
+      "description": "Enable request payload logging with sensitive data masking",
+      "title": "Log Requests",
+      "type": "boolean"
+    },
+    "log_format": {
+      "default": "json",
+      "enum": [
+        "json",
+        "text"
+      ],
+      "title": "Log Format",
+      "type": "string"
+    },
+    "log_to_file": {
+      "default": false,
+      "title": "Log To File",
+      "type": "boolean"
+    },
+    "log_filemode": {
+      "default": "a+",
+      "title": "Log Filemode",
+      "type": "string"
+    },
+    "log_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Log File"
+    },
+    "log_folder": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Log Folder"
+    },
+    "log_rotation_enabled": {
+      "default": false,
+      "title": "Log Rotation Enabled",
+      "type": "boolean"
+    },
+    "log_max_size_mb": {
+      "default": 1,
+      "title": "Log Max Size Mb",
+      "type": "integer"
+    },
+    "log_backup_count": {
+      "default": 5,
+      "title": "Log Backup Count",
+      "type": "integer"
+    },
+    "log_detailed_max_body_size": {
+      "default": 16384,
+      "description": "Maximum request body size to log in detailed mode (bytes). Separate from log_max_size_mb which is for file rotation.",
+      "maximum": 1048576,
+      "minimum": 1024,
+      "title": "Log Detailed Max Body Size",
+      "type": "integer"
+    },
+    "log_detailed_skip_endpoints": {
+      "description": "List of path prefixes to skip when log_detailed_requests is enabled",
+      "items": {
+        "type": "string"
+      },
+      "title": "Log Detailed Skip Endpoints",
+      "type": "array"
+    },
+    "log_resolve_user_identity": {
+      "default": false,
+      "description": "If true, RequestLoggingMiddleware will attempt DB fallback to resolve user identity when needed",
+      "title": "Log Resolve User Identity",
+      "type": "boolean"
+    },
+    "log_detailed_sample_rate": {
+      "default": 1.0,
+      "description": "Fraction of requests to sample for detailed logging (0.0-1.0)",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Log Detailed Sample Rate",
+      "type": "number"
+    },
+    "log_buffer_size_mb": {
+      "default": 1.0,
+      "title": "Log Buffer Size Mb",
+      "type": "number"
+    },
+    "observability_enabled": {
+      "default": false,
+      "description": "Enable observability tracing and metrics collection",
+      "title": "Observability Enabled",
+      "type": "boolean"
+    },
+    "observability_trace_http_requests": {
+      "default": true,
+      "description": "Automatically trace HTTP requests",
+      "title": "Observability Trace Http Requests",
+      "type": "boolean"
+    },
+    "observability_trace_retention_days": {
+      "default": 7,
+      "description": "Number of days to retain trace data",
+      "minimum": 1,
+      "title": "Observability Trace Retention Days",
+      "type": "integer"
+    },
+    "observability_max_traces": {
+      "default": 100000,
+      "description": "Maximum number of traces to retain",
+      "minimum": 1000,
+      "title": "Observability Max Traces",
+      "type": "integer"
+    },
+    "observability_sample_rate": {
+      "default": 1.0,
+      "description": "Trace sampling rate (0.0-1.0)",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Observability Sample Rate",
+      "type": "number"
+    },
+    "observability_include_paths": {
+      "description": "Regex patterns to include for tracing (when empty, all paths are eligible before excludes)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Observability Include Paths",
+      "type": "array"
+    },
+    "observability_exclude_paths": {
+      "description": "Regex patterns to exclude from tracing (applies after include patterns)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Observability Exclude Paths",
+      "type": "array"
+    },
+    "observability_metrics_enabled": {
+      "default": true,
+      "description": "Enable metrics collection",
+      "title": "Observability Metrics Enabled",
+      "type": "boolean"
+    },
+    "observability_events_enabled": {
+      "default": true,
+      "description": "Enable event logging within spans",
+      "title": "Observability Events Enabled",
+      "type": "boolean"
+    },
+    "correlation_id_enabled": {
+      "default": true,
+      "description": "Enable automatic correlation ID tracking for requests",
+      "title": "Correlation Id Enabled",
+      "type": "boolean"
+    },
+    "correlation_id_header": {
+      "default": "X-Correlation-ID",
+      "description": "HTTP header name for correlation ID",
+      "title": "Correlation Id Header",
+      "type": "string"
+    },
+    "correlation_id_preserve": {
+      "default": true,
+      "description": "Preserve correlation IDs from incoming requests",
+      "title": "Correlation Id Preserve",
+      "type": "boolean"
+    },
+    "correlation_id_response_header": {
+      "default": true,
+      "description": "Include correlation ID in response headers",
+      "title": "Correlation Id Response Header",
+      "type": "boolean"
+    },
+    "db_query_log_enabled": {
+      "default": false,
+      "description": "Enable database query logging to file (for N+1 detection)",
+      "title": "Db Query Log Enabled",
+      "type": "boolean"
+    },
+    "db_query_log_file": {
+      "default": "logs/db-queries.log",
+      "description": "Path to database query log file",
+      "title": "Db Query Log File",
+      "type": "string"
+    },
+    "db_query_log_json_file": {
+      "default": "logs/db-queries.jsonl",
+      "description": "Path to JSON Lines query log file",
+      "title": "Db Query Log Json File",
+      "type": "string"
+    },
+    "db_query_log_format": {
+      "default": "both",
+      "description": "Log format: 'json', 'text', or 'both'",
+      "title": "Db Query Log Format",
+      "type": "string"
+    },
+    "db_query_log_min_queries": {
+      "default": 1,
+      "description": "Only log requests with >= N queries",
+      "minimum": 1,
+      "title": "Db Query Log Min Queries",
+      "type": "integer"
+    },
+    "db_query_log_include_params": {
+      "default": false,
+      "description": "Include query parameters (may expose sensitive data)",
+      "title": "Db Query Log Include Params",
+      "type": "boolean"
+    },
+    "db_query_log_detect_n1": {
+      "default": true,
+      "description": "Automatically detect and flag N+1 query patterns",
+      "title": "Db Query Log Detect N1",
+      "type": "boolean"
+    },
+    "db_query_log_n1_threshold": {
+      "default": 3,
+      "description": "Number of similar queries to flag as potential N+1",
+      "minimum": 2,
+      "title": "Db Query Log N1 Threshold",
+      "type": "integer"
+    },
+    "structured_logging_enabled": {
+      "default": true,
+      "description": "Enable structured JSON logging with database persistence",
+      "title": "Structured Logging Enabled",
+      "type": "boolean"
+    },
+    "structured_logging_database_enabled": {
+      "default": false,
+      "description": "Persist structured logs to database (enables /api/logs/* endpoints, impacts performance)",
+      "title": "Structured Logging Database Enabled",
+      "type": "boolean"
+    },
+    "structured_logging_external_enabled": {
+      "default": false,
+      "description": "Send logs to external systems",
+      "title": "Structured Logging External Enabled",
+      "type": "boolean"
+    },
+    "performance_tracking_enabled": {
+      "default": true,
+      "description": "Enable performance tracking and metrics",
+      "title": "Performance Tracking Enabled",
+      "type": "boolean"
+    },
+    "performance_threshold_database_query_ms": {
+      "default": 100.0,
+      "description": "Alert threshold for database queries (ms)",
+      "title": "Performance Threshold Database Query Ms",
+      "type": "number"
+    },
+    "performance_threshold_tool_invocation_ms": {
+      "default": 2000.0,
+      "description": "Alert threshold for tool invocations (ms)",
+      "title": "Performance Threshold Tool Invocation Ms",
+      "type": "number"
+    },
+    "performance_threshold_resource_read_ms": {
+      "default": 1000.0,
+      "description": "Alert threshold for resource reads (ms)",
+      "title": "Performance Threshold Resource Read Ms",
+      "type": "number"
+    },
+    "performance_threshold_http_request_ms": {
+      "default": 500.0,
+      "description": "Alert threshold for HTTP requests (ms)",
+      "title": "Performance Threshold Http Request Ms",
+      "type": "number"
+    },
+    "performance_degradation_multiplier": {
+      "default": 1.5,
+      "description": "Alert if performance degrades by this multiplier vs baseline",
+      "title": "Performance Degradation Multiplier",
+      "type": "number"
+    },
+    "audit_trail_enabled": {
+      "default": false,
+      "description": "Enable audit trail logging to database for compliance",
+      "title": "Audit Trail Enabled",
+      "type": "boolean"
+    },
+    "security_logging_enabled": {
+      "default": false,
+      "description": "Enable security event logging to database",
+      "title": "Security Logging Enabled",
+      "type": "boolean"
+    },
+    "security_logging_level": {
+      "default": "failures_only",
+      "description": "Security logging level: 'all' = log all events including successful auth (high DB load), 'failures_only' = log only authentication/authorization failures, 'high_severity' = log only high/critical severity events",
+      "enum": [
+        "all",
+        "failures_only",
+        "high_severity"
+      ],
+      "title": "Security Logging Level",
+      "type": "string"
+    },
+    "security_failed_auth_threshold": {
+      "default": 5,
+      "description": "Failed auth attempts before high severity alert",
+      "title": "Security Failed Auth Threshold",
+      "type": "integer"
+    },
+    "security_threat_score_alert": {
+      "default": 0.7,
+      "description": "Threat score threshold for alerts (0.0-1.0)",
+      "title": "Security Threat Score Alert",
+      "type": "number"
+    },
+    "security_rate_limit_window_minutes": {
+      "default": 5,
+      "description": "Time window for rate limit checks (minutes)",
+      "title": "Security Rate Limit Window Minutes",
+      "type": "integer"
+    },
+    "metrics_aggregation_enabled": {
+      "default": true,
+      "description": "Enable automatic log aggregation into performance metrics",
+      "title": "Metrics Aggregation Enabled",
+      "type": "boolean"
+    },
+    "metrics_aggregation_backfill_hours": {
+      "default": 6,
+      "description": "Hours of structured logs to backfill into performance metrics on startup",
+      "maximum": 168,
+      "minimum": 0,
+      "title": "Metrics Aggregation Backfill Hours",
+      "type": "integer"
+    },
+    "metrics_aggregation_window_minutes": {
+      "default": 5,
+      "description": "Time window for metrics aggregation (minutes)",
+      "title": "Metrics Aggregation Window Minutes",
+      "type": "integer"
+    },
+    "metrics_aggregation_auto_start": {
+      "default": false,
+      "description": "Automatically run the log aggregation loop on application startup",
+      "title": "Metrics Aggregation Auto Start",
+      "type": "boolean"
+    },
+    "yield_batch_size": {
+      "default": 1000,
+      "description": "Number of rows fetched per batch when streaming hourly metric data from the database. Used to limit memory usage during aggregation and percentile calculations. Smaller values reduce memory footprint but increase DB round-trips; larger values improve throughput at the cost of higher memory usage.",
+      "maximum": 100000,
+      "minimum": 100,
+      "title": "Yield Batch Size",
+      "type": "integer"
+    },
+    "db_metrics_recording_enabled": {
+      "default": true,
+      "description": "Enable recording of execution metrics (tool/resource/prompt/server/A2A) to database. Disable if using external observability.",
+      "title": "Db Metrics Recording Enabled",
+      "type": "boolean"
+    },
+    "metrics_buffer_enabled": {
+      "default": true,
+      "description": "Enable buffered metrics writes (reduces DB pressure under load)",
+      "title": "Metrics Buffer Enabled",
+      "type": "boolean"
+    },
+    "metrics_buffer_flush_interval": {
+      "default": 60,
+      "description": "Seconds between automatic metrics buffer flushes",
+      "maximum": 300,
+      "minimum": 5,
+      "title": "Metrics Buffer Flush Interval",
+      "type": "integer"
+    },
+    "metrics_buffer_max_size": {
+      "default": 1000,
+      "description": "Maximum buffered metrics before forced flush",
+      "maximum": 10000,
+      "minimum": 100,
+      "title": "Metrics Buffer Max Size",
+      "type": "integer"
+    },
+    "metrics_cache_enabled": {
+      "default": true,
+      "description": "Enable in-memory caching for aggregate metrics queries",
+      "title": "Metrics Cache Enabled",
+      "type": "boolean"
+    },
+    "metrics_cache_ttl_seconds": {
+      "default": 60,
+      "description": "TTL for cached aggregate metrics in seconds",
+      "maximum": 300,
+      "minimum": 1,
+      "title": "Metrics Cache Ttl Seconds",
+      "type": "integer"
+    },
+    "metrics_cleanup_enabled": {
+      "default": true,
+      "description": "Enable automatic cleanup of old metrics data",
+      "title": "Metrics Cleanup Enabled",
+      "type": "boolean"
+    },
+    "metrics_retention_days": {
+      "default": 7,
+      "description": "Days to retain raw metrics before cleanup (fallback when rollup disabled)",
+      "maximum": 365,
+      "minimum": 1,
+      "title": "Metrics Retention Days",
+      "type": "integer"
+    },
+    "metrics_cleanup_interval_hours": {
+      "default": 1,
+      "description": "Hours between automatic cleanup runs",
+      "maximum": 168,
+      "minimum": 1,
+      "title": "Metrics Cleanup Interval Hours",
+      "type": "integer"
+    },
+    "metrics_cleanup_batch_size": {
+      "default": 10000,
+      "description": "Batch size for metrics deletion (prevents long locks)",
+      "maximum": 100000,
+      "minimum": 100,
+      "title": "Metrics Cleanup Batch Size",
+      "type": "integer"
+    },
+    "metrics_rollup_enabled": {
+      "default": true,
+      "description": "Enable hourly metrics rollup for efficient historical queries",
+      "title": "Metrics Rollup Enabled",
+      "type": "boolean"
+    },
+    "metrics_rollup_interval_hours": {
+      "default": 1,
+      "description": "Hours between rollup runs",
+      "maximum": 24,
+      "minimum": 1,
+      "title": "Metrics Rollup Interval Hours",
+      "type": "integer"
+    },
+    "metrics_rollup_retention_days": {
+      "default": 365,
+      "description": "Days to retain hourly rollup data",
+      "maximum": 3650,
+      "minimum": 30,
+      "title": "Metrics Rollup Retention Days",
+      "type": "integer"
+    },
+    "metrics_rollup_late_data_hours": {
+      "default": 1,
+      "description": "Hours to re-process on each run to catch late-arriving data (smaller = less CPU, larger = more tolerance for delayed metrics)",
+      "maximum": 48,
+      "minimum": 1,
+      "title": "Metrics Rollup Late Data Hours",
+      "type": "integer"
+    },
+    "metrics_delete_raw_after_rollup": {
+      "default": true,
+      "description": "Delete raw metrics after hourly rollup exists (recommended for production)",
+      "title": "Metrics Delete Raw After Rollup",
+      "type": "boolean"
+    },
+    "metrics_delete_raw_after_rollup_hours": {
+      "default": 1,
+      "description": "Hours to retain raw metrics when hourly rollup exists",
+      "maximum": 8760,
+      "minimum": 1,
+      "title": "Metrics Delete Raw After Rollup Hours",
+      "type": "integer"
+    },
+    "auth_cache_enabled": {
+      "default": true,
+      "description": "Enable Redis/in-memory caching for authentication data (user, team, revocation)",
+      "title": "Auth Cache Enabled",
+      "type": "boolean"
+    },
+    "auth_cache_user_ttl": {
+      "default": 60,
+      "description": "TTL in seconds for cached user data",
+      "maximum": 300,
+      "minimum": 10,
+      "title": "Auth Cache User Ttl",
+      "type": "integer"
+    },
+    "auth_cache_revocation_ttl": {
+      "default": 30,
+      "description": "TTL in seconds for token revocation cache (security-critical, keep short)",
+      "maximum": 120,
+      "minimum": 5,
+      "title": "Auth Cache Revocation Ttl",
+      "type": "integer"
+    },
+    "auth_cache_team_ttl": {
+      "default": 60,
+      "description": "TTL in seconds for team membership cache",
+      "maximum": 300,
+      "minimum": 10,
+      "title": "Auth Cache Team Ttl",
+      "type": "integer"
+    },
+    "auth_cache_role_ttl": {
+      "default": 60,
+      "description": "TTL in seconds for user role in team cache",
+      "maximum": 300,
+      "minimum": 10,
+      "title": "Auth Cache Role Ttl",
+      "type": "integer"
+    },
+    "auth_cache_teams_enabled": {
+      "default": true,
+      "description": "Enable caching for get_user_teams() (default: true)",
+      "title": "Auth Cache Teams Enabled",
+      "type": "boolean"
+    },
+    "auth_cache_teams_ttl": {
+      "default": 60,
+      "description": "TTL in seconds for user teams list cache",
+      "maximum": 300,
+      "minimum": 10,
+      "title": "Auth Cache Teams Ttl",
+      "type": "integer"
+    },
+    "auth_cache_batch_queries": {
+      "default": true,
+      "description": "Batch auth DB queries into single call (reduces 3 queries to 1)",
+      "title": "Auth Cache Batch Queries",
+      "type": "boolean"
+    },
+    "registry_cache_enabled": {
+      "default": true,
+      "description": "Enable caching for registry list endpoints (tools, prompts, resources, etc.)",
+      "title": "Registry Cache Enabled",
+      "type": "boolean"
+    },
+    "registry_cache_tools_ttl": {
+      "default": 20,
+      "description": "TTL in seconds for tools list cache",
+      "maximum": 300,
+      "minimum": 5,
+      "title": "Registry Cache Tools Ttl",
+      "type": "integer"
+    },
+    "registry_cache_prompts_ttl": {
+      "default": 15,
+      "description": "TTL in seconds for prompts list cache",
+      "maximum": 300,
+      "minimum": 5,
+      "title": "Registry Cache Prompts Ttl",
+      "type": "integer"
+    },
+    "registry_cache_resources_ttl": {
+      "default": 15,
+      "description": "TTL in seconds for resources list cache",
+      "maximum": 300,
+      "minimum": 5,
+      "title": "Registry Cache Resources Ttl",
+      "type": "integer"
+    },
+    "registry_cache_agents_ttl": {
+      "default": 20,
+      "description": "TTL in seconds for agents list cache",
+      "maximum": 300,
+      "minimum": 5,
+      "title": "Registry Cache Agents Ttl",
+      "type": "integer"
+    },
+    "registry_cache_servers_ttl": {
+      "default": 20,
+      "description": "TTL in seconds for servers list cache",
+      "maximum": 300,
+      "minimum": 5,
+      "title": "Registry Cache Servers Ttl",
+      "type": "integer"
+    },
+    "registry_cache_gateways_ttl": {
+      "default": 20,
+      "description": "TTL in seconds for gateways list cache",
+      "maximum": 300,
+      "minimum": 5,
+      "title": "Registry Cache Gateways Ttl",
+      "type": "integer"
+    },
+    "registry_cache_catalog_ttl": {
+      "default": 300,
+      "description": "TTL in seconds for catalog servers list cache (external catalog, changes infrequently)",
+      "maximum": 600,
+      "minimum": 60,
+      "title": "Registry Cache Catalog Ttl",
+      "type": "integer"
+    },
+    "tool_lookup_cache_enabled": {
+      "default": true,
+      "description": "Enable tool lookup cache (tool name -> tool config)",
+      "title": "Tool Lookup Cache Enabled",
+      "type": "boolean"
+    },
+    "tool_lookup_cache_ttl_seconds": {
+      "default": 60,
+      "description": "TTL in seconds for tool lookup cache entries",
+      "maximum": 600,
+      "minimum": 5,
+      "title": "Tool Lookup Cache Ttl Seconds",
+      "type": "integer"
+    },
+    "tool_lookup_cache_negative_ttl_seconds": {
+      "default": 10,
+      "description": "TTL in seconds for negative tool lookup cache entries",
+      "maximum": 60,
+      "minimum": 1,
+      "title": "Tool Lookup Cache Negative Ttl Seconds",
+      "type": "integer"
+    },
+    "tool_lookup_cache_l1_maxsize": {
+      "default": 10000,
+      "description": "Max entries for in-memory tool lookup cache (L1)",
+      "maximum": 1000000,
+      "minimum": 100,
+      "title": "Tool Lookup Cache L1 Maxsize",
+      "type": "integer"
+    },
+    "tool_lookup_cache_l2_enabled": {
+      "default": true,
+      "description": "Enable Redis-backed tool lookup cache (L2) when cache_type=redis",
+      "title": "Tool Lookup Cache L2 Enabled",
+      "type": "boolean"
+    },
+    "admin_stats_cache_enabled": {
+      "default": true,
+      "description": "Enable caching for admin dashboard statistics",
+      "title": "Admin Stats Cache Enabled",
+      "type": "boolean"
+    },
+    "admin_stats_cache_system_ttl": {
+      "default": 60,
+      "description": "TTL in seconds for system stats cache",
+      "maximum": 300,
+      "minimum": 10,
+      "title": "Admin Stats Cache System Ttl",
+      "type": "integer"
+    },
+    "admin_stats_cache_observability_ttl": {
+      "default": 30,
+      "description": "TTL in seconds for observability stats cache",
+      "maximum": 120,
+      "minimum": 10,
+      "title": "Admin Stats Cache Observability Ttl",
+      "type": "integer"
+    },
+    "admin_stats_cache_tags_ttl": {
+      "default": 120,
+      "description": "TTL in seconds for tags listing cache",
+      "maximum": 600,
+      "minimum": 30,
+      "title": "Admin Stats Cache Tags Ttl",
+      "type": "integer"
+    },
+    "admin_stats_cache_plugins_ttl": {
+      "default": 120,
+      "description": "TTL in seconds for plugin stats cache",
+      "maximum": 600,
+      "minimum": 30,
+      "title": "Admin Stats Cache Plugins Ttl",
+      "type": "integer"
+    },
+    "admin_stats_cache_performance_ttl": {
+      "default": 60,
+      "description": "TTL in seconds for performance aggregates cache",
+      "maximum": 300,
+      "minimum": 15,
+      "title": "Admin Stats Cache Performance Ttl",
+      "type": "integer"
+    },
+    "team_member_count_cache_enabled": {
+      "default": true,
+      "description": "Enable Redis caching for team member counts",
+      "title": "Team Member Count Cache Enabled",
+      "type": "boolean"
+    },
+    "team_member_count_cache_ttl": {
+      "default": 300,
+      "description": "TTL in seconds for team member count cache (default: 5 minutes)",
+      "maximum": 3600,
+      "minimum": 30,
+      "title": "Team Member Count Cache Ttl",
+      "type": "integer"
+    },
+    "log_search_max_results": {
+      "default": 1000,
+      "description": "Maximum results per log search query",
+      "title": "Log Search Max Results",
+      "type": "integer"
+    },
+    "log_retention_days": {
+      "default": 30,
+      "description": "Number of days to retain logs in database",
+      "title": "Log Retention Days",
+      "type": "integer"
+    },
+    "elasticsearch_enabled": {
+      "default": false,
+      "description": "Send logs to Elasticsearch",
+      "title": "Elasticsearch Enabled",
+      "type": "boolean"
+    },
+    "elasticsearch_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Elasticsearch cluster URL",
+      "title": "Elasticsearch Url"
+    },
+    "elasticsearch_index_prefix": {
+      "default": "mcpgateway-logs",
+      "description": "Elasticsearch index prefix",
+      "title": "Elasticsearch Index Prefix",
+      "type": "string"
+    },
+    "syslog_enabled": {
+      "default": false,
+      "description": "Send logs to syslog",
+      "title": "Syslog Enabled",
+      "type": "boolean"
+    },
+    "syslog_host": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Syslog server host",
+      "title": "Syslog Host"
+    },
+    "syslog_port": {
+      "default": 514,
+      "description": "Syslog server port",
+      "title": "Syslog Port",
+      "type": "integer"
+    },
+    "webhook_logging_enabled": {
+      "default": false,
+      "description": "Send logs to webhook endpoints",
+      "title": "Webhook Logging Enabled",
+      "type": "boolean"
+    },
+    "webhook_logging_urls": {
+      "description": "Webhook URLs for log delivery",
+      "items": {
+        "type": "string"
+      },
+      "title": "Webhook Logging Urls",
+      "type": "array"
+    },
+    "transport_type": {
+      "default": "all",
+      "title": "Transport Type",
+      "type": "string"
+    },
+    "websocket_ping_interval": {
+      "default": 30,
+      "title": "Websocket Ping Interval",
+      "type": "integer"
+    },
+    "sse_retry_timeout": {
+      "default": 5000,
+      "title": "Sse Retry Timeout",
+      "type": "integer"
+    },
+    "sse_keepalive_enabled": {
+      "default": true,
+      "title": "Sse Keepalive Enabled",
+      "type": "boolean"
+    },
+    "sse_keepalive_interval": {
+      "default": 30,
+      "title": "Sse Keepalive Interval",
+      "type": "integer"
+    },
+    "federation_timeout": {
+      "default": 120,
+      "title": "Federation Timeout",
+      "type": "integer"
+    },
+    "sso_issuers": {
+      "anyOf": [
+        {
+          "items": {
+            "format": "uri",
+            "maxLength": 2083,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sso Issuers"
+    },
+    "resource_cache_size": {
+      "default": 1000,
+      "title": "Resource Cache Size",
+      "type": "integer"
+    },
+    "resource_cache_ttl": {
+      "default": 3600,
+      "title": "Resource Cache Ttl",
+      "type": "integer"
+    },
+    "max_resource_size": {
+      "default": 10485760,
+      "title": "Max Resource Size",
+      "type": "integer"
+    },
+    "allowed_mime_types": {
+      "default": [
+        "image/gif",
+        "application/xml",
+        "text/html",
+        "application/json",
+        "image/png",
+        "text/plain",
+        "text/markdown",
+        "image/jpeg"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Mime Types",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "tool_timeout": {
+      "default": 60,
+      "title": "Tool Timeout",
+      "type": "integer"
+    },
+    "max_tool_retries": {
+      "default": 3,
+      "title": "Max Tool Retries",
+      "type": "integer"
+    },
+    "tool_rate_limit": {
+      "default": 100,
+      "title": "Tool Rate Limit",
+      "type": "integer"
+    },
+    "tool_concurrent_limit": {
+      "default": 10,
+      "title": "Tool Concurrent Limit",
+      "type": "integer"
+    },
+    "mcp_session_pool_enabled": {
+      "default": false,
+      "title": "Mcp Session Pool Enabled",
+      "type": "boolean"
+    },
+    "mcp_session_pool_max_per_key": {
+      "default": 10,
+      "title": "Mcp Session Pool Max Per Key",
+      "type": "integer"
+    },
+    "mcp_session_pool_ttl": {
+      "default": 300.0,
+      "title": "Mcp Session Pool Ttl",
+      "type": "number"
+    },
+    "mcp_session_pool_health_check_interval": {
+      "default": 60.0,
+      "title": "Mcp Session Pool Health Check Interval",
+      "type": "number"
+    },
+    "mcp_session_pool_acquire_timeout": {
+      "default": 30.0,
+      "title": "Mcp Session Pool Acquire Timeout",
+      "type": "number"
+    },
+    "mcp_session_pool_create_timeout": {
+      "default": 30.0,
+      "title": "Mcp Session Pool Create Timeout",
+      "type": "number"
+    },
+    "mcp_session_pool_circuit_breaker_threshold": {
+      "default": 5,
+      "title": "Mcp Session Pool Circuit Breaker Threshold",
+      "type": "integer"
+    },
+    "mcp_session_pool_circuit_breaker_reset": {
+      "default": 60.0,
+      "title": "Mcp Session Pool Circuit Breaker Reset",
+      "type": "number"
+    },
+    "mcp_session_pool_idle_eviction": {
+      "default": 600.0,
+      "title": "Mcp Session Pool Idle Eviction",
+      "type": "number"
+    },
+    "mcp_session_pool_transport_timeout": {
+      "default": 30.0,
+      "title": "Mcp Session Pool Transport Timeout",
+      "type": "number"
+    },
+    "mcp_session_pool_explicit_health_rpc": {
+      "default": false,
+      "title": "Mcp Session Pool Explicit Health Rpc",
+      "type": "boolean"
+    },
+    "mcp_session_pool_health_check_methods": {
+      "default": [
+        "ping",
+        "skip"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcp Session Pool Health Check Methods",
+      "type": "array"
+    },
+    "mcp_session_pool_health_check_timeout": {
+      "default": 5.0,
+      "title": "Mcp Session Pool Health Check Timeout",
+      "type": "number"
+    },
+    "mcp_session_pool_identity_headers": {
+      "default": [
+        "authorization",
+        "x-tenant-id",
+        "x-user-id",
+        "x-api-key",
+        "cookie"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcp Session Pool Identity Headers",
+      "type": "array"
+    },
+    "prompt_cache_size": {
+      "default": 100,
+      "title": "Prompt Cache Size",
+      "type": "integer"
+    },
+    "max_prompt_size": {
+      "default": 102400,
+      "title": "Max Prompt Size",
+      "type": "integer"
+    },
+    "prompt_render_timeout": {
+      "default": 10,
+      "title": "Prompt Render Timeout",
+      "type": "integer"
+    },
+    "health_check_interval": {
+      "default": 60,
+      "title": "Health Check Interval",
+      "type": "integer"
+    },
+    "health_check_timeout": {
+      "default": 5,
+      "title": "Health Check Timeout",
+      "type": "integer"
+    },
+    "gateway_health_check_timeout": {
+      "default": 5.0,
+      "title": "Gateway Health Check Timeout",
+      "type": "number"
+    },
+    "unhealthy_threshold": {
+      "default": 3,
+      "title": "Unhealthy Threshold",
+      "type": "integer"
+    },
+    "max_concurrent_health_checks": {
+      "default": 10,
+      "title": "Max Concurrent Health Checks",
+      "type": "integer"
+    },
+    "auto_refresh_servers": {
+      "default": false,
+      "description": "Enable automatic tool/resource/prompt refresh during gateway health checks",
+      "title": "Auto Refresh Servers",
+      "type": "boolean"
+    },
+    "gateway_auto_refresh_interval": {
+      "default": 300,
+      "description": "Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)",
+      "minimum": 60,
+      "title": "Gateway Auto Refresh Interval",
+      "type": "integer"
+    },
+    "gateway_validation_timeout": {
+      "default": 5,
+      "title": "Gateway Validation Timeout",
+      "type": "integer"
+    },
+    "gateway_max_redirects": {
+      "default": 5,
+      "title": "Gateway Max Redirects",
+      "type": "integer"
+    },
+    "filelock_name": {
+      "default": "gateway_service_leader.lock",
+      "title": "Filelock Name",
+      "type": "string"
+    },
+    "default_roots": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Default Roots",
+      "type": "array"
+    },
+    "db_driver": {
+      "default": "mariadb+mariadbconnector",
+      "title": "Db Driver",
+      "type": "string"
+    },
+    "db_pool_size": {
+      "default": 200,
+      "title": "Db Pool Size",
+      "type": "integer"
+    },
+    "db_max_overflow": {
+      "default": 10,
+      "title": "Db Max Overflow",
+      "type": "integer"
+    },
+    "db_pool_timeout": {
+      "default": 30,
+      "title": "Db Pool Timeout",
+      "type": "integer"
+    },
+    "db_pool_recycle": {
+      "default": 3600,
+      "title": "Db Pool Recycle",
+      "type": "integer"
+    },
+    "db_max_retries": {
+      "default": 30,
+      "title": "Db Max Retries",
+      "type": "integer"
+    },
+    "db_retry_interval_ms": {
+      "default": 2000,
+      "title": "Db Retry Interval Ms",
+      "type": "integer"
+    },
+    "db_max_backoff_seconds": {
+      "default": 30,
+      "title": "Db Max Backoff Seconds",
+      "type": "integer"
+    },
+    "use_postgresdb_percentiles": {
+      "default": true,
+      "description": "Use database-native percentile functions (percentile_cont) for performance metrics. When enabled, PostgreSQL uses native SQL percentile calculations (5-10x faster). When disabled or using SQLite, falls back to Python-based percentile calculations. Recommended: true for PostgreSQL, auto-detected for SQLite.",
+      "title": "Use Postgresdb Percentiles",
+      "type": "boolean"
+    },
+    "db_prepare_threshold": {
+      "default": 5,
+      "description": "psycopg3 prepare_threshold for auto-prepared statements",
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Db Prepare Threshold",
+      "type": "integer"
+    },
+    "db_pool_class": {
+      "default": "auto",
+      "description": "Connection pool class: auto (NullPool with PgBouncer), null, or queue",
+      "enum": [
+        "auto",
+        "null",
+        "queue"
+      ],
+      "title": "Db Pool Class",
+      "type": "string"
+    },
+    "db_pool_pre_ping": {
+      "default": "auto",
+      "description": "Pre-ping connections: auto, true, or false",
+      "enum": [
+        "auto",
+        "true",
+        "false"
+      ],
+      "title": "Db Pool Pre Ping",
+      "type": "string"
+    },
+    "cache_type": {
+      "default": "database",
+      "enum": [
+        "redis",
+        "memory",
+        "none",
+        "database"
+      ],
+      "title": "Cache Type",
+      "type": "string"
+    },
+    "redis_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "redis://localhost:6379/0",
+      "title": "Redis Url"
+    },
+    "cache_prefix": {
+      "default": "mcpgw:",
+      "title": "Cache Prefix",
+      "type": "string"
+    },
+    "session_ttl": {
+      "default": 3600,
+      "title": "Session Ttl",
+      "type": "integer"
+    },
+    "message_ttl": {
+      "default": 600,
+      "title": "Message Ttl",
+      "type": "integer"
+    },
+    "redis_max_retries": {
+      "default": 30,
+      "title": "Redis Max Retries",
+      "type": "integer"
+    },
+    "redis_retry_interval_ms": {
+      "default": 2000,
+      "title": "Redis Retry Interval Ms",
+      "type": "integer"
+    },
+    "redis_max_backoff_seconds": {
+      "default": 30,
+      "title": "Redis Max Backoff Seconds",
+      "type": "integer"
+    },
+    "global_config_cache_ttl": {
+      "default": 60,
+      "description": "TTL in seconds for GlobalConfig in-memory cache (default: 60)",
+      "maximum": 3600,
+      "minimum": 5,
+      "title": "Global Config Cache Ttl",
+      "type": "integer"
+    },
+    "a2a_stats_cache_ttl": {
+      "default": 30,
+      "description": "TTL in seconds for A2A stats in-memory cache (default: 30)",
+      "maximum": 3600,
+      "minimum": 5,
+      "title": "A2A Stats Cache Ttl",
+      "type": "integer"
+    },
+    "redis_parser": {
+      "default": "auto",
+      "description": "Redis protocol parser: auto (use hiredis if available), hiredis (require hiredis), python (pure-Python)",
+      "enum": [
+        "auto",
+        "hiredis",
+        "python"
+      ],
+      "title": "Redis Parser",
+      "type": "string"
+    },
+    "redis_decode_responses": {
+      "default": true,
+      "description": "Return strings instead of bytes",
+      "title": "Redis Decode Responses",
+      "type": "boolean"
+    },
+    "redis_max_connections": {
+      "default": 50,
+      "description": "Connection pool size per worker",
+      "title": "Redis Max Connections",
+      "type": "integer"
+    },
+    "redis_socket_timeout": {
+      "default": 2.0,
+      "description": "Socket read/write timeout in seconds",
+      "title": "Redis Socket Timeout",
+      "type": "number"
+    },
+    "redis_socket_connect_timeout": {
+      "default": 2.0,
+      "description": "Connection timeout in seconds",
+      "title": "Redis Socket Connect Timeout",
+      "type": "number"
+    },
+    "redis_retry_on_timeout": {
+      "default": true,
+      "description": "Retry commands on timeout",
+      "title": "Redis Retry On Timeout",
+      "type": "boolean"
+    },
+    "redis_health_check_interval": {
+      "default": 30,
+      "description": "Seconds between connection health checks (0=disabled)",
+      "title": "Redis Health Check Interval",
+      "type": "integer"
+    },
+    "redis_leader_ttl": {
+      "default": 15,
+      "description": "Leader election TTL in seconds",
+      "title": "Redis Leader Ttl",
+      "type": "integer"
+    },
+    "redis_leader_key": {
+      "default": "gateway_service_leader",
+      "description": "Leader key name",
+      "title": "Redis Leader Key",
+      "type": "string"
+    },
+    "redis_leader_heartbeat_interval": {
+      "default": 5,
+      "description": "Seconds between leader heartbeats",
+      "title": "Redis Leader Heartbeat Interval",
+      "type": "integer"
+    },
+    "use_stateful_sessions": {
+      "default": false,
+      "title": "Use Stateful Sessions",
+      "type": "boolean"
+    },
+    "json_response_enabled": {
+      "default": true,
+      "title": "Json Response Enabled",
+      "type": "boolean"
+    },
+    "plugins_enabled": {
+      "default": false,
+      "description": "Enable the plugin framework",
+      "title": "Plugins Enabled",
+      "type": "boolean"
+    },
+    "plugin_config_file": {
+      "default": "plugins/config.yaml",
+      "description": "Path to main plugin configuration file",
+      "title": "Plugin Config File",
+      "type": "string"
+    },
+    "plugins_cli_completion": {
+      "default": false,
+      "description": "Enable auto-completion for plugins CLI",
+      "title": "Plugins Cli Completion",
+      "type": "boolean"
+    },
+    "plugins_cli_markup_mode": {
+      "anyOf": [
+        {
+          "enum": [
+            "markdown",
+            "rich",
+            "disabled"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Set markup mode for plugins CLI",
+      "title": "Plugins Cli Markup Mode"
+    },
+    "dev_mode": {
+      "default": false,
+      "title": "Dev Mode",
+      "type": "boolean"
+    },
+    "reload": {
+      "default": false,
+      "title": "Reload",
+      "type": "boolean"
+    },
+    "debug": {
+      "default": false,
+      "title": "Debug",
+      "type": "boolean"
+    },
+    "otel_enable_observability": {
+      "default": false,
+      "description": "Enable OpenTelemetry observability",
+      "title": "Otel Enable Observability",
+      "type": "boolean"
+    },
+    "otel_traces_exporter": {
+      "default": "otlp",
+      "description": "Traces exporter: otlp, jaeger, zipkin, console, none",
+      "title": "Otel Traces Exporter",
+      "type": "string"
+    },
+    "otel_exporter_otlp_endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OTLP endpoint (e.g., http://localhost:4317)",
+      "title": "Otel Exporter Otlp Endpoint"
+    },
+    "otel_exporter_otlp_protocol": {
+      "default": "grpc",
+      "description": "OTLP protocol: grpc or http",
+      "title": "Otel Exporter Otlp Protocol",
+      "type": "string"
+    },
+    "otel_exporter_otlp_insecure": {
+      "default": true,
+      "description": "Use insecure connection for OTLP",
+      "title": "Otel Exporter Otlp Insecure",
+      "type": "boolean"
+    },
+    "otel_exporter_otlp_headers": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OTLP headers (comma-separated key=value)",
+      "title": "Otel Exporter Otlp Headers"
+    },
+    "otel_exporter_jaeger_endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Jaeger endpoint",
+      "title": "Otel Exporter Jaeger Endpoint"
+    },
+    "otel_exporter_zipkin_endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Zipkin endpoint",
+      "title": "Otel Exporter Zipkin Endpoint"
+    },
+    "otel_service_name": {
+      "default": "mcp-gateway",
+      "description": "Service name for traces",
+      "title": "Otel Service Name",
+      "type": "string"
+    },
+    "otel_resource_attributes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Resource attributes (comma-separated key=value)",
+      "title": "Otel Resource Attributes"
+    },
+    "otel_bsp_max_queue_size": {
+      "default": 2048,
+      "description": "Max queue size for batch span processor",
+      "title": "Otel Bsp Max Queue Size",
+      "type": "integer"
+    },
+    "otel_bsp_max_export_batch_size": {
+      "default": 512,
+      "description": "Max export batch size",
+      "title": "Otel Bsp Max Export Batch Size",
+      "type": "integer"
+    },
+    "otel_bsp_schedule_delay": {
+      "default": 5000,
+      "description": "Schedule delay in milliseconds",
+      "title": "Otel Bsp Schedule Delay",
+      "type": "integer"
+    },
+    "well_known_enabled": {
+      "default": true,
+      "title": "Well Known Enabled",
+      "type": "boolean"
+    },
+    "well_known_robots_txt": {
+      "default": "User-agent: *\nDisallow: /\n\n# MCP Gateway is a private API gateway\n# Public crawling is disabled by default",
+      "title": "Well Known Robots Txt",
+      "type": "string"
+    },
+    "well_known_security_txt": {
+      "default": "",
+      "title": "Well Known Security Txt",
+      "type": "string"
+    },
+    "well_known_security_txt_enabled": {
+      "default": false,
+      "title": "Well Known Security Txt Enabled",
+      "type": "boolean"
+    },
+    "well_known_custom_files": {
+      "default": "{}",
+      "title": "Well Known Custom Files",
+      "type": "string"
+    },
+    "well_known_cache_max_age": {
+      "default": 3600,
+      "title": "Well Known Cache Max Age",
+      "type": "integer"
+    },
+    "slug_refresh_batch_size": {
+      "default": 1000,
+      "description": "Batch size for gateway/tool slug refresh at startup",
+      "title": "Slug Refresh Batch Size",
+      "type": "integer"
+    },
+    "gateway_tool_name_separator": {
+      "default": "-",
+      "title": "Gateway Tool Name Separator",
+      "type": "string"
+    },
+    "validation_dangerous_html_pattern": {
+      "default": "<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>",
+      "title": "Validation Dangerous Html Pattern",
+      "type": "string"
+    },
+    "validation_dangerous_js_pattern": {
+      "default": "(?i)(?:^|\\s|[\\\"'`<>=])(javascript:|vbscript:|data:\\s*[^,]*[;\\s]*(javascript|vbscript)|\\bon[a-z]+\\s*=|<\\s*script\\b)",
+      "title": "Validation Dangerous Js Pattern",
+      "type": "string"
+    },
+    "validation_allowed_url_schemes": {
+      "default": [
+        "http://",
+        "https://",
+        "ws://",
+        "wss://"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Validation Allowed Url Schemes",
+      "type": "array"
+    },
+    "validation_name_pattern": {
+      "default": "^[a-zA-Z0-9_.\\-\\s]+$",
+      "title": "Validation Name Pattern",
+      "type": "string"
+    },
+    "validation_identifier_pattern": {
+      "default": "^[a-zA-Z0-9_\\-\\.]+$",
+      "title": "Validation Identifier Pattern",
+      "type": "string"
+    },
+    "validation_safe_uri_pattern": {
+      "default": "^[a-zA-Z0-9_\\-.:/?=&%{}]+$",
+      "title": "Validation Safe Uri Pattern",
+      "type": "string"
+    },
+    "validation_unsafe_uri_pattern": {
+      "default": "[<>\"\\'\\\\]",
+      "title": "Validation Unsafe Uri Pattern",
+      "type": "string"
+    },
+    "validation_tool_name_pattern": {
+      "default": "^[a-zA-Z][a-zA-Z0-9._-]*$",
+      "title": "Validation Tool Name Pattern",
+      "type": "string"
+    },
+    "validation_tool_method_pattern": {
+      "default": "^[a-zA-Z][a-zA-Z0-9_\\./-]*$",
+      "title": "Validation Tool Method Pattern",
+      "type": "string"
+    },
+    "validation_max_name_length": {
+      "default": 255,
+      "title": "Validation Max Name Length",
+      "type": "integer"
+    },
+    "validation_max_description_length": {
+      "default": 8192,
+      "title": "Validation Max Description Length",
+      "type": "integer"
+    },
+    "validation_max_template_length": {
+      "default": 65536,
+      "title": "Validation Max Template Length",
+      "type": "integer"
+    },
+    "validation_max_content_length": {
+      "default": 1048576,
+      "title": "Validation Max Content Length",
+      "type": "integer"
+    },
+    "validation_max_json_depth": {
+      "default": 30,
+      "description": "Maximum allowed JSON nesting depth for tool/resource schemas. Increased from 10 to 30 for compatibility with deeply nested schemas like Notion MCP (issue #1542). Override with VALIDATION_MAX_JSON_DEPTH environment variable. Minimum: 1, Maximum: 100",
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Validation Max Json Depth",
+      "type": "integer"
+    },
+    "validation_max_url_length": {
+      "default": 2048,
+      "title": "Validation Max Url Length",
+      "type": "integer"
+    },
+    "validation_max_rpc_param_size": {
+      "default": 262144,
+      "title": "Validation Max Rpc Param Size",
+      "type": "integer"
+    },
+    "validation_max_method_length": {
+      "default": 128,
+      "title": "Validation Max Method Length",
+      "type": "integer"
+    },
+    "validation_allowed_mime_types": {
+      "default": [
+        "text/plain",
+        "text/html",
+        "text/css",
+        "text/markdown",
+        "text/javascript",
+        "application/json",
+        "application/xml",
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/svg+xml",
+        "application/octet-stream"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Validation Allowed Mime Types",
+      "type": "array"
+    },
+    "validation_max_requests_per_minute": {
+      "default": 60,
+      "title": "Validation Max Requests Per Minute",
+      "type": "integer"
+    },
+    "enable_header_passthrough": {
+      "default": false,
+      "description": "Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)",
+      "title": "Enable Header Passthrough",
+      "type": "boolean"
+    },
+    "enable_overwrite_base_headers": {
+      "default": false,
+      "description": "Enable overwriting of base headers",
+      "title": "Enable Overwrite Base Headers",
+      "type": "boolean"
+    },
+    "default_passthrough_headers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Default Passthrough Headers",
+      "type": "array"
+    },
+    "passthrough_headers_source": {
+      "default": "db",
+      "description": "Source priority for passthrough headers: env (environment always wins), db (database wins, default), merge (combine both)",
+      "enum": [
+        "env",
+        "db",
+        "merge"
+      ],
+      "title": "Passthrough Headers Source",
+      "type": "string"
+    },
+    "pagination_default_page_size": {
+      "default": 50,
+      "description": "Default number of items per page",
+      "maximum": 1000,
+      "minimum": 1,
+      "title": "Pagination Default Page Size",
+      "type": "integer"
+    },
+    "pagination_max_page_size": {
+      "default": 500,
+      "description": "Maximum allowed items per page",
+      "maximum": 10000,
+      "minimum": 1,
+      "title": "Pagination Max Page Size",
+      "type": "integer"
+    },
+    "pagination_min_page_size": {
+      "default": 1,
+      "description": "Minimum items per page",
+      "minimum": 1,
+      "title": "Pagination Min Page Size",
+      "type": "integer"
+    },
+    "pagination_cursor_threshold": {
+      "default": 10000,
+      "description": "Threshold for cursor-based pagination",
+      "minimum": 1,
+      "title": "Pagination Cursor Threshold",
+      "type": "integer"
+    },
+    "pagination_cursor_enabled": {
+      "default": true,
+      "description": "Enable cursor-based pagination",
+      "title": "Pagination Cursor Enabled",
+      "type": "boolean"
+    },
+    "pagination_default_sort_field": {
+      "default": "created_at",
+      "description": "Default sort field",
+      "title": "Pagination Default Sort Field",
+      "type": "string"
+    },
+    "pagination_default_sort_order": {
+      "default": "desc",
+      "description": "Default sort order",
+      "pattern": "^(asc|desc)$",
+      "title": "Pagination Default Sort Order",
+      "type": "string"
+    },
+    "pagination_max_offset": {
+      "default": 100000,
+      "description": "Maximum offset for pagination",
+      "minimum": 0,
+      "title": "Pagination Max Offset",
+      "type": "integer"
+    },
+    "pagination_count_cache_ttl": {
+      "default": 300,
+      "description": "Cache TTL for pagination counts",
+      "minimum": 0,
+      "title": "Pagination Count Cache Ttl",
+      "type": "integer"
+    },
+    "pagination_include_links": {
+      "default": true,
+      "description": "Include pagination links",
+      "title": "Pagination Include Links",
+      "type": "boolean"
+    },
+    "pagination_base_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Base URL for pagination links",
+      "title": "Pagination Base Url"
+    },
+    "enable_ed25519_signing": {
+      "default": false,
+      "description": "Enable Ed25519 signing for certificates",
+      "title": "Enable Ed25519 Signing",
+      "type": "boolean"
+    },
+    "prev_ed25519_private_key": {
+      "default": "",
+      "description": "Previous Ed25519 private key for signing",
+      "format": "password",
+      "title": "Prev Ed25519 Private Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "prev_ed25519_public_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Derived previous Ed25519 public key",
+      "title": "Prev Ed25519 Public Key"
+    },
+    "ed25519_private_key": {
+      "default": "",
+      "description": "Ed25519 private key for signing",
+      "format": "password",
+      "title": "Ed25519 Private Key",
+      "type": "string",
+      "writeOnly": true
+    },
+    "ed25519_public_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Derived Ed25519 public key",
+      "title": "Ed25519 Public Key"
+    },
+    "masked_auth_value": {
+      "default": "*****",
+      "title": "Masked Auth Value",
+      "type": "string"
+    },
+    "ENABLE_METRICS": {
+      "default": true,
+      "description": "Enable Prometheus metrics instrumentation",
+      "title": "Enable Metrics",
+      "type": "boolean"
+    },
+    "METRICS_EXCLUDED_HANDLERS": {
+      "default": "",
+      "description": "Comma-separated regex patterns for paths to exclude from metrics",
+      "title": "Metrics Excluded Handlers",
+      "type": "string"
+    },
+    "METRICS_NAMESPACE": {
+      "default": "default",
+      "description": "Prometheus metrics namespace",
+      "title": "Metrics Namespace",
+      "type": "string"
+    },
+    "METRICS_SUBSYSTEM": {
+      "default": "",
+      "description": "Prometheus metrics subsystem",
+      "title": "Metrics Subsystem",
+      "type": "string"
+    },
+    "METRICS_CUSTOM_LABELS": {
+      "default": "",
+      "description": "Comma-separated \"key=value\" pairs for static custom labels",
+      "title": "Metrics Custom Labels",
+      "type": "string"
+    }
+  },
+  "title": "Settings",
+  "type": "object"
+}

@@ -1,0 +1,23 @@
+{{/* -------------------------------------------------------------------
+     SERVICE - Redis
+     -------------------------------------------------------------------
+     - Exposes port 6379 (or whatever you set in values.yaml).
+     - Selector now matches the app label from the Deployment above.
+     ------------------------------------------------------------------- */}}
+
+{{- if and .Values.redis.enabled (not .Values.redis.external.enabled) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-redis
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-redis
+spec:
+  type: {{ .Values.redis.service.type }}
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+  selector:
+    app: {{ include "mcp-stack.fullname" . }}-redis
+{{- end }}

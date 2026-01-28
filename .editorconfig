@@ -1,0 +1,31 @@
+# top-most EditorConfig file
+root = true
+
+# Unix-style newlines with UTF-8 encoding
+[*]
+end_of_line = lf
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Indentation for source and config files
+[*.{py,yml,yaml,json,js,ts,md,sh,txt}]
+indent_style = space
+indent_size = 4
+
+# Markdown and JSON should not trim trailing spaces (needed for alignment)
+[*.md]
+trim_trailing_whitespace = false
+
+# Shell scripts
+[*.sh]
+insert_final_newline = true
+
+# Makefiles use tabs, not spaces
+[Makefile]
+indent_style = tab
+
+# Ignore binary files
+[*.{png,jpg,jpeg,gif,ico,svg,webp,pyc}]
+insert_final_newline = false
+trim_trailing_whitespace = false

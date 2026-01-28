@@ -1,0 +1,48 @@
+# Generated PowerPoint files
+examples/generated/*.pptx
+examples/demos/*.pptx
+
+# Keep templates but ignore generated ones from templates
+examples/templates/*_generated.pptx
+examples/templates/from_*.pptx
+
+# Python cache and build files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Virtual environment
+venv/
+env/
+.env
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Keep directory structure but ignore content
+examples/generated/.gitkeep
+examples/demos/.gitkeep

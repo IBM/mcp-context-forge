@@ -1,0 +1,17 @@
+nav:
+  - index.md
+  - local.md
+  - container.md
+  - compose.md
+  - kubernetes.md
+  - openshift.md
+  - minikube.md
+  - helm.md
+  - argocd.md
+  - google-cloud-run.md
+  - ibm-code-engine.md
+  - aws.md
+  - azure.md
+  - fly-io.md
+  - proxy-auth.md
+  - cforge-gateway.md

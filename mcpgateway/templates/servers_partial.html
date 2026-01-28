@@ -1,0 +1,128 @@
+<!-- htmlhint doctype-first:false -->
+<table id="servers-table" class="min-w-full divide-y divide-gray-200">
+  <thead class="bg-gray-50 dark:bg-gray-700">
+    <tr>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Icon</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">S. No.</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">UUID</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Tools</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Resources</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Prompts</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Tags</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Team</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Visibility</th>
+    </tr>
+  </thead>
+  <tbody id="servers-table-body" data-testid="server-list" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+  {% for server in data %}
+  {% set server_label = server.name or server.id %}
+  <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}">
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+      <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
+        <!-- Row 1: View | Edit -->
+        <button onclick="viewServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+        <button onclick="editServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+
+        <!-- Row 2: Export Config -->
+        <button onclick="showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')" class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors" x-tooltip="'💡Generate client configuration files for this server'">Export Config</button>
+
+        <!-- Row 3: Activate/Deactivate | Delete -->
+        <div class="col-span-2 flex flex-col space-y-1">
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'servers')">
+            <input type="hidden" name="activate" value="{{ 'false' if server.enabled else 'true' }}" />
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md {% if server.enabled %}text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20{% else %}text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20{% endif %}">{% if server.enabled %}Deactivate{% else %}Activate{% endif %}</button>
+          </form>
+          <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/delete" class="contents" onsubmit="return handleDeleteSubmit(event, 'server', '{{ server_label }}', 'servers')">
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
+          </form>
+        </div>
+      </div>
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap">
+      {% if server.icon %}
+      <img src="{{ server.icon }}" alt="{{ server.name }} Icon" class="h-8 w-8" />
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-300">N/A</span>
+      {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
+    <td class="px-6 py-4 whitespace-normal break-all text-sm font-medium text-gray-900 dark:text-gray-300 max-w-32">{{ server.id }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ server.name }}</td>
+    <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ server.description }}</td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
+      {% if server.associatedTools %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">{{ server.associatedTools | length }} tool{{ 's' if server.associatedTools | length != 1 else '' }}</span>
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-400 text-xs">0 tools</span>
+      {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
+      {% if server.associatedResources %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">{{ server.associatedResources | length }} resource{{ 's' if server.associatedResources | length != 1 else '' }}</span>
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-400 text-xs">0 resources</span>
+      {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
+      {% if server.associatedPrompts %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">{{ server.associatedPrompts | length }} prompt{{ 's' if server.associatedPrompts | length != 1 else '' }}</span>
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-400 text-xs">0 prompts</span>
+      {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap">
+      {% if server.tags %}
+        {% for tag in server.tags %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">
+          {% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}
+        </span>
+        {% endfor %}
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
+      {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap">
+      {% if server.ownerEmail %}
+      <span class="text-sm text-gray-900 dark:text-gray-100">{{ server.ownerEmail }}</span>
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+      {% endif %}
+    </td>
+    <td class="px-2 py-4 whitespace-nowrap">
+      {% if server.team %}
+      <span class="text-sm text-gray-900 dark:text-gray-100">{{ server.team|e|replace(' ', '<br />')|safe }}</span>
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+      {% endif %}
+    </td>
+    <td class="px-6 py-4 whitespace-nowrap">
+      {% if server.visibility == 'private' %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Private</span>
+      {% elif server.visibility == 'team' %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Team</span>
+      {% elif server.visibility == 'public' %}
+      <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Public</span>
+      {% else %}
+      <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+      {% endif %}
+    </td>
+  </tr>
+{% endfor %}
+  </tbody>
+</table>
+
+<!-- Out-of-band swap for pagination controls -->
+<div id="servers-pagination-controls" hx-swap-oob="true">
+  {% set base_url = root_path + '/admin/servers/partial' %}
+  {% set hx_target = '#servers-table' %}
+  {% set hx_indicator = '#servers-loading' %}
+  {% set table_name = 'servers' %}
+  {% set query_params = {'include_inactive': include_inactive} %}
+  {% autoescape false %}
+  {% include 'pagination_controls.html' %}
+  {% endautoescape %}
+</div>

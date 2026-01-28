@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: mcp-gateway
+  labels:
+    app: postgres
+data:
+  # PostgreSQL connection settings
+  # IMPORTANT: Change these values for your deployment
+  POSTGRES_HOST: postgresql
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: mcp
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: changeme

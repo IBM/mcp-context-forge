@@ -1,0 +1,55 @@
+# .prospector.yaml - Configuration for prospector
+output-format: text
+strictness: medium
+test-warnings: false
+doc-warnings: true
+member-warnings: true
+
+ignore-paths:
+  - docs
+  - build
+  - dist
+  - .tox
+  - .eggs
+  - venv
+  - .venv
+  - node_modules
+
+ignore-patterns:
+  - .*\.egg$
+  - .*migrations.*
+  - .*settings\.py
+  - .*manage\.py
+  - tests/.*
+
+pylint:
+  disable:
+    - too-few-public-methods
+    - too-many-arguments
+    - too-many-instance-attributes
+    - too-many-locals
+
+pep8:
+  full: true
+  options:
+    max-line-length: 200
+
+mccabe:
+  run: true
+  options:
+    max-complexity: 10
+
+dodgy:
+  run: true
+
+pyroma:
+  run: true
+  disable:
+    - PYR19  # Has Readme
+    - PYR16  # Has proper author
+
+pep257:
+  disable:
+    - D203  # 1 blank line required before class docstring
+    - D212  # Multi-line docstring summary should start at the first line
+    - D213  # Multi-line docstring summary should start at the second line

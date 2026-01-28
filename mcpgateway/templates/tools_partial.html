@@ -1,0 +1,218 @@
+<!-- htmlhint doctype-first:false -->
+<table id="tools-table" class="min-w-full divide-y divide-gray-200">
+  <thead class="bg-gray-50 dark:bg-gray-700">
+    <tr>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-48">Actions</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">S. No.</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-36">Source</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">Name</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">Request Type</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">Annotations</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Tags</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Owner</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Team</th>
+      <th class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Status</th>
+    </tr>
+  </thead>
+  <tbody
+    id="tools-table-body"
+    class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700"
+  >
+    {% for tool in data %}
+      <tr data-enabled="{{ tool.enabled|lower }}">
+        <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
+          <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
+            <!-- Row 1: Test -->
+            <button
+              onclick="testTool('{{ tool.id }}')"
+              class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
+              x-tooltip="'💡Execute this Tool with sample inputs'"
+            >
+              Test
+            </button>
+
+            <!-- Row 2: View | Edit -->
+            <button
+              onclick="viewTool('{{ tool.id }}')"
+              class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors"
+              x-tooltip="'💡View tool details and configuration'"
+            >
+              View
+            </button>
+            <button
+              onclick="editTool('{{ tool.id }}')"
+              class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
+              x-tooltip="'💡Edit tool settings and configuration'"
+            >
+              Edit
+            </button>
+
+            <!-- Row 3: Deactivate/Activate | Delete -->
+            <div class="col-span-2 flex flex-col space-y-1">
+              {% if tool.enabled %}
+              <form
+                method="POST"
+                action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
+                class="contents"
+                onsubmit="return handleToggleSubmit(event, 'tools')"
+              >
+                <input type="hidden" name="activate" value="false" />
+                <button
+                  type="submit"
+                  class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                  x-tooltip="'💡Temporarily disable this tool'"
+                >
+                  Deactivate
+                </button>
+              </form>
+              {% else %}
+              <form
+                method="POST"
+                action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
+                class="contents"
+                onsubmit="return handleToggleSubmit(event, 'tools')"
+              >
+                <input type="hidden" name="activate" value="true" />
+                <button
+                  type="submit"
+                  class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
+                  x-tooltip="'💡Re-enable this tool'"
+                >
+                  Activate
+                </button>
+              </form>
+              {% endif %}
+
+              <form
+                method="POST"
+                action="{{ root_path }}/admin/tools/{{ tool.id }}/delete"
+                class="contents"
+                onsubmit="return handleDeleteSubmit(event, 'tool', '{{ tool.name }}', 'tools')"
+              >
+                <button
+                  type="submit"
+                  class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                  x-tooltip="'💡Permanently delete this tool'"
+                >
+                  Delete
+                </button>
+              </form>
+            </div>
+          </div>
+        </td>
+        <td
+          class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12 dark:text-gray-100"
+        >
+          {{ (pagination.page - 1) * pagination.per_page + loop.index }}
+        </td>
+        <td class="px-2 py-4 text-sm w-36">
+          <div class="font-medium text-gray-900 dark:text-gray-100">{{ tool.gatewaySlug }}</div>
+          <div class="text-xs text-gray-500 dark:text-gray-400 break-words">{{ tool.url }}</div>
+        </td>
+        <td
+          class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-24 dark:text-gray-100"
+        >
+          {{ tool.name }}
+        </td>
+        <td
+          class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300 w-12"
+        >
+          {{ tool.requestType }}
+        </td>
+        <td
+          class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
+        >
+          {% set clean_desc = (tool.description or "") | replace('\n', ' ') |
+          replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags |
+          trim | escape %} {% if refactor_desc | length is greaterthan 220 %} {{
+          refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}
+        </td>
+        <td class="px-2 py-4 whitespace-normal break-words">
+          {% if tool.annotations %} {% if tool.annotations.title %}
+          <span
+            class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1"
+            >📖</span
+          >
+          {% endif %} {% if tool.annotations.destructiveHint %}
+          <span
+            class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1"
+            >⚠️</span
+          >
+          {% endif %} {% if tool.annotations.idempotentHint %}
+          <span
+            class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1"
+            >🔄</span
+          >
+          {% endif %} {% if tool.annotations.openWorldHint %}
+          <span
+            class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1"
+            >🌐</span
+          >
+          {% endif %} {% else %}
+          <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
+          {% endif %}
+        </td>
+        <td class="px-2 py-4 whitespace-nowrap">
+          {% if tool.tags %} {% for tag in tool.tags %}
+          <span
+            class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
+            >{{ tag.id }}</span
+          >
+          {% endfor %} {% else %}
+          <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
+          {% endif %}
+        </td>
+        <td
+          class="px-2 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20"
+        >
+          {{ tool.ownerEmail }}
+        </td>
+        <td
+          class="px-2 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20"
+        >
+          {% if tool.team %}{{ tool.team }}{% else %}<span
+            class="text-gray-400 dark:text-gray-600 text-xs"
+            >None</span
+          >{% endif %}
+        </td>
+        <td class="px-2 py-4 whitespace-nowrap text-sm w-20">
+          <div class="flex flex-col gap-1">
+            <!-- Type badge -->
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 w-fit">{{ tool.integrationType }}</span>
+            <!-- Visibility badge -->
+            {% if tool.visibility == "public" %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 w-fit">🌍 Public</span>
+            {% elif tool.visibility == "team" %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 w-fit">👥 Team</span>
+            {% else %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 w-fit">🔒 Private</span>
+            {% endif %}
+            <!-- Status badge with tooltip -->
+            <div class="relative group">
+              {% set enabled = tool.enabled %}{% set reachable = tool.reachable %}
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium w-fit {% if enabled and reachable %}bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200{% elif enabled %}bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200{% else %}bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200{% endif %}">
+                {% if enabled and reachable %}● Online{% elif enabled %}● Offline{% else %}● Inactive{% endif %}
+              </span>
+              <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">
+                {% if not enabled %}Tool is Manually Deactivated{% elif not reachable %}Gateway unreachable{% else %}Everything stable{% endif %}
+              </div>
+            </div>
+          </div>
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Out-of-band swap for pagination controls -->
+<div id="tools-pagination-controls" hx-swap-oob="true">
+  {% set base_url = root_path + '/admin/tools/partial' %}
+  {% set hx_target = '#tools-table' %}
+  {% set hx_indicator = '#tools-loading' %}
+  {% set table_name = 'tools' %}
+  {% set query_params = {'include_inactive': include_inactive} %}
+  {% autoescape false %}
+  {% include 'pagination_controls.html' %}
+  {% endautoescape %}
+</div>

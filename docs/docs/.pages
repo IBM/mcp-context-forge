@@ -1,0 +1,14 @@
+nav:
+  - "🏠 Home": index.md
+  - "🧭 Overview": overview
+  - "🧰 Use": using
+  - "🚀 Deploy": deployment
+  - "🛡️ Manage": manage
+  - "🔧 Operations": operations
+  - "💻 Develop": development
+  - "🧪 Test": testing
+  - "📐 Design & Roadmap": architecture
+  - "📰 Media": media
+  - "📖 Tutorials": tutorials
+  - "⭐ Best Practices": best-practices
+  - "❓ FAQ": faq

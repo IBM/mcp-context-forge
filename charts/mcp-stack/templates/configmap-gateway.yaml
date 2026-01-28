@@ -1,0 +1,24 @@
+{{/* -------------------------------------------------------------------
+     CONFIGMAP - Gateway Plain-Text Configuration
+     -------------------------------------------------------------------
+     - Renders a ConfigMap named   <release>-mcp-stack-gateway-config
+     - Each key/value in values.yaml → mcpContextForge.config
+       becomes an environment variable.
+     - Use ONLY for non-secret data (anything you don't mind in plain text).
+     - The matching Secret template handles sensitive keys.
+     ------------------------------------------------------------------- */}}
+
+{{- if .Values.mcpContextForge.config }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-gateway-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+data:
+{{- /* Iterate over every key in mcpContextForge.config */}}
+{{- range $key, $val := .Values.mcpContextForge.config }}
+  {{ $key }}: {{ $val | quote }}
+{{- end }}
+{{- end }}

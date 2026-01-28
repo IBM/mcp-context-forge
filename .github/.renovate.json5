@@ -1,0 +1,50 @@
+{
+  /*
+   * https://docs.renovatebot.com/configuration-options/
+   * 1️⃣  General bot behaviour
+   * ──────────────────────────
+   */
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",       /* sensible defaults, but no major-bumps or grouping magic */
+    "schedule:daily"     /* run once a day */
+  ],
+
+  /* Only open one brand-new branch or PR during the weekly window */
+  "prHourlyLimit": 1,
+
+  /*
+   * 2️⃣  Package-specific safeguards
+   * ───────────────────────────────
+   * We simply turn *off* major-update PRs for the three troublesome deps.
+   * Minor / patch releases (incl. security fixes) still flow through.
+   */
+  "packageRules": [
+    {
+      "description": "🚫  Never bump the project Python major",
+      "matchPackageNames": ["python"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "🚫  Stay on CodeMirror 5.x",
+      "matchPackageNames": ["codemirror"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "🚫  Stay on Tailwind 2.x",
+      "matchPackageNames": ["tailwindcss"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ],
+
+  /*
+   * 3️⃣  Quality-of-life niceties (optional, but handy)
+   * ──────────────────────────────────────────────────
+   */
+  "dependencyDashboard": true,              /* one place to see/snooze every update            */
+  "prCreation": "not-pending",              /* PR appears only after CI finishes the branch    */
+  "rebaseWhen": "behind-base-branch"        /* keep approved PRs fresh until you hit "merge"   */
+}

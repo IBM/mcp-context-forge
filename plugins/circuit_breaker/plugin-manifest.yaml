@@ -1,0 +1,14 @@
+description: "Trips per-tool breaker on high error rates or consecutive failures; blocks during cooldown."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["reliability", "stability", "sre"]
+available_hooks:
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_config:
+  error_rate_threshold: 0.5
+  window_seconds: 60
+  min_calls: 10
+  consecutive_failure_threshold: 5
+  cooldown_seconds: 60
+  tool_overrides: {}

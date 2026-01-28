@@ -1,0 +1,63 @@
+plugins:
+  - name: "OPAPluginFilter"
+    kind: "opapluginfilter.plugin.OPAPluginFilter"
+    description: "An OPA plugin that enforces rego policies on requests and allows/denies requests as per policies"
+    version: "0.1.0"
+    author: "Shriti Priya"
+    hooks: ["tool_pre_invoke", "tool_post_invoke", "prompt_pre_fetch", "prompt_post_fetch", "resource_pre_fetch", "resource_post_fetch"]
+    tags: ["plugin"]
+    mode: "permissive"  # enforce | permissive | disabled
+    priority: 30
+    applied_to:
+      tools:
+        - tool_name: "fast-time-git-status"
+          extensions:
+            policy: "example"
+            policy_endpoints:
+              - "allow_tool_pre_invoke"
+              - "allow_tool_post_invoke"
+            policy_modality:
+              - "text"
+      prompts:
+        - prompt_name: "test_prompt"
+          extensions:
+            policy: "example"
+            policy_endpoints:
+              - "allow_prompt_pre_fetch"
+              - "allow_prompt_post_fetch"
+            policy_modality:
+              - "text"
+      resources:
+        - resource_uri: "https://example.com"
+          extensions:
+            policy: "example"
+            policy_endpoints:
+              - "allow_resource_pre_fetch"
+              - "allow_resource_post_fetch"
+            policy_modality:
+              - "text"
+
+    conditions:
+      # Apply to specific tools/servers
+      - server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      # Plugin config dict passed to the plugin constructor
+      opa_base_url: "http://127.0.0.1:8181/v1/data/"
+      opa_client_retries: 3
+      opa_client_timeout: 30s
+      opa_client_max_keepalive: 20
+      opa_client_max_connections: 100
+      opa_client_keepalive_expiry: 5s
+
+# Plugin directories to scan
+plugin_dirs:
+  - "opapluginfilter"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

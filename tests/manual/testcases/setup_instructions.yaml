@@ -1,0 +1,173 @@
+# MCP Gateway v0.9.0 - Setup Instructions
+# Complete environment setup guide for manual testers
+# Must be completed before any other testing
+
+worksheet_name: "Setup Instructions"
+description: "Complete environment setup and validation for MCP Gateway testing"
+priority: "CRITICAL"
+estimated_time: "30-60 minutes"
+prerequisite: true
+
+headers:
+  - "Step"
+  - "Action"
+  - "Command"
+  - "Expected Result"
+  - "Troubleshooting"
+  - "Status"
+  - "Notes"
+  - "Required"
+
+prerequisites:
+  - "Python 3.11+ installed (python3 --version)"
+  - "Git installed (git --version)"
+  - "curl installed (curl --version)"
+  - "Modern web browser (Chrome/Firefox recommended)"
+  - "Text editor (vi/vim/VSCode)"
+  - "Terminal/command line access"
+  - "4+ hours dedicated testing time"
+  - "Reliable internet connection"
+  - "Admin/sudo access for package installation"
+  - "Basic understanding of web applications and APIs"
+
+tests:
+  - step: "1"
+    action: "Check Prerequisites"
+    command: "python3 --version && git --version && curl --version"
+    expected: "Python 3.11+, Git, and curl version numbers displayed"
+    troubleshooting: "Install missing tools via package manager"
+    required: true
+    notes: "Must have all three tools"
+
+  - step: "2"
+    action: "Clone Repository"
+    command: "git clone <repository-url>"
+    expected: "Repository cloned successfully"
+    troubleshooting: "Check git credentials and network access"
+    required: true
+    notes: "Get repository URL from admin"
+
+  - step: "3"
+    action: "Enter Project Directory"
+    command: "cd mcp-context-forge"
+    expected: "Directory changed to project root"
+    troubleshooting: "Use 'ls' to verify files like README.md, .env.example exist"
+    required: true
+    notes: ""
+
+  - step: "4"
+    action: "Copy Environment File"
+    command: "cp .env.example .env"
+    expected: "Environment configuration file created"
+    troubleshooting: "Check file exists: ls -la .env"
+    required: true
+    notes: ""
+
+  - step: "5"
+    action: "Edit Configuration"
+    command: "vi .env"
+    expected: "Configuration file opened in vi editor"
+    troubleshooting: "Use :wq to save and quit vi editor"
+    required: true
+    notes: "Set PLATFORM_ADMIN_EMAIL=<your-test-email>"
+
+  - step: "6"
+    action: "Configure Admin Email"
+    command: "Set PLATFORM_ADMIN_EMAIL=<your-test-email>"
+    expected: "Admin email configured in .env"
+    troubleshooting: "Use a real email address you control"
+    required: true
+    notes: "This will be your login email"
+
+  - step: "7"
+    action: "Configure Admin Password"
+    command: "Set PLATFORM_ADMIN_PASSWORD=<strong-password>"
+    expected: "Admin password configured in .env"
+    troubleshooting: "Use 12+ character password for security"
+    required: true
+    notes: "Don't use 'changeme' in production"
+
+  - step: "8"
+    action: "Enable Email Authentication"
+    command: "Set EMAIL_AUTH_ENABLED=true"
+    expected: "Email authentication enabled"
+    troubleshooting: "Required for multitenancy features"
+    required: true
+    notes: "Critical for migration"
+
+  - step: "9"
+    action: "Verify Configuration"
+    command: 'python3 -c "from mcpgateway.config import settings; print(f\"Admin: {settings.platform_admin_email}\")"'
+    expected: "Shows your configured admin email address"
+    troubleshooting: "If error, check .env file syntax and save"
+    required: true
+    notes: "Configuration validation"
+
+  - step: "10"
+    action: "Install Dependencies"
+    command: "make install-dev"
+    expected: "All Python packages installed successfully"
+    troubleshooting: "May take 5-15 minutes, check internet connection"
+    required: true
+    notes: "Download and install packages"
+
+  - step: "11"
+    action: "Run Database Migration"
+    command: "python3 -m mcpgateway.bootstrap_db"
+    expected: "'Database ready' message displayed at end"
+    troubleshooting: "MUST complete successfully - get help if fails"
+    required: true
+    notes: "CRITICAL STEP - migration execution"
+    critical: true
+
+  - step: "12"
+    action: "Verify Migration Success"
+    command: "python3 scripts/verify_multitenancy_0_7_0_migration.py"
+    expected: "'🎉 MIGRATION VERIFICATION: SUCCESS!' message at end"
+    troubleshooting: "All checks must pass - use fix script if needed"
+    required: true
+    notes: "Migration validation"
+    critical: true
+
+  - step: "13"
+    action: "Start MCP Gateway"
+    command: "make dev"
+    expected: "'Uvicorn running on http://0.0.0.0:4444' message"
+    troubleshooting: "Keep this terminal window open during testing"
+    required: true
+    notes: "Server startup"
+
+  - step: "14"
+    action: "Test Basic Connectivity"
+    command: "curl http://localhost:4444/health"
+    expected: '{"status":"ok"}'
+    troubleshooting: "If fails, check server started correctly"
+    required: true
+    notes: "Basic connectivity test"
+
+  - step: "15"
+    action: "Access Admin UI"
+    command: "Open http://localhost:4444/admin in browser"
+    expected: "Admin login page loads successfully"
+    troubleshooting: "Try both http:// and https:// if needed"
+    required: true
+    notes: "Web interface access"
+
+  - step: "16"
+    action: "Test Admin Authentication"
+    command: "Login with admin email/password from .env file"
+    expected: "Successful login, admin dashboard appears"
+    troubleshooting: "Main authentication validation test"
+    required: true
+    notes: "Primary authentication test"
+    critical: true
+
+  - step: "17"
+    action: "Verify Servers Visible (MAIN TEST)"
+    command: "Navigate to Virtual Servers section in admin UI"
+    expected: "Server list displays including pre-migration servers"
+    troubleshooting: "If empty list, migration failed - get help immediately"
+    required: true
+    notes: "THIS IS THE MAIN MIGRATION VALIDATION TEST"
+    critical: true
+    main_test: true

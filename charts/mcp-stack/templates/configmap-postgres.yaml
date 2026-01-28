@@ -1,0 +1,8 @@
+{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.postgresConfigName" . }}
+data:
+  POSTGRES_DB: {{ .Values.postgres.credentials.database }}
+{{- end }}

@@ -1,0 +1,764 @@
+# ----------------------------------------------------------------
+# 💡 Build system (PEP 517)
+#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - wheel is needed by most build front-ends
+# ----------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ----------------------------------------------------------------
+# 📦 Core project metadata (PEP 621)
+# ----------------------------------------------------------------
+[project]
+name = "mcp-contextforge-gateway"
+version = "1.0.0-BETA-2"
+description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
+keywords = ["MCP","API","gateway","proxy","tools",
+  "agents","agentic ai","model context protocol","multi-agent","fastapi",
+  "json-rpc","sse","websocket","federation","security","authentication"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Topic :: Software Development :: Libraries :: Application Frameworks"
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+
+# SPDX licence expression + explicit licence file (PEP 639)
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+# Maintainers
+maintainers = [
+    {name = "Mihai Criveti", email = "redacted@ibm.com"}
+]
+
+# ----------------------------------------------------------------
+# Runtime dependencies
+# ----------------------------------------------------------------
+dependencies = [
+    "aiohttp>=3.13.3",
+    "alembic>=1.18.1",
+    "argon2-cffi>=25.1.0",
+    "cryptography>=46.0.3",
+    "fastapi>=0.128.0",
+    "filelock>=3.20.3",
+    "gunicorn>=24.1.1",
+    "httpx>=0.28.1",
+    "httpx[http2]>=0.28.1",
+    "jinja2>=3.1.6",
+    "jq>=1.11.0",
+    "jsonpath-ng>=1.7.0",
+    "jsonschema>=4.26.0",
+    "mcp>=1.25.0",
+    "oauthlib>=3.3.1",
+    "orjson>=3.11.5",
+    "parse>=1.20.2",
+    "prometheus-fastapi-instrumentator>=7.1.0",
+    "prometheus_client>=0.24.1",
+    "psutil>=7.2.1",
+    "pydantic>=2.12.5",
+    "pydantic[email]>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "pyjwt>=2.10.1",
+    "python-json-logger>=4.0.0",
+    "PyYAML>=6.0.3",
+    "requests-oauthlib>=2.0.0",
+    "sqlalchemy>=2.0.46",
+    "sse-starlette>=3.2.0",
+    "starlette>=0.40.0,<0.51.0",
+    "starlette-compress>=1.6.1",
+    "typer>=0.21.1",
+    "uvicorn[standard]>=0.40.0",
+    "zeroconf>=0.148.0",
+]
+
+# ----------------------------------------------------------------
+# Development dependencies (for contributors and maintainers)
+# ----------------------------------------------------------------
+[dependency-groups]
+dev = [
+    "a2a-sdk[http-server]",
+    "aiohttp>=3.12.15",
+    "argparse-manpage>=4.7",
+    "autoflake>=2.3.1",
+    "bandit>=1.8.6",
+    "black>=25.9.0",
+    "bump2version>=1.0.1",
+    "check-manifest>=0.50",
+    "code2flow>=2.5.1",
+    "cookiecutter>=2.6.0",
+    "coverage>=7.10.7",
+    "coverage-badge>=1.1.2",
+    "darglint>=1.8.1",
+    "dlint>=0.16.0",
+    "dodgy>=0.2.1",
+    "fawltydeps>=0.20.0",
+    "flake8>=7.3.0",
+    "gprof2dot>=2025.4.14",
+    "hypothesis>=6.140.3",
+    "importchecker>=3.0",
+    "interrogate>=1.7.0",
+    "isort>=6.1.0",
+    "locust>=2.35.0",
+    "mypy>=1.18.2",
+    "pexpect>=4.9.0",
+    "pip-licenses>=5.0.0",
+    "pip_audit>=2.9.0",
+    "pre-commit>=4.5.1",
+    "prospector[with_everything]>=1.17.3",
+    "pydocstyle>=6.3.0",
+    "pylint>=3.3.9",
+    "pylint-pydantic>=0.3.5",
+    #"pyre-check>=0.9.25", # unused, conflicts with altk, superceded by pyrefly
+    "pyrefly>=0.35.0",
+    "pyright>=1.1.406",
+    "pyroma>=5.0",
+    "pyspelling>=2.11",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
+    "pytest-env>=1.1.5",
+    "pytest-examples>=0.0.18",
+    "pytest-httpx>=0.35.0",
+    "pytest-integration-mark>=0.2.0",
+    "pytest-md-report>=0.7.0",
+    "pytest-rerunfailures>=16.0.1",
+    "pytest-timeout>=2.4.0",
+    "pytest-trio>=0.8.0",
+    "pytest-xdist>=3.8.0",
+    "pytype>=2024.10.11",
+    "pyupgrade>=3.20.0",
+    "radon>=6.0.1",
+    "redis>=6.4.0",
+    "ruff>=0.13.3",
+    #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
+    "settings-doc>=4.3.2",
+    "snakeviz>=2.2.2",
+    "tomlcheck>=0.2.3",
+    "tomlkit>=0.13.3",
+    "tox>=4.34.1",
+    "tox-uv>=1.29.0",
+    "twine>=6.2.0",
+    "ty>=0.0.1a21",
+    "types-tabulate>=0.9.0.20241207",
+    "unimport>=1.3.0",
+    "url-normalize>=2.2.1",
+    "uv>=0.8.23",
+    "vulture>=2.14",
+    "websockets>=15.0.1",
+    "yamllint>=1.37.1",
+    # Required by other packages but here for security version control (CVEs)
+    # Can be removed once the associated packages update their dependencies
+    "pyasn1>=0.6.2", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
+]
+
+# ----------------------------------------------------------------
+# Optional dependency groups (extras)
+# ----------------------------------------------------------------
+[project.optional-dependencies]
+
+# Optional dependency groups (runtime)
+# Redis with hiredis C parser for up to 83x faster response parsing
+# See ADR-026 for benchmarks and decision rationale
+redis = [
+    "redis[hiredis]>=7.1.0",
+]
+
+# Pure-Python Redis parser fallback (for environments where hiredis wheels aren't available)
+redis-pure = [
+    "redis>=7.1.0",
+]
+
+# PostgreSQL adapter with psycopg3
+# Requires system dependency: libpq-dev (Debian/Ubuntu) or postgresql-devel (RHEL/Fedora)
+# Install with: sudo apt-get install libpq-dev (or dnf install postgresql-devel)
+postgres = [
+    "psycopg[c,binary]>=3.3.2",
+]
+
+mysql = [
+    "pymysql>=1.1.2",
+]
+
+mariadb = [
+    "mariadb>=1.1.14",
+]
+
+llmchat = [
+    "langchain-core>=1.2.7",
+    "langchain-mcp-adapters>=0.2.1",
+    "langchain-ollama>=1.0.1",
+    "langchain-openai>=1.1.7",
+    "langgraph>=1.0.7",
+]
+
+# Fuzzing and property-based testing
+fuzz = [
+    "hypothesis>=6.150.3",
+    "pytest-benchmark>=5.2.3",
+    "pytest-xdist>=3.8.0",
+    "schemathesis>=4.9.4",
+]
+
+# Coverage-guided fuzzing (requires clang/libfuzzer)
+fuzz-atheris = [
+    "atheris>=3.0.0",
+]
+
+alembic = [
+    "alembic>=1.18.1",
+]
+
+# Observability dependencies (optional)
+observability = [
+    "opentelemetry-api>=1.39.1",
+    "opentelemetry-sdk>=1.39.1",
+]
+
+# Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)
+# Rust-based ASGI server with native HTTP/2, WebSocket, and mTLS support
+# Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
+granian = [
+    "granian[pname,uvloop,reload]>=2.6.1",
+]
+
+# Async SQLite Driver (optional)
+aiosqlite = [
+    "aiosqlite>=0.22.1",
+]
+
+# Async PostgreSQL driver (optional)
+asyncpg = [
+    "asyncpg>=0.31.0",
+]
+
+# Profiling tools (optional) - for debugging memory leaks and performance issues
+# memray requires Python 3.12+ and Linux/macOS (not Windows)
+# Install with: pip install mcp-contextforge-gateway[profiling]
+# Usage: memray run -o profile.bin python -m mcpgateway
+#        memray flamegraph profile.bin -o flamegraph.html
+# See docs/docs/development/profiling.md for detailed usage
+profiling = [
+    "memray>=1.17.0",
+    "py-spy>=0.4.0",
+]
+
+# Plugin templating tools (optional) - copier pulls jinja2-ansible-filters which is GPL licensed
+templating = [
+    "copier>=9.11.3",
+]
+
+# Agent Lifecycle Toolkit(optional)
+altk = [
+    "agent-lifecycle-toolkit>=0.10.0",
+]
+
+# Agent Lifecycle Toolkit(optional)
+toolops = [
+    "agent-lifecycle-toolkit>=0.10.0",
+    "langchain-core>=1.2.7",
+    "langchain-mcp-adapters>=0.2.1",
+    "langchain-ollama>=1.0.1",
+    "langchain-openai>=1.1.7",
+    "langgraph>=1.0.7",
+]
+
+# gRPC Support (EXPERIMENTAL - optional, disabled by default)
+# Install with: pip install mcp-contextforge-gateway[grpc]
+grpc = [
+    "grpcio>=1.76.0",
+    "grpcio-reflection>=1.76.0",
+    "grpcio-tools>=1.76.0",
+    "protobuf>=6.33.4",
+]
+
+# UI Testing
+playwright = [
+    "playwright>=1.57.0",
+    "pytest-html>=4.2.0",
+    "pytest-playwright>=0.7.2",
+    "pytest-timeout>=2.4.0",
+]
+
+# Convenience meta-extras
+all = [
+    "mcp-contextforge-gateway[redis]>=0.9.0",
+]
+
+dev-all = [
+    "mcp-contextforge-gateway[redis,dev]>=0.9.0",
+]
+
+# --------------------------------------------------------------------
+#  Authors and URLs
+# --------------------------------------------------------------------
+[[project.authors]]
+name = "Mihai Criveti"
+email = "redacted@ibm.com"
+
+[project.urls]
+Homepage = "https://ibm.github.io/mcp-context-forge/"
+Documentation = "https://ibm.github.io/mcp-context-forge/"
+Repository = "https://github.com/IBM/mcp-context-forge"
+"Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
+Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
+
+# --------------------------------------------------------------------
+#  💻 Project scripts (cli entrypoint)
+# --------------------------------------------------------------------
+[project.scripts]
+mcpgateway = "mcpgateway.cli:main"
+mcpplugins = "mcpgateway.plugins.tools.cli:main"
+cforge = "mcpgateway.tools.cli:main"
+
+# --------------------------------------------------------------------
+#  🔧 setuptools-specific configuration
+# --------------------------------------------------------------------
+[tool.setuptools]
+include-package-data = true          # ensure wheels include the data files
+
+# Automatic discovery: keep every package that starts with "mcpgateway"
+[tool.setuptools.packages.find]
+include = ["mcpgateway*"]
+exclude = ["tests*"]
+
+##  Runtime data files  ------------------------------------------------
+#  - py.typed  -> advertises inline type hints (PEP 561)
+#  - static/*  -> CSS/JS for the admin UI
+#  - templates -> Jinja2 templates shipped at runtime
+[tool.setuptools.package-data]
+mcpgateway = [
+  "tools/builder/templates/*.yaml.j2",
+  "tools/builder/templates/compose/*.yaml.j2",
+  "tools/builder/templates/kubernetes/*.yaml.j2",
+  "py.typed",
+  "static/*.css",
+  "static/*.js",
+  "templates/*.html",
+  "alembic.ini",
+  "alembic/*.py",
+  "alembic/*.mako",
+  "alembic/*.md",
+  "alembic/versions/*.py",
+]
+
+# --------------------------------------------------------------------
+#  🛠  Tool configurations (black, mypy, etc.)
+# --------------------------------------------------------------------
+[tool.pytype]
+# Directory-specific options:
+inputs = ["mcpgateway"]
+python_version = "3.11"          # match default runtime
+
+[tool.check-manifest]
+ignore = [
+    "docs/**",
+    "tests/**",
+    ".github/**",
+    "Makefile",
+]
+
+[tool.black]
+line-length = 200
+target-version = ["py310", "py311", "py312"]
+include = "\\.pyi?$"
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "docs",
+    "test"
+]
+
+# 200 line length
+line-length = 200
+indent-width = 4
+
+# Assume Python 3.11
+target-version = "py311"
+
+
+[tool.ruff.lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+# Also "D1" for docstring present checks.
+# TODO: Enable "I" for import sorting as a separate PR.
+select = ["E3", "E4", "E7", "E9", "F", "D1"]
+ignore = []
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+preview = true
+
+# Ignore D1 (docstring checks) in tests and other non-production code
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D1"]
+"scripts/**/*.py" = ["D1"]
+"mcp-servers/**/*.py" = ["D1"]
+"agent_runtimes/**/*.py" = ["D1"]
+".github/**/*.py" = ["D1"]
+"migration_add_annotations.py" = ["D1"]
+"playwright.config.py" = ["D1"]
+"run_mutmut.py" = ["D1"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.lint.isort]
+###############################################################################
+# Core behaviour
+###############################################################################
+# profile                    = "black"      # inherit Black's own import-sorting profile
+# line-length                = 200          # match Black's custom line length
+# multi-line-output          = 3            # vertical-hanging-indent style
+# include-trailing-comma     = true         # keep trailing commas for Black
+from-first                 = true         # place all "from ... import ..." before plain "import ..."
+
+###############################################################################
+# Section ordering & headings
+###############################################################################
+# sections                   = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+# import-heading-future      = "Future"       # header above FUTURE imports (if headings enabled)
+# import-heading-stdlib      = "Standard"     # header for built-in Stdlib imports
+# import-heading-thirdparty  = "Third-Party"  # header for pip-installed packages
+# import-heading-firstparty  = "First-Party"  # header for internal 'mcpgateway' code
+# import-heading-localfolder = "Local"        # header for ad-hoc scripts / tests
+
+###############################################################################
+# What belongs where
+###############################################################################
+known-first-party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
+known-local-folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
+known-third-party          = ["alembic"] # treat "alembic" as THIRDPARTY
+# src-paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
+
+###############################################################################
+# Style niceties
+###############################################################################
+force-sort-within-sections = true         # always alphabetise names inside each block
+order-by-type              = false        # don't group imports by "type vs. straight name"
+# balanced-wrapping          = true         # spread wrapped imports evenly between lines
+# lines-between-sections     = 1            # exactly one blank line between the five groups
+# lines-between-types        = 1            # one blank line between 'import X' and 'from X import ...'
+no-lines-before            = ["local-folder"]  # suppress blank line *before* the LOCALFOLDER block
+# ensure-newline-before-comments = true     # newline before any inline # comment after an import
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.isort]
+###############################################################################
+# Core behaviour
+###############################################################################
+profile                    = "black"      # inherit Black's own import-sorting profile
+line_length                = 200          # match Black's custom line length
+multi_line_output          = 3            # vertical-hanging-indent style
+include_trailing_comma     = true         # keep trailing commas for Black
+from_first                 = true         # place all "from ... import ..." before plain "import ..."
+
+###############################################################################
+# Section ordering & headings
+###############################################################################
+sections                   = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+import_heading_future      = "Future"       # header above FUTURE imports (if headings enabled)
+import_heading_stdlib      = "Standard"     # header for built-in Stdlib imports
+import_heading_thirdparty  = "Third-Party"  # header for pip-installed packages
+import_heading_firstparty  = "First-Party"  # header for internal 'mcpgateway' code
+import_heading_localfolder = "Local"        # header for ad-hoc scripts / tests
+
+###############################################################################
+# What belongs where
+###############################################################################
+known_first_party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
+known_local_folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
+known_third_party          = ["alembic"] # treat "alembic" as THIRDPARTY
+# src_paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
+
+###############################################################################
+# Style niceties
+###############################################################################
+force_sort_within_sections = true         # always alphabetise names inside each block
+order_by_type              = false        # don't group imports by "type vs. straight name"
+balanced_wrapping          = true         # spread wrapped imports evenly between lines
+lines_between_sections     = 1            # exactly one blank line between the five groups
+lines_between_types        = 1            # one blank line between 'import X' and 'from X import ...'
+no_lines_before            = ["LOCALFOLDER"]  # suppress blank line *before* the LOCALFOLDER block
+ensure_newline_before_comments = true     # newline before any inline # comment after an import
+
+###############################################################################
+# Ignore junk we never want to touch
+###############################################################################
+extend_skip                = [
+  ".md", ".json", ".yaml", ".yml",
+  "dist", "build", ".venv", ".tox",
+  "*.tmp", "*.bak",
+]
+skip_glob                  = ["**/__init__.py"]  # leave namespace init files alone
+
+# ---- Optional CI toggles ----------------------------------------------------
+# check_only             = true    # dry-run mode: non-zero exit if files would change
+# verbose                = true    # print every file name processed
+# case_sensitive         = true    # treat upper/lowercase differences as significant
+
+[tool.mypy]
+# Target Python version
+python_version = "3.11"
+
+# Full strictness and individual checks
+strict = true                           # Enable all strict checks
+
+check_untyped_defs = true              # Type-check the bodies of untyped functions
+no_implicit_optional = true            # Require explicit Optional for None default
+disallow_untyped_defs = true           # Require type annotations for all functions
+disallow_untyped_calls = true          # Disallow calling functions without type info
+disallow_any_unimported = true         # Disallow Any from missing imports
+warn_return_any = true                 # Warn if a function returns Any
+warn_unreachable = true                # Warn about unreachable code
+warn_unused_ignores = true             # Warn if a "# type: ignore" is unnecessary
+warn_unused_configs = true             # Warn about unused config options
+warn_redundant_casts = true            # Warn if a cast does nothing
+strict_equality = true                 # Disallow ==/!= between incompatible types
+
+# Output formatting
+show_error_codes = true                # Show error codes in output
+pretty = true                          # Format output nicely
+
+# Exclude these paths from analysis
+exclude = [
+  '^build/',
+  '^\\.venv/',
+  '^\\.mypy_cache/',
+]
+
+# Plugins to use with mypy
+plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic models
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance"
+testpaths = [ "tests",]
+asyncio_mode = "auto"
+filterwarnings = [
+  "ignore:Passing 'msg' argument to .*\\.cancel\\(\\) is deprecated:DeprecationWarning", # From 3rd party libraries
+  "ignore:Use `streamable_http_client` instead\\.:DeprecationWarning",
+  "ignore:'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated\\.:DeprecationWarning",
+  "ignore:coroutine 'AsyncMockMixin\\._execute_mock_call' was never awaited:RuntimeWarning",
+]
+
+# Set environment variables for all tests
+env = [
+    "MCPGATEWAY_ADMIN_API_ENABLED=true",
+    "MCPGATEWAY_UI_ENABLED=true",
+    "DATABASE_URL=sqlite:///:memory:",
+    "TEST_DATABASE_URL=sqlite:///:memory:"
+]
+
+# ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
+# Pytest test markers
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "ui: marks tests as UI tests",
+    "api: marks tests as API tests",
+    "smoke: marks tests as smoke tests for quick validation",
+    "e2e: marks tests as end-to-end tests",
+    "fuzz: marks tests as fuzz tests (excluded from main test suite)",
+    "benchmark: marks tests as performance benchmarks (migration testing)",
+    "integration: marks tests as integration tests (require external services)",
+    "postgresql: marks tests that require PostgreSQL database",
+]
+
+# Playwright-specific test discovery patterns
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Playwright browser configuration (can be overridden via CLI)
+# These are custom options that your conftest.py can read
+# playwright_browser = "chromium"  # default browser
+# playwright_headed = false        # run headless by default
+# playwright_slow_mo = 0          # milliseconds delay between actions
+# playwright_screenshot = "only-on-failure"
+# playwright_video = "retain-on-failure"
+# playwright_trace = "retain-on-failure"
+
+# ── fawltydeps ─────────────────────────────────────────────────────
+[tool.fawltydeps]
+# only parse main pyproject.toml
+deps = ["pyproject.toml"]
+
+# ignore 'dev' extras so they won't show up in fawltydeps
+ignore_unused = [
+  "autoflake",
+  "argparse-manpage",
+  "bandit",
+  "black",
+  "bump2version",
+  "check-manifest",
+  "code2flow",
+  "cookiecutter",
+  "coverage",
+  "coverage-badge",
+  "darglint",
+  "flake8",
+  "fawltydeps",
+  "gprof2dot",
+  "gunicorn",
+  "importchecker",
+  "isort",
+  "ty",
+  "tomlcheck",
+  "mypy",
+  "pexpect",
+  "pip-licenses",
+  "pip_audit",
+  "pre-commit",
+  "pydocstyle",
+  "pylint",
+  "pylint-pydantic",
+  "pyre-check",
+  "pyright",
+  "pyroma",
+  "pyspelling",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-examples",
+  "pytest-md-report",
+  "pytest-rerunfailures",
+  "pytest-xdist",
+  "pytype",
+  "radon",
+  "ruff",
+  "settings-doc",
+  "snakeviz",
+  "types-tabulate",
+  "twine",
+  "uvicorn"
+]
+
+# --------------------------------------------------------------------
+#  🛠  https://github.com/facebook/pyrefly (replaces pyre)
+# --------------------------------------------------------------------
+[tool.pyrefly]
+project-excludes = [
+    "**/build/",
+    '**/\.venv/',
+    '**/\.mypy_cache/',
+]
+python-version = "3.11.0"
+
+# --------------------------------------------------------------------
+#  🧬 mutmut - Mutation testing configuration
+# --------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = ["mcpgateway/"]
+tests_dir = ["tests/"]
+do_not_mutate = ["mcpgateway/services/gateway_service.py"]
+also_copy = ["plugins/", "pyproject.toml", "mutmut_config.py"]
+
+# --------------------------------------------------------------------
+#  📊 coverage - Code coverage configuration
+# --------------------------------------------------------------------
+[tool.coverage.run]
+source = ["mcpgateway"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__init__.py",
+    "*/alembic/*",
+    "*/version.py",
+    # Builder deployment files - require external tools (docker, kubectl, templates)
+    "mcpgateway/tools/builder/common.py",
+    "mcpgateway/tools/builder/dagger_deploy.py",
+    "mcpgateway/tools/builder/python_deploy.py"
+]
+
+# --------------------------------------------------------------------
+#  Pylint - Static code analysis
+# --------------------------------------------------------------------
+[tool.pylint.main]
+# C extension modules that pylint cannot introspect - trust their members
+extension-pkg-allow-list = ["orjson"]
+
+# --------------------------------------------------------------------
+#  Interrogate - Documentation coverage tool
+# --------------------------------------------------------------------
+[tool.interrogate]
+ignore-init-method = true
+ignore-init-module = false
+ignore-magic = false
+ignore-semiprivate = false
+ignore-private = false
+ignore-property-decorators = false
+ignore-module = false
+ignore-nested-functions = false
+ignore-nested-classes = true
+ignore-setters = false
+fail-under = 100
+exclude = ["setup.py", "docs", "build", "tests"]
+ignore-regex = ["^get_", "^post_"]
+verbose = 0
+quiet = false
+whitelist-regex = []
+color = true
+omit-covered-files = false
+
+# --------------------------------------------------------------------
+# Bandit security scanner configuration
+# --------------------------------------------------------------------
+[tool.bandit]
+# No global skips - use inline # nosec comments for specific false positives

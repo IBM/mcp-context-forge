@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "convert_time",
+    "arguments": {
+      "source_timezone": "Europe/Berlin",
+      "target_timezone": "Europe/Dublin",
+      "time": "2025-06-21 09:00:00"
+    }
+  }
+}

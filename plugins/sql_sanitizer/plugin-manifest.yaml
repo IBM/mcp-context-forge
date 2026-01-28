@@ -1,0 +1,15 @@
+description: "Detects risky SQL patterns and sanitizes/blocks (comments strip, DELETE/UPDATE w/o WHERE, dangerous statements, interpolation)"
+author: "ContextForge"
+version: "0.1.0"
+tags: ["security", "sql", "validation"]
+available_hooks:
+  - "prompt_pre_fetch"
+  - "tool_pre_invoke"
+default_config:
+  fields: null
+  blocked_statements: ["\\bDROP\\b", "\\bTRUNCATE\\b", "\\bALTER\\b", "\\bGRANT\\b", "\\bREVOKE\\b"]
+  block_delete_without_where: true
+  block_update_without_where: true
+  strip_comments: true
+  require_parameterization: false
+  block_on_violation: true

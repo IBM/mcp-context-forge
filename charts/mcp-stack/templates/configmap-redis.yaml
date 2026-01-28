@@ -1,0 +1,32 @@
+{{- if and .Values.redis.enabled (not .Values.redis.external.enabled) .Values.redis.persistence.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-redis-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-redis
+data:
+  redis.conf: |
+    # Redis persistence configuration
+    # Enable AOF (Append Only File) persistence
+    appendonly yes
+    appendfilename "appendonly.aof"
+
+    # AOF rewrite configuration
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+
+    # RDB configuration (backup snapshots)
+    save 900 1     # Save after 900 sec if at least 1 key changed
+    save 300 10    # Save after 300 sec if at least 10 keys changed
+    save 60 10000  # Save after 60 sec if at least 10000 keys changed
+
+    # Set the directory for persistence files
+    dir /data
+
+    # Other recommended settings for data safety
+    stop-writes-on-bgsave-error yes
+    rdbcompression yes
+    rdbchecksum yes
+{{- end }}

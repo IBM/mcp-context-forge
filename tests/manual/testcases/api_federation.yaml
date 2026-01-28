@@ -1,0 +1,95 @@
+# MCP Gateway v0.9.0 - Federation API Tests
+# Gateway-to-gateway federation testing
+# Focus: Peer registration, discovery, and cross-gateway operations
+
+worksheet_name: "API Federation"
+description: "Gateway federation testing including peer management and cross-gateway communication"
+priority: "MEDIUM"
+estimated_time: "45-90 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Status"
+  - "Tester"
+  - "Setup Required"
+  - "Comments"
+
+tests:
+  - test_id: "FED-001"
+    endpoint: "/gateways"
+    method: "GET"
+    description: "List registered peer gateways"
+    curl_command: 'curl http://localhost:4444/gateways -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of registered peer gateways"
+
+  - test_id: "FED-002"
+    endpoint: "/gateways"
+    method: "POST"
+    description: "Register new peer gateway"
+    curl_command: 'curl -X POST http://localhost:4444/gateways -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"test-peer-gateway","description":"Peer gateway for testing","endpoint":"http://peer.example.com:4444","auth_type":"basic","auth_config":{"username":"admin","password":"changeme"}}'
+    expected_status: 201
+    expected_response: "Peer gateway registered successfully"
+
+  - test_id: "FED-003"
+    endpoint: "/gateways/{id}"
+    method: "GET"
+    description: "Get peer gateway details"
+    curl_command: 'curl http://localhost:4444/gateways/{GATEWAY_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Gateway details with connection info"
+
+  - test_id: "FED-004"
+    endpoint: "/gateways/{id}/health"
+    method: "GET"
+    description: "Check peer gateway health"
+    curl_command: 'curl http://localhost:4444/gateways/{GATEWAY_ID}/health -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Peer gateway health status and connectivity"
+
+  - test_id: "FED-005"
+    endpoint: "/gateways/{id}/tools"
+    method: "GET"
+    description: "List tools available from peer"
+    curl_command: 'curl http://localhost:4444/gateways/{GATEWAY_ID}/tools -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of tools available from peer gateway"
+
+  - test_id: "FED-006"
+    endpoint: "/gateways/{id}/sync"
+    method: "POST"
+    description: "Synchronize with peer gateway"
+    curl_command: 'curl -X POST http://localhost:4444/gateways/{GATEWAY_ID}/sync -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Synchronization completed successfully"
+
+  - test_id: "FED-007"
+    endpoint: "/gateways/{id}"
+    method: "PUT"
+    description: "Update peer gateway configuration"
+    curl_command: 'curl -X PUT http://localhost:4444/gateways/{GATEWAY_ID} -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"updated-peer","description":"Updated peer gateway"}'
+    expected_status: 200
+    expected_response: "Peer gateway updated successfully"
+
+  - test_id: "FED-008"
+    endpoint: "/gateways/{id}"
+    method: "DELETE"
+    description: "Unregister peer gateway"
+    curl_command: 'curl -X DELETE http://localhost:4444/gateways/{GATEWAY_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 204
+    expected_response: "Peer gateway unregistered successfully"

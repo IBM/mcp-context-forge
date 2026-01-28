@@ -1,0 +1,124 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-migration
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    # Run after install (so Postgres exists) and before upgrade (so new app has migrated DB)
+    "helm.sh/hook": post-install,pre-upgrade
+    # Delete old Job before new one and clean up succeeded ones
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # Job configuration
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+
+  template:
+    metadata:
+      labels:
+        {{- include "mcp-stack.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: {{ .Values.migration.restartPolicy }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+
+      containers:
+        - name: migration
+          image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+          imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
+
+          # Migration workflow: wait for DB → run migrations
+          command: ["/bin/sh"]
+          args:
+            - -c
+            - |
+              set -e
+              echo "🔍 Waiting for database to be ready..."
+              {{ .Values.migration.command.waitForDb }}
+              echo "✅ Database is ready!"
+              echo "🚀 Running database migrations..."
+              {{ .Values.migration.command.migrate }}
+              echo "✅ Migration job completed successfully!"
+
+          env:
+            # ---------- POSTGRES ----------
+            - name: POSTGRES_HOST
+              {{- if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.hostKey | default "host" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.host | quote }}
+              {{- end }}
+              {{- else }}
+              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              {{- end }}
+            - name: POSTGRES_PORT
+              {{- if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.portKey | default "port" }}
+              {{- else }}
+              value: "{{ .Values.postgres.external.port }}"
+              {{- end }}
+              {{- else }}
+              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              {{- end }}
+            - name: POSTGRES_DB
+              {{- if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.databaseKey | default "dbname" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.database | quote }}
+              {{- end }}
+              {{- else }}
+              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+              {{- end }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.userKey | default "user" }}{{ else }}POSTGRES_USER{{ end }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
+            # ---------- DERIVED URLS ----------
+            - name: DATABASE_URL
+              value: >-
+                postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
+            # ---------- LOGGING ----------
+            - name: LOG_LEVEL
+              value: "INFO"
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+            - configMapRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-config
+            {{- if .Values.mcpContextForge.extraEnvFrom }}
+            {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
+            {{- end }}
+          # Resource limits
+          resources:
+{{- toYaml .Values.migration.resources | nindent 12 }}
+
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+{{- end }}

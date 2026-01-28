@@ -1,0 +1,410 @@
+environment:
+  gateway_url: http://localhost:4444
+  fast_time_url: http://localhost:8888
+  jwt_secret: my-test-key
+  username: admin@example.com
+  jwt_expiration_minutes: 10080
+  results_base_dir: results
+profiles:
+  smoke:
+    requests: 100
+    concurrency: 5
+    duration: 10s
+    timeout: 30
+    description: Quick smoke test for basic functionality
+  light:
+    requests: 1000
+    concurrency: 10
+    duration: 10s
+    timeout: 30
+    description: Light load for quick testing
+  medium:
+    requests: 10000
+    concurrency: 50
+    duration: 30s
+    timeout: 60
+    description: Realistic load simulation
+  heavy:
+    requests: 50000
+    concurrency: 200
+    duration: 60s
+    timeout: 60
+    description: Stress testing and capacity planning
+  sustained:
+    requests: 0
+    concurrency: 50
+    duration: 3600s
+    timeout: 60
+    description: Long-running stability test
+scenarios:
+  tools_benchmark:
+    enabled: true
+    description: MCP tool invocation performance
+    tests:
+    - name: list_tools
+      payload: payloads/tools/list_tools.json
+      endpoint: /rpc
+    - name: get_system_time
+      payload: payloads/tools/get_system_time.json
+      endpoint: /rpc
+    - name: convert_time
+      payload: payloads/tools/convert_time.json
+      endpoint: /rpc
+  resources_benchmark:
+    enabled: true
+    description: MCP resource access performance
+    tests:
+    - name: list_resources
+      payload: payloads/resources/list_resources.json
+      endpoint: /rpc
+    - name: read_timezone_info
+      payload: payloads/resources/read_timezone_info.json
+      endpoint: /rpc
+    - name: read_world_times
+      payload: payloads/resources/read_world_times.json
+      endpoint: /rpc
+  prompts_benchmark:
+    enabled: true
+    description: MCP prompt execution performance
+    tests:
+    - name: list_prompts
+      payload: payloads/prompts/list_prompts.json
+      endpoint: /rpc
+    - name: get_compare_timezones
+      payload: payloads/prompts/get_compare_timezones.json
+      endpoint: /rpc
+  gateway_core:
+    enabled: true
+    description: Gateway core functionality (no MCP servers)
+    tests:
+    - name: health_check
+      payload: null
+      endpoint: /health
+      method: GET
+    - name: health_check_authenticated
+      payload: null
+      endpoint: /health
+      method: GET
+      require_auth: true
+  mcp_server_direct:
+    enabled: true
+    description: Direct MCP server testing (bypass gateway)
+    base_url: http://localhost:8888
+    tests:
+    - name: direct_list_tools
+      payload: payloads/tools/list_tools.json
+      endpoint: /sse
+    - name: direct_get_system_time
+      payload: payloads/tools/get_system_time.json
+      endpoint: /sse
+slos:
+  health_check:
+    p50_ms: 5
+    p95_ms: 10
+    p99_ms: 15
+    min_rps: 1000
+    max_error_rate: 0.0
+  tools_list:
+    p50_ms: 15
+    p95_ms: 30
+    p99_ms: 50
+    min_rps: 500
+    max_error_rate: 0.001
+  tools_invoke_simple:
+    p50_ms: 25
+    p95_ms: 50
+    p99_ms: 100
+    min_rps: 300
+    max_error_rate: 0.001
+  tools_invoke_complex:
+    p50_ms: 40
+    p95_ms: 100
+    p99_ms: 200
+    min_rps: 200
+    max_error_rate: 0.005
+  resources_list:
+    p50_ms: 15
+    p95_ms: 30
+    p99_ms: 50
+    min_rps: 500
+    max_error_rate: 0.001
+  resources_read:
+    p50_ms: 20
+    p95_ms: 40
+    p99_ms: 80
+    min_rps: 400
+    max_error_rate: 0.001
+  prompts_list:
+    p50_ms: 20
+    p95_ms: 40
+    p99_ms: 80
+    min_rps: 400
+    max_error_rate: 0.001
+  prompts_get:
+    p50_ms: 30
+    p95_ms: 60
+    p99_ms: 120
+    min_rps: 300
+    max_error_rate: 0.001
+monitoring:
+  enabled: true
+  interval_seconds: 5
+  collect:
+  - system_metrics
+  - docker_stats
+  - database_stats
+  - application_metrics
+  system_metrics:
+  - cpu_percent
+  - memory_percent
+  - disk_io
+  - network_io
+  database_metrics:
+  - connection_count
+  - active_connections
+  - idle_connections
+  - query_count
+  - slow_query_count
+profiling:
+  enabled: false
+  duration_seconds: 300
+  tools:
+  - py-spy
+  - memory_profiler
+  output_formats:
+  - flamegraph
+  - speedscope
+reporting:
+  enabled: true
+  format: html
+  output_dir: reports
+  html:
+    template: templates/report_template.html
+    include_charts: true
+    chart_library: chart.js
+  sections:
+  - summary
+  - slo_compliance
+  - test_results
+  - system_metrics
+  - database_performance
+  - profiling_results
+  - recommendations
+  baseline_comparison:
+    enabled: true
+    baseline_file: baselines/production_baseline.json
+    regression_threshold_percent: 10
+ci:
+  enabled: false
+  fail_on_slo_violation: true
+  fail_on_regression: true
+  upload_artifacts: true
+  notifications:
+    slack:
+      enabled: false
+      webhook_url: ${SLACK_WEBHOOK_URL}
+    email:
+      enabled: false
+      smtp_server: smtp.example.com
+      recipients:
+      - team@example.com
+server_profiles:
+  minimal:
+    description: Minimal resources for small deployments
+    gunicorn_workers: 1
+    gunicorn_threads: 2
+    gunicorn_timeout: 120
+    db_pool_size: 5
+    db_pool_max_overflow: 10
+    db_pool_timeout: 30
+    redis_pool_size: 5
+  standard:
+    description: Standard production configuration
+    gunicorn_workers: 4
+    gunicorn_threads: 4
+    gunicorn_timeout: 120
+    db_pool_size: 20
+    db_pool_max_overflow: 40
+    db_pool_timeout: 30
+    redis_pool_size: 10
+  optimized:
+    description: CPU-optimized for high throughput
+    gunicorn_workers: 8
+    gunicorn_threads: 2
+    gunicorn_timeout: 120
+    db_pool_size: 30
+    db_pool_max_overflow: 60
+    db_pool_timeout: 30
+    redis_pool_size: 20
+  memory_optimized:
+    description: Memory-optimized for concurrent connections
+    gunicorn_workers: 4
+    gunicorn_threads: 8
+    gunicorn_timeout: 120
+    db_pool_size: 40
+    db_pool_max_overflow: 80
+    db_pool_timeout: 30
+    redis_pool_size: 25
+  io_optimized:
+    description: I/O optimized for database-heavy workloads
+    gunicorn_workers: 6
+    gunicorn_threads: 4
+    gunicorn_timeout: 180
+    db_pool_size: 50
+    db_pool_max_overflow: 100
+    db_pool_timeout: 60
+    redis_pool_size: 30
+infrastructure_profiles:
+  development:
+    description: Development environment - minimal resources
+    gateway_instances: 1
+    postgres_version: 17-alpine
+    postgres_shared_buffers: 128MB
+    postgres_effective_cache_size: 512MB
+    postgres_max_connections: 50
+    redis_enabled: false
+    benchmark_server_enabled: true
+    benchmark_server_count: 10
+    benchmark_start_port: 9000
+    benchmark_tools_per_server: 10
+    benchmark_resources_per_server: 5
+    benchmark_prompts_per_server: 3
+  staging:
+    description: Staging environment - moderate resources
+    gateway_instances: 2
+    postgres_version: 17-alpine
+    postgres_shared_buffers: 512MB
+    postgres_effective_cache_size: 2GB
+    postgres_max_connections: 100
+    postgres_work_mem: 8MB
+    redis_enabled: true
+    redis_maxmemory: 256mb
+    benchmark_server_enabled: true
+    benchmark_server_count: 100
+    benchmark_start_port: 9000
+    benchmark_tools_per_server: 50
+    benchmark_resources_per_server: 20
+    benchmark_prompts_per_server: 10
+  production:
+    description: Production environment - optimized resources
+    gateway_instances: 4
+    postgres_version: 17-alpine
+    postgres_shared_buffers: 2GB
+    postgres_effective_cache_size: 6GB
+    postgres_max_connections: 200
+    postgres_work_mem: 16MB
+    postgres_maintenance_work_mem: 512MB
+    postgres_random_page_cost: 1.1
+    postgres_effective_io_concurrency: 200
+    redis_enabled: true
+    redis_maxmemory: 1gb
+    redis_maxmemory_policy: allkeys-lru
+    benchmark_server_enabled: true
+    benchmark_server_count: 1000
+    benchmark_start_port: 9000
+    benchmark_tools_per_server: 100
+    benchmark_resources_per_server: 50
+    benchmark_prompts_per_server: 25
+  production_ha:
+    description: Production HA - high availability configuration
+    gateway_instances: 6
+    postgres_version: 17-alpine
+    postgres_shared_buffers: 4GB
+    postgres_effective_cache_size: 12GB
+    postgres_max_connections: 300
+    postgres_work_mem: 32MB
+    postgres_maintenance_work_mem: 1GB
+    postgres_random_page_cost: 1.1
+    postgres_effective_io_concurrency: 200
+    redis_enabled: true
+    redis_maxmemory: 2gb
+    redis_maxmemory_policy: allkeys-lru
+    benchmark_server_enabled: true
+    benchmark_server_count: 10000
+    benchmark_start_port: 9000
+    benchmark_tools_per_server: 200
+    benchmark_resources_per_server: 100
+    benchmark_prompts_per_server: 50
+database_comparison:
+  enabled: false
+  versions:
+  - version: 15-alpine
+    label: PostgreSQL 15
+  - version: 16-alpine
+    label: PostgreSQL 16
+  - version: 17-alpine
+    label: PostgreSQL 17
+  common_config:
+    shared_buffers: 512MB
+    effective_cache_size: 2GB
+    max_connections: 100
+scaling_tests:
+  enabled: false
+  configurations:
+  - instances: 1
+    description: Single instance baseline
+  - instances: 2
+    description: Dual instance
+  - instances: 4
+    description: Quad instance
+  - instances: 8
+    description: Eight instance scale-out
+  load_balancer:
+    algorithm: round_robin
+    health_check_interval: 10
+configuration_matrix:
+  enabled: false
+  strategy: one_factor_at_a_time
+  variables:
+    gunicorn_workers:
+      values:
+      - 2
+      - 4
+      - 6
+      - 8
+      default: 4
+    gunicorn_threads:
+      values:
+      - 2
+      - 4
+      - 8
+      default: 4
+    db_pool_size:
+      values:
+      - 10
+      - 20
+      - 30
+      - 40
+      default: 20
+    postgres_version:
+      values:
+      - 15-alpine
+      - 16-alpine
+      - 17-alpine
+      default: 17-alpine
+  sample_size: 20
+comparison:
+  save_baseline: false
+  baseline_file: baselines/current_baseline.json
+  compare_enabled: false
+  compare_baseline: baselines/production_baseline.json
+  regression_threshold:
+    throughput_decrease_percent: 10
+    latency_increase_percent: 15
+    error_rate_increase_percent: 5
+advanced:
+  warmup:
+    enabled: true
+    requests: 100
+  cooldown_seconds: 10
+  infrastructure_change_delay_seconds: 30
+  retry:
+    enabled: true
+    max_attempts: 3
+  save_raw_results: true
+  capture_logs: true
+  log_level: INFO
+  docker_compose:
+    file: docker-compose.yml
+    backup_original: true
+    restore_after_test: false

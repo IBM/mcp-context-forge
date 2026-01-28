@@ -1,0 +1,9 @@
+description: "Export comprehensive tool invocation telemetry to OpenTelemetry"
+author: "Bar Haim"
+version: "0.1.0"
+available_hooks:
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_configs:
+  export_full_payload: true
+  max_payload_bytes_size: 10000  # (10 KB default)

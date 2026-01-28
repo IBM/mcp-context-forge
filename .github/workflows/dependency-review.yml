@@ -1,0 +1,88 @@
+# ===============================================================
+# 🔍 Dependency-Review Workflow - Vulnerabilities ⬧ Licenses
+# ===============================================================
+#
+# This workflow:
+#   - Diffs any dependency changes introduced by pushes or PRs to `main`
+#   - **Fails** when a change introduces either of the following:
+#       ↳ A vulnerability of severity ≥ MODERATE
+#       ↳ A dependency under a "strong-copyleft" license incompatible
+#         with this project's Apache-2.0 license (see deny-list below)
+#   - Uploads a SARIF report to "Security → Dependency review"
+#   - Adds (or overwrites) a comment on the PR **only on failure**
+#
+# References
+# ──────────
+#   - Marketplace:  https://github.com/marketplace/actions/dependency-review
+#   - Source code:  https://github.com/github/dependency-review-action  (MIT)
+#
+# NOTE ▸ The action is designed for PR events, but it can also run on
+#        push & schedule if you supply explicit `base-ref` / `head-ref`
+#        (see bottom of `with:` block).
+# ===============================================================
+
+name: Dependency Review
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  # Weekly safety-net run - useful for catching newly-disclosed CVEs
+  # or upstream license changes even when no PR is open.
+  schedule:
+    - cron: "31 12 * * 6" # Saturday @ 12:31 UTC
+
+# -----------------------------------------------------------------
+# Minimal permissions - principle of least privilege
+# -----------------------------------------------------------------
+permissions:
+  contents: read # for actions/checkout
+  security-events: write # upload SARIF results
+  pull-requests: write # post / overwrite PR comment
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Check out the repository
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v5
+
+      # -----------------------------------------------------------
+      # 1️⃣  Dependency & License gate
+      # -----------------------------------------------------------
+      - name: 🔍  Dependency Review
+        id: dep-scan
+        uses: actions/dependency-review-action@v4
+        with:
+          # ───────── Vulnerability policy ─────────
+          fail-on-severity: moderate # MODERATE, HIGH, CRITICAL ⇒ ❌
+          vulnerability-check: true # (default)
+
+          # ───────── License policy ─────────
+          # Hard-deny strong- or service-copyleft licenses that would
+          # "infect" an Apache-2.0 project.  (LGPL/MPL/EPL are *not*
+          # listed - they're weak/file-level copyleft.  Add them here
+          # if your org chooses to forbid them outright.)
+          deny-licenses: >
+            GPL-1.0, GPL-2.0, GPL-3.0,
+            AGPL-3.0,
+            SSPL-1.0,
+            RPL-1.5,
+            OSL-3.0,
+            CPAL-1.0
+          allow-dependencies-licenses: "pkg:pypi/pylint-pydantic"
+          license-check: true # (default)
+          # ───────── UX tweaks ─────────
+          warn-only: false # actually fail the workflow
+          comment-summary-in-pr: on-failure
+
+          # ───────── Refs for non-PR events ─────────
+          # These are ignored on pull_request events but allow the
+          # scheduled run to compare HEAD against `main`.
+          base-ref: main
+          head-ref: ${{ github.sha }}

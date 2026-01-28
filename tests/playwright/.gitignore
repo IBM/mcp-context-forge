@@ -1,0 +1,97 @@
+# Playwright Test Artifacts
+# This .gitignore is for tests/playwright/ directory
+
+# Screenshots from failed tests
+screenshots/
+*.png
+*.jpg
+*.jpeg
+
+# Test reports
+reports/
+*.html
+report.html
+*-report.html
+playwright-report/
+playwright-report-*/
+coverage/
+htmlcov/
+.coverage
+coverage.xml
+*.lcov
+
+# Test videos
+videos/
+*.webm
+*.mp4
+*.avi
+*.mov
+
+# Test traces
+traces/
+*.zip
+*.trace
+
+# Playwright test results
+test-results/
+test-results-*/
+results/
+*.xml
+junit.xml
+*-results.xml
+
+# Pytest cache
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.bak
+
+# Environment files (if any test-specific)
+.env.test.local
+.env.playwright
+
+# Node modules (if using any JS-based Playwright tools)
+node_modules/
+
+# Downloaded browser binaries (usually in system cache, but just in case)
+.cache/
+browsers/
+
+# Allure report artifacts (if using allure-pytest)
+allure-report/
+allure-results/
+
+# Visual regression snapshots (keep these in git)
+# Comment out if you want to track snapshots
+# snapshots/
+# *-snapshots/
+
+# Performance test results
+performance-results/
+lighthouse-reports/
+
+# Accessibility test results
+a11y-reports/
+axe-results/
+
+# Keep the directory structure
+!.gitkeep
+!__init__.py
+!pages/__init__.py

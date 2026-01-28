@@ -1,0 +1,335 @@
+{{- /*
+   NOTES.txt for the "mcp-stack" Helm chart
+   - Rendered after every install/upgrade.
+   - Surfaces endpoints, credentials and helper commands so you can
+     start interacting with the stack right away.
+   - Set showSecrets to show secrets.
+*/ -}}
+
+{{- $ns       := .Release.Namespace }}
+{{- $fullName := include "mcp-stack.fullname" . }}
+
+{{- /* ─── show / hide secrets ───────────────────────────── */}}
+{{- $showSecrets := false }}   {{/* set to true to reveal passwords & keys */}}
+
+{{- /* ─── Resource names (keep in sync with _helpers.tpl) ─ */}}
+{{- $gatewaySvc  := printf "%s-mcpgateway"            $fullName }}
+{{- $ftSvc       := printf "%s-mcp-fast-time-server"  $fullName }}
+{{- $postgresSvc := printf "%s-postgres"              $fullName }}
+{{- $redisSvc    := printf "%s-redis"                 $fullName }}
+{{- $pgadminSvc  := printf "%s-pgadmin"               $fullName }}
+
+{{- $gwSecret := printf "%s-gateway-secret" $fullName }}
+{{- $pgSecret := include "mcp-stack.postgresSecretName" . }}
+
+{{- /* ─── Secret look-ups (only used when $showSecrets=true) */}}
+{{- $basicAuthPass := "" }}
+{{- $jwtKey        := "" }}
+{{- $pgPass        := "" }}
+{{- if $showSecrets }}
+  {{- with (lookup "v1" "Secret" $ns $gwSecret) }}
+    {{- $basicAuthPass = index .data "BASIC_AUTH_PASSWORD" | b64dec }}
+    {{- $jwtKey        = index .data "JWT_SECRET_KEY"      | b64dec }}
+  {{- end }}
+  {{- with (lookup "v1" "Secret" $ns $pgSecret) }}
+    {{- $pgPass = index .data "POSTGRES_PASSWORD" | b64dec }}
+  {{- end }}
+{{- end }}
+
+{{- /* ─── Convenience ports ─────────────────────────────── */}}
+{{- $gwPort      := .Values.mcpContextForge.service.port | default 80 }}
+{{- $pgPort      := .Values.postgres.service.port        | default 5432 }}
+{{- $redisPort   := .Values.redis.service.port           | default 6379 }}
+{{- $pgAdminPort := .Values.pgadmin.service.port         | default 80 }}
+
+{{- /* ─── Deployment context information ─────────────────── */}}
+{{- $timestamp := now | date "2006-01-02 15:04:05 UTC" }}
+{{- $k8sVersion := .Capabilities.KubeVersion.Version }}
+{{- $helmVersion := .Capabilities.HelmVersion.Version }}
+
+🎉  **{{ .Chart.Name }}** has been successfully deployed!
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📋 **Deployment Summary**
+  - Release Name   : {{ .Release.Name }}
+  - Namespace      : {{ $ns }}
+  - Chart Version  : {{ .Chart.Version }}
+  - App Version    : {{ .Chart.AppVersion }}
+  - Deployed At    : {{ $timestamp }}
+  - Revision       : {{ .Release.Revision }}
+  - Kubernetes    : {{ $k8sVersion }}
+  - Helm Version   : {{ $helmVersion }}
+  {{- with .Values.global.nameOverride }}
+  - Name Override  : {{ . }}
+  {{- end }}
+  {{- with .Values.global.fullnameOverride }}
+  - Full Override  : {{ . }}
+  {{- end }}
+
+🏗️ **Infrastructure Stack**
+  - MCP Gateway    : {{ .Values.mcpContextForge.replicaCount }} replica(s) - {{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}
+  {{- if .Values.mcpFastTimeServer.enabled }}
+  - Fast Time Srv  : {{ .Values.mcpFastTimeServer.replicaCount }} replica(s) - {{ .Values.mcpFastTimeServer.image.repository }}:{{ .Values.mcpFastTimeServer.image.tag }}
+  {{- end }}
+  {{- if .Values.postgres.external.enabled }}
+  - PostgreSQL     : External ({{ .Values.postgres.external.host | default "via secret" }})
+  {{- else if .Values.postgres.enabled }}
+  - PostgreSQL     : {{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}
+    {{- if .Values.postgres.persistence.enabled }} ({{ .Values.postgres.persistence.size }} storage){{ end }}
+  {{- end }}
+  {{- if .Values.redis.enabled }}
+  - Redis Cache    : {{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}
+  {{- end }}
+  {{- if .Values.pgadmin.enabled }}
+  - PgAdmin UI     : {{ .Values.pgadmin.image.repository }}:{{ .Values.pgadmin.image.tag }}
+  {{- end }}
+  {{- if .Values.redisCommander.enabled }}
+  - Redis UI       : {{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}
+  {{- end }}
+
+🔧 **Configuration**
+  {{- if .Values.mcpContextForge.hpa.enabled }}
+  - Auto-Scaling   : {{ .Values.mcpContextForge.hpa.minReplicas }} - {{ .Values.mcpContextForge.hpa.maxReplicas }} replicas (CPU: {{ .Values.mcpContextForge.hpa.targetCPUUtilizationPercentage }}%)
+  {{- end }}
+  {{- if .Values.mcpContextForge.ingress.enabled }}
+  - Ingress        : {{ .Values.mcpContextForge.ingress.className }} @ {{ .Values.mcpContextForge.ingress.host }}
+  {{- end }}
+  - Migration      : {{ if .Values.migration.enabled }}✅ Enabled{{ else }}❌ Disabled{{ end }}
+  - Dev Mode       : {{ if eq (.Values.mcpContextForge.config.DEV_MODE | default "false") "true" }}⚠️ ENABLED{{ else }}✅ Production{{ end }}
+
+═══════════════════════════════════════════════════════════════════════════════
+
+{{- /* ════════════  Migration Status  ════════════ */}}
+{{- if .Values.migration.enabled }}
+📊 **Database Migration**
+  - Status         : `kubectl get jobs -n {{ $ns }} -l app.kubernetes.io/component=migration`
+  - Logs           : `kubectl logs -n {{ $ns }} -l app.kubernetes.io/component=migration`
+  - Job Details    : `kubectl describe job -n {{ $ns }} {{ $fullName }}-migration`
+  {{- with (lookup "batch/v1" "Job" $ns (printf "%s-migration" $fullName)) }}
+    {{- if .status.conditions }}
+      {{- range .status.conditions }}
+        {{- if eq .type "Complete" }}
+          {{- if eq .status "True" }}
+  - ✅ Migration completed successfully at {{ .lastTransitionTime }}
+          {{- else }}
+  - ⏳ Migration in progress...
+          {{- end }}
+        {{- else if eq .type "Failed" }}
+          {{- if eq .status "True" }}
+  - ❌ Migration failed at {{ .lastTransitionTime }} - check logs above
+          {{- end }}
+        {{- end }}
+      {{- end }}
+    {{- else }}
+  - ⏳ Migration job starting...
+    {{- end }}
+  {{- else }}
+  - ⏳ Migration job not found - may still be creating...
+  {{- end }}
+
+{{- else }}
+📊 **Database Migration**
+  - Database migrations are **disabled** (migration.enabled=false)
+  - To enable: `helm upgrade {{ .Release.Name }} --set migration.enabled=true -n {{ $ns }}`
+{{- end }}
+
+{{- /* ════════════  MCP Gateway  ════════════ */}}
+🔗 **MCP Gateway**
+{{- if .Values.mcpContextForge.ingress.enabled }}
+  - Primary URL    : https://{{ .Values.mcpContextForge.ingress.host }}{{ .Values.mcpContextForge.ingress.path | default "/" }}
+  - Health Check   : https://{{ .Values.mcpContextForge.ingress.host }}/health
+{{- else }}
+  - Service URL    : http://{{ $gatewaySvc }}.{{ $ns }}.svc.cluster.local:{{ $gwPort }}
+  - Health Check   : http://{{ $gatewaySvc }}.{{ $ns }}.svc.cluster.local:{{ $gwPort }}/health
+{{- end }}
+  - Basic-Auth :
+      user      = {{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}
+{{- if $showSecrets }}
+      password  = {{ $basicAuthPass }}
+{{- else }}
+      password  : <hidden>
+{{- end }}
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.BASIC_AUTH_PASSWORD}" | base64 -d`)
+{{- if $showSecrets }}
+  - JWT signing key (JWT_SECRET_KEY) = {{ $jwtKey }}
+{{- else }}
+  - JWT signing key (JWT_SECRET_KEY) : <hidden>
+{{- end }}
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.JWT_SECRET_KEY}" | base64 -d`)
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }}`
+
+{{- /* ════════════  Fast-Time-Server  ════════════ */}}
+{{- if .Values.mcpFastTimeServer.enabled }}
+🔗 **Fast-Time-Server (SSE)**
+  - Cluster URL  : http://{{ $ftSvc }}.{{ $ns }}.svc.cluster.local
+  - Via Gateway  : {{- if .Values.mcpContextForge.ingress.enabled }} https://{{ .Values.mcpContextForge.ingress.host }}/fast-time {{- else }} http://localhost:4444/fast-time {{- end }}
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $ftSvc }} 8080:80`
+{{- end }}
+
+{{- /* ════════════  Datastores  ════════════ */}}
+{{- if .Values.postgres.external.enabled }}
+💾 **PostgreSQL Database (External)**
+  {{- if .Values.postgres.external.existingSecret }}
+  - Secret       : {{ .Values.postgres.external.existingSecret }}
+  {{- else }}
+  - Host         : {{ .Values.postgres.external.host }}
+  - Port         : {{ .Values.postgres.external.port | default 5432 }}
+  - Database     : {{ .Values.postgres.external.database }}
+  - Username     : {{ .Values.postgres.external.user }}
+  - Secret       : {{ $pgSecret }}
+  {{- end }}
+  - Password     : <from secret>
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ $pgSecret }} -o jsonpath="{.data.{{ .Values.postgres.external.passwordKey | default "password" }}}" | base64 -d`)
+{{- else if .Values.postgres.enabled }}
+💾 **PostgreSQL Database**
+  - Host / Port  : {{ $postgresSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgPort }}
+  - Database     : {{ .Values.postgres.credentials.database }}
+  - Username     : {{ .Values.postgres.credentials.user }}
+{{- if $showSecrets }}
+  - Password     : {{ $pgPass | default "<secret-not-yet-created>" }}
+{{- else }}
+  - Password     : <hidden>
+{{- end }}
+      (kubectl  = `kubectl -n {{ $ns }} get secret {{ $pgSecret }} -o jsonpath="{.data.POSTGRES_PASSWORD}" | base64 -d`)
+  {{- if .Values.postgres.persistence.enabled }}
+  - Storage      : {{ .Values.postgres.persistence.size }} ({{ .Values.postgres.persistence.storageClassName }})
+  {{- end }}
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $postgresSvc }} 5432:{{ $pgPort }}`
+{{- end }}
+
+{{- if .Values.redis.enabled }}
+🔑 **Redis Cache**
+  - Host / Port  : {{ $redisSvc }}.{{ $ns }}.svc.cluster.local:{{ $redisPort }}
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $redisSvc }} 6379:{{ $redisPort }}`
+{{- end }}
+
+{{- /* ════════════  Management UIs  ════════════ */}}
+{{- if .Values.pgadmin.enabled }}
+📊 **PgAdmin (Database UI)**
+  - Internal URL : http://{{ $pgadminSvc }}.{{ $ns }}.svc.cluster.local:{{ $pgAdminPort }}
+  - Login Email  : {{ .Values.pgadmin.env.email }}
+  - Password     : (same as PostgreSQL password above)
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $pgadminSvc }} 8080:{{ $pgAdminPort }}`
+  - Local Access: http://localhost:8080 (after port-forward)
+{{- end }}
+
+{{- if .Values.redisCommander.enabled }}
+📊 **Redis Commander (Cache UI)**
+  - Internal URL : http://{{ $redisSvc }}-commander.{{ $ns }}.svc.cluster.local:8081
+  - Port-forward : `kubectl -n {{ $ns }} port-forward svc/{{ $fullName }}-redis-commander 8081:8081`
+  - Local Access: http://localhost:8081 (after port-forward)
+{{- end }}
+
+{{- /* ════════════  Cluster Information  ════════════ */}}
+🏢 **Cluster Context**
+```bash
+# Current cluster context
+kubectl config current-context
+
+# Verify deployment
+kubectl get all -n {{ $ns }}
+helm status {{ .Release.Name }} -n {{ $ns }}
+
+# Resource usage
+kubectl top pods -n {{ $ns }}
+kubectl get pvc -n {{ $ns }}
+```
+
+{{- /* ════════════  Troubleshooting  ════════════ */}}
+🔧 **Troubleshooting & Monitoring**
+
+```bash
+# === Resource Status ===
+kubectl get all -n {{ $ns }}
+kubectl get pvc -n {{ $ns }}
+kubectl get secrets -n {{ $ns }}
+
+# === Migration Debugging ===
+{{- if .Values.migration.enabled }}
+kubectl get jobs -n {{ $ns }} -l app.kubernetes.io/component=migration
+kubectl describe job -n {{ $ns }} {{ $fullName }}-migration
+kubectl logs -n {{ $ns }} -l app.kubernetes.io/component=migration --tail=50
+{{- end }}
+
+# === Gateway Debugging ===
+kubectl get pods -n {{ $ns }} -l app={{ $gatewaySvc }}
+kubectl describe deployment -n {{ $ns }} {{ $gatewaySvc }}
+kubectl logs -n {{ $ns }} -l app={{ $gatewaySvc }} --tail=50
+
+# === Database Connectivity ===
+kubectl exec -n {{ $ns }} deployment/{{ $gatewaySvc }} -- python3 /app/mcpgateway/utils/db_isready.py
+{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
+kubectl exec -n {{ $ns }} deployment/{{ $postgresSvc }} -- pg_isready -U {{ .Values.postgres.credentials.user }}
+{{- end }}
+
+# === Performance Monitoring ===
+kubectl top pods -n {{ $ns }}
+kubectl get hpa -n {{ $ns }}
+kubectl get events -n {{ $ns }} --sort-by='.lastTimestamp' --field-selector type!=Normal
+
+# === Port Forwarding for Local Access ===
+kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }}
+{{- if .Values.pgadmin.enabled }}
+kubectl -n {{ $ns }} port-forward svc/{{ $pgadminSvc }} 8080:{{ $pgAdminPort }}
+{{- end }}
+{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
+kubectl -n {{ $ns }} port-forward svc/{{ $postgresSvc }} 5432:{{ $pgPort }}
+{{- end }}
+```
+
+{{- /* ════════════  Quick-start  ════════════ */}}
+🚀 **Quick-start Guide**
+
+```bash
+# 1) Verify deployment is ready
+kubectl get pods -n {{ $ns }} -w
+
+# 2) Forward the Gateway locally (skip if using ingress)
+kubectl -n {{ $ns }} port-forward svc/{{ $gatewaySvc }} 4444:{{ $gwPort }} &
+
+# 3) Get credentials and obtain JWT
+{{- if $showSecrets }}
+export GW_TOKEN=$(curl -s -u '{{ .Values.mcpContextForge.secret.BASIC_AUTH_USER }}:{{ $basicAuthPass }}' \
+  -X POST http://localhost:4444/auth/login | jq -r '.access_token')
+{{- else }}
+export GW_PASS=$(kubectl -n {{ $ns }} get secret {{ $gwSecret }} -o jsonpath="{.data.BASIC_AUTH_PASSWORD}" | base64 -d)
+export GW_TOKEN=$(curl --request POST \
+  --url http://localhost:4444/auth/login \
+  --header 'Content-Type: application/json' \
+  --data "{
+    \"email\": \"admin@example.com\",
+    \"password\": \"$GW_PASS\"
+  }" | jq -r '.access_token'
+)
+{{- end }}
+
+# 4) Test the gateway health
+curl -s http://localhost:4444/health | jq .
+
+{{- if .Values.mcpFastTimeServer.enabled }}
+# 5) Register the Fast-Time-Server with the Gateway
+curl -s -X POST \
+     -H "Authorization: Bearer $GW_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"local_time","url":"http://{{ $ftSvc }}.{{ $ns }}.svc.cluster.local/sse"}' \
+     http://localhost:4444/gateways
+
+# 6) Test the time server registration
+curl -s -H "Authorization: Bearer $GW_TOKEN" http://localhost:4444/gateways | jq .
+{{- end }}
+```
+
+═══════════════════════════════════════════════════════════════════════════════
+
+📚 **Documentation & Support**
+  - Helm Chart    : https://github.com/IBM/mcp-context-forge/tree/main/charts/mcp-stack
+  - Documentation : https://ibm.github.io/mcp-context-forge/deployment/helm/
+  - API Testing   : https://ibm.github.io/mcp-context-forge/testing/basic/
+  - Issues        : https://github.com/IBM/mcp-context-forge/issues
+
+📋 **Next Steps**
+  1. Verify all pods are Running: `kubectl get pods -n {{ $ns }}`
+  2. Check gateway health: `curl http://localhost:4444/health` (after port-forward)
+  3. Register MCP servers with the gateway using the API
+  4. Configure your MCP clients to use: {{ if .Values.mcpContextForge.ingress.enabled }}https://{{ .Values.mcpContextForge.ingress.host }}{{ else }}http://localhost:4444{{ end }}

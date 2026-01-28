@@ -1,0 +1,25 @@
+# plugins/config.yaml - Main plugin configuration file
+
+plugins:
+  - name: "DenyListPlugin"
+    kind: "external"
+    description: "a different configuration."
+    priority: 150
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
+    mcp:
+      proto: STDIO
+      script: mcpgateway/plugins/framework/external/mcp/server/runtime.py
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"      # Built-in plugins
+  - "plugins/custom"      # Custom organization plugins
+  - "/etc/mcpgateway/plugins"  # System-wide plugins
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

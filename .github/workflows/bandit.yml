@@ -1,0 +1,60 @@
+# ===============================================================
+# 🐍 Bandit - Python Static-Analysis Workflow
+# ===============================================================
+#
+# This workflow:
+#   - Runs **Bandit** (PyCQA) against ONLY the `mcpgateway/` package
+#   - Reports findings with **severity ≥ MEDIUM** and **confidence = HIGH**
+#   - Uploads results as SARIF so they appear in the Security → Code scanning tab
+#   - Executes on every push / PR to `main` + a weekly scheduled run
+#
+# References:
+#   - Action: https://github.com/marketplace/actions/bandit-scan  (ISC lic.)
+#   - CLI:    https://pypi.org/project/bandit/                   (Apache-2.0)
+# ---------------------------------------------------------------
+
+name: Bandit
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"] # must be a subset of the push branches
+  schedule:
+    - cron: "26 11 * * 6" # Saturday @ 11:26 UTC - catch new CVEs
+
+jobs:
+  bandit:
+    permissions:
+      contents: read # required by actions/checkout
+      security-events: write # upload SARIF to "Code scanning"
+      actions: read # needed only for private repos
+
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Check out the repository
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v5
+
+      # -----------------------------------------------------------
+      # 1️⃣  Run Bandit with custom filters
+      # -----------------------------------------------------------
+      - name: 🔍  Bandit scan (medium / high-conf)
+        uses: shundor/python-bandit-scan@ab1d87dfccc5a0ffab88be3aaac6ffe35c10d6cd
+        with:
+          # Fail **softly** so devs can triage before gating the build
+          exit_zero: true
+
+          # Built-in GitHub token (no extra secrets needed)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # ──────────────── Customised CLI flags ────────────────
+          path: mcpgateway # recurse into package
+          level: MEDIUM # MEDIUM and HIGH severities
+          confidence: HIGH # HIGH-confidence findings only
+          # excluded_paths: DEFAULT          # inherit Bandit defaults
+          # skips: DEFAULT                   # inherit Bandit defaults
+          # ini_path: ""                     # not using a .bandit config

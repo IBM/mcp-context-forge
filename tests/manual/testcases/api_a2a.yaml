@@ -1,0 +1,149 @@
+# MCP Gateway v0.9.0 - A2A (Agent-to-Agent) API Tests
+# A2A agent integration testing
+# Focus: AI agent management and tool integration
+
+worksheet_name: "API A2A Agents"
+description: "Complete A2A agent integration testing including OpenAI, Anthropic, and custom agents"
+priority: "MEDIUM"
+estimated_time: "45-90 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Agent Type"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Status"
+  - "Tester"
+  - "Config Required"
+  - "Comments"
+
+tests:
+  - test_id: "A2A-001"
+    endpoint: "/a2a"
+    method: "GET"
+    description: "List A2A agents"
+    agent_type: "All"
+    curl_command: 'curl http://localhost:4444/a2a -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of registered A2A agents"
+    config_required: "MCPGATEWAY_A2A_ENABLED=true"
+
+  - test_id: "A2A-002"
+    endpoint: "/a2a"
+    method: "POST"
+    description: "Register OpenAI agent"
+    agent_type: "OpenAI"
+    curl_command: 'curl -X POST http://localhost:4444/a2a -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"test-openai-agent","description":"OpenAI agent for testing","endpoint_url":"https://api.openai.com/v1","config":{"model":"gpt-4","api_key":"sk-test-key"}}'
+    expected_status: 201
+    expected_response: "OpenAI agent registered successfully"
+    config_required: "Valid OpenAI API key"
+
+  - test_id: "A2A-003"
+    endpoint: "/a2a"
+    method: "POST"
+    description: "Register Anthropic agent"
+    agent_type: "Anthropic"
+    curl_command: 'curl -X POST http://localhost:4444/a2a -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"test-claude-agent","description":"Claude agent for testing","endpoint_url":"https://api.anthropic.com","config":{"model":"claude-3-haiku","api_key":"sk-ant-test"}}'
+    expected_status: 201
+    expected_response: "Anthropic agent registered successfully"
+    config_required: "Valid Anthropic API key"
+
+  - test_id: "A2A-004"
+    endpoint: "/a2a"
+    method: "POST"
+    description: "Register custom HTTP agent"
+    agent_type: "Custom"
+    curl_command: 'curl -X POST http://localhost:4444/a2a -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"test-custom-agent","description":"Custom HTTP agent","endpoint_url":"http://custom-agent.example.com/api","config":{"timeout":30,"retries":3}}'
+    expected_status: 201
+    expected_response: "Custom agent registered successfully"
+    config_required: "Accessible agent endpoint"
+
+  - test_id: "A2A-005"
+    endpoint: "/a2a/{id}"
+    method: "GET"
+    description: "Get agent details and configuration"
+    agent_type: "Any"
+    curl_command: 'curl http://localhost:4444/a2a/{AGENT_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Agent details with configuration (sensitive data masked)"
+
+  - test_id: "A2A-006"
+    endpoint: "/a2a/{id}"
+    method: "PUT"
+    description: "Update agent configuration"
+    agent_type: "Any"
+    curl_command: 'curl -X PUT http://localhost:4444/a2a/{AGENT_ID} -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"updated-agent-name","description":"Updated via API testing"}'
+    expected_status: 200
+    expected_response: "Agent updated successfully"
+
+  - test_id: "A2A-007"
+    endpoint: "/a2a/{id}/tools"
+    method: "GET"
+    description: "List tools provided by agent"
+    agent_type: "Any"
+    curl_command: 'curl http://localhost:4444/a2a/{AGENT_ID}/tools -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of tools automatically created by agent"
+
+  - test_id: "A2A-008"
+    endpoint: "/a2a/{id}/invoke"
+    method: "POST"
+    description: "Invoke agent directly"
+    agent_type: "Any"
+    curl_command: 'curl -X POST http://localhost:4444/a2a/{AGENT_ID}/invoke -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"prompt":"Hello, how are you today?","context":{"user":"test","session":"manual-testing"}}'
+    expected_status: 200
+    expected_response: "Agent response with generated content"
+    critical: true
+
+  - test_id: "A2A-009"
+    endpoint: "/a2a/{id}/health"
+    method: "GET"
+    description: "Check agent health and availability"
+    agent_type: "Any"
+    curl_command: 'curl http://localhost:4444/a2a/{AGENT_ID}/health -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Agent health status and response time"
+
+  - test_id: "A2A-010"
+    endpoint: "/a2a/{id}/metrics"
+    method: "GET"
+    description: "Get agent usage metrics"
+    agent_type: "Any"
+    curl_command: 'curl http://localhost:4444/a2a/{AGENT_ID}/metrics -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Agent usage statistics and performance metrics"
+
+  - test_id: "A2A-011"
+    endpoint: "/a2a/{id}"
+    method: "DELETE"
+    description: "Unregister agent"
+    agent_type: "Any"
+    curl_command: 'curl -X DELETE http://localhost:4444/a2a/{AGENT_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 204
+    expected_response: "Agent unregistered successfully"
+
+  - test_id: "A2A-012"
+    endpoint: "/a2a/providers"
+    method: "GET"
+    description: "List available agent providers"
+    agent_type: "All"
+    curl_command: 'curl http://localhost:4444/a2a/providers -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of supported agent providers (OpenAI, Anthropic, Custom)"

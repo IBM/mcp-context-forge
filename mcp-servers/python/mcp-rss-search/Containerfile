@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+# MCP RSS Search Server Container
+
+FROM python:3.11-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/app/.venv/bin:$PATH"
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+# Install Python dependencies
+RUN python -m venv /app/.venv && \
+    /app/.venv/bin/pip install --upgrade pip setuptools wheel && \
+    /app/.venv/bin/pip install -e .
+
+# Create non-root user
+RUN useradd -u 1001 -m rssuser && chown -R 1001:1001 /app
+USER 1001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:9100/health || exit 1
+
+# Default to HTTP mode
+EXPOSE 9100
+
+# Default command - can override for stdio mode
+CMD ["python", "-m", "mcp_rss_search.server_fastmcp", "--transport", "http", "--host", "0.0.0.0", "--port", "9100"]

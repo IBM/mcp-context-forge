@@ -1,0 +1,412 @@
+# ===============================================================
+# 🛡️ Snyk Security - Comprehensive Vulnerability Scanning Workflow
+# ===============================================================
+#
+# This workflow:
+#   - Scans Python dependencies for known vulnerabilities
+#   - Performs static application security testing (SAST) on source code
+#   - Analyzes container images for security issues
+#   - Tests Infrastructure as Code (IaC) including Helm charts
+#   - Uploads SARIF results to GitHub Security tab
+#   - Runs on every push/PR to `main` and weekly (Monday @ 00:00 UTC)
+#   - Generates SBOMs for supply chain visibility
+# ---------------------------------------------------------------
+
+name: Snyk Security
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "**/docs/**"
+      - "**/*.md"
+      - ".github/workflows/!(snyk.yml)"
+  pull_request:
+    branches: ["main"]
+    paths-ignore:
+      - "**/docs/**"
+      - "**/*.md"
+      - ".github/workflows/!(snyk.yml)"
+  schedule:
+    - cron: '0 0 * * 1'   # Weekly on Monday at 00:00 UTC
+  workflow_dispatch:
+    inputs:
+      severity-threshold:
+        description: 'Severity threshold for failing builds'
+        required: false
+        default: 'high'
+        type: choice
+        options:
+          - low
+          - medium
+          - high
+          - critical
+
+permissions:
+  contents: read       # For checking out the code
+  security-events: write   # Required to upload SARIF results
+  actions: read       # Required for workflow status
+  packages: read      # Required for container scanning
+
+env:
+  IMAGE_NAME: mcpgateway/mcpgateway
+  IMAGE_TAG: latest
+  CONTAINERFILE: Containerfile.lite
+
+jobs:
+  # -------------------------------------------------------------
+  # 🔍 Dependency Scanning - Open Source Vulnerabilities
+  # -------------------------------------------------------------
+  dependencies:
+    name: 📦 Dependency Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------------------------------------
+      # 0️⃣  Checkout source
+      # -------------------------------------------------------------
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v5
+
+      # -------------------------------------------------------------
+      # 1️⃣  Setup Python environment
+      # -------------------------------------------------------------
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      # -------------------------------------------------------------
+      # 2️⃣  Run Snyk dependency test
+      # -------------------------------------------------------------
+      - name: 🔍 Run Snyk dependency test
+        uses: snyk/actions/python@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: >
+            --severity-threshold=${{ github.event.inputs.severity-threshold || 'high' }}
+            --file=pyproject.toml
+            --policy-path=.snyk
+            --json-file-output=snyk-deps-results.json
+
+      # -------------------------------------------------------------
+      # 3️⃣  Upload dependency scan results
+      # -------------------------------------------------------------
+      - name: 📤 Upload dependency results
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: snyk-dependency-results
+          path: snyk-deps-results.json
+          retention-days: 30
+
+  # -------------------------------------------------------------
+  # 🔐 Code Security - Static Application Security Testing
+  # -------------------------------------------------------------
+  code-security:
+    name: 🔐 Code Security (SAST)
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------------------------------------
+      # 0️⃣  Checkout source
+      # -------------------------------------------------------------
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v5
+
+      # -------------------------------------------------------------
+      # 1️⃣  Setup Snyk CLI
+      # -------------------------------------------------------------
+      - name: 🛠️ Setup Snyk
+        uses: snyk/actions/setup@master
+
+      # -------------------------------------------------------------
+      # 2️⃣  Run Snyk Code test
+      # -------------------------------------------------------------
+      - name: 🔐 Run Snyk Code test
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          snyk code test mcpgateway/ \
+            --severity-threshold=${{ github.event.inputs.severity-threshold || 'high' }} \
+            --sarif-file-output=snyk-code.sarif \
+            --json-file-output=snyk-code-results.json || true
+
+      # -------------------------------------------------------------
+      # 3️⃣  Upload SARIF to GitHub Security tab
+      # -------------------------------------------------------------
+      - name: 📊 Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-code.sarif
+          category: "snyk-code"
+
+      # -------------------------------------------------------------
+      # 4️⃣  Upload code scan artifacts
+      # -------------------------------------------------------------
+      - name: 📤 Upload code scan results
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: snyk-code-results
+          path: |
+            snyk-code.sarif
+            snyk-code-results.json
+          retention-days: 30
+
+  # -------------------------------------------------------------
+  # 🐳 Container Security - Image Vulnerability Scanning
+  # -------------------------------------------------------------
+  container-security:
+    name: 🐳 Container Security
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------------------------------------
+      # 0️⃣  Checkout source
+      # -------------------------------------------------------------
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v5
+
+      # -------------------------------------------------------------
+      # 1️⃣  Build container image
+      # -------------------------------------------------------------
+      - name: 🏗️ Build container image
+        run: |
+          docker build -f ${{ env.CONTAINERFILE }} -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+
+      # -------------------------------------------------------------
+      # 2️⃣  Run Snyk container test
+      # -------------------------------------------------------------
+      - name: 🐳 Run Snyk container test
+        uses: snyk/actions/docker@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          args: >
+            --file=${{ env.CONTAINERFILE }}
+            --severity-threshold=${{ github.event.inputs.severity-threshold || 'high' }}
+            --exclude-app-vulns
+            --sarif-file-output=snyk-container.sarif
+            --json-file-output=snyk-container-results.json
+
+      # -------------------------------------------------------------
+      # 3️⃣  Upload SARIF to GitHub Security tab
+      # -------------------------------------------------------------
+      - name: 📊 Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-container.sarif
+          category: "snyk-container"
+
+      # -------------------------------------------------------------
+      # 4️⃣  Upload container scan artifacts
+      # -------------------------------------------------------------
+      - name: 📤 Upload container scan results
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: snyk-container-results
+          path: |
+            snyk-container.sarif
+            snyk-container-results.json
+          retention-days: 30
+
+  # -------------------------------------------------------------
+  # 🏗️ Infrastructure as Code - IaC Security Scanning
+  # -------------------------------------------------------------
+  iac-security:
+    name: 🏗️ IaC Security
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------------------------------------
+      # 0️⃣  Checkout source
+      # -------------------------------------------------------------
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v5
+
+      # -------------------------------------------------------------
+      # 1️⃣  Setup Snyk CLI
+      # -------------------------------------------------------------
+      - name: 🛠️ Setup Snyk
+        uses: snyk/actions/setup@master
+
+      # -------------------------------------------------------------
+      # 2️⃣  Run IaC tests for docker-compose and Containerfiles
+      # -------------------------------------------------------------
+      - name: 🐳 Test Docker configurations
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          # Test docker-compose files
+          for file in docker-compose*.y*ml; do
+            if [ -f "$file" ]; then
+              echo "Scanning $file..."
+              snyk iac test "$file" \
+                --severity-threshold=medium \
+                --json-file-output="snyk-iac-${file%.y*ml}.json" || true
+            fi
+          done
+
+          # Test Containerfiles
+          for file in Containerfile*; do
+            if [ -f "$file" ]; then
+              echo "Scanning $file..."
+              snyk iac test "$file" \
+                --severity-threshold=medium \
+                --json-file-output="snyk-iac-${file}.json" || true
+            fi
+          done
+
+      # -------------------------------------------------------------
+      # 3️⃣  Run IaC tests for Helm charts
+      # -------------------------------------------------------------
+      - name: ⎈ Test Helm charts
+        if: ${{ hashFiles('charts/mcp-stack/**/*.yaml') != '' }}
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          snyk iac test charts/mcp-stack/ \
+            --severity-threshold=medium \
+            --sarif-file-output=snyk-helm.sarif \
+            --json-file-output=snyk-helm-results.json || true
+
+      # -------------------------------------------------------------
+      # 4️⃣  Upload SARIF to GitHub Security tab
+      # -------------------------------------------------------------
+      - name: 📊 Upload SARIF results
+        if: always() && hashFiles('snyk-helm.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-helm.sarif
+          category: "snyk-iac"
+
+      # -------------------------------------------------------------
+      # 5️⃣  Upload IaC scan artifacts
+      # -------------------------------------------------------------
+      - name: 📤 Upload IaC scan results
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: snyk-iac-results
+          path: |
+            snyk-iac-*.json
+            snyk-helm-results.json
+            snyk-helm.sarif
+          retention-days: 30
+
+  # -------------------------------------------------------------
+  # 📋 SBOM Generation - Software Bill of Materials
+  # -------------------------------------------------------------
+  sbom-generation:
+    name: 📋 Generate SBOM
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      # -------------------------------------------------------------
+      # 0️⃣  Checkout source
+      # -------------------------------------------------------------
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v5
+
+      # -------------------------------------------------------------
+      # 1️⃣  Setup Python and Snyk
+      # -------------------------------------------------------------
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: 🛠️ Setup Snyk
+        uses: snyk/actions/setup@master
+
+      # -------------------------------------------------------------
+      # 2️⃣  Generate SBOMs
+      # -------------------------------------------------------------
+      - name: 📋 Generate SBOMs
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          # Get version from pyproject.toml
+          VERSION=$(grep -m1 version pyproject.toml | cut -d'"' -f2 || echo "0.0.0")
+
+          # Generate CycloneDX format
+          snyk sbom \
+            --format=cyclonedx1.5+json \
+            --file=pyproject.toml \
+            --name=mcpgateway \
+            --version=$VERSION \
+            --json-file-output=sbom-cyclonedx.json \
+            . || true
+
+          # Generate SPDX format
+          snyk sbom \
+            --format=spdx2.3+json \
+            --file=pyproject.toml \
+            --name=mcpgateway \
+            --json-file-output=sbom-spdx.json \
+            . || true
+
+      # -------------------------------------------------------------
+      # 3️⃣  Upload SBOM artifacts
+      # -------------------------------------------------------------
+      - name: 📤 Upload SBOMs
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: sbom-artifacts
+          path: |
+            sbom-cyclonedx.json
+            sbom-spdx.json
+          retention-days: 90
+
+  # -------------------------------------------------------------
+  # 📊 Summary Report - Aggregate all results
+  # -------------------------------------------------------------
+  summary:
+    name: 📊 Security Summary
+    runs-on: ubuntu-latest
+    needs: [dependencies, code-security, container-security, iac-security]
+    if: always()
+
+    steps:
+      # -------------------------------------------------------------
+      # 0️⃣  Download all artifacts
+      # -------------------------------------------------------------
+      - name: ⬇️ Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: snyk-results
+
+      # -------------------------------------------------------------
+      # 1️⃣  Generate summary report
+      # -------------------------------------------------------------
+      - name: 📊 Generate summary
+        run: |
+          echo "# 🛡️ Snyk Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan Date:** $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Severity Threshold:** ${{ github.event.inputs.severity-threshold || 'high' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## 📋 Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # List all result files
+          echo "### 📁 Generated Reports:" >> $GITHUB_STEP_SUMMARY
+          find snyk-results -type f -name "*.json" -o -name "*.sarif" | while read -r file; do
+            echo "- \`$(basename "$file")\`" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*View detailed results in the [Security tab](../../security/code-scanning) or download artifacts from this workflow run.*" >> $GITHUB_STEP_SUMMARY

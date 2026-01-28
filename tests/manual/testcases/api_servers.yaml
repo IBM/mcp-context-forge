@@ -1,0 +1,115 @@
+# MCP Gateway v0.9.0 - Virtual Servers API Tests
+# Server management endpoint testing
+# Focus: Virtual server CRUD operations and transport testing
+
+worksheet_name: "API Servers"
+description: "Virtual server management API testing including CRUD and transport endpoints"
+priority: "HIGH"
+estimated_time: "45-90 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Actual Status"
+  - "Actual Response"
+  - "Status"
+  - "Tester"
+  - "Comments"
+
+tests:
+  - test_id: "SRV-001"
+    endpoint: "/servers"
+    method: "GET"
+    description: "List virtual servers with team filtering"
+    curl_command: 'curl http://localhost:4444/servers -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of virtual servers user can access"
+    critical: true
+
+  - test_id: "SRV-002"
+    endpoint: "/servers"
+    method: "POST"
+    description: "Create new virtual server"
+    curl_command: 'curl -X POST http://localhost:4444/servers -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"Manual Test Server","description":"Server created during testing","transport":"sse","config":{"timeout":30}}'
+    expected_status: 201
+    expected_response: "Virtual server created with ID and team assignment"
+
+  - test_id: "SRV-003"
+    endpoint: "/servers/{id}"
+    method: "GET"
+    description: "Get server details and configuration"
+    curl_command: 'curl http://localhost:4444/servers/{SERVER_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Server details with full configuration"
+
+  - test_id: "SRV-004"
+    endpoint: "/servers/{id}"
+    method: "PUT"
+    description: "Update server configuration"
+    curl_command: 'curl -X PUT http://localhost:4444/servers/{SERVER_ID} -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"Updated Server Name","description":"Updated during testing"}'
+    expected_status: 200
+    expected_response: "Server updated successfully"
+
+  - test_id: "SRV-005"
+    endpoint: "/servers/{id}/sse"
+    method: "GET"
+    description: "Server-Sent Events connection test"
+    curl_command: 'curl -N http://localhost:4444/servers/{SERVER_ID}/sse -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "SSE stream established, events received"
+
+  - test_id: "SRV-006"
+    endpoint: "/servers/{id}/tools"
+    method: "GET"
+    description: "List tools available on server"
+    curl_command: 'curl http://localhost:4444/servers/{SERVER_ID}/tools -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of tools available on the server"
+
+  - test_id: "SRV-007"
+    endpoint: "/servers/{id}/resources"
+    method: "GET"
+    description: "List resources available on server"
+    curl_command: 'curl http://localhost:4444/servers/{SERVER_ID}/resources -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of resources available on the server"
+
+  - test_id: "SRV-008"
+    endpoint: "/servers/{id}/status"
+    method: "GET"
+    description: "Get server status and health"
+    curl_command: 'curl http://localhost:4444/servers/{SERVER_ID}/status -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Server status, health, and connection info"
+
+  - test_id: "SRV-009"
+    endpoint: "/servers/{id}"
+    method: "DELETE"
+    description: "Delete virtual server"
+    curl_command: 'curl -X DELETE http://localhost:4444/servers/{SERVER_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 204
+    expected_response: "Server deleted successfully"
+
+  - test_id: "SRV-010"
+    endpoint: "/servers/{id}/restart"
+    method: "POST"
+    description: "Restart virtual server"
+    curl_command: 'curl -X POST http://localhost:4444/servers/{SERVER_ID}/restart -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Server restarted successfully"

@@ -1,0 +1,133 @@
+# ======================================================================
+# 🐳  Docker Release Workflow - Tag and Push on GitHub Release
+# ======================================================================
+#
+# This workflow re-tags a Docker image (built by a previous workflow)
+# when a GitHub Release is published, giving it a semantic version tag
+# like `v0.9.0`. It assumes the CI build has already pushed an image
+# tagged with the commit SHA, and that all checks on that commit passed.
+#
+# ➤ Trigger: Release published (e.g. from GitHub UI or `gh release` CLI)
+# ➤ Assumes: Existing image tagged with the commit SHA is available
+# ➤ Result: Image re-tagged as `ghcr.io/OWNER/REPO:v0.9.0`
+#
+# ======================================================================
+
+name: "Docker image - release tag"
+
+# ----------------------------------------------------------------------------
+# Trigger: When a release is published (NOT draft or prerelease)
+# OR manually via workflow_dispatch
+# ----------------------------------------------------------------------------
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.9.0)'
+        required: true
+        type: string
+
+jobs:
+  tag-and-push:
+    # ------------------------------------------------------------------
+    # Only run if the release tag starts with 'v', and is not draft/prerelease
+    # ------------------------------------------------------------------
+    if: |
+      startsWith(github.event.release.tag_name, 'v') &&
+      github.event.release.draft == false &&
+      github.event.release.prerelease == false
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read      # read repo info
+      packages: write     # push Docker image
+      statuses: read      # check commit status API
+
+    steps:
+      # ----------------------------------------------------------------
+      # Step 1  Capture release tag and resolve the commit SHA it points to
+      # ----------------------------------------------------------------
+      - name: 🏷️  Extract tag & commit SHA
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name }}"
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+
+          # Ask the remote repo which commit the tag points to
+          SHA=$(git ls-remote --quiet --refs \
+                "https://github.com/${{ github.repository }}.git" \
+                "refs/tags/$TAG" | cut -f1)
+
+          # Fallback to the release's target_commitish (covers annotated tags/branch releases)
+          if [ -z "$SHA" ] || [ "$SHA" = "null" ]; then
+            SHA="${{ github.event.release.target_commitish }}"
+          fi
+
+          echo "Resolved commit SHA: $SHA"
+          echo "sha=$SHA" >>"$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------------
+      # Step 2  Confirm all checks on that commit were successful
+      # ----------------------------------------------------------------
+      - name: ✅  Verify commit checks passed
+        env:
+          SHA: ${{ steps.meta.outputs.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          STATUS=$(curl -sSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/$REPO/commits/$SHA/status" \
+            | jq -r '.state')
+          echo "Combined status: $STATUS"
+          if [ "$STATUS" != "success" ]; then
+            echo "Required workflows have not all succeeded - aborting." >&2
+            exit 1
+          fi
+
+      # ----------------------------------------------------------------
+      # Step 3  Authenticate with GitHub Container Registry (GHCR)
+      # ----------------------------------------------------------------
+      - name: 🔐  Log in to GHCR
+        uses: docker/login-action@v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ----------------------------------------------------------------
+      # Step 4  Set up Docker Buildx for multiplatform manifest handling
+      # ----------------------------------------------------------------
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ----------------------------------------------------------------
+      # Step 5  Create version tag from existing multiplatform manifest
+      # Note: For multiplatform images, we use 'docker buildx imagetools create'
+      # instead of 'docker pull' + 'docker tag' + 'docker push' because:
+      # 1. Multiplatform images are manifest lists, not single images
+      # 2. We create a new manifest that references the existing SHA-tagged image
+      # 3. This preserves all architecture variants (amd64, arm64, s390x)
+      # ----------------------------------------------------------------
+      - name: 🏷️  Create version tag for multiplatform manifest
+        run: |
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "Creating version tag ${{ steps.meta.outputs.tag }} from ${IMAGE}:${{ steps.meta.outputs.sha }}"
+          docker buildx imagetools create \
+            "${IMAGE}:${{ steps.meta.outputs.sha }}" \
+            --tag "${IMAGE}:${{ steps.meta.outputs.tag }}"
+
+      # ----------------------------------------------------------------
+      # Step 6  Verify the new version tag
+      # ----------------------------------------------------------------
+      - name: 🔍  Verify version tag
+        run: |
+          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "Inspecting ${IMAGE}:${{ steps.meta.outputs.tag }}"
+          docker buildx imagetools inspect "${IMAGE}:${{ steps.meta.outputs.tag }}"

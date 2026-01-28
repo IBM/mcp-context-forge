@@ -1,0 +1,47 @@
+# MCP Gateway with Phoenix Observability
+# This extends the main docker-compose.yml with Phoenix integration
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.with-phoenix.yml up -d
+
+services:
+  # Override gateway to add Phoenix environment variables
+  gateway:
+    environment:
+      # Phoenix Observability Integration
+      - PHOENIX_ENDPOINT=http://phoenix:6006
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:4317
+      - OTEL_SERVICE_NAME=mcp-gateway
+      - OTEL_TRACES_EXPORTER=otlp
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=docker,service.namespace=mcp
+
+  # Add Phoenix service
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: phoenix
+    restart: unless-stopped
+    networks:
+      - mcpnet
+    ports:
+      - "6006:6006"      # Phoenix UI and OTLP HTTP collector
+      - "4317:4317"      # OTLP gRPC collector
+    environment:
+      # SQLite Configuration (simple setup)
+      - PHOENIX_WORKING_DIR=/data
+      - PHOENIX_ENABLE_AUTH=false
+      - PHOENIX_LOG_LEVEL=info
+      - PHOENIX_GRPC_PORT=4317
+      - PHOENIX_HTTP_PORT=6006
+    volumes:
+      - phoenix-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  phoenix-data:
+    driver: local

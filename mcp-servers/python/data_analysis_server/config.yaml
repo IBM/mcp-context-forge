@@ -1,0 +1,38 @@
+# Configuration for MCP Data Analysis Server
+
+# Server settings
+max_datasets: 100
+max_memory_mb: 1024
+max_download_size_mb: 500
+timeout_seconds: 30
+
+# Data sources
+data_sources:
+  allowed_protocols: ["http", "https", "file"]
+  max_download_size: "500MB"
+  timeout: 30
+
+# Visualization settings
+plot_output_dir: "./plots"
+plot_style: "seaborn-v0_8"
+default_figsize: [10, 6]
+max_plot_points: 10000
+
+# Statistics settings
+default_confidence_level: 0.95
+max_categories: 50
+outlier_method: "iqr"  # iqr, zscore, isolation_forest
+
+# Performance settings
+chunk_size: 10000
+parallel_processing: true
+max_workers: 4
+max_query_results: 10000
+
+# Security settings
+enable_sandboxing: true
+allowed_file_extensions: [".csv", ".json", ".parquet", ".xlsx", ".xls"]
+
+# Logging
+log_level: "INFO"
+log_file: "data_analysis_server.log"

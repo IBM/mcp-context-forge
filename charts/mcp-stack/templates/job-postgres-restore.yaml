@@ -1,0 +1,4 @@
+{{- /* removed: job-postgres-restore is deprecated and intentionally disabled.
+     Restores are handled by the postgres initContainer during the upgrade flow.
+     Keeping this template present would be confusing; it is left inert on purpose.
+*/ -}}

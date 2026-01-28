@@ -1,0 +1,115 @@
+# MCP Gateway v0.9.0 - Prompts API Tests
+# Prompt management and rendering testing
+# Focus: Prompt CRUD, template rendering, and team access
+
+worksheet_name: "API Prompts"
+description: "Complete prompt management API testing including templates and rendering"
+priority: "MEDIUM"
+estimated_time: "30-60 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Actual Status"
+  - "Actual Response"
+  - "Status"
+  - "Tester"
+  - "Comments"
+
+tests:
+  - test_id: "PROM-001"
+    endpoint: "/prompts"
+    method: "GET"
+    description: "List available prompts with team filtering"
+    curl_command: 'curl http://localhost:4444/prompts -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of prompts accessible based on team membership"
+
+  - test_id: "PROM-002"
+    endpoint: "/prompts"
+    method: "POST"
+    description: "Create new prompt template"
+    curl_command: 'curl -X POST http://localhost:4444/prompts -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"test-api-prompt","description":"Prompt created via API","content":"Hello {{name}}! Welcome to {{location}}.","arguments":{"name":{"type":"string","description":"User name"},"location":{"type":"string","description":"Location name"}}}'
+    expected_status: 201
+    expected_response: "Prompt created successfully with team assignment"
+
+  - test_id: "PROM-003"
+    endpoint: "/prompts/{id}"
+    method: "GET"
+    description: "Get prompt details and template"
+    curl_command: 'curl http://localhost:4444/prompts/{PROMPT_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Prompt details with template content and argument definitions"
+
+  - test_id: "PROM-004"
+    endpoint: "/prompts/{id}"
+    method: "PUT"
+    description: "Update prompt template"
+    curl_command: 'curl -X PUT http://localhost:4444/prompts/{PROMPT_ID} -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"updated-prompt","content":"Updated template: Hello {{name}}!"}'
+    expected_status: 200
+    expected_response: "Prompt updated successfully"
+
+  - test_id: "PROM-005"
+    endpoint: "/prompts/{id}"
+    method: "DELETE"
+    description: "Delete prompt"
+    curl_command: 'curl -X DELETE http://localhost:4444/prompts/{PROMPT_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 204
+    expected_response: "Prompt deleted successfully"
+
+  - test_id: "PROM-006"
+    endpoint: "/prompts/{id}/render"
+    method: "POST"
+    description: "Render prompt with arguments"
+    curl_command: 'curl -X POST http://localhost:4444/prompts/{PROMPT_ID}/render -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"arguments":{"name":"John Doe","location":"New York City"}}'
+    expected_status: 200
+    expected_response: "Rendered prompt content: Hello John Doe! Welcome to New York City."
+    critical: true
+
+  - test_id: "PROM-007"
+    endpoint: "/prompts/search"
+    method: "GET"
+    description: "Search prompts by content or metadata"
+    curl_command: 'curl "http://localhost:4444/prompts/search?q=hello&limit=10" -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Search results with team-based access control"
+
+  - test_id: "PROM-008"
+    endpoint: "/prompts/export"
+    method: "GET"
+    description: "Export prompts as JSON"
+    curl_command: 'curl http://localhost:4444/prompts/export -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Prompts exported with template content and metadata"
+
+  - test_id: "PROM-009"
+    endpoint: "/prompts/import"
+    method: "POST"
+    description: "Bulk import prompts"
+    curl_command: 'curl -X POST http://localhost:4444/prompts/import -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"prompts":[{"name":"import-test","content":"Imported template: {{message}}","arguments":{"message":{"type":"string"}}}]}'
+    expected_status: 201
+    expected_response: "Prompts imported successfully with team assignments"
+
+  - test_id: "PROM-010"
+    endpoint: "/prompts/{id}/validate"
+    method: "POST"
+    description: "Validate prompt syntax and arguments"
+    curl_command: 'curl -X POST http://localhost:4444/prompts/{PROMPT_ID}/validate -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Prompt validation results and syntax check"

@@ -1,0 +1,26 @@
+date,product_category,product_name,price,quantity_sold,revenue,customer_segment,region
+2023-01-01,Electronics,Laptop,1200,5,6000,Business,North America
+2023-01-01,Electronics,Smartphone,800,12,9600,Consumer,North America
+2023-01-01,Books,Fiction Novel,15,25,375,Consumer,Europe
+2023-01-02,Electronics,Tablet,600,8,4800,Consumer,Asia
+2023-01-02,Clothing,T-Shirt,25,30,750,Consumer,North America
+2023-01-02,Books,Technical Manual,45,10,450,Business,Europe
+2023-01-03,Electronics,Laptop,1200,3,3600,Business,Asia
+2023-01-03,Clothing,Jeans,60,15,900,Consumer,North America
+2023-01-03,Books,Cookbook,30,20,600,Consumer,Europe
+2023-01-04,Electronics,Smartphone,800,18,14400,Consumer,Asia
+2023-01-04,Clothing,Dress,80,12,960,Consumer,Europe
+2023-01-04,Books,Biography,25,8,200,Consumer,North America
+2023-01-05,Electronics,Headphones,150,22,3300,Consumer,North America
+2023-01-05,Clothing,Jacket,120,7,840,Consumer,Asia
+2023-01-05,Books,Science Fiction,20,35,700,Consumer,Europe
+2023-01-06,Electronics,Smart Watch,350,14,4900,Consumer,North America
+2023-01-06,Clothing,Sneakers,90,25,2250,Consumer,Asia
+2023-01-06,Books,History Book,35,15,525,Consumer,Europe
+2023-01-07,Electronics,Gaming Console,500,6,3000,Consumer,North America
+2023-01-07,Clothing,Sweater,70,18,1260,Consumer,Europe
+2023-01-08,Electronics,Tablet,600,11,6600,Business,Asia
+2023-01-08,Books,Programming Guide,55,12,660,Business,North America
+2023-01-09,Electronics,Laptop,1200,7,8400,Business,Europe
+2023-01-09,Clothing,Formal Shirt,45,20,900,Business,North America
+2023-01-10,Electronics,Smartphone,800,15,12000,Consumer,Asia

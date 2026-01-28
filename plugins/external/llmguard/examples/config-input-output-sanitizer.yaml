@@ -1,0 +1,57 @@
+plugins:
+  # Self-contained Search Replace Plugin
+  - name: "LLMGuardPluginInputSanitizer"
+    kind: "llmguardplugin.plugin.LLMGuardPlugin"
+    description: "A plugin for running input through llmguard scanners "
+    version: "0.1"
+    author: "ContextForge"
+    hooks: ["prompt_pre_fetch"]
+    tags: ["plugin", "guardrails", "llmguard", "pre", "sanitizers"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 20
+    conditions:
+      # Apply to specific tools/servers
+      - prompts: ["test_prompt"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      cache_ttl: 120 #defined in seconds
+      input:
+        sanitizers:
+          Anonymize:
+            language: "en"
+            vault_ttl: 120 #defined in seconds
+            vault_leak_detection: True
+
+  - name: "LLMGuardPluginOutputSanitizer"
+    kind: "llmguardplugin.plugin.LLMGuardPlugin"
+    description: "A plugin for running input through llmguard scanners "
+    version: "0.1"
+    author: "ContextForge"
+    hooks: ["prompt_post_fetch"]
+    tags: ["plugin", "guardrails", "llmguard", "post", "sanitizers"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 10
+    conditions:
+      # Apply to specific tools/servers
+      - prompts: ["test_prompt"]
+        server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      cache_ttl: 60 # defined in minutes
+      output:
+        sanitizers:
+          Deanonymize:
+            matching_strategy: exact
+
+# Plugin directories to scan
+plugin_dirs:
+  - "llmguardplugin"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

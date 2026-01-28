@@ -1,0 +1,171 @@
+# ===============================================================
+# 🧪  PyTest & Coverage - Quality Gate
+# ===============================================================
+#
+#   - runs the full test-suite across three Python versions
+#   - measures branch + line coverage (fails < 60% main, < 35% doctest)
+#   - uploads the XML/HTML coverage reports as build artifacts
+#   - (optionally) generates / commits an SVG badge - kept disabled
+#   - posts a concise per-file coverage table to the job summary
+#   - executes on every push / PR to *main*  ➕  a weekly cron
+# ---------------------------------------------------------------
+
+name: Tests & Coverage
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  # schedule:
+  #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
+
+permissions:
+  contents: write # needed *only* if the badge-commit step is enabled
+  checks: write
+  actions: read
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      # -----------------------------------------------------------
+      # 1️⃣  Set-up Python
+      # -----------------------------------------------------------
+      - name: 🐍  Setup Python ${{ matrix.python }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # -----------------------------------------------------------
+      # 2  Install uv
+      # -----------------------------------------------------------
+      - name: ⚡ Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.2"
+          python-version: ${{ matrix.python }}
+
+      # -----------------------------------------------------------
+      # 3️⃣  Run the tests with coverage (fail under 60% coverage)
+      # -----------------------------------------------------------
+      - name: 🧪  Run pytest
+        run: |
+          uv run pytest \
+            --ignore=tests/fuzz \
+            --cov=mcpgateway \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term \
+            --cov-branch \
+            --cov-fail-under=60
+
+      # -----------------------------------------------------------
+      # 4️⃣  Run doctests (fail under 35% coverage)
+      # -----------------------------------------------------------
+      - name: 📊  Doctest coverage with threshold
+        run: |
+          # Run doctests with coverage measurement
+          uv run pytest --doctest-modules mcpgateway/ \
+            --cov=mcpgateway \
+            --cov-report=term \
+            --cov-report=json:doctest-coverage.json \
+            --cov-fail-under=34 \
+            --tb=short
+
+      # -----------------------------------------------------------
+      # 5️⃣  Doctest coverage check
+      # -----------------------------------------------------------
+      - name: 📊  Doctest coverage validation
+        run: |
+          uv run python3 -c "
+          import subprocess, sys
+          result = subprocess.run(['uv', 'run', 'python3', '-m', 'pytest', '--doctest-modules', 'mcpgateway/', '--tb=no', '-q'], capture_output=True)
+          if result.returncode == 0:
+              print('✅ All doctests passing')
+          else:
+              print('❌ Doctest failures detected')
+              print(result.stdout.decode())
+              print(result.stderr.decode())
+              sys.exit(1)
+          "
+
+    # -----------------------------------------------------------
+    # 4️⃣  Upload coverage artifacts (XML + HTML)
+    #       --- keep disabled unless you need them ---
+    # -----------------------------------------------------------
+    # - name: 📤  Upload coverage.xml
+    #   uses: actions/upload-artifact@v4.6.2
+    #   with:
+    #     name: coverage-xml-${{ matrix.python }}
+    #     path: coverage.xml
+    #
+    # - name: 📤  Upload HTML coverage
+    #   uses: actions/upload-artifact@v4.6.2
+    #   with:
+    #     name: htmlcov-${{ matrix.python }}
+    #     path: htmlcov/
+
+    # -----------------------------------------------------------
+    # 5️⃣  Generate + commit badge (main branch, highest Python)
+    #       --- intentionally commented-out ---
+    # -----------------------------------------------------------
+    # - name: 📊  Create coverage badge
+    #   if: matrix.python == '3.11' && github.ref == 'refs/heads/main'
+    #   id: make_badge
+    #   uses: tj-actions/coverage-badge@v2
+    #   with:
+    #     coverage-file: coverage.xml          # input
+    #     output: .github/badges/coverage.svg  # output file
+    #   env:
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #
+    # - name: 🚀  Commit badge
+    #   if: steps.make_badge.outputs.badge-updated == 'true'
+    #   uses: stefanzweifel/git-auto-commit-action@v5
+    #   with:
+    #     commit_message: "docs(badge): update coverage badge"
+    #     file_pattern: ".github/badges/coverage.svg"
+
+    # -----------------------------------------------------------
+    # 6️⃣  Publish coverage table to the job summary
+    # -----------------------------------------------------------
+
+#     - name: 📝  Coverage summary
+#       if: always()
+#       run: |
+#         echo "### Coverage - Python ${{ matrix.python }}" >> "$GITHUB_STEP_SUMMARY"
+#         echo "| File | Stmts | Miss | Branch | BrMiss | Cover |" >> "$GITHUB_STEP_SUMMARY"
+#         echo "|------|------:|-----:|-------:|-------:|------:|" >> "$GITHUB_STEP_SUMMARY"
+#         coverage json -q -o cov.json
+#         python3 - <<'PY'
+# import json, pathlib, sys, os
+# data = json.load(open("cov.json"))
+# root = pathlib.Path().resolve()
+# for f in data["files"].values():
+#     rel = pathlib.Path(f["filename"]).resolve().relative_to(root)
+#     s   = f["summary"]
+#     print(f"| {rel} | {s['num_statements']} | {s['missing_lines']} | "
+#           f"{s['num_branches']} | {s['missing_branches']} | "
+#           f"{s['percent_covered']:.1f}% |")
+# PY >> "$GITHUB_STEP_SUMMARY"

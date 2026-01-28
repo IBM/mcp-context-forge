@@ -1,0 +1,42 @@
+name: Playwright Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install -e ".[playwright]"
+        playwright install chromium
+
+    - name: Start application
+      run: |
+        make serve &
+        sleep 5  # Wait for server to start
+
+    - name: Run Playwright tests
+      run: |
+        make test-ui-headless
+      env:
+        TEST_BASE_URL: http://localhost:4444
+
+    - name: Upload screenshots on failure
+      if: failure()
+      uses: actions/upload-artifact@v4.6.2
+      with:
+        name: playwright-screenshots
+        path: tests/playwright/screenshots/

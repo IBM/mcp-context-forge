@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "prompts/get",
+  "params": {
+    "name": "compare_timezones",
+    "arguments": {
+      "timezones": "America/New_York,Europe/London,Asia/Tokyo"
+    }
+  }
+}

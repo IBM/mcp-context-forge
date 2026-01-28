@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "prompts/get",
+  "params": {
+    "name": "customer_greeting",
+    "arguments": {
+      "name": "John Smith",
+      "company": "Acme Corporation",
+      "topic": "cloud migration"
+    }
+  }
+}

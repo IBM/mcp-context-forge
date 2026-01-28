@@ -1,0 +1,298 @@
+<!-- htmlhint doctype-first:false -->
+<div class="space-y-6" x-data="overviewDashboard()" x-init="init()">
+  <!-- Header -->
+  <div class="flex justify-between items-center">
+    <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 flex items-center">
+      <svg class="h-8 w-8 mr-3 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+      </svg>
+      System Overview
+    </h2>
+    <div class="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+      <span class="flex items-center">
+        <svg class="h-4 w-4 mr-1 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        Uptime: {% set hours = uptime_seconds // 3600 %}{% set minutes = (uptime_seconds % 3600) // 60 %}{% if hours > 0 %}{{ hours }}h {{ minutes }}m{% else %}{{ minutes }}m {{ uptime_seconds % 60 }}s{% endif %}
+      </span>
+      <span>v{{ version }}</span>
+    </div>
+  </div>
+
+  <!-- Key Metrics Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <!-- Total Executions -->
+    <div class="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800 shadow-sm">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-2xl font-bold text-blue-900 dark:text-blue-100">{{ "{:,}".format(total_executions|int) }}</div>
+          <div class="text-sm text-blue-700 dark:text-blue-300 mt-1">Total Executions</div>
+        </div>
+        <div class="text-blue-500 dark:text-blue-400">
+          <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success Rate -->
+    <div class="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-lg p-4 border border-green-200 dark:border-green-800 shadow-sm">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-2xl font-bold text-green-900 dark:text-green-100">{{ "%.1f"|format(success_rate) }}%</div>
+          <div class="text-sm text-green-700 dark:text-green-300 mt-1">Success Rate</div>
+        </div>
+        <div class="text-green-500 dark:text-green-400">
+          <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Avg Latency -->
+    <div class="bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-900/20 dark:to-amber-800/20 rounded-lg p-4 border border-amber-200 dark:border-amber-800 shadow-sm">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-2xl font-bold text-amber-900 dark:text-amber-100">{{ "%.0f"|format(avg_latency_ms) }}ms</div>
+          <div class="text-sm text-amber-700 dark:text-amber-300 mt-1">Avg Latency</div>
+        </div>
+        <div class="text-amber-500 dark:text-amber-400">
+          <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Entities -->
+    <div class="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800 shadow-sm">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="text-2xl font-bold text-purple-900 dark:text-purple-100">{{ servers_active + tools_active + prompts_active + resources_active }}</div>
+          <div class="text-sm text-purple-700 dark:text-purple-300 mt-1">Active Entities</div>
+        </div>
+        <div class="text-purple-500 dark:text-purple-400">
+          <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Architecture Flow Diagram -->
+  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-6 overflow-x-auto">
+    <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Architecture Flow</h3>
+    <div class="min-w-[800px]">
+      <svg id="overview-architecture" class="w-full" viewBox="0 0 900 440" xmlns="http://www.w3.org/2000/svg">
+        <!-- Definitions for gradients and markers -->
+        <defs>
+          <!-- Arrow marker -->
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="fill-gray-400 dark:fill-gray-500"/>
+          </marker>
+          <!-- Animated dash pattern -->
+          <style>
+            @keyframes dash {
+              to { stroke-dashoffset: -20; }
+            }
+            .flow-line {
+              stroke-dasharray: 5, 5;
+              animation: dash 1s linear infinite;
+            }
+          </style>
+        </defs>
+
+        <!-- INPUT SECTION - Virtual Servers -->
+        <g class="input-section">
+          <!-- Section Label -->
+          <text x="80" y="30" class="fill-gray-500 dark:fill-gray-400 text-xs font-semibold" text-anchor="middle">INPUTS</text>
+
+          <!-- Virtual Servers Box -->
+          <rect x="20" y="120" width="120" height="140" rx="8" class="fill-blue-50 dark:fill-blue-900/30 stroke-blue-300 dark:stroke-blue-700" stroke-width="2"/>
+          <text x="80" y="150" class="fill-blue-700 dark:fill-blue-300 text-sm font-semibold" text-anchor="middle">Virtual Servers</text>
+          <text x="80" y="175" class="fill-blue-600 dark:fill-blue-400 text-xs" text-anchor="middle">🔗</text>
+
+          <!-- Count Badge -->
+          <rect x="55" y="190" width="50" height="24" rx="12" class="fill-blue-500"/>
+          <text x="80" y="207" class="fill-white text-sm font-bold" text-anchor="middle">{{ servers_active }}/{{ servers_total }}</text>
+          <text x="80" y="235" class="fill-blue-600 dark:fill-blue-400 text-xs" text-anchor="middle">active</text>
+        </g>
+
+        <!-- CENTER SECTION - ContextForge -->
+        <g class="center-section">
+          <!-- Section Label -->
+          <text x="450" y="30" class="fill-gray-500 dark:fill-gray-400 text-xs font-semibold" text-anchor="middle">GATEWAY</text>
+
+          <!-- Main ContextForge Box -->
+          <rect x="320" y="60" width="260" height="260" rx="12" class="fill-indigo-50 dark:fill-indigo-900/20 stroke-indigo-400 dark:stroke-indigo-600" stroke-width="3"/>
+
+          <!-- ContextForge Header -->
+          <rect x="320" y="60" width="260" height="50" rx="12" class="fill-indigo-500"/>
+          <rect x="320" y="90" width="260" height="20" class="fill-indigo-500"/>
+          <text x="450" y="92" class="fill-white text-base font-bold" text-anchor="middle">ContextForge</text>
+
+          <!-- Plugins Section -->
+          <text x="340" y="140" class="fill-indigo-700 dark:fill-indigo-300 text-sm font-semibold">Middleware (Plugins)</text>
+
+          <!-- Plugin badges -->
+          <rect x="340" y="155" width="220" height="30" rx="6" class="fill-purple-100 dark:fill-purple-900/30 stroke-purple-300 dark:stroke-purple-700" stroke-width="1"/>
+          <text x="450" y="175" class="fill-purple-700 dark:fill-purple-300 text-xs" text-anchor="middle">{{ plugins_enabled }} / {{ plugins_total }} plugins enabled</text>
+
+          <!-- Hook badges -->
+          {% for hook, count in plugins_by_hook.items() %}
+          {% if loop.index <= 4 %}
+          <rect x="{{ 340 + ((loop.index0 % 2) * 110) }}" y="{{ 195 + ((loop.index0 // 2) * 35) }}" width="100" height="28" rx="4" class="fill-gray-100 dark:fill-gray-700 stroke-gray-300 dark:stroke-gray-600" stroke-width="1"/>
+          <text x="{{ 390 + ((loop.index0 % 2) * 110) }}" y="{{ 214 + ((loop.index0 // 2) * 35) }}" class="fill-gray-600 dark:fill-gray-300 text-xs" text-anchor="middle">{{ hook[:12] }}: {{ count }}</text>
+          {% endif %}
+          {% endfor %}
+
+          <!-- Features row -->
+          <g transform="translate(340, 275)">
+            <rect width="60" height="24" rx="4" class="fill-green-100 dark:fill-green-900/30"/>
+            <text x="30" y="16" class="fill-green-700 dark:fill-green-300 text-xs" text-anchor="middle">Auth</text>
+            <rect x="70" width="70" height="24" rx="4" class="fill-green-100 dark:fill-green-900/30"/>
+            <text x="105" y="16" class="fill-green-700 dark:fill-green-300 text-xs" text-anchor="middle">Rate Limit</text>
+            <rect x="150" width="70" height="24" rx="4" class="fill-green-100 dark:fill-green-900/30"/>
+            <text x="185" y="16" class="fill-green-700 dark:fill-green-300 text-xs" text-anchor="middle">Metrics</text>
+          </g>
+        </g>
+
+        <!-- INFRASTRUCTURE SECTION - Below ContextForge -->
+        <g class="infrastructure-section">
+          <!-- Section Label -->
+          <text x="450" y="345" class="fill-gray-500 dark:fill-gray-400 text-xs font-semibold" text-anchor="middle">INFRASTRUCTURE</text>
+
+          <!-- Database Status -->
+          <rect x="335" y="355" width="110" height="45" rx="6" class="{% if db_reachable %}fill-green-50 dark:fill-green-900/30 stroke-green-300 dark:stroke-green-700{% else %}fill-red-50 dark:fill-red-900/30 stroke-red-300 dark:stroke-red-700{% endif %}" stroke-width="2"/>
+          <text x="390" y="375" class="{% if db_reachable %}fill-green-700 dark:fill-green-300{% else %}fill-red-700 dark:fill-red-300{% endif %} text-xs font-semibold" text-anchor="middle">{{ db_dialect | capitalize }}</text>
+          <text x="390" y="392" class="{% if db_reachable %}fill-green-600 dark:fill-green-400{% else %}fill-red-600 dark:fill-red-400{% endif %} text-xs" text-anchor="middle">{% if db_reachable %}Connected{% else %}Disconnected{% endif %}</text>
+
+          <!-- Cache Status -->
+          <rect x="455" y="355" width="110" height="45" rx="6" class="{% if cache_type == 'redis' %}{% if redis_reachable %}fill-green-50 dark:fill-green-900/30 stroke-green-300 dark:stroke-green-700{% else %}fill-red-50 dark:fill-red-900/30 stroke-red-300 dark:stroke-red-700{% endif %}{% else %}fill-gray-50 dark:fill-gray-700 stroke-gray-300 dark:stroke-gray-600{% endif %}" stroke-width="2"/>
+          <text x="510" y="375" class="{% if cache_type == 'redis' %}{% if redis_reachable %}fill-green-700 dark:fill-green-300{% else %}fill-red-700 dark:fill-red-300{% endif %}{% else %}fill-gray-700 dark:fill-gray-300{% endif %} text-xs font-semibold" text-anchor="middle">{{ cache_type | capitalize }}</text>
+          <text x="510" y="392" class="{% if cache_type == 'redis' %}{% if redis_reachable %}fill-green-600 dark:fill-green-400{% else %}fill-red-600 dark:fill-red-400{% endif %}{% else %}fill-gray-500 dark:fill-gray-400{% endif %} text-xs" text-anchor="middle">{% if cache_type == 'redis' %}{% if redis_reachable %}Connected{% else %}Disconnected{% endif %}{% else %}In-Memory{% endif %}</text>
+
+          <!-- Connection line from ContextForge to Infrastructure -->
+          <line x1="450" y1="320" x2="450" y2="355" class="stroke-gray-300 dark:stroke-gray-600" stroke-width="2" stroke-dasharray="4,4"/>
+        </g>
+
+        <!-- OUTPUT SECTION -->
+        <g class="output-section">
+          <!-- Section Label -->
+          <text x="780" y="30" class="fill-gray-500 dark:fill-gray-400 text-xs font-semibold" text-anchor="middle">OUTPUTS</text>
+
+          <!-- MCP Servers -->
+          <rect x="700" y="50" width="120" height="55" rx="6" class="fill-teal-50 dark:fill-teal-900/30 stroke-teal-300 dark:stroke-teal-700" stroke-width="2"/>
+          <text x="760" y="72" class="fill-teal-700 dark:fill-teal-300 text-xs font-semibold" text-anchor="middle">MCP Servers</text>
+          <text x="760" y="92" class="fill-teal-600 dark:fill-teal-400 text-sm font-bold" text-anchor="middle">{{ gateways_active }}/{{ gateways_total }}</text>
+
+          {% if a2a_enabled %}
+          <!-- A2A Agents -->
+          <rect x="700" y="115" width="120" height="55" rx="6" class="fill-orange-50 dark:fill-orange-900/30 stroke-orange-300 dark:stroke-orange-700" stroke-width="2"/>
+          <text x="760" y="137" class="fill-orange-700 dark:fill-orange-300 text-xs font-semibold" text-anchor="middle">A2A Agents</text>
+          <text x="760" y="157" class="fill-orange-600 dark:fill-orange-400 text-sm font-bold" text-anchor="middle">{{ a2a_active }}/{{ a2a_total }}</text>
+          {% endif %}
+
+          <!-- Tools -->
+          <rect x="700" y="180" width="120" height="55" rx="6" class="fill-rose-50 dark:fill-rose-900/30 stroke-rose-300 dark:stroke-rose-700" stroke-width="2"/>
+          <text x="760" y="202" class="fill-rose-700 dark:fill-rose-300 text-xs font-semibold" text-anchor="middle">Tools</text>
+          <text x="760" y="222" class="fill-rose-600 dark:fill-rose-400 text-sm font-bold" text-anchor="middle">{{ tools_active }}/{{ tools_total }}</text>
+
+          <!-- Prompts -->
+          <rect x="700" y="245" width="120" height="55" rx="6" class="fill-cyan-50 dark:fill-cyan-900/30 stroke-cyan-300 dark:stroke-cyan-700" stroke-width="2"/>
+          <text x="760" y="267" class="fill-cyan-700 dark:fill-cyan-300 text-xs font-semibold" text-anchor="middle">Prompts</text>
+          <text x="760" y="287" class="fill-cyan-600 dark:fill-cyan-400 text-sm font-bold" text-anchor="middle">{{ prompts_active }}/{{ prompts_total }}</text>
+
+          <!-- Resources -->
+          <rect x="700" y="310" width="120" height="55" rx="6" class="fill-lime-50 dark:fill-lime-900/30 stroke-lime-300 dark:stroke-lime-700" stroke-width="2"/>
+          <text x="760" y="332" class="fill-lime-700 dark:fill-lime-300 text-xs font-semibold" text-anchor="middle">Resources</text>
+          <text x="760" y="352" class="fill-lime-600 dark:fill-lime-400 text-sm font-bold" text-anchor="middle">{{ resources_active }}/{{ resources_total }}</text>
+        </g>
+
+        <!-- CONNECTION LINES -->
+        <!-- Input to Center -->
+        <line x1="140" y1="190" x2="320" y2="190" class="stroke-gray-400 dark:stroke-gray-500 flow-line" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+        <!-- Center to Outputs -->
+        <line x1="580" y1="77" x2="700" y2="77" class="stroke-gray-400 dark:stroke-gray-500 flow-line" stroke-width="2" marker-end="url(#arrowhead)"/>
+        {% if a2a_enabled %}
+        <line x1="580" y1="142" x2="700" y2="142" class="stroke-gray-400 dark:stroke-gray-500 flow-line" stroke-width="2" marker-end="url(#arrowhead)"/>
+        {% endif %}
+        <line x1="580" y1="207" x2="700" y2="207" class="stroke-gray-400 dark:stroke-gray-500 flow-line" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="580" y1="272" x2="700" y2="272" class="stroke-gray-400 dark:stroke-gray-500 flow-line" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <line x1="580" y1="310" x2="640" y2="337" class="stroke-gray-400 dark:stroke-gray-500 flow-line" stroke-width="2"/>
+        <line x1="640" y1="337" x2="700" y2="337" class="stroke-gray-400 dark:stroke-gray-500 flow-line" stroke-width="2" marker-end="url(#arrowhead)"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Quick Stats Grid -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <!-- Virtual Servers Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="showTab('catalog')">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center">
+          <div class="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg mr-3">
+            <svg class="h-6 w-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
+            </svg>
+          </div>
+          <div>
+            <h4 class="text-sm font-medium text-gray-900 dark:text-gray-100">Virtual Servers</h4>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Composite MCP endpoints</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ servers_total }}</div>
+          <div class="text-xs text-green-600 dark:text-green-400">{{ servers_active }} active</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tools Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="showTab('tools')">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center">
+          <div class="p-2 bg-rose-100 dark:bg-rose-900/30 rounded-lg mr-3">
+            <svg class="h-6 w-6 text-rose-600 dark:text-rose-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </div>
+          <div>
+            <h4 class="text-sm font-medium text-gray-900 dark:text-gray-100">Tools</h4>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Registered tool endpoints</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-2xl font-bold text-rose-600 dark:text-rose-400">{{ tools_total }}</div>
+          <div class="text-xs text-green-600 dark:text-green-400">{{ tools_active }} active</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Plugins Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="showTab('plugins')">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center">
+          <div class="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg mr-3">
+            <svg class="h-6 w-6 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+            </svg>
+          </div>
+          <div>
+            <h4 class="text-sm font-medium text-gray-900 dark:text-gray-100">Plugins</h4>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Middleware extensions</p>
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-2xl font-bold text-purple-600 dark:text-purple-400">{{ plugins_total }}</div>
+          <div class="text-xs text-green-600 dark:text-green-400">{{ plugins_enabled }} enabled</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

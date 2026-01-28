@@ -1,0 +1,242 @@
+# ===============================================================
+# ☁️  MCP Gateway ▸ Build, Cache & Deploy to Google Cloud Run
+# ===============================================================
+# Maintainer: Mihai Criveti
+# Status: Inactive
+# This workflow:
+#   - Restores / updates a local **BuildKit layer cache**  ❄️
+#   - Builds the Docker image from **Containerfile.lite**  🏗️
+#   - Pushes the image to **Google Artifact Registry**     📤
+#   - Deploys to **Google Cloud Run** with autoscale=1     🚀
+#
+# ---------------------------------------------------------------
+# Prerequisites (one-time setup)
+# ---------------------------------------------------------------
+# 1. Create a Google Cloud project and enable billing
+# 2. Enable required APIs:
+#    gcloud services enable run.googleapis.com artifactregistry.googleapis.com
+# 3. Create an Artifact Registry repository:
+#    gcloud artifacts repositories create mcpgateway \
+#      --repository-format=docker \
+#      --location=us-central1 \
+#      --description="MCP Gateway Docker images"
+# 4. Create a service account with required permissions:
+#      - Cloud Run Developer (only on mcpgateway service)
+#      - Artifact Registry Writer (only on mcpgateway repository)
+#    Example for restricted setup:
+#      gcloud run services add-iam-policy-binding mcpgateway \
+#        --region=us-central1 \
+#        --member="serviceAccount:github-mcpgateway@PROJECT.iam.gserviceaccount.com" \
+#        --role="roles/run.developer"
+# 5. Create Cloud SQL (PostgreSQL) and Memorystore (Redis) instances
+#    (see deployment documentation for commands)
+#
+# ---------------------------------------------------------------
+# Required repository **secrets**
+# ---------------------------------------------------------------
+#  ┌────────────────────────┬─────────────────────────────────────────────────────────────────────┐
+#  │ Secret name            │ Description / Example value                                         │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ GCP_PROJECT_ID         │ Your Google Cloud project identifier.                               │
+#  │                        │ While not a secret, it's sensitive and used as such for consistency.│
+#  │                        │ Example: "my-gcp-project-123456"                                    │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ GCP_SERVICE_KEY        │ Service account JSON key for authentication to Google Cloud         │
+#  │                        │ Get from: IAM & Admin > Service Accounts > Keys > Add Key > JSON    │
+#  │                        │ Example: {"type": "service_account", "project_id": "my-project"...} │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ JWT_SECRET_KEY         │ Random secret for signing JWT authentication tokens                 │
+#  │                        │ Generate with: openssl rand -base64 32                              │
+#  │                        │ Example: "xQ3Z5yDvEd2qP9kL7mN4wR8tU1aF6jH0bC3gI5sV"                 │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ BASIC_AUTH_PASSWORD    │ Password for HTTP Basic Authentication (fallback auth method)       │
+#  │                        │ Example: "changeme-to-something-secure"                             │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ DATABASE_URL           │ PostgreSQL connection string for Cloud SQL instance                 │
+#  │                        │ Format: postgresql://USER:PASS@IP:PORT/DATABASE                     │
+#  │                        │ Example: "postgresql://postgres:mypass@10.20.30.40:5432/mcpgw"      │
+#  ├────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+#  │ REDIS_URL              │ Redis connection string for Memorystore instance                    │
+#  │                        │ Format: redis://IP:PORT/DB_NUMBER                                   │
+#  │                        │ Example: "redis://10.20.30.50:6379/0"                               │
+#  └────────────────────────┴─────────────────────────────────────────────────────────────────────┘
+#
+# ---------------------------------------------------------------
+# Required repository **variables**
+# ---------------------------------------------------------------
+#  ┌────────────────────────────┬─────────────────────────────────────────────────────────────────┐
+#  │ Variable name              │ Description / Example value                                     │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ GCP_REGION                 │ Google Cloud region for deployment                              │
+#  │                            │ Example: "us-central1" (or us-east1, europe-west1, etc.)        │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ GAR_REPO_NAME              │ Artifact Registry repository name (must exist)                  │
+#  │                            │ Example: "mcpgateway" or "docker-images"                        │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ IMAGE_NAME                 │ Name for your Docker image                                      │
+#  │                            │ Example: "mcpgateway"                                           │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CLOUD_RUN_SERVICE          │ Name of the Cloud Run service                                   │
+#  │                            │ Example: "mcpgateway" or "mcp-gateway-prod"                     │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CLOUD_RUN_PORT             │ Port number the container listens on (numeric, no quotes)       │
+#  │                            │ Example: 4444                                                   │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ BASIC_AUTH_USER            │ Username for HTTP Basic Authentication                          │
+#  │                            │ Example: "admin"                                                │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CACHE_TYPE                 │ Cache backend type for MCP Gateway                              │
+#  │                            │ Example: "redis" (or "memory" for development)                  │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ HOST                       │ IP address to bind the service to (required for containers)     │
+#  │                            │ Must be: "0.0.0.0" (to listen on all interfaces)                │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ GUNICORN_WORKERS           │ Number of Gunicorn worker processes (numeric, no quotes)        │
+#  │                            │ Example: 1 (keep low for cost efficiency)                       │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CLOUD_RUN_CPU              │ Number of vCPUs allocated (numeric, no quotes)                  │
+#  │                            │ Example: 1 (minimum is 0.08, maximum is 8)                      │
+#  ├────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+#  │ CLOUD_RUN_MEMORY           │ Memory allocation for the service                               │
+#  │                            │ Example: "512Mi" (minimum is 128Mi, maximum is 32Gi)            │
+#  └────────────────────────────┴─────────────────────────────────────────────────────────────────┘
+#
+# Triggers:
+#   - Every push to `main`
+# ===============================================================
+
+name: Deploy to Google Cloud Run
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+env:
+  # ─── project & registry ───────────────────────────
+  GCP_REGION:          ${{ vars.GCP_REGION }}
+  GAR_REPO_NAME:       ${{ vars.GAR_REPO_NAME }}
+  IMAGE_NAME:          ${{ vars.IMAGE_NAME }}
+  IMAGE_TAG:           ${{ github.sha }}
+  CLOUD_RUN_SERVICE:   ${{ vars.CLOUD_RUN_SERVICE }}
+  CLOUD_RUN_PORT:      ${{ vars.CLOUD_RUN_PORT }}
+
+  # ─── app configuration (non-secret) ──────────────
+  BASIC_AUTH_USER:     ${{ vars.BASIC_AUTH_USER }}
+  CACHE_TYPE:          ${{ vars.CACHE_TYPE }}
+  HOST:                ${{ vars.HOST }}
+  GUNICORN_WORKERS:    ${{ vars.GUNICORN_WORKERS }}
+  CLOUD_RUN_CPU:       ${{ vars.CLOUD_RUN_CPU }}
+  CLOUD_RUN_MEMORY:    ${{ vars.CLOUD_RUN_MEMORY }}
+
+  # ─── secrets ─────────────────────────────────────
+  GCP_PROJECT_ID:      ${{ secrets.GCP_PROJECT_ID }}
+  JWT_SECRET_KEY:      ${{ secrets.JWT_SECRET_KEY }}
+  BASIC_AUTH_PASSWORD: ${{ secrets.BASIC_AUTH_PASSWORD }}
+  DATABASE_URL:        ${{ secrets.DATABASE_URL }}
+  REDIS_URL:           ${{ secrets.REDIS_URL }}
+
+  # ─── caching helpers ──────────────────────────────
+  CACHE_DIR:        /tmp/.buildx-cache
+
+jobs:
+  build-push-deploy:
+    name: 🚀 Build, Cache, Push & Deploy
+    runs-on: ubuntu-latest
+    environment: google-cloud-run-production
+    # Uses PostgreSQL database and Redis cache
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout repository
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout source
+        uses: actions/checkout@v5
+
+      # -----------------------------------------------------------
+      # 1️⃣  Authenticate to Google Cloud
+      # -----------------------------------------------------------
+      - name: 🔐  Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_KEY }}
+
+      - name: 🧰  Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      # -----------------------------------------------------------
+      # 2️⃣  Set up Docker Buildx + cache
+      # -----------------------------------------------------------
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+
+      - name: 🔄  Restore BuildKit cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CACHE_DIR }}
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-buildx-
+
+      # -----------------------------------------------------------
+      # 3️⃣  Configure Docker to use gcloud auth
+      # -----------------------------------------------------------
+      - name: 🔧  Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev
+
+      # -----------------------------------------------------------
+      # 4️⃣  Build & tag image
+      # -----------------------------------------------------------
+      - name: 🏗️  Build Docker image
+        run: |
+          docker buildx build \
+            --file Containerfile.lite \
+            --tag ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            --cache-from type=local,src=${{ env.CACHE_DIR }} \
+            --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
+            --load \
+            .
+
+      # -----------------------------------------------------------
+      # 5️⃣  Push image to Artifact Registry
+      # -----------------------------------------------------------
+      - name: 📤  Push image to GAR
+        run: |
+          docker push ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPO_NAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+      # -----------------------------------------------------------
+      # 6️⃣  Deploy to Cloud Run
+      # -----------------------------------------------------------
+      - name: 🚀  Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$CLOUD_RUN_SERVICE" \
+            --image "$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$GAR_REPO_NAME/$IMAGE_NAME:$IMAGE_TAG" \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --port "$CLOUD_RUN_PORT" \
+            --cpu "$CLOUD_RUN_CPU" \
+            --memory "$CLOUD_RUN_MEMORY" \
+            --max-instances 1 \
+            --set-env-vars "JWT_SECRET_KEY=$JWT_SECRET_KEY" \
+            --set-env-vars "BASIC_AUTH_USER=$BASIC_AUTH_USER" \
+            --set-env-vars "BASIC_AUTH_PASSWORD=$BASIC_AUTH_PASSWORD" \
+            --set-env-vars "AUTH_REQUIRED=true" \
+            --set-env-vars "DATABASE_URL=$DATABASE_URL" \
+            --set-env-vars "REDIS_URL=$REDIS_URL" \
+            --set-env-vars "CACHE_TYPE=$CACHE_TYPE" \
+            --set-env-vars "HOST=$HOST" \
+            --set-env-vars "GUNICORN_WORKERS=$GUNICORN_WORKERS"
+
+      # -----------------------------------------------------------
+      # 7️⃣  Show deployment status
+      # -----------------------------------------------------------
+      - name: 📈  Display deployment status
+        run: |
+          URL=$(gcloud run services describe "$CLOUD_RUN_SERVICE" --region "$GCP_REGION" --format "value(status.url)")
+          echo "🎉 Service deployed to: $URL"
+          echo "📊 Service details:"
+          gcloud run services describe "$CLOUD_RUN_SERVICE" --region "$GCP_REGION"

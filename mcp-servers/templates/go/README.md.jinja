@@ -1,0 +1,41 @@
+# {{ project_name }}
+
+{{ description }}
+
+## Quick Start
+
+```bash
+# Build & run over stdio
+make run
+```
+
+## Install
+
+```bash
+go install {{ module_path }}@latest
+```
+
+## MCP Client Configuration (stdio)
+
+```json
+{
+  "mcpServers": {
+    "{{ bin_name }}": {
+      "command": "{{ bin_name }}",
+      "args": []
+    }
+  }
+}
+```
+
+## Docker
+
+```bash
+# Build
+podman build -t {{ bin_name }}:{{ version }} .
+# Run (stdio mode in container)
+podman run --rm -it {{ bin_name }}:{{ version }}
+```
+
+License: {{ license }}
+
