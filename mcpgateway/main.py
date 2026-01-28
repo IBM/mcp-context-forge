@@ -1524,6 +1524,26 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         username = api_token_info["user_email"]
                         logger.debug(f"Admin auth via API token: {username}")
 
+            # Try basic auth if no JWT/API token succeeded
+            if not username and token and token.startswith("Basic "):
+                import base64
+
+                try:
+                    # Decode Basic auth credentials
+                    encoded = token.split(" ", 1)[1]
+                    decoded = base64.b64decode(encoded).decode("utf-8")
+                    if ":" in decoded:
+                        basic_user, basic_pass = decoded.split(":", 1)
+                        # Verify against configured basic auth credentials
+                        if (
+                            basic_user == settings.basic_auth_user
+                            and basic_pass == settings.basic_auth_password.get_secret_value()
+                        ):
+                            username = basic_user
+                            logger.debug(f"Admin auth via basic auth: {username}")
+                except Exception as basic_err:
+                    logger.debug(f"Basic auth decoding failed: {basic_err}")
+
             if not username and settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
                 # Proxy authentication path (when MCP client auth is disabled and proxy auth is trusted)
                 proxy_user = request.headers.get(settings.proxy_user_header)
@@ -1536,29 +1556,34 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 return self._error_response(request, root_path, 401, "Authentication required")
 
             # Check if user exists, is active, and is admin
-            db = next(get_db())
-            try:
-                auth_service = EmailAuthService(db)
-                user = await auth_service.get_user_by_email(username)
+            # Basic auth users are inherently admin (legacy support)
+            if username == settings.basic_auth_user:
+                logger.debug(f"Basic auth admin access granted: {username}")
+                # Basic auth user is always admin, skip DB check
+            else:
+                db = next(get_db())
+                try:
+                    auth_service = EmailAuthService(db)
+                    user = await auth_service.get_user_by_email(username)
 
-                if not user:
-                    # Platform admin bootstrap (when REQUIRE_USER_IN_DB=false)
-                    platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
-                    if not settings.require_user_in_db and username == platform_admin_email:
-                        logger.info(f"Platform admin bootstrap authentication for {username}")
-                        # Allow platform admin through - they have implicit admin privileges
+                    if not user:
+                        # Platform admin bootstrap (when REQUIRE_USER_IN_DB=false)
+                        platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+                        if not settings.require_user_in_db and username == platform_admin_email:
+                            logger.info(f"Platform admin bootstrap authentication for {username}")
+                            # Allow platform admin through - they have implicit admin privileges
+                        else:
+                            return ORJSONResponse(status_code=401, content={"detail": "User not found"})
                     else:
-                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
-                else:
-                    # User exists in DB - check active and admin status
-                    if not user.is_active:
-                        logger.warning(f"Admin access denied for disabled user: {username}")
-                        return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
-                    if not user.is_admin:
-                        logger.warning(f"Admin access denied for non-admin user: {username}")
-                        return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
-            finally:
-                db.close()
+                        # User exists in DB - check active and admin status
+                        if not user.is_active:
+                            logger.warning(f"Admin access denied for disabled user: {username}")
+                            return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
+                        if not user.is_admin:
+                            logger.warning(f"Admin access denied for non-admin user: {username}")
+                            return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
+                finally:
+                    db.close()
 
         except HTTPException as e:
             return self._error_response(request, root_path, e.status_code, e.detail)
