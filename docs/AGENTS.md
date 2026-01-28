@@ -40,7 +40,7 @@ pip install -r requirements.txt
 make build                # Build static site
 
 # Serve locally
-make serve                # Serve at http://localhost:8001
+make serve                # Serve at http://localhost:8000 (MkDocs default)
 
 # Clean
 make clean                # Remove build artifacts
