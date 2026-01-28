@@ -103,6 +103,14 @@ spec:
             # ---------- LOGGING ----------
             - name: LOG_LEVEL
               value: "INFO"
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+            - configMapRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-config
+            {{- if .Values.mcpContextForge.extraEnvFrom }}
+            {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
+            {{- end }}
           # Resource limits
           resources:
 {{- toYaml .Values.migration.resources | nindent 12 }}

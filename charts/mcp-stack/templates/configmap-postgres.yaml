@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: postgres-config
+  name: {{ include "mcp-stack.postgresConfigName" . }}
 data:
   POSTGRES_DB: {{ .Values.postgres.credentials.database }}
 {{- end }}
