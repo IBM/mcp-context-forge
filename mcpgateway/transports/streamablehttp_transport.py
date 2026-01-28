@@ -488,6 +488,9 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     Raises:
         Exception: Re-raised after logging to allow MCP SDK to convert to JSON-RPC error response.
 
+    Raises:
+        Exception: Re-raises exceptions encountered during tool invocation after logging.
+
     Examples:
         >>> # Test call_tool function signature
         >>> import inspect

@@ -686,7 +686,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
                 pool = get_mcp_session_pool()
-                pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())
+                pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())  # pylint: disable=protected-access
                 logger.info("Multi-worker session affinity RPC listener started")
 
         await root_service.initialize()
