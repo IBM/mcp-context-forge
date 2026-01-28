@@ -77,7 +77,7 @@ class ErrorFormatter:
             ...     @field_validator('name')
             ...     def validate_name(cls, v):
             ...         if not v.startswith('A'):
-            ...             raise ValueError('Tool name must start with a letter A')
+            ...             raise ValueError('Tool name must start with a letter, number, or underscore')
             ...         return v
             >>> # Test validation error formatting
             >>> try:
@@ -87,14 +87,14 @@ class ErrorFormatter:
             ...     result = ErrorFormatter.format_validation_error(e)
             <class 'pydantic_core._pydantic_core.ValidationError'>
             >>> result['message']
-            'Validation failed: Name must start with a letter and contain only letters, numbers, and underscores'
+            'Validation failed: Name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes'
             >>> result['success']
             False
             >>> len(result['details']) > 0
             True
             >>> result['details'][0]['field']
             'name'
-            >>> 'must start with a letter' in result['details'][0]['message']
+            >>> 'must start with a letter, number, or underscore' in result['details'][0]['message']
             True
 
             >>> # Test with multiple errors
@@ -158,9 +158,9 @@ class ErrorFormatter:
 
         Examples:
             >>> # Test letter requirement mapping
-            >>> msg = ErrorFormatter._get_user_message("name", "Tool name must start with a letter")
+            >>> msg = ErrorFormatter._get_user_message("name", "Tool name must start with a letter, number, or underscore")
             >>> msg
-            'Name must start with a letter and contain only letters, numbers, and underscores'
+            'Name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes'
 
             >>> # Test length validation mapping
             >>> msg = ErrorFormatter._get_user_message("description", "Tool name exceeds maximum length")
@@ -188,7 +188,7 @@ class ErrorFormatter:
             'Invalid custom_field'
         """
         mappings = {
-            "Tool name must start with a letter": f"{field.title()} must start with a letter and contain only letters, numbers, and underscores",
+            "Tool name must start with a letter, number, or underscore": f"{field.title()} must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes",
             "Tool name exceeds maximum length": f"{field.title()} is too long (maximum 255 characters)",
             "Tool URL must start with": f"{field.title()} must be a valid HTTP or WebSocket URL",
             "cannot contain directory traversal": f"{field.title()} contains invalid characters",
