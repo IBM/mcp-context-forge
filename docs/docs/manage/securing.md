@@ -33,8 +33,15 @@ users by removing the corresponding permissions.
 ```bash
 # Configure strong authentication
 AUTH_REQUIRED=true
-BASIC_AUTH_USER=custom-username       # Change from default
-BASIC_AUTH_PASSWORD=strong-password-here  # Use secrets manager
+
+# Basic auth is DISABLED by default (recommended for security)
+# API_ALLOW_BASIC_AUTH=false    # Default - use JWT tokens instead
+# DOCS_ALLOW_BASIC_AUTH=false   # Default - use JWT tokens instead
+
+# If you MUST use Basic auth (legacy compatibility only):
+# API_ALLOW_BASIC_AUTH=true
+# BASIC_AUTH_USER=custom-username       # Change from default
+# BASIC_AUTH_PASSWORD=strong-password-here  # Use secrets manager
 
 # Platform admin user (auto-created during bootstrap)
 PLATFORM_ADMIN_EMAIL=admin@yourcompany.com  # Change from default
@@ -466,8 +473,8 @@ Applications consuming MCP Gateway data must:
 MCPGATEWAY_UI_ENABLED=false              # Must be false in production
 MCPGATEWAY_ADMIN_API_ENABLED=false       # Must be false in production
 AUTH_REQUIRED=true                       # Enforce auth for every request
-BASIC_AUTH_USER=custom-user              # Change from default
-BASIC_AUTH_PASSWORD=<from-secrets>       # Use secrets manager or secret store
+API_ALLOW_BASIC_AUTH=false               # Keep disabled (use JWT instead)
+DOCS_ALLOW_BASIC_AUTH=false              # Keep disabled (use JWT instead)
 
 # Feature Flags (disable unused features)
 MCPGATEWAY_BULK_IMPORT_ENABLED=false

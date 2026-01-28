@@ -728,3 +728,152 @@ async def test_verify_jwt_token_validate_environment_disabled_ignores_mismatch(m
     payload = await vc.verify_jwt_token(token)
     assert payload["sub"] == "user@example.com"
     assert payload["env"] == "development"
+
+
+# ---------------------------------------------------------------------------
+# API_ALLOW_BASIC_AUTH tests for require_admin_auth()
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_require_admin_auth_rejects_basic_auth_when_disabled(monkeypatch):
+    """When API_ALLOW_BASIC_AUTH=false (default), basic auth should be rejected for API endpoints."""
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    # Create mock request
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    # Valid basic credentials that WOULD work if enabled
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(
+            request=mock_request,
+            credentials=None,
+            jwt_token=None,
+            basic_credentials=basic_creds,
+        )
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Basic authentication is disabled for API endpoints" in exc.value.detail
+    assert exc.value.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_accepts_basic_auth_when_enabled(monkeypatch):
+    """When API_ALLOW_BASIC_AUTH=true, basic auth should be accepted for API endpoints."""
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    # Create mock request
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    # Valid basic credentials
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+
+    result = await vc.require_admin_auth(
+        request=mock_request,
+        credentials=None,
+        jwt_token=None,
+        basic_credentials=basic_creds,
+    )
+
+    assert result == "admin"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_invalid_basic_auth_rejected_even_when_enabled(monkeypatch):
+    """When API_ALLOW_BASIC_AUTH=true, invalid credentials should still be rejected."""
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    # Create mock request
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    # Invalid basic credentials
+    basic_creds = HTTPBasicCredentials(username="admin", password="wrong")
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(
+            request=mock_request,
+            credentials=None,
+            jwt_token=None,
+            basic_credentials=basic_creds,
+        )
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Invalid credentials"
+
+
+@pytest.mark.asyncio
+async def test_docs_basic_auth_independent_of_api_basic_auth(monkeypatch):
+    """CRITICAL: Docs Basic auth should work independently of API Basic auth setting.
+
+    When DOCS_ALLOW_BASIC_AUTH=true and API_ALLOW_BASIC_AUTH=false:
+    - /docs endpoints (via require_auth_override) should accept Basic auth
+    - /api/metrics/* endpoints (via require_admin_auth) should reject Basic auth
+    """
+    # Setup: docs enabled, API disabled
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    basic_header = f"Basic {base64.b64encode(b'admin:secret').decode()}"
+
+    # Test 1: Docs path (require_auth_override) should ACCEPT Basic auth
+    docs_result = await vc.require_auth_override(auth_header=basic_header)
+    assert docs_result == "admin", "Docs Basic auth should work when DOCS_ALLOW_BASIC_AUTH=true"
+
+    # Test 2: API path (require_admin_auth) should REJECT Basic auth
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", False, raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(
+            request=mock_request,
+            credentials=None,
+            jwt_token=None,
+            basic_credentials=basic_creds,
+        )
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Basic authentication is disabled for API endpoints" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_no_credentials_provided(monkeypatch):
+    """When no credentials are provided, require_admin_auth should return 401."""
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", False, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(
+            request=mock_request,
+            credentials=None,
+            jwt_token=None,
+            basic_credentials=None,
+        )
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Authentication required"

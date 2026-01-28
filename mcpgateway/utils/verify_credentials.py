@@ -925,15 +925,22 @@ async def require_admin_auth(
             # If there's any other error with email auth, fall back to basic auth
             pass  # nosec B110 - Intentional fallback to basic auth on any email auth error
 
-    # Fall back to basic authentication
+    # Fall back to basic authentication (gated by API_ALLOW_BASIC_AUTH)
     try:
         if basic_credentials:
+            # SECURITY: Basic auth for API endpoints is disabled by default
+            if not settings.api_allow_basic_auth:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Basic authentication is disabled for API endpoints. Use JWT or API tokens instead.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             return await verify_basic_credentials(basic_credentials)
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="No basic auth credentials provided",
-                headers={"WWW-Authenticate": "Basic"},
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
             )
     except HTTPException:
         # If both methods fail, check if we should redirect browser users to login page

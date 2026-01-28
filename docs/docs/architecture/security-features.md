@@ -13,7 +13,7 @@
 
 ### Core Gateway Authentication
 
-- **HTTP Basic Auth** protects the Admin UI and optionally the OpenAPI docs (`DOCS_ALLOW_BASIC_AUTH=true`). Credentials are defined by `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD`, and the config endpoint masks secrets (`mcpgateway/admin.py`).
+- **HTTP Basic Auth** is disabled by default for security. Enable with `API_ALLOW_BASIC_AUTH=true` for API endpoints or `DOCS_ALLOW_BASIC_AUTH=true` for docs. When enabled, credentials use `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD`. The Admin UI uses email/password authentication, not Basic auth.
 - **JWT bearer tokens** are required for API access and MCP transports when `MCP_CLIENT_AUTH_ENABLED=true` (default). For reverse proxies you can opt into `TRUST_PROXY_AUTH=true` and provide the authenticated identity through `PROXY_USER_HEADER`.
 - **Token issuance tooling.** `python -m mcpgateway.utils.create_jwt_token` produces gateway-signed tokens for automation. The helper respects configured expiry, issuer, and audience claims.
 
@@ -127,7 +127,8 @@ For production deployments, always include JTI in issued tokens to enable proper
 ## Production Hardening Checklist
 
 - [ ] **Set production posture.** Run with `ENVIRONMENT=production`, configure `APP_DOMAIN` and explicit `ALLOWED_ORIGINS`, and leave `SKIP_SSL_VERIFY=false`.
-- [ ] **Harden secrets.** Rotate `BASIC_AUTH_PASSWORD`, `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, `PLATFORM_ADMIN_PASSWORD`, and database credentials; enable `REQUIRE_STRONG_SECRETS=true` so weak values stop startup.
+- [ ] **Harden secrets.** Rotate `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, `PLATFORM_ADMIN_PASSWORD`, and database credentials; enable `REQUIRE_STRONG_SECRETS=true` so weak values stop startup.
+- [ ] **Keep Basic auth disabled.** Leave `API_ALLOW_BASIC_AUTH=false` (default) and `DOCS_ALLOW_BASIC_AUTH=false` (default). Use JWT tokens for API access.
 - [ ] **Keep auth mandatory.** Maintain `AUTH_REQUIRED=true`, `MCP_CLIENT_AUTH_ENABLED=true`, and only enable `TRUST_PROXY_AUTH` behind a trusted authentication proxy.
 - [ ] **Disable unused surfaces.** Leave `MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`, `MCPGATEWAY_BULK_IMPORT_ENABLED=false`, `MCPGATEWAY_A2A_ENABLED=false`, and `MCPGATEWAY_CATALOG_ENABLED=false` unless you actively use them.
 - [ ] **Leave header passthrough off.** `ENABLE_HEADER_PASSTHROUGH=false` (default) should only change after reviewing downstream requirements and allowlists.

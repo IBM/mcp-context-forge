@@ -192,17 +192,21 @@ services:
       # - JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem
       - JWT_AUDIENCE=mcpgateway-api
       - JWT_ISSUER=mcpgateway
-      # Basic auth credentials (docs/admin UI)
-      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
+      # Basic auth is DISABLED by default for security (API_ALLOW_BASIC_AUTH=false)
+      # Only set these if you explicitly enable Basic auth for backwards compatibility
+      # - API_ALLOW_BASIC_AUTH=true
+      # - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
+      # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       # Auth encryption secret + default user password
       - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-my-test-salt}
       - DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:-changeme}
+      # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
-      - REQUIRE_TOKEN_EXPIRATION=false
-      - REQUIRE_JTI=${REQUIRE_JTI:-false}
+      # Security defaults (tokens require expiration and JTI for revocation)
+      - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
+      - REQUIRE_JTI=${REQUIRE_JTI:-true}
       - REQUIRE_USER_IN_DB=${REQUIRE_USER_IN_DB:-false}
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true

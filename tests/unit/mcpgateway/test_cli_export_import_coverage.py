@@ -30,15 +30,31 @@ async def test_get_auth_token_from_env():
 
 
 @pytest.mark.asyncio
-async def test_get_auth_token_basic_fallback():
-    """Test fallback to basic auth."""
+async def test_get_auth_token_basic_fallback_when_enabled():
+    """Test fallback to basic auth when API_ALLOW_BASIC_AUTH=true."""
     with patch.dict("os.environ", {}, clear=True):
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.api_allow_basic_auth = True  # Enable basic auth for API
             mock_settings.basic_auth_user = "admin"
             mock_settings.basic_auth_password = "secret"
 
             token = await get_auth_token()
+            assert token is not None
             assert token.startswith("Basic ")
+
+
+@pytest.mark.asyncio
+async def test_get_auth_token_basic_fallback_disabled_by_default():
+    """Test that basic auth fallback is skipped when API_ALLOW_BASIC_AUTH=false (default)."""
+    with patch.dict("os.environ", {}, clear=True):
+        with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.api_allow_basic_auth = False  # Disabled by default
+            mock_settings.basic_auth_user = "admin"
+            mock_settings.basic_auth_password = "secret"
+
+            token = await get_auth_token()
+            # Should return None because API_ALLOW_BASIC_AUTH=false
+            assert token is None
 
 
 @pytest.mark.asyncio
@@ -46,11 +62,27 @@ async def test_get_auth_token_no_config():
     """Test when no auth is configured."""
     with patch.dict("os.environ", {}, clear=True):
         with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.api_allow_basic_auth = True
             mock_settings.basic_auth_user = None
             mock_settings.basic_auth_password = None
 
             token = await get_auth_token()
             assert token is None
+
+
+@pytest.mark.asyncio
+async def test_get_auth_token_prefers_jwt_over_basic():
+    """Test that JWT token from environment is preferred over basic auth."""
+    with patch.dict("os.environ", {"MCPGATEWAY_BEARER_TOKEN": "jwt-token"}):
+        with patch("mcpgateway.cli_export_import.settings") as mock_settings:
+            mock_settings.api_allow_basic_auth = True
+            mock_settings.basic_auth_user = "admin"
+            mock_settings.basic_auth_password = "secret"
+
+            token = await get_auth_token()
+            # JWT should be preferred over Basic auth
+            assert token == "jwt-token"
+            assert not token.startswith("Basic ")
 
 
 def test_create_parser():

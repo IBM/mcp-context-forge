@@ -26,9 +26,20 @@ This release introduces **secure-by-default configuration** and **RBAC hardening
 
 #### **🛡️ AdminAuthMiddleware Enhancements**
 * Added API token authentication support for `/admin/*` routes
-* Added Basic authentication support for `/admin/*` routes
 * Added platform admin bootstrap support for initial setup scenarios
 * Unified authentication methods with main API authentication
+* Removed non-functional Basic auth from Admin UI (use email/password login)
+
+#### **🔒 Basic Auth Security Hardening**
+* **API_ALLOW_BASIC_AUTH** now defaults to `false` - Basic auth disabled for API endpoints by default
+* **DOCS_ALLOW_BASIC_AUTH** remains `false` by default - Basic auth disabled for docs endpoints
+* **FIXED**: Outbound credential leak - gateway no longer sends admin credentials to remote servers
+
+> **Migration**: If you use Basic auth for API access, either:
+> 1. **(Recommended)** Migrate to JWT tokens: `export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token ...)`
+> 2. Set `API_ALLOW_BASIC_AUTH=true` to restore previous behavior
+
+> **Breaking**: Gateways without configured `auth_value` will now send unauthenticated requests to remote servers. Configure per-gateway authentication for servers that require it.
 
 #### **🔒 SSO Redirect Validation**
 * Redirect URI validation now uses server-side allowlist only
