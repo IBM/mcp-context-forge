@@ -436,12 +436,24 @@ class TestAdminToolOpsAPIs:
         # Get db session from app's dependency overrides or directly from get_db
         # (which uses the patched SessionLocal in tests)
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
+        db_gen = test_db_dependency()
+        db = next(db_gen)
 
-        # Create two teams (creator is automatically added as owner)
-        team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Team 1 - {uuid.uuid4().hex[:8]}", description="First team", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Team 2 - {uuid.uuid4().hex[:8]}", description="Second team", created_by="admin@example.com", visibility="private")
+        try:
+            # Create two teams (creator is automatically added as owner)
+            team_service = TeamManagementService(db)
+            team1 = await team_service.create_team(name=f"Team 1 - {uuid.uuid4().hex[:8]}", description="First team", created_by="admin@example.com", visibility="private")
+            team2 = await team_service.create_team(name=f"Team 2 - {uuid.uuid4().hex[:8]}", description="Second team", created_by="admin@example.com", visibility="private")
+            # Store IDs before closing session
+            team1_id = team1.id
+            team2_id = team2.id
+            db.commit()  # Explicitly commit the teams
+        finally:
+            # Properly close the generator to trigger cleanup
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
 
         # Create tools in different teams
         # Note: tool names get normalized to use hyphens instead of underscores
@@ -452,14 +464,14 @@ class TestAdminToolOpsAPIs:
             "url": "http://example.com/tool1",
             "description": "Tool in team 1",
             "visibility": "team",
-            "team_id": team1.id,
+            "team_id": team1_id,
         }
         tool2_data = {
             "name": tool2_name,
             "url": "http://example.com/tool2",
             "description": "Tool in team 2",
             "visibility": "team",
-            "team_id": team2.id,
+            "team_id": team2_id,
         }
 
         # Create the tools
@@ -467,14 +479,14 @@ class TestAdminToolOpsAPIs:
         await client.post("/admin/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
 
         # Test filtering by team1 - should only return tool1
-        response = await client.get(f"/admin/tool-ops/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/tool-ops/partial?team_id={team1_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool1_name in html
         assert tool2_name not in html
 
         # Test filtering by team2 - should only return tool2
-        response = await client.get(f"/admin/tool-ops/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/tool-ops/partial?team_id={team2_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool2_name in html
@@ -795,12 +807,24 @@ class TestTeamFiltering:
         # Get db session from app's dependency overrides or directly from get_db
         # (which uses the patched SessionLocal in tests)
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
+        db_gen = test_db_dependency()
+        db = next(db_gen)
 
-        # Create two teams (creator is automatically added as owner)
-        team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Team 1 - {uuid.uuid4().hex[:8]}", description="First team", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Team 2 - {uuid.uuid4().hex[:8]}", description="Second team", created_by="admin@example.com", visibility="private")
+        try:
+            # Create two teams (creator is automatically added as owner)
+            team_service = TeamManagementService(db)
+            team1 = await team_service.create_team(name=f"Team 1 - {uuid.uuid4().hex[:8]}", description="First team", created_by="admin@example.com", visibility="private")
+            team2 = await team_service.create_team(name=f"Team 2 - {uuid.uuid4().hex[:8]}", description="Second team", created_by="admin@example.com", visibility="private")
+            # Store IDs before closing session
+            team1_id = team1.id
+            team2_id = team2.id
+            db.commit()  # Explicitly commit the teams
+        finally:
+            # Properly close the generator to trigger cleanup
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
 
         # Create tools in different teams
         # Note: tool names get normalized to use hyphens instead of underscores
@@ -811,14 +835,14 @@ class TestTeamFiltering:
             "url": "http://example.com/tool1",
             "description": "Tool in team 1",
             "visibility": "team",
-            "team_id": team1.id,
+            "team_id": team1_id,
         }
         tool2_data = {
             "name": tool2_name,
             "url": "http://example.com/tool2",
             "description": "Tool in team 2",
             "visibility": "team",
-            "team_id": team2.id,
+            "team_id": team2_id,
         }
 
         # Create the tools
@@ -826,14 +850,14 @@ class TestTeamFiltering:
         await client.post("/admin/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
 
         # Test filtering by team1 - should only return tool1
-        response = await client.get(f"/admin/tools/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/tools/partial?team_id={team1_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool1_name in html
         assert tool2_name not in html
 
         # Test filtering by team2 - should only return tool2
-        response = await client.get(f"/admin/tools/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/tools/partial?team_id={team2_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool2_name in html
@@ -855,45 +879,56 @@ class TestTeamFiltering:
         # Get db session from app's dependency overrides or directly from get_db
         # (which uses the patched SessionLocal in tests)
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
+        db_gen = test_db_dependency()
+        db = next(db_gen)
 
-        # Create TWO teams
-        team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Team 1 IDs - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Team 2 IDs - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        try:
+            # Create TWO teams
+            team_service = TeamManagementService(db)
+            team1 = await team_service.create_team(name=f"Team 1 IDs - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+            team2 = await team_service.create_team(name=f"Team 2 IDs - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+            # Store IDs before closing session
+            team1_id = team1.id
+            team2_id = team2.id
+            
+            # Create tools in different teams (while session is still open)
+            team1_tool_id = uuid.uuid4().hex
+            team1_tool = DbTool(
+                id=team1_tool_id,
+                original_name=f"team1_tool_{uuid.uuid4().hex[:8]}",
+                url="http://example.com/team1",
+                description="Team 1 tool",
+                visibility="team",
+                team_id=team1_id,
+                owner_email="admin@example.com",
+                enabled=True,
+                input_schema={},
+            )
+            db.add(team1_tool)
 
-        # Create tools in different teams
-        team1_tool_id = uuid.uuid4().hex
-        team1_tool = DbTool(
-            id=team1_tool_id,
-            original_name=f"team1_tool_{uuid.uuid4().hex[:8]}",
-            url="http://example.com/team1",
-            description="Team 1 tool",
-            visibility="team",
-            team_id=team1.id,
-            owner_email="admin@example.com",
-            enabled=True,
-            input_schema={},
-        )
-        db.add(team1_tool)
-
-        team2_tool_id = uuid.uuid4().hex
-        team2_tool = DbTool(
-            id=team2_tool_id,
-            original_name=f"team2_tool_{uuid.uuid4().hex[:8]}",
-            url="http://example.com/team2",
-            description="Team 2 tool",
-            visibility="team",
-            team_id=team2.id,
-            owner_email="admin@example.com",
-            enabled=True,
-            input_schema={},
-        )
-        db.add(team2_tool)
-        db.commit()
+            team2_tool_id = uuid.uuid4().hex
+            team2_tool = DbTool(
+                id=team2_tool_id,
+                original_name=f"team2_tool_{uuid.uuid4().hex[:8]}",
+                url="http://example.com/team2",
+                description="Team 2 tool",
+                visibility="team",
+                team_id=team2_id,
+                owner_email="admin@example.com",
+                enabled=True,
+                input_schema={},
+            )
+            db.add(team2_tool)
+            db.commit()  # Commit teams and tools together
+        finally:
+            # Properly close the generator to trigger cleanup
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
 
         # Test filtering by team1 - should return ONLY team1 tools (strict team scoping)
-        response = await client.get(f"/admin/tools/ids?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/tools/ids?team_id={team1_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         assert team1_tool_id in data["tool_ids"]
@@ -967,11 +1002,22 @@ class TestTeamFiltering:
         # Get db session from app's dependency overrides or directly from get_db
         # (which uses the patched SessionLocal in tests)
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
+        db_gen = test_db_dependency()
+        db = next(db_gen)
 
-        # Create a team but DON'T add the user to it
-        team_service = TeamManagementService(db)
-        other_team = await team_service.create_team(name=f"Other Team - {uuid.uuid4().hex[:8]}", description="Test", created_by="other@example.com", visibility="private")
+        try:
+            # Create a team but DON'T add the user to it
+            team_service = TeamManagementService(db)
+            other_team = await team_service.create_team(name=f"Other Team - {uuid.uuid4().hex[:8]}", description="Test", created_by="other@example.com", visibility="private")
+            # Store ID before closing session
+            other_team_id = other_team.id
+            db.commit()  # Explicitly commit the team
+        finally:
+            # Properly close the generator to trigger cleanup
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
 
         # Create a tool in that team
         tool_data = {
@@ -979,7 +1025,7 @@ class TestTeamFiltering:
             "url": "http://example.com/other",
             "description": "Tool in other team",
             "visibility": "team",
-            "team_id": other_team.id,
+            "team_id": other_team_id,
             "owner_email": "other@example.com",
         }
 
@@ -1001,13 +1047,13 @@ class TestTeamFiltering:
         db.commit()
 
         # Try to filter by the other team - returns empty results (user is not a member)
-        response = await client.get(f"/admin/tools/partial?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/tools/partial?team_id={other_team_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool_data["name"] not in html
 
         # Same for /ids endpoint - the specific tool from other team should not be in results
-        response = await client.get(f"/admin/tools/ids?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/tools/ids?team_id={other_team_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         assert db_tool.id not in data["tool_ids"], f"Tool from other team should not be accessible: {db_tool.id}"
@@ -1021,12 +1067,24 @@ class TestTeamFiltering:
         # Get db session from app's dependency overrides or directly from get_db
         # (which uses the patched SessionLocal in tests)
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
+        db_gen = test_db_dependency()
+        db = next(db_gen)
 
-        # Create TWO teams (creator is automatically added as owner)
-        team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Resource Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Resource Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        try:
+            # Create TWO teams (creator is automatically added as owner)
+            team_service = TeamManagementService(db)
+            team1 = await team_service.create_team(name=f"Resource Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+            team2 = await team_service.create_team(name=f"Resource Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+            # Store IDs before closing session
+            team1_id = team1.id
+            team2_id = team2.id
+            db.commit()  # Explicitly commit the teams
+        finally:
+            # Properly close the generator to trigger cleanup
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
 
         # Create resources in different teams
         team1_resource = {
@@ -1034,7 +1092,7 @@ class TestTeamFiltering:
             "uri": f"file:///team1-{uuid.uuid4().hex[:8]}",
             "description": "Team 1 resource",
             "visibility": "team",
-            "team_id": team1.id,
+            "team_id": team1_id,
             "content": "Test content for team1",
         }
         team2_resource = {
@@ -1042,7 +1100,7 @@ class TestTeamFiltering:
             "uri": f"file:///team2-{uuid.uuid4().hex[:8]}",
             "description": "Team 2 resource",
             "visibility": "team",
-            "team_id": team2.id,
+            "team_id": team2_id,
             "content": "Test content for team2",
         }
 
@@ -1052,7 +1110,7 @@ class TestTeamFiltering:
         assert resp2.status_code == 200, f"Failed to create team2 resource: {resp2.text}"
 
         # Test with team1 filter - returns ONLY team1 resources (strict team scoping)
-        response = await client.get(f"/admin/resources/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/resources/partial?team_id={team1_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_resource["name"] in html, f"team1_resource not found in HTML. First 500 chars: {html[:500]}"
@@ -1067,26 +1125,38 @@ class TestTeamFiltering:
         # Get db session from app's dependency overrides or directly from get_db
         # (which uses the patched SessionLocal in tests)
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
+        db_gen = test_db_dependency()
+        db = next(db_gen)
 
-        # Create TWO teams (creator is automatically added as owner)
-        team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Prompt Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Prompt Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        try:
+            # Create TWO teams (creator is automatically added as owner)
+            team_service = TeamManagementService(db)
+            team1 = await team_service.create_team(name=f"Prompt Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+            team2 = await team_service.create_team(name=f"Prompt Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+            # Store IDs before closing session
+            team1_id = team1.id
+            team2_id = team2.id
+            db.commit()  # Explicitly commit the teams
+        finally:
+            # Properly close the generator to trigger cleanup
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
 
         # Create prompts in different teams
         team1_prompt = {
             "name": f"team1_prompt_{uuid.uuid4().hex[:8]}",
             "description": "Team 1 prompt",
             "visibility": "team",
-            "team_id": team1.id,
+            "team_id": team1_id,
             "template": "Hello {{name}}!",
         }
         team2_prompt = {
             "name": f"team2_prompt_{uuid.uuid4().hex[:8]}",
             "description": "Team 2 prompt",
             "visibility": "team",
-            "team_id": team2.id,
+            "team_id": team2_id,
             "template": "Hello {{name}}!",
         }
 
@@ -1096,7 +1166,7 @@ class TestTeamFiltering:
         assert resp2.status_code == 200, f"Failed to create team2 prompt: {resp2.text}"
 
         # Test with team1 filter - returns ONLY team1 prompts (strict team scoping)
-        response = await client.get(f"/admin/prompts/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/prompts/partial?team_id={team1_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_prompt["name"] in html
