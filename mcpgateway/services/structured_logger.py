@@ -301,7 +301,12 @@ class LogRouter:
             )
 
             db.add(log_entry)
-            db.commit()
+            # Only commit if we created our own session
+            if should_close:
+                db.commit()
+            else:
+                # Flush to persist but let caller manage commit
+                db.flush()
 
         except Exception as e:
             logger.error(f"Failed to persist log entry to database: {e}", exc_info=True)

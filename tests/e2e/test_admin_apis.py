@@ -950,12 +950,23 @@ class TestTeamFiltering:
         # Get db session from app's dependency overrides or directly from get_db
         # (which uses the patched SessionLocal in tests)
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
-        db = next(test_db_dependency())
+        db_gen = test_db_dependency()
+        db = next(db_gen)
 
-        # Create TWO teams (creator is automatically added as owner)
-        team_service = TeamManagementService(db)
-        team1 = await team_service.create_team(name=f"Search Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
-        team2 = await team_service.create_team(name=f"Search Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+        try:
+            # Create TWO teams (creator is automatically added as owner)
+            team_service = TeamManagementService(db)
+            team1 = await team_service.create_team(name=f"Search Team 1 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+            team2 = await team_service.create_team(name=f"Search Team 2 - {uuid.uuid4().hex[:8]}", description="Test", created_by="admin@example.com", visibility="private")
+            # Store IDs before closing session
+            team1_id = team1.id
+            team2_id = team2.id
+            db.commit()
+        finally:
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
 
         # Create searchable tools in different teams
         search_term = f"searchable_{uuid.uuid4().hex[:8]}"
@@ -964,21 +975,21 @@ class TestTeamFiltering:
             "url": "http://example.com/team1",
             "description": "Searchable team1 tool",
             "visibility": "team",
-            "team_id": team1.id,
+            "team_id": team1_id,
         }
         team2_tool_data = {
             "name": f"{search_term}_team2",
             "url": "http://example.com/team2",
             "description": "Searchable team2 tool",
             "visibility": "team",
-            "team_id": team2.id,
+            "team_id": team2_id,
         }
 
         await client.post("/admin/tools/", data=team1_tool_data, headers=TEST_AUTH_HEADER)
         await client.post("/admin/tools/", data=team2_tool_data, headers=TEST_AUTH_HEADER)
 
         # Test search with team filter - returns ONLY team1 tools (strict team scoping)
-        response = await client.get(f"/admin/tools/search?q={search_term}&team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/tools/search?q={search_term}&team_id={team1_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         tool_names = [tool["name"] for tool in data["tools"]]

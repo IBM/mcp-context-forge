@@ -175,8 +175,14 @@ class AuditTrailService:
             )
 
             db.add(audit_entry)
-            db.commit()
-            db.refresh(audit_entry)
+            # Only commit if we created our own session
+            if close_db:
+                db.commit()
+                db.refresh(audit_entry)
+            else:
+                # Flush to get the ID but let caller manage commit
+                db.flush()
+                db.refresh(audit_entry)
 
             logger.debug(
                 f"Audit trail logged: {action} {resource_type}/{resource_id} by {user_id}",
