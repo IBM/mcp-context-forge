@@ -46,6 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 import orjson
@@ -1654,7 +1655,12 @@ else:
 
 # Set up Jinja2 templates and store in app state for later use
 # auto_reload=False in production prevents re-parsing templates on each request (performance)
-templates = Jinja2Templates(directory=str(settings.templates_dir), auto_reload=settings.templates_auto_reload)
+jinja_env = Environment(
+    loader=FileSystemLoader(str(settings.templates_dir)),
+    autoescape=True,
+    auto_reload=settings.templates_auto_reload,
+)
+templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")
 app.state.templates = templates
@@ -2474,6 +2480,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
     Raises:
         HTTPException: If there is an error in establishing the SSE connection.
+        asyncio.CancelledError: If the request is cancelled during SSE setup.
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
@@ -2483,9 +2490,9 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
-        response = await transport.create_sse_response(request)
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
+        # MUST be computed BEFORE create_sse_response to avoid race condition (Finding 1)
         auth_token = None
         auth_header = request.headers.get("authorization", "")
         if auth_header.lower().startswith("bearer "):
@@ -2513,7 +2520,38 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         user_with_token["token_teams"] = token_teams  # Always a list, never None
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
-        asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
+        # Defensive cleanup callback - runs immediately on client disconnect
+        async def on_disconnect_cleanup() -> None:
+            """Clean up session when SSE client disconnects."""
+            try:
+                await session_registry.remove_session(transport.session_id)
+                logger.debug("Defensive session cleanup completed: %s", transport.session_id)
+            except Exception as e:
+                logger.warning("Defensive session cleanup failed for %s: %s", transport.session_id, e)
+
+        # CRITICAL: Create and register respond task BEFORE create_sse_response (Finding 1 fix)
+        # This ensures the task exists when disconnect callback runs, preventing orphaned tasks
+        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
+        session_registry.register_respond_task(transport.session_id, respond_task)
+
+        try:
+            response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        except asyncio.CancelledError:
+            # Request cancelled - still need to clean up to prevent orphaned tasks
+            logger.debug(f"SSE request cancelled for {transport.session_id}, cleaning up")
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup after SSE cancellation failed: {cleanup_error}")
+            raise  # Re-raise CancelledError
+        except Exception as sse_error:
+            # CRITICAL: Cleanup on failure - respond task and session would be orphaned otherwise
+            logger.error(f"create_sse_response failed for {transport.session_id}: {sse_error}")
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup after SSE failure also failed: {cleanup_error}")
+            raise
 
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
@@ -5074,9 +5112,15 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                # Release DB connection early to prevent idle-in-transaction under load
+                db.commit()
+                db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
                 tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                # Release DB connection early to prevent idle-in-transaction under load
+                db.commit()
+                db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -5091,14 +5135,20 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
                 tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_gateways":
             gateways = await gateway_service.list_gateways(db, include_inactive=False)
+            db.commit()
+            db.close()
             result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
         elif method == "list_roots":
             roots = await root_service.list_roots()
@@ -5113,9 +5163,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
                 resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -5190,9 +5244,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
                 prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -5648,6 +5706,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
     Raises:
         HTTPException: Returned with **500 Internal Server Error** if the SSE connection cannot be established or an unexpected error occurs while creating the transport.
+        asyncio.CancelledError: If the request is cancelled during SSE setup.
     """
     try:
         logger.debug("User %s requested SSE connection", user)
@@ -5656,6 +5715,15 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
+
+        # Defensive cleanup callback - runs immediately on client disconnect
+        async def on_disconnect_cleanup() -> None:
+            """Clean up session when SSE client disconnects."""
+            try:
+                await session_registry.remove_session(transport.session_id)
+                logger.debug("Defensive session cleanup completed: %s", transport.session_id)
+            except Exception as e:
+                logger.warning("Defensive session cleanup failed for %s: %s", transport.session_id, e)
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         auth_token = None
@@ -5685,9 +5753,29 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["token_teams"] = token_teams  # Always a list, never None
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
-        asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
+        # Create respond task and register for cancellation on disconnect
+        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
+        session_registry.register_respond_task(transport.session_id, respond_task)
 
-        response = await transport.create_sse_response(request)
+        try:
+            response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        except asyncio.CancelledError:
+            # Request cancelled - still need to clean up to prevent orphaned tasks
+            logger.debug("SSE request cancelled for %s, cleaning up", transport.session_id)
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning("Cleanup after SSE cancellation failed: %s", cleanup_error)
+            raise  # Re-raise CancelledError
+        except Exception as sse_error:
+            # CRITICAL: Cleanup on failure - respond task and session would be orphaned otherwise
+            logger.error("create_sse_response failed for %s: %s", transport.session_id, sse_error)
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning("Cleanup after SSE failure also failed: %s", cleanup_error)
+            raise
+
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
         response.background = tasks

@@ -940,13 +940,15 @@ class TestEmailAuthServiceUserListing:
     @pytest.mark.asyncio
     async def test_get_all_users(self, service, mock_db, mock_users):
         """Test getting all users without explicit pagination."""
+        EmailAuthService.get_all_users_deprecated_warned = False
         mock_count_result = MagicMock()
         mock_count_result.scalar.return_value = len(mock_users)
         mock_list_result = MagicMock()
         mock_list_result.scalars.return_value.all.return_value = mock_users
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        result = await service.get_all_users()
+        with pytest.deprecated_call():
+            result = await service.get_all_users()
 
         assert len(result) == 5
         assert mock_db.execute.call_count == 2
@@ -954,11 +956,12 @@ class TestEmailAuthServiceUserListing:
     @pytest.mark.asyncio
     async def test_get_all_users_raises_when_exceeds_limit(self, service, mock_db):
         """Test get_all_users raises when total exceeds limit."""
+        EmailAuthService.get_all_users_deprecated_warned = False
         mock_count_result = MagicMock()
         mock_count_result.scalar.return_value = 10001
         mock_db.execute.return_value = mock_count_result
 
-        with pytest.raises(ValueError):
+        with pytest.deprecated_call(), pytest.raises(ValueError):
             await service.get_all_users()
 
     @pytest.mark.asyncio

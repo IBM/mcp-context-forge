@@ -20,6 +20,14 @@
 # Python major.minor series to track
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
+# Enable profiling tools (memray, py-spy) - off by default for smaller images
+# To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile.lite .
+# Usage after enabling:
+#   memray: docker exec -it <container> memray attach <PID> -o /tmp/profile.bin
+#   py-spy: sudo py-spy top --pid $(docker inspect --format '{{.State.Pid}}' <container>)
+# Note: Container must have SYS_PTRACE capability for attaching to processes
+# See docs/docs/development/profiling.md for detailed usage
+ARG ENABLE_PROFILING=false
 
 ###############################################################################
 # Rust builder stage - builds Rust plugins in manylinux2014 container
@@ -123,10 +131,12 @@ COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
 #  - Install Rust plugins from pre-built wheels (if built)
+#  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
 #  - Remove build tools but keep runtime dist-info
 #  - Remove build caches and build artifacts
 # ----------------------------------------------------------------------------
 ARG ENABLE_RUST=false
+ARG ENABLE_PROFILING=false
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
@@ -140,6 +150,13 @@ RUN set -euo pipefail \
         echo "⏭️  Rust plugins not available - using Python implementations"; \
     fi \
     && rm -rf /tmp/rust-wheels \
+    && if [ "$ENABLE_PROFILING" = "true" ]; then \
+        echo "📊 Installing profiling tools (memray, py-spy)..."; \
+        /app/.venv/bin/pip install --no-cache-dir "memray>=1.17.0" && \
+        /app/.venv/bin/python3 -c "import memray; print('✓ memray installed successfully')"; \
+    else \
+        echo "⏭️  Profiling tools disabled (set --build-arg ENABLE_PROFILING=true to enable)"; \
+    fi \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
     && rm -rf /root/.cache /var/cache/dnf \
     && find /app/.venv -name "*.dist-info" -type d \
@@ -199,6 +216,7 @@ RUN chown -R 1001:0 /app \
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1769090502 AS runtime
 
 ARG PYTHON_VERSION=3.12
+ARG ENABLE_PROFILING=false
 
 # ----------------------------------------------------------------------------
 # OCI image metadata
@@ -215,6 +233,7 @@ LABEL maintainer="Mihai Criveti" \
 # - ca-certificates for HTTPS
 # - procps-ng for process management (ps command)
 # - shadow-utils for useradd command
+# - gdb for memray attach (only when ENABLE_PROFILING=true)
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
@@ -224,6 +243,19 @@ RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
     shadow-utils \
     && microdnf clean all \
     && rm -rf /var/cache/yum
+
+# ----------------------------------------------------------------------------
+# Install profiling dependencies (only when ENABLE_PROFILING=true)
+# - gdb: Required for memray attach to running processes
+# ----------------------------------------------------------------------------
+# hadolint ignore=DL3041
+RUN if [ "$ENABLE_PROFILING" = "true" ]; then \
+        echo "📊 Installing profiling dependencies (gdb)..."; \
+        microdnf install -y --nodocs --setopt=install_weak_deps=0 gdb && \
+        microdnf clean all && \
+        rm -rf /var/cache/yum && \
+        echo "✓ gdb installed for memray attach support"; \
+    fi
 
 # ----------------------------------------------------------------------------
 # Create python3 symlink

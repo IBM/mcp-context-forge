@@ -16,6 +16,7 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 from sqlalchemy import text, and_, or_, func, create_engine
+from sqlalchemy.sql.elements import BooleanClauseList
 from typing import Any
 
 from mcpgateway.utils.sqlalchemy_modifier import (
@@ -82,7 +83,7 @@ def test_json_contains_expr_mysql_fallback(mock_session: Any):
     col = DummyColumn()
     with patch("mcpgateway.utils.sqlalchemy_modifier.func.json_overlaps", side_effect=Exception("fail")):
         expr = json_contains_expr(mock_session, col, ["a", "b"], match_any=True)
-        assert isinstance(expr, type(or_()))
+        assert isinstance(expr, BooleanClauseList)
 
 def test_json_contains_expr_postgresql_match_any(mock_session: Any):
     mock_session.get_bind().dialect.name = "postgresql"
@@ -111,7 +112,7 @@ def test_json_contains_expr_sqlite_match_all(mock_session: Any):
     mock_session.get_bind().dialect.name = "sqlite"
     col = DummyColumn()
     expr = json_contains_expr(mock_session, col, ["a", "b"], match_any=False)
-    assert isinstance(expr, type(and_()))
+    assert isinstance(expr, BooleanClauseList)
     assert "EXISTS" in str(expr)
 
 def test_json_contains_expr_sqlite_single_value(mock_session: Any):

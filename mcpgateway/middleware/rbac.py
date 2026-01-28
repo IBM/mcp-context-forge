@@ -144,13 +144,18 @@ async def get_current_user_with_permissions(
                         logger.debug(f"Could not lookup proxy user in DB: {e}")
                         # Continue with is_admin=False if lookup fails
 
+                # CRITICAL: Release DB connection early to prevent idle-in-transaction
+                # All data has been extracted; session not needed during HTTP calls
+                db.commit()
+                db.close()
+
                 return {
                     "email": proxy_user,
                     "full_name": full_name,
                     "is_admin": is_admin,
                     "ip_address": request.client.host if request.client else None,
                     "user_agent": request.headers.get("user-agent"),
-                    "db": db,
+                    "db": None,  # Session closed; use endpoint's db param instead
                     "auth_method": "proxy",
                     "request_id": getattr(request.state, "request_id", None),
                     "team_id": getattr(request.state, "team_id", None),
@@ -175,13 +180,17 @@ async def get_current_user_with_permissions(
                 )
 
             # auth_required=false: allow anonymous access
+            # CRITICAL: Release DB connection early to prevent idle-in-transaction
+            db.commit()
+            db.close()
+
             return {
                 "email": "anonymous",
                 "full_name": "Anonymous User",
                 "is_admin": False,
                 "ip_address": request.client.host if request.client else None,
                 "user_agent": request.headers.get("user-agent"),
-                "db": db,
+                "db": None,  # Session closed; use endpoint's db param instead
                 "auth_method": "anonymous",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
@@ -206,13 +215,17 @@ async def get_current_user_with_permissions(
                 detail="Authentication required but no auth method configured",
             )
 
+        # CRITICAL: Release DB connection early to prevent idle-in-transaction
+        db.commit()
+        db.close()
+
         return {
             "email": "anonymous",
             "full_name": "Anonymous User",
             "is_admin": False,
             "ip_address": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent"),
-            "db": db,
+            "db": None,  # Session closed; use endpoint's db param instead
             "auth_method": "anonymous",
             "request_id": getattr(request.state, "request_id", None),
             "team_id": getattr(request.state, "team_id", None),
@@ -248,13 +261,17 @@ async def get_current_user_with_permissions(
 
         # If auth is disabled, return the stock admin user
         if not settings.auth_required:
+            # CRITICAL: Release DB connection early to prevent idle-in-transaction
+            db.commit()
+            db.close()
+
             return {
                 "email": settings.platform_admin_email,
                 "full_name": "Platform Admin",
                 "is_admin": True,
                 "ip_address": request.client.host if request.client else None,
                 "user_agent": request.headers.get("user-agent"),
-                "db": db,
+                "db": None,  # Session closed; use endpoint's db param instead
                 "auth_method": "disabled",
                 "request_id": getattr(request.state, "request_id", None),
                 "team_id": getattr(request.state, "team_id", None),
@@ -282,6 +299,11 @@ async def get_current_user_with_permissions(
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
+        # CRITICAL: Release DB connection early to prevent idle-in-transaction
+        # All user data has been extracted; session not needed during HTTP calls
+        db.commit()
+        db.close()
+
         # Add request context for permission auditing
         return {
             "email": user.email,
@@ -289,7 +311,7 @@ async def get_current_user_with_permissions(
             "is_admin": user.is_admin,
             "ip_address": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent"),
-            "db": db,
+            "db": None,  # Session closed; use endpoint's db param instead
             "auth_method": auth_method,  # Include auth_method from plugin
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
@@ -366,15 +388,19 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             # Extract user context from kwargs
             user_context = None
             for _, value in kwargs.items():
-                if isinstance(value, dict) and "email" in value and "db" in value:
+                if isinstance(value, dict) and "email" in value:
                     user_context = value
                     break
 
             if not user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
-            # Create permission service and check permission
-            permission_service = PermissionService(user_context["db"])
+            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
+            db_session = kwargs.get("db") or user_context.get("db")
+            if not db_session:
+                # Create fresh db session as fallback
+                db_session = SessionLocal()
+            permission_service = PermissionService(db_session)
 
             # Extract team_id from path parameters if available
             team_id = kwargs.get("team_id")

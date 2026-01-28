@@ -134,7 +134,63 @@ Plugins: How They Work in MCP Context Forge
      ```
 - Enable framework in gateway: `.env` must set `PLUGINS_ENABLED=true` and optionally `PLUGIN_CONFIG_FILE=plugins/config.yaml`. To reuse a gateway-wide mTLS client certificate for multiple external plugins, set `PLUGINS_MTLS_CA_BUNDLE`, `PLUGINS_MTLS_CLIENT_CERT`, and related `PLUGINS_MTLS_*` variables. Individual plugin `tls` blocks override these defaults.
 
-**Built‑in Plugins (Examples)**
+**Built‑in Plugins (39 plugins in 42 directories)**
+
+Security & Filtering:
+- `pii_filter` - PII detection and masking (SSN, credit card, email, phone, IP, keys)
+- `deny_filter` - Denylist word blocking
+- `secrets_detection` - Secret/credential detection
+- `content_moderation` - Content moderation
+- `harmful_content_detector` - Harmful content detection
+- `code_safety_linter` - Code safety validation
+
+Validation:
+- `schema_guard` - Schema validation
+- `sql_sanitizer` - SQL injection prevention
+- `safe_html_sanitizer` - HTML sanitization
+- `file_type_allowlist` - File type restrictions
+- `citation_validator` - Citation validation
+- `robots_license_guard` - Robots.txt and license compliance
+- `sparc_static_validator` - Static validation
+- `resource_filter` - URI/protocol/domain validation, size limits
+
+Data Processing:
+- `argument_normalizer` - Unicode, whitespace, casing, date, number normalization
+- `markdown_cleaner` - Markdown cleanup
+- `html_to_markdown` - HTML to Markdown conversion
+- `code_formatter` - Code formatting
+- `json_repair` - JSON repair and normalization
+- `altk_json_processor` - ALTK JSON processing
+- `ai_artifacts_normalizer` - AI artifact normalization
+- `timezone_translator` - Timezone conversion
+- `summarizer` - Content summarization
+
+Optimization:
+- `cached_tool_result` - Tool result caching
+- `response_cache_by_prompt` - Response caching
+- `circuit_breaker` - Circuit breaker pattern
+- `retry_with_backoff` - Retry logic with backoff
+- `rate_limiter` - Rate limiting
+- `output_length_guard` - Output length limits
+
+Utilities:
+- `header_injector` - HTTP header injection
+- `license_header_injector` - License header injection
+- `privacy_notice_injector` - Privacy notice injection
+- `tools_telemetry_exporter` - Telemetry export
+- `webhook_notification` - Webhook notifications
+
+External Services:
+- `virus_total_checker` - VirusTotal integration
+- `url_reputation` - URL reputation checking
+- `watchdog` - Monitoring/watchdog
+- `vault` - HashiCorp Vault integration
+
+Examples:
+- `examples/` - Example plugin templates
+- `external/` - External plugin examples (OPA policy enforcement)
+
+**Key Plugin Examples:**
 - `ArgumentNormalizer` (`plugins/argument_normalizer/argument_normalizer.py`)
   - Hooks: prompt pre, tool pre
   - Normalizes Unicode (NFC/NFD/NFKC/NFKD), trims/collapses whitespace, optional casing, numeric date strings to ISO `YYYY-MM-DD`, and numbers to canonical form (dot decimal, no thousands). Per-field overrides via regex.

@@ -935,7 +935,7 @@ async def get_current_user(
     return user
 
 
-def _inject_userinfo_instate(request: Optional[object] = None, user: EmailUser = None) -> None:
+def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[EmailUser] = None) -> None:
     """This function injects user related information into the plugin_global_context, if the config has
     include_user_info key set as true.
 

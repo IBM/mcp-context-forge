@@ -126,9 +126,6 @@ class MockPubSub:
     def __init__(self):
         self.subscribed_channels = set()
 
-    def subscribe(self, channel):
-        self.subscribed_channels.add(channel)
-
     async def subscribe(self, channel):
         self.subscribed_channels.add(channel)
 
@@ -1591,7 +1588,8 @@ async def test_session_backend_docstring_examples():
         backend = SessionBackend(backend="redis")
         assert False, "Should have raised ValueError"
     except ValueError as e:
-        assert "Redis backend requires redis_url" in str(e)
+        # In environments without redis installed, error message differs
+        assert ("Redis backend requires redis_url" in str(e)) or ("redis package not installed" in str(e))
 
     # Test invalid backend
     try:
@@ -1741,6 +1739,334 @@ async def test_refresh_redis_sessions_error(monkeypatch, caplog):
         assert "Error refreshing session error_session" in caplog.text
 
         await registry.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# Respond Task Tracking and Cancellation Tests                                #
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_register_respond_task(registry: SessionRegistry):
+    """Test registering a respond task for a session."""
+    # Create a simple task
+    async def dummy_task():
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(dummy_task())
+
+    # Register it
+    registry.register_respond_task("test_session", task)
+
+    # Verify it's tracked
+    assert "test_session" in registry._respond_tasks
+    assert registry._respond_tasks["test_session"] is task
+
+    # Cleanup
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_cancel_respond_task_success(registry: SessionRegistry):
+    """Test successful cancellation of a respond task."""
+    cancelled = asyncio.Event()
+
+    async def cancellable_task():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    task = asyncio.create_task(cancellable_task())
+    await asyncio.sleep(0)  # Let task start executing
+    registry.register_respond_task("cancel_test", task)
+
+    # Cancel the task
+    await registry._cancel_respond_task("cancel_test")
+
+    # Verify task was cancelled and removed from tracking
+    assert cancelled.is_set()
+    assert "cancel_test" not in registry._respond_tasks
+
+
+@pytest.mark.asyncio
+async def test_cancel_respond_task_already_done(registry: SessionRegistry):
+    """Test cancelling an already-completed task."""
+    completed = asyncio.Event()
+
+    async def quick_task():
+        completed.set()
+        return "done"
+
+    task = asyncio.create_task(quick_task())
+    await asyncio.sleep(0.01)  # Let task complete
+
+    assert task.done()
+    registry.register_respond_task("done_test", task)
+
+    # Cancel should handle already-done task gracefully
+    await registry._cancel_respond_task("done_test")
+
+    # Verify removed from tracking
+    assert "done_test" not in registry._respond_tasks
+
+
+@pytest.mark.asyncio
+async def test_cancel_respond_task_nonexistent(registry: SessionRegistry):
+    """Test cancelling a task that doesn't exist."""
+    # Should not raise any errors
+    await registry._cancel_respond_task("nonexistent_session")
+
+
+@pytest.mark.asyncio
+async def test_cancel_respond_task_timeout_with_escalation(registry: SessionRegistry, caplog):
+    """Test task cancellation timeout triggers escalation."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.cache.session_registry")
+
+    stop_flag = asyncio.Event()
+
+    async def stubborn_task():
+        # Use shield to protect against cancellation
+        try:
+            await asyncio.shield(asyncio.sleep(100))
+        except asyncio.CancelledError:
+            # Still ignore - wait until told to stop
+            while not stop_flag.is_set():
+                await asyncio.sleep(0.001)
+
+    task = asyncio.create_task(stubborn_task())
+    await asyncio.sleep(0)  # Let task start executing
+    registry.register_respond_task("stubborn_test", task)
+
+    # Cancel with very short timeout - will trigger escalation
+    await registry._cancel_respond_task("stubborn_test", timeout=0.05)
+
+    # After escalation, task should be removed from _respond_tasks
+    # It may be in _stuck_tasks if retry also failed, or removed if retry succeeded
+    assert "stubborn_test" not in registry._respond_tasks
+    # Should see escalation message
+    assert "escalating" in caplog.text
+
+    # Cleanup - signal task to stop and clear any stuck_tasks
+    stop_flag.set()
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=0.1)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    registry._stuck_tasks.pop("stubborn_test", None)
+
+
+@pytest.mark.asyncio
+async def test_cancel_respond_task_escalation_calls_transport_disconnect(registry: SessionRegistry, caplog):
+    """Test that escalation calls transport.disconnect() to unblock the task."""
+    caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
+
+    stop_flag = asyncio.Event()
+
+    async def stubborn_task():
+        # Task that ignores cancellation until told to stop
+        try:
+            await asyncio.shield(asyncio.sleep(100))
+        except asyncio.CancelledError:
+            while not stop_flag.is_set():
+                await asyncio.sleep(0.001)
+
+    # Create a fake transport and add it to sessions
+    transport = FakeSSETransport("escalation_test")
+    await registry.add_session("escalation_test", transport)
+
+    # Register the stubborn task
+    task = asyncio.create_task(stubborn_task())
+    await asyncio.sleep(0)  # Let task start executing
+    registry.register_respond_task("escalation_test", task)
+
+    # Cancel with very short timeout - will trigger escalation
+    await registry._cancel_respond_task("escalation_test", timeout=0.05)
+
+    # Verify transport.disconnect() was called during escalation
+    assert transport.disconnect_called, "transport.disconnect() should be called during escalation"
+
+    # Verify escalation message in logs
+    assert "Force-disconnected transport" in caplog.text or "escalating" in caplog.text
+
+    # Cleanup
+    stop_flag.set()
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=0.1)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        pass
+    registry._stuck_tasks.pop("escalation_test", None)
+
+
+@pytest.mark.asyncio
+async def test_cancel_respond_task_with_exception(registry: SessionRegistry, caplog):
+    """Test cancelling a task that failed with an exception."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.cache.session_registry")
+
+    async def failing_task():
+        raise ValueError("Task failed!")
+
+    task = asyncio.create_task(failing_task())
+    await asyncio.sleep(0.01)  # Let task fail
+
+    assert task.done()
+    registry.register_respond_task("fail_test", task)
+
+    # Cancel should handle failed task and log warning
+    await registry._cancel_respond_task("fail_test")
+
+    # Verify removed from tracking
+    assert "fail_test" not in registry._respond_tasks
+    assert "failed with" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_remove_session_cancels_respond_task(registry: SessionRegistry):
+    """Test that remove_session cancels the respond task first."""
+    cancelled = asyncio.Event()
+
+    async def tracked_task():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    # Add session with transport
+    tr = FakeSSETransport("session_with_task")
+    await registry.add_session("session_with_task", tr)
+
+    # Register respond task
+    task = asyncio.create_task(tracked_task())
+    await asyncio.sleep(0)  # Let task start executing
+    registry.register_respond_task("session_with_task", task)
+
+    # Remove session should cancel task
+    await registry.remove_session("session_with_task")
+
+    # Verify task was cancelled
+    assert cancelled.is_set()
+    assert "session_with_task" not in registry._respond_tasks
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_all_respond_tasks(registry: SessionRegistry):
+    """Test that shutdown cancels all respond tasks."""
+    cancelled_count = 0
+
+    async def make_task(name):
+        nonlocal cancelled_count
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled_count += 1
+            raise
+
+    # Register multiple tasks
+    tasks = []
+    for i in range(3):
+        task = asyncio.create_task(make_task(f"task_{i}"))
+        registry.register_respond_task(f"session_{i}", task)
+        tasks.append(task)
+
+    await asyncio.sleep(0)  # Let all tasks start executing
+
+    # Shutdown should cancel all
+    await registry.shutdown()
+
+    # Verify all cancelled
+    assert cancelled_count == 3
+    assert len(registry._respond_tasks) == 0
+
+
+@pytest.mark.asyncio
+async def test_register_respond_task_overwrites_previous():
+    """Test that registering a new task overwrites the previous one."""
+    registry = SessionRegistry(backend="memory")
+    await registry.initialize()
+
+    async def task1():
+        await asyncio.sleep(10)
+
+    async def task2():
+        await asyncio.sleep(10)
+
+    t1 = asyncio.create_task(task1())
+    t2 = asyncio.create_task(task2())
+
+    registry.register_respond_task("overwrite_test", t1)
+    registry.register_respond_task("overwrite_test", t2)
+
+    # Only t2 should be tracked
+    assert registry._respond_tasks["overwrite_test"] is t2
+
+    # Cleanup
+    t1.cancel()
+    t2.cancel()
+    try:
+        await t1
+    except asyncio.CancelledError:
+        pass
+    try:
+        await t2
+    except asyncio.CancelledError:
+        pass
+
+    await registry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_stuck_task_reaper_cleans_completed_tasks(caplog):
+    """Test that the stuck task reaper cleans up completed tasks."""
+    caplog.set_level(logging.INFO, logger="mcpgateway.cache.session_registry")
+
+    registry = SessionRegistry(backend="memory")
+    await registry.initialize()
+
+    # Manually add a completed task to _stuck_tasks
+    completed_event = asyncio.Event()
+
+    async def quick_task():
+        completed_event.set()
+        return "done"
+
+    task = asyncio.create_task(quick_task())
+    await asyncio.sleep(0.01)  # Let task complete
+    assert task.done()
+
+    registry._stuck_tasks["completed_stuck"] = task
+
+    # Manually call the reaper logic (don't wait for the loop)
+    # Simulate one iteration of the reaper
+    for session_id, t in list(registry._stuck_tasks.items()):
+        if t.done():
+            registry._stuck_tasks.pop(session_id, None)
+
+    # Verify task was removed
+    assert "completed_stuck" not in registry._stuck_tasks
+
+    await registry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_stuck_task_reaper():
+    """Test that shutdown properly cancels the stuck task reaper."""
+    registry = SessionRegistry(backend="memory")
+    await registry.initialize()
+
+    # Verify reaper was started
+    assert registry._stuck_task_reaper is not None
+    assert not registry._stuck_task_reaper.done()
+
+    await registry.shutdown()
+
+    # Verify reaper was cancelled
+    assert registry._stuck_task_reaper.done()
 
 
 if __name__ == "__main__":

@@ -439,7 +439,7 @@ def get_user_email_from_context() -> str:
 
 
 @mcp_app.call_tool(validate_input=False)
-async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]]:
+async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]]:
     """
     Handles tool invocation via the MCP Server.
 
@@ -481,7 +481,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         >>> sig.parameters['arguments'].annotation
         <class 'dict'>
         >>> sig.return_annotation
-        typing.List[typing.Union[mcp.types.TextContent, mcp.types.ImageContent, mcp.types.EmbeddedResource]]
+        typing.List[typing.Union[mcp.types.TextContent, mcp.types.ImageContent, mcp.types.AudioContent, mcp.types.ResourceLink, mcp.types.EmbeddedResource]]
     """
     request_headers = request_headers_var.get()
     server_id = server_id_var.get()
@@ -528,8 +528,92 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-            # Normalize unstructured content to MCP SDK types
-            unstructured = [types.TextContent(type=content.type, text=content.text) for content in result.content]
+            # Normalize unstructured content to MCP SDK types, preserving metadata (annotations, _meta, size)
+            # Helper to convert gateway Annotations to dict for MCP SDK compatibility
+            # (mcpgateway.common.models.Annotations != mcp.types.Annotations)
+            def _convert_annotations(ann: Any) -> dict[str, Any] | None:
+                """Convert gateway Annotations to dict for MCP SDK compatibility.
+
+                Args:
+                    ann: Gateway Annotations object, dict, or None.
+
+                Returns:
+                    Dict representation of annotations, or None.
+                """
+                if ann is None:
+                    return None
+                if isinstance(ann, dict):
+                    return ann
+                if hasattr(ann, "model_dump"):
+                    return ann.model_dump(by_alias=True, mode="json")
+                return None
+
+            def _convert_meta(meta: Any) -> dict[str, Any] | None:
+                """Convert gateway meta to dict for MCP SDK compatibility.
+
+                Args:
+                    meta: Gateway meta object, dict, or None.
+
+                Returns:
+                    Dict representation of meta, or None.
+                """
+                if meta is None:
+                    return None
+                if isinstance(meta, dict):
+                    return meta
+                if hasattr(meta, "model_dump"):
+                    return meta.model_dump(by_alias=True, mode="json")
+                return None
+
+            unstructured: list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource] = []
+            for content in result.content:
+                if content.type == "text":
+                    unstructured.append(
+                        types.TextContent(
+                            type="text",
+                            text=content.text,
+                            annotations=_convert_annotations(getattr(content, "annotations", None)),
+                            _meta=_convert_meta(getattr(content, "meta", None)),
+                        )
+                    )
+                elif content.type == "image":
+                    unstructured.append(
+                        types.ImageContent(
+                            type="image",
+                            data=content.data,
+                            mimeType=content.mime_type,
+                            annotations=_convert_annotations(getattr(content, "annotations", None)),
+                            _meta=_convert_meta(getattr(content, "meta", None)),
+                        )
+                    )
+                elif content.type == "audio":
+                    unstructured.append(
+                        types.AudioContent(
+                            type="audio",
+                            data=content.data,
+                            mimeType=content.mime_type,
+                            annotations=_convert_annotations(getattr(content, "annotations", None)),
+                            _meta=_convert_meta(getattr(content, "meta", None)),
+                        )
+                    )
+                elif content.type == "resource_link":
+                    unstructured.append(
+                        types.ResourceLink(
+                            type="resource_link",
+                            uri=content.uri,
+                            name=content.name,
+                            description=getattr(content, "description", None),
+                            mimeType=getattr(content, "mime_type", None),
+                            size=getattr(content, "size", None),
+                            _meta=_convert_meta(getattr(content, "meta", None)),
+                        )
+                    )
+                elif content.type == "resource":
+                    # EmbeddedResource - pass through the model dump as the MCP SDK type requires complex nested structure
+                    unstructured.append(types.EmbeddedResource.model_validate(content.model_dump(by_alias=True, mode="json")))
+                else:
+                    # Unknown content type - convert to text representation
+                    unstructured.append(types.TextContent(type="text", text=str(content.model_dump(by_alias=True, mode="json"))))
 
             # If the tool produced structured content (ToolResult.structured_content / structuredContent),
             # return a combination (unstructured, structured) so the server can validate against outputSchema.

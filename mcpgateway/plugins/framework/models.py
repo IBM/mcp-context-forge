@@ -723,7 +723,7 @@ class PluginSettings(BaseModel):
     fail_on_plugin_error: bool = False
     enable_plugin_api: bool = False
     plugin_health_check_interval: int = 60
-    include_user_info: bool = True
+    include_user_info: bool = False
 
 
 class Config(BaseModel):

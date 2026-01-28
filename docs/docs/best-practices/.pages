@@ -1,4 +1,5 @@
 nav:
+  - "Why use an MCP Gateway": selecting-an-mcp-gateway.md
   - "📐 MCP Architecture Patterns": mcp-architecture-patterns.md
   - "⭐ Best Practices Guide": mcp-best-practices.md
   - "🔒 Input Validation": input-validation.md
