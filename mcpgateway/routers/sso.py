@@ -218,12 +218,13 @@ async def initiate_sso_login(
 ) -> SSOLoginResponse:
     """Initiate SSO authentication flow.
 
-    Validates the redirect_uri to prevent open redirect attacks.
-    Only allows relative URIs, same-origin URIs, or URIs from configured allowed origins.
+    Validates the redirect_uri against a server-side allowlist to prevent open redirect attacks.
+    Only allows relative URIs, URIs matching app_domain, or URIs from configured allowed_origins.
+    Does NOT trust the Host header for validation.
 
     Args:
         provider_id: SSO provider identifier (e.g., 'github', 'google')
-        request: FastAPI request object (used for same-origin validation)
+        request: FastAPI request object
         redirect_uri: Callback URI after successful authentication
         scopes: Optional custom OAuth scopes (space-separated)
         db: Database session

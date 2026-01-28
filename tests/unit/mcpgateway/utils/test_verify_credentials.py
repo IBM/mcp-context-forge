@@ -28,6 +28,7 @@ from __future__ import annotations
 import base64
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
+import uuid
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -53,11 +54,22 @@ SECRET = "unit-secret"
 ALGO = "HS256"
 
 
-def _token(payload: dict, *, exp_delta: int | None = 60, secret: str = SECRET) -> str:
-    """Return a signed JWT with optional expiry offset (minutes)."""
+def _token(payload: dict, *, exp_delta: int | None = 60, secret: str = SECRET, include_jti: bool = True) -> str:
+    """Return a signed JWT with optional expiry offset (minutes).
+
+    Args:
+        payload: JWT payload claims
+        exp_delta: Expiry offset in minutes (None for no expiry)
+        secret: Signing secret
+        include_jti: Whether to include JTI claim (default True for REQUIRE_JTI=true)
+    """
     # Add required audience and issuer claims for compatibility with RBAC system
     token_payload = payload.copy()
     token_payload.update({"iss": "mcpgateway", "aud": "mcpgateway-api"})
+
+    # Add JTI claim by default (required when REQUIRE_JTI=true)
+    if include_jti and "jti" not in token_payload:
+        token_payload["jti"] = str(uuid.uuid4())
 
     if exp_delta is not None:
         expire = datetime.now(timezone.utc) + timedelta(minutes=exp_delta)
@@ -117,8 +129,8 @@ async def test_verify_jwt_token_skip_issuer_verification_only(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)  # Keep audience verification enabled
     monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
 
-    # Token with correct audience but wrong/missing issuer
-    token = jwt.encode({"sub": "user-wrong-iss", "aud": "mcpgateway-api", "iss": "wrong-issuer"}, SECRET, algorithm=ALGO)
+    # Token with correct audience but wrong/missing issuer (include JTI for REQUIRE_JTI=true default)
+    token = jwt.encode({"sub": "user-wrong-iss", "aud": "mcpgateway-api", "iss": "wrong-issuer", "jti": str(uuid.uuid4())}, SECRET, algorithm=ALGO)
 
     # Should succeed because issuer verification is disabled, but audience is still checked
     data = await vc.verify_jwt_token(token)
@@ -134,8 +146,8 @@ async def test_verify_jwt_token_skip_both_verifications(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_issuer_verification", False, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_audience_verification", False, raising=False)
 
-    # Token without issuer or audience claims
-    token = jwt.encode({"sub": "no-iss-aud"}, SECRET, algorithm=ALGO)
+    # Token without issuer or audience claims (include JTI for REQUIRE_JTI=true default)
+    token = jwt.encode({"sub": "no-iss-aud", "jti": str(uuid.uuid4())}, SECRET, algorithm=ALGO)
 
     # Should succeed even without ISS/AUD claims
     data = await vc.verify_jwt_token(token)
@@ -597,8 +609,8 @@ async def test_verify_jwt_token_require_jti_enabled_rejects_missing_jti(monkeypa
     monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
     monkeypatch.setattr(vc.settings, "require_jti", True, raising=False)
 
-    # Token without JTI claim
-    token = _token({"sub": "user-no-jti"})
+    # Token without JTI claim (explicitly exclude JTI to test rejection)
+    token = _token({"sub": "user-no-jti"}, include_jti=False)
 
     with pytest.raises(HTTPException) as exc:
         await vc.verify_jwt_token(token)
@@ -634,8 +646,8 @@ async def test_verify_jwt_token_require_jti_disabled_accepts_missing_jti(monkeyp
     monkeypatch.setattr(vc.settings, "require_token_expiration", False, raising=False)
     monkeypatch.setattr(vc.settings, "require_jti", False, raising=False)
 
-    # Token without JTI claim
-    token = _token({"sub": "user-no-jti-allowed"})
+    # Token without JTI claim (explicitly exclude JTI to test the warning)
+    token = _token({"sub": "user-no-jti-allowed"}, include_jti=False)
 
     with caplog.at_level(logging.WARNING):
         payload = await vc.verify_jwt_token(token)

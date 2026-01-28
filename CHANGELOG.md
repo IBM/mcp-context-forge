@@ -4,6 +4,44 @@
 
 ---
 
+## [1.0.0-RC1] - 2026-01-28 - Secure Defaults & RBAC Hardening
+
+### Overview
+
+This release introduces **secure-by-default configuration** and **RBAC hardening** to prepare for production GA:
+
+- **🔐 Secure Defaults** - JWT tokens now require JTI and expiration claims by default
+- **🛡️ Admin Authentication** - Unified authentication across all admin routes
+- **🔒 SSO Security** - Server-side redirect URI validation
+- **📝 Configuration Clarity** - Prominent security settings in environment templates
+
+### Changed
+
+#### **🔐 Secure Token Defaults**
+* **REQUIRE_JTI** now defaults to `true` - All JWT tokens must include a JTI (JWT ID) claim for revocation support
+* **REQUIRE_TOKEN_EXPIRATION** now defaults to `true` - All JWT tokens must include an expiration claim
+* **PUBLIC_REGISTRATION_ENABLED** now defaults to `false` - Self-registration disabled by default
+
+> **Migration**: Existing tokens without JTI or expiration claims will be rejected. Generate new tokens with `python -m mcpgateway.utils.create_jwt_token` which includes these claims by default.
+
+#### **🛡️ AdminAuthMiddleware Enhancements**
+* Added API token authentication support for `/admin/*` routes
+* Added Basic authentication support for `/admin/*` routes
+* Added platform admin bootstrap support for initial setup scenarios
+* Unified authentication methods with main API authentication
+
+#### **🔒 SSO Redirect Validation**
+* Redirect URI validation now uses server-side allowlist only
+* Removed Host header trust to prevent spoofing attacks
+* Validates against `ALLOWED_ORIGINS` and `APP_DOMAIN` settings
+
+### Added
+
+* **Security Defaults Section** in `.env.example` - Prominent documentation of security-related settings
+* **Deferred Issues Tracking** - Documentation for items identified during security review
+
+---
+
 ## [1.0.0-BETA-2] - 2026-01-20 - Performance, Scale & Reliability
 
 ### Overview

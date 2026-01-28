@@ -27,9 +27,11 @@ Structure:
 
 # Standard
 import asyncio
+import base64
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from functools import lru_cache
+import hashlib
 import os as _os  # local alias to avoid collisions
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -120,8 +122,8 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
-from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -1511,8 +1513,6 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                             # Continue - don't fail auth if revocation check fails
                 except Exception:
                     # JWT validation failed, try API token
-                    import hashlib
-
                     token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
                     api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
 
@@ -1526,8 +1526,6 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
 
             # Try basic auth if no JWT/API token succeeded
             if not username and token and token.startswith("Basic "):
-                import base64
-
                 try:
                     # Decode Basic auth credentials
                     encoded = token.split(" ", 1)[1]
@@ -1535,10 +1533,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                     if ":" in decoded:
                         basic_user, basic_pass = decoded.split(":", 1)
                         # Verify against configured basic auth credentials
-                        if (
-                            basic_user == settings.basic_auth_user
-                            and basic_pass == settings.basic_auth_password.get_secret_value()
-                        ):
+                        if basic_user == settings.basic_auth_user and basic_pass == settings.basic_auth_password.get_secret_value():
                             username = basic_user
                             logger.debug(f"Admin auth via basic auth: {username}")
                 except Exception as basic_err:
