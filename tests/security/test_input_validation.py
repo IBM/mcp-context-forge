@@ -379,7 +379,7 @@ class TestSecurityValidation:
             "tool[name]",
             "tool|name",
             "tool\\name",
-            "tool/name",
+            # "tool/name",      # slash allowed per SEP-986
             "tool<name>",
             "tool>name>",
             "tool?name",
@@ -391,7 +391,7 @@ class TestSecurityValidation:
             "\n",  # newline
             "\t",  # tab
             "a" * 256,  # too long
-            "1tool",  # must start with a letter
+            "-tool",  # must start with letter, number, or underscore (hyphen not allowed)
         ]
         for name in invalid_names:
             logger.debug("Testing invalid tool name: %r", name)
