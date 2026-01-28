@@ -65,9 +65,6 @@ def _get_cleanup_timeout() -> float:
     """
     try:
         # Lazy import to avoid circular dependency during startup
-        # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
         return settings.mcp_session_pool_cleanup_timeout
     except Exception:
         return 5.0  # Fallback default
