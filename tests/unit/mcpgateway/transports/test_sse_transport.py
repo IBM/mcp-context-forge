@@ -403,3 +403,33 @@ class TestSSETransport:
 
         result = await asyncio.wait_for(sse_transport._get_message_with_timeout(timeout=None), timeout=1.0)
         assert result == test_message
+
+
+def test_anyio_cancel_delivery_patch_toggle(monkeypatch):
+    from anyio._backends._asyncio import CancelScope
+
+    import mcpgateway.transports.sse_transport as sse_transport
+
+    # Ensure we start from the original implementation
+    monkeypatch.setattr(CancelScope, "_deliver_cancellation", sse_transport._original_deliver_cancellation)
+    sse_transport._patch_applied = False
+
+    monkeypatch.setattr(sse_transport.settings, "anyio_cancel_delivery_patch_enabled", True)
+    monkeypatch.setattr(sse_transport.settings, "anyio_cancel_delivery_max_iterations", 1)
+
+    assert sse_transport.apply_anyio_cancel_delivery_patch() is True
+    assert CancelScope._deliver_cancellation is not sse_transport._original_deliver_cancellation
+
+    assert sse_transport.remove_anyio_cancel_delivery_patch() is True
+    assert CancelScope._deliver_cancellation is sse_transport._original_deliver_cancellation
+
+
+def test_get_sse_cleanup_timeout_fallback(monkeypatch):
+    import mcpgateway.transports.sse_transport as sse_transport
+
+    class DummySettings:
+        pass
+
+    monkeypatch.setattr(sse_transport, "settings", DummySettings())
+
+    assert sse_transport._get_sse_cleanup_timeout() == 5.0
