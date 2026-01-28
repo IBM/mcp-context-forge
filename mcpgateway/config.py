@@ -210,8 +210,8 @@ class Settings(BaseSettings):
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
 
-    require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
-    require_jti: bool = Field(default=False, description="Require JTI (JWT ID) claim in all tokens for revocation support")  # Default to flexible mode for backward compatibility
+    require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
+    require_jti: bool = Field(default=True, description="Require JTI (JWT ID) claim in all tokens for revocation support (secure default)")
     require_user_in_db: bool = Field(
         default=False,
         description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
