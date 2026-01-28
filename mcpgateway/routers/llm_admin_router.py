@@ -101,6 +101,7 @@ async def get_providers_partial(
         )
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "llm_providers_partial.html",
         {
             "request": request,
@@ -197,6 +198,7 @@ async def get_models_partial(
     provider_options = [{"id": p.id, "name": p.name} for p in providers]
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "llm_models_partial.html",
         {
             "request": request,
@@ -239,6 +241,7 @@ async def set_provider_state_html(
         provider = llm_provider_service.set_provider_state(db, provider_id)
 
         return request.app.state.templates.TemplateResponse(
+            request,
             "llm_provider_row.html",
             {
                 "request": request,
@@ -357,6 +360,7 @@ async def set_model_state_html(
             provider_name = "Unknown"
 
         return request.app.state.templates.TemplateResponse(
+            request,
             "llm_model_row.html",
             {
                 "request": request,
@@ -460,6 +464,7 @@ async def get_api_info_partial(
     }
 
     return request.app.state.templates.TemplateResponse(
+        request,
         "llm_api_info_partial.html",
         {
             "request": request,
