@@ -58,7 +58,7 @@ class DummySettings:
     validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"  # IDs cannot have spaces
     validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern = r'[<>"\'\\]'
-    validation_tool_name_pattern = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # Must start with letter
+    validation_tool_name_pattern = r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"  # SEP-986 pattern
 
     # Size limits for various fields
     validation_max_name_length = 100  # Realistic name length
@@ -499,19 +499,26 @@ def test_validate_tool_name_invalid():
     with pytest.raises(ValueError, match="cannot be empty"):
         SecurityValidator.validate_tool_name("")
 
-    # Must start with letter - check actual error message
-    with pytest.raises(ValueError, match="must start with a letter"):
-        SecurityValidator.validate_tool_name("1tool")
-    with pytest.raises(ValueError, match="must start with a letter"):
-        SecurityValidator.validate_tool_name("_tool")
-    with pytest.raises(ValueError, match="must start with a letter"):
+    # Names starting with hyphen are invalid (not in [a-zA-Z0-9_])
+    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
         SecurityValidator.validate_tool_name("-tool")
 
-    # Tool name pattern doesn't match - check actual error
-    with pytest.raises(ValueError, match="must start with a letter"):
+    # Tool name pattern doesn't match - contains invalid characters
+    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
         SecurityValidator.validate_tool_name("tool<name>")
-    with pytest.raises(ValueError, match="must start with a letter"):
+    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
         SecurityValidator.validate_tool_name('tool"name')
+
+
+def test_validate_tool_name_valid_with_leading_underscore_or_number():
+    """Test valid tool names starting with underscore or number (per MCP spec)."""
+    # Names starting with underscore are valid (per MCP spec)
+    assert SecurityValidator.validate_tool_name("_tool") == "_tool"
+    assert SecurityValidator.validate_tool_name("_5gpt_query_by_market_id") == "_5gpt_query_by_market_id"
+
+    # Names starting with number are valid (per MCP spec)
+    assert SecurityValidator.validate_tool_name("1tool") == "1tool"
+    assert SecurityValidator.validate_tool_name("5gpt_query") == "5gpt_query"
 
 
 def test_validate_tool_name_length():

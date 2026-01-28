@@ -29,7 +29,7 @@ class NameModel(BaseModel):
     @field_validator("name")
     def validate_name(cls, v):
         if not v.startswith("A"):
-            raise ValueError("Tool name must start with a letter")
+            raise ValueError("Tool name must start with a letter, number, or underscore")
         if len(v) > 255:
             raise ValueError("Tool name exceeds maximum length")
         return v
@@ -69,10 +69,10 @@ def test_format_validation_error_letter_requirement():
     with pytest.raises(ValidationError) as exc:
         NameModel(name="Bobby")
     result = ErrorFormatter.format_validation_error(exc.value)
-    assert result["message"] == "Validation failed: Name must start with a letter and contain only letters, numbers, and underscores"
+    assert result["message"] == "Validation failed: Name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes"
     assert result["success"] is False
     assert result["details"][0]["field"] == "name"
-    assert "must start with a letter" in result["details"][0]["message"]
+    assert "must start with a letter, number, or underscore" in result["details"][0]["message"]
 
 
 def test_format_validation_error_length():
@@ -145,7 +145,7 @@ def test_format_validation_error_multiple_fields():
 
 def test_get_user_message_all_patterns():
     # Directly test _get_user_message for all mappings and fallback
-    assert "must start with a letter" in ErrorFormatter._get_user_message("name", "Tool name must start with a letter")
+    assert "must start with a letter, number, or underscore" in ErrorFormatter._get_user_message("name", "Tool name must start with a letter, number, or underscore")
     assert "too long" in ErrorFormatter._get_user_message("description", "Tool name exceeds maximum length")
     assert "valid HTTP" in ErrorFormatter._get_user_message("endpoint", "Tool URL must start with http")
     assert "invalid characters" in ErrorFormatter._get_user_message("path", "cannot contain directory traversal")
