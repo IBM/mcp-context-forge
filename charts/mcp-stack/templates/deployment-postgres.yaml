@@ -181,7 +181,7 @@ spec:
           # Secret stores POSTGRES_USER / POSTGRES_PASSWORD.
           envFrom:
             - configMapRef:
-                name: postgres-config
+                name: {{ include "mcp-stack.postgresConfigName" . }}
             - secretRef:
                 name: {{ include "mcp-stack.postgresSecretName" . | trim | quote }}
 

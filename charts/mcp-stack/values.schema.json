@@ -409,6 +409,11 @@
               "type": "object",
               "description": "Redis connection configuration",
               "properties": {
+                "host": {
+                  "type": "string",
+                  "description": "Redis host override",
+                  "default": ""
+                },
                 "port": {
                   "type": "integer",
                   "minimum": 1,
@@ -986,31 +991,6 @@
             }
           },
           "additionalProperties": true
-        },
-        "envFrom": {
-          "type": "array",
-          "description": "Environment variable sources",
-          "items": {
-            "type": "object",
-            "properties": {
-              "secretRef": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  }
-                }
-              },
-              "configMapRef": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
         }
       },
       "additionalProperties": false
@@ -1481,6 +1461,51 @@
           },
           "additionalProperties": false
         },
+        "external": {
+          "type": "object",
+          "description": "External Redis configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable external Redis",
+              "default": false
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Secret containing REDIS_URL",
+              "default": ""
+            },
+            "urlKey": {
+              "type": "string",
+              "description": "Secret key for REDIS_URL",
+              "default": "REDIS_URL"
+            },
+            "url": {
+              "type": "string",
+              "description": "Direct Redis URL override",
+              "default": ""
+            },
+            "host": {
+              "type": "string",
+              "description": "Redis host",
+              "default": ""
+            },
+            "port": {
+              "type": "integer",
+              "description": "Redis port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 6379
+            },
+            "db": {
+              "type": "integer",
+              "description": "Redis database index",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          "additionalProperties": false
+        },
         "resources": {
           "$ref": "#/$defs/resources",
           "description": "Resource limits and requests"
@@ -1600,6 +1625,16 @@
             }
           },
           "additionalProperties": false
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret name for PgAdmin credentials",
+          "default": ""
+        },
+        "passwordKey": {
+          "type": "string",
+          "description": "Secret key for PGADMIN_DEFAULT_PASSWORD",
+          "default": "PGADMIN_DEFAULT_PASSWORD"
         },
         "env": {
           "type": "object",
@@ -1821,6 +1856,16 @@
               "description": "Enable ingress",
               "default": true
             },
+            "className": {
+              "type": "string",
+              "description": "Ingress class name",
+              "default": "nginx"
+            },
+            "host": {
+              "type": "string",
+              "description": "Ingress host",
+              "default": "gateway.local"
+            },
             "path": {
               "type": "string",
               "description": "Ingress path",
@@ -1838,6 +1883,29 @@
               "minimum": 1,
               "maximum": 65535,
               "default": 80
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Ingress annotations",
+              "additionalProperties": { "type": "string" },
+              "default": {}
+            },
+            "tls": {
+              "type": "object",
+              "description": "TLS configuration for ingress",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable TLS for ingress",
+                  "default": false
+                },
+                "secretName": {
+                  "type": "string",
+                  "description": "Name of the TLS secret (optional, auto-generated if empty)",
+                  "default": ""
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

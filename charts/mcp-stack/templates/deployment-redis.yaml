@@ -6,7 +6,7 @@
      - Adds resource requests / limits pulled from values.yaml.
      ------------------------------------------------------------------- */}}
 
-{{- if .Values.redis.enabled }}
+{{- if and .Values.redis.enabled (not .Values.redis.external.enabled) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -62,13 +62,13 @@ spec:
           {{- end }}
 
           # ─── Volume mounts for persistence ───
+          {{- if .Values.redis.persistence.enabled }}
           volumeMounts:
-            {{- if .Values.redis.persistence.enabled }}
             - name: redis-data
               mountPath: /data
             - name: redis-config
               mountPath: /usr/local/etc/redis
-            {{- end }}
+          {{- end }}
 
           # ─── Resource limits & requests ───
           {{- with .Values.redis.resources }}
