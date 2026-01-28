@@ -132,11 +132,21 @@ export TEST_BASE_URL=http://localhost:8000
 # Authentication token
 export MCP_AUTH=your-test-token
 
+# Admin login credentials for UI tests
+export PLATFORM_ADMIN_EMAIL=admin@example.com
+export PLATFORM_ADMIN_PASSWORD=changeme
+
+# Optional: password used when the UI forces a password change
+# (override if your password policy requires extra complexity)
+export PLATFORM_ADMIN_NEW_PASSWORD=changeme123
+
 # Playwright options
 export PWDEBUG=1           # Enable Playwright Inspector
 export HEADED=1            # Force headed mode
 export SLOWMO=100          # Add 100ms delay between actions
 ```
+
+The Playwright auth fixtures will automatically handle the "change password required" flow when triggered.
 
 ### pyproject.toml Configuration
 
