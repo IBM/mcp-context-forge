@@ -77,11 +77,11 @@ The `infra/` directory provides Docker Compose components for local development:
 # Start PostgreSQL
 docker-compose -f infra/postgres/docker-compose.yml up -d
 
-# Start Redis
-docker-compose -f infra/redis/docker-compose.yml up -d
-
-# Start monitoring stack
+# Start monitoring stack (Prometheus/Grafana)
 docker-compose -f infra/monitoring/docker-compose.yml up -d
+
+# Start Nginx reverse proxy
+docker-compose -f infra/nginx/docker-compose.yml up -d
 ```
 
 ## TLS/SSL

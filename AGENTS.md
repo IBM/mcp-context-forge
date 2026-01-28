@@ -22,12 +22,12 @@ MCP Gateway (ContextForge) is a production-grade gateway, proxy, and registry fo
 mcpgateway/                 # Core FastAPI application
 ├── main.py                 # Application entry point
 ├── config.py               # Environment configuration
-├── models.py               # SQLAlchemy ORM models
+├── db.py                   # SQLAlchemy ORM models and session management
 ├── schemas.py              # Pydantic validation schemas
-├── services/               # Business logic layer
-├── routers/                # HTTP endpoint definitions
-├── middleware/             # Cross-cutting concerns
-├── transports/             # Protocol implementations (SSE, WebSocket, stdio)
+├── services/               # Business logic layer (50+ services)
+├── routers/                # HTTP endpoint definitions (19 routers)
+├── middleware/             # Cross-cutting concerns (15 middleware)
+├── transports/             # Protocol implementations (SSE, WebSocket, stdio, streamable HTTP)
 ├── plugins/                # Plugin framework infrastructure
 └── alembic/                # Database migrations
 
@@ -72,7 +72,7 @@ make flake8 bandit interrogate pylint verify
 # Core
 HOST=0.0.0.0
 PORT=4444
-DATABASE_URL=sqlite:///./mcp.db   # or postgresql://...
+DATABASE_URL=sqlite:///./mcp.db   # or postgresql+psycopg://...
 REDIS_URL=redis://localhost:6379
 RELOAD=true
 
@@ -81,16 +81,23 @@ JWT_SECRET_KEY=your-secret-key
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
 AUTH_REQUIRED=true
+AUTH_ENCRYPTION_SECRET=my-test-salt  # For encrypting stored secrets
 
 # Features
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
 MCPGATEWAY_A2A_ENABLED=true
+PLUGINS_ENABLED=true
+PLUGIN_CONFIG_FILE=plugins/config.yaml
 
 # Logging
 LOG_LEVEL=INFO
 LOG_TO_FILE=false
 STRUCTURED_LOGGING_DATABASE_ENABLED=false
+
+# Observability
+OBSERVABILITY_ENABLED=false
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
 ## MCP Helpers
@@ -157,7 +164,7 @@ Always write idempotent migrations that check before modifying:
 def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
 
-    # Skip if table doesn't exist (fresh DB uses models.py directly)
+    # Skip if table doesn't exist (fresh DB uses db.py models directly)
     if "my_table" not in inspector.get_table_names():
         return
 
@@ -213,7 +220,7 @@ make test
 
 - `mcpgateway/main.py` - Application entry point
 - `mcpgateway/config.py` - Environment configuration
-- `mcpgateway/models.py` - ORM models
+- `mcpgateway/db.py` - SQLAlchemy ORM models and session management
 - `mcpgateway/schemas.py` - Pydantic schemas
 - `pyproject.toml` - Project configuration
 - `Makefile` - Build automation

@@ -1,7 +1,7 @@
 Go MCP Servers: Create, Build, and Run
 
 - Scope: Practical guide to author, build, and containerize Go MCP servers.
-- References: See working example `mcp-servers/go/fast-time-server` and the Copier template in `mcp-servers/templates/go`.
+- References: See 5 working examples under `mcp-servers/go/` (fast-time-server, calculator-server, system-monitor-server, benchmark-server, pandoc-server) and the Copier template in `mcp-servers/templates/go`.
 
 **Project Layout**
 - Recommended structure for a new server `fast_time_lite`:

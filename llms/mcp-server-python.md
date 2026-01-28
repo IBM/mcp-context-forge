@@ -1,7 +1,7 @@
 FastMCP 2 Python Servers: Create, Build, and Run
 
 - Scope: Practical guide for authoring, packaging, containerizing, and exposing Python MCP servers with FastMCP 2.x.
-- References: See full implementations under `mcp-servers/python/*/server_fastmcp.py`, e.g. `mcp-servers/python/chunker_server/src/chunker_server/server_fastmcp.py` and `mcp-servers/python/url_to_markdown_server/src/url_to_markdown_server/server_fastmcp.py`.
+- References: See full implementations under `mcp-servers/python/*/server_fastmcp.py` (20 example servers available), e.g. `mcp-servers/python/chunker_server/src/chunker_server/server_fastmcp.py` and `mcp-servers/python/url_to_markdown_server/src/url_to_markdown_server/server_fastmcp.py`.
 
 **Project Layout**
 - Recommended structure for a new server `awesome_server`:

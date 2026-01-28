@@ -14,7 +14,7 @@ plugins/
 ├── regex_filter/            # Built-in: Search/replace
 ├── resource_filter/         # Built-in: Resource validation
 ├── argument_normalizer/     # Built-in: Input normalization
-└── [many more plugins...]   # 47+ plugin directories
+└── [many more plugins...]   # 42 plugin directories total
 ```
 
 ## Plugin Framework
