@@ -44,10 +44,36 @@ plugins:
         - id: redact-non-admin-views
           effect: Permit
           principal: Role::"non-admin"
-          action: 
+          action:
             - Action::"fast-time-git-status" #tool name
             - Action::"view_redacted_output"
           resource:
             - Server::"fast-time"
 
-  
+        - id: allow-admin-resources # policy for resources
+          effect: Permit
+          principal: Role::"admin"
+          action:
+            - Action::"view_full_output"
+          resource: Resource::"https://example.com/data" #Resource::<resource_uri>
+
+        - id: allow-employee-redacted-resources # policy for resources
+          effect: Permit
+          principal: Role::"non-admin"
+          action:
+            - Action::"view_redacted_output"
+          resource: Resource::"https://example.com/data" #Resource::<resource_uri>
+
+        - id: allow-admin-prompts # policy for resources
+          effect: Permit
+          principal: Role::"admin"
+          action:
+            - Action::"view_full_output"
+          resource: Prompts::"judge_prompts" #Prompt::<prompt_name>
+
+        - id: allow-employee-redacted-prompts # policy for resources
+          effect: Permit
+          principal: Role::"non-admin"
+          action:
+            - Action::"view_redacted_output"
+          resource: Prompts::"judge_prompts" #Prompt::<prompt_name>
