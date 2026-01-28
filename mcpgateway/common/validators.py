@@ -107,7 +107,16 @@ _SSTI_SIMPLE_TEMPLATE_PREFIXES: tuple[str, ...] = ("${", "#{", "%{")
 
 
 def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str]:
-    """Yield template expression contents for a start/end delimiter, skipping delimiters inside quotes."""
+    """Yield template expression contents for a start/end delimiter, skipping delimiters inside quotes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+        end (str): Closing delimiter.
+
+    Yields:
+        str: The template expression contents between delimiters.
+    """
     start_len = len(start)
     end_len = len(end)
     i = 0
@@ -141,7 +150,15 @@ def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str
 
 
 def _has_simple_template_expression(value: str, start: str) -> bool:
-    """Return True if start is followed by any closing brace."""
+    """Return True if start is followed by any closing brace.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+
+    Returns:
+        bool: True if a closing brace exists after the delimiter.
+    """
     start_len = len(start)
     idx = value.find(start)
     while idx != -1:
@@ -150,6 +167,7 @@ def _has_simple_template_expression(value: str, start: str) -> bool:
             return True
         idx = value.find(start, idx + start_len)
     return False
+
 
 # Dangerous URL protocol patterns (precompiled with IGNORECASE)
 _DANGEROUS_URL_PATTERNS: List[Pattern[str]] = [
