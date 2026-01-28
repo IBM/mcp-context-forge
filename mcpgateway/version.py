@@ -65,6 +65,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
 import orjson
 from sqlalchemy import text
 
@@ -841,7 +842,14 @@ async def version_endpoint(
     payload = _build_payload(redis_version, redis_ok)
     if partial:
         # Return partial HTML fragment for HTMX embedding
-        templates = Jinja2Templates(directory=str(settings.templates_dir), auto_reload=settings.templates_auto_reload)
+        templates = getattr(request.app.state, "templates", None)
+        if templates is None:
+            jinja_env = Environment(
+                loader=FileSystemLoader(str(settings.templates_dir)),
+                autoescape=True,
+                auto_reload=settings.templates_auto_reload,
+            )
+            templates = Jinja2Templates(env=jinja_env)
         return templates.TemplateResponse(request, "version_info_partial.html", {"request": request, "payload": payload})
     wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
     if wants_html:

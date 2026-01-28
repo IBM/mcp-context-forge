@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
@@ -230,10 +230,7 @@ class LogEntry(BaseModel):
     is_security_event: bool = False
     error_details: Optional[Dict[str, Any]] = None
 
-    class Config:
-        """Pydantic configuration."""
-
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LogSearchResponse(BaseModel):
@@ -277,10 +274,7 @@ class SecurityEventResponse(BaseModel):
     action_taken: Optional[str]
     resolved: bool
 
-    class Config:
-        """Pydantic configuration."""
-
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AuditTrailResponse(BaseModel):
@@ -299,10 +293,7 @@ class AuditTrailResponse(BaseModel):
     requires_review: bool
     data_classification: Optional[str]
 
-    class Config:
-        """Pydantic configuration."""
-
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PerformanceMetricResponse(BaseModel):
@@ -324,10 +315,7 @@ class PerformanceMetricResponse(BaseModel):
     p95_duration_ms: float
     p99_duration_ms: float
 
-    class Config:
-        """Pydantic configuration."""
-
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # API Endpoints
@@ -716,7 +704,7 @@ async def get_performance_metrics(
     component: Optional[str] = Query(None),
     operation: Optional[str] = Query(None),
     hours: float = Query(24.0, ge=MIN_PERFORMANCE_RANGE_HOURS, le=1000.0, description="Historical window to display"),
-    aggregation: str = Query(_DEFAULT_AGGREGATION_KEY, regex="^(5m|24h)$", description="Aggregation level for metrics"),
+    aggregation: str = Query(_DEFAULT_AGGREGATION_KEY, pattern="^(5m|24h)$", description="Aggregation level for metrics"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> List[PerformanceMetricResponse]:
