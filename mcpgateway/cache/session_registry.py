@@ -1938,7 +1938,7 @@ class SessionRegistry(SessionBackend):
                     token = await create_jwt_token(payload)
 
                 session_id = transport.session_id
-                
+
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "x-mcp-session-id": session_id}
                 # Extract root URL from base_url (remove /servers/{id} path)
                 parsed_url = urlparse(base_url)
