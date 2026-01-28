@@ -1,3 +1,18 @@
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"      # Built-in plugins
+  - "plugins/custom"      # Custom organization plugins
+  - "/etc/mcpgateway/plugins"  # System-wide plugins
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 120
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 120
+  include_user_info: true
+
 plugins:
   - name: "CedarPolicyPlugin"
     kind: "cedarpolicyplugin.plugin.CedarPolicyPlugin"
@@ -17,8 +32,6 @@ plugins:
       policy_output_keywords:
         view_full: "view_full_output"
         view_redacted: "view_redacted_output"
-      policy_redaction_spec:
-        pattern: '"\$\d{1,}(,\d{1,})*"' # provide regex, if none, then replace all            
       policy:
         - id: allow-admin-basic-access
           effect: Permit
