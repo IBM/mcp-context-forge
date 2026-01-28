@@ -1588,7 +1588,8 @@ async def test_session_backend_docstring_examples():
         backend = SessionBackend(backend="redis")
         assert False, "Should have raised ValueError"
     except ValueError as e:
-        assert "Redis backend requires redis_url" in str(e)
+        # In environments without redis installed, error message differs
+        assert ("Redis backend requires redis_url" in str(e)) or ("redis package not installed" in str(e))
 
     # Test invalid backend
     try:
