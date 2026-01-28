@@ -355,6 +355,12 @@ class Settings(BaseSettings):
     # Client name template
     dcr_client_name_template: str = Field(default="MCP Gateway ({gateway_name})", description="Template for client_name in DCR requests")
 
+    # Refresh token behavior
+    dcr_request_refresh_token_when_unsupported: bool = Field(
+        default=False,
+        description="Request refresh_token even when AS metadata omits grant_types_supported. Enable for AS servers that support refresh tokens but don't advertise it.",
+    )
+
     # ===================================
     # OAuth Discovery (RFC 8414)
     # ===================================
@@ -448,6 +454,10 @@ class Settings(BaseSettings):
     mcpgateway_catalog_auto_health_check: bool = Field(default=True, description="Automatically health check catalog servers")
     mcpgateway_catalog_cache_ttl: int = Field(default=3600, description="Catalog cache TTL in seconds")
     mcpgateway_catalog_page_size: int = Field(default=100, description="Number of catalog servers per page")
+
+    # MCP Gateway Bootstrap Roles In DB Configuration
+    mcpgateway_bootstrap_roles_in_db_enabled: bool = Field(default=False, description="Enable MCP Gateway add additional roles in db")
+    mcpgateway_bootstrap_roles_in_db_file: str = Field(default="additional_roles_in_db.json", description="Path to add additional roles in db")
 
     # Elicitation support (MCP 2025-06-18)
     mcpgateway_elicitation_enabled: bool = Field(default=True, description="Enable elicitation passthrough support (MCP 2025-06-18)")
@@ -729,18 +739,16 @@ class Settings(BaseSettings):
         Returns:
             Itself.
         """
-        if self.client_mode:
-            return self
+        if not self.client_mode:
+            # Check for dangerous combinations - only log warnings, don't raise errors
+            if not self.auth_required and self.mcpgateway_ui_enabled:
+                logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
 
-        # Check for dangerous combinations - only log warnings, don't raise errors
-        if not self.auth_required and self.mcpgateway_ui_enabled:
-            logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
+            if self.skip_ssl_verify and not self.dev_mode:
+                logger.warning("🔓 SECURITY WARNING: SSL verification is disabled in non-dev mode. This is a security risk! Set SKIP_SSL_VERIFY=false for production.")
 
-        if self.skip_ssl_verify and not self.dev_mode:
-            logger.warning("🔓 SECURITY WARNING: SSL verification is disabled in non-dev mode. This is a security risk! Set SKIP_SSL_VERIFY=false for production.")
-
-        if self.debug and not self.dev_mode:
-            logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
+            if self.debug and not self.dev_mode:
+                logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
         return self
 
@@ -1203,9 +1211,12 @@ class Settings(BaseSettings):
     # Transport
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
-    sse_retry_timeout: int = 5000  # milliseconds
+    sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect
     sse_keepalive_enabled: bool = True  # Enable SSE keepalive events
     sse_keepalive_interval: int = 30  # seconds between keepalive events
+    sse_send_timeout: float = 30.0  # seconds - timeout for ASGI send() calls, protects against hung connections
+    sse_rapid_yield_window_ms: int = 1000  # milliseconds - time window for rapid yield detection
+    sse_rapid_yield_max: int = 50  # max yields per window before assuming client disconnected (0=disabled)
 
     # Gateway/Server Connection Timeout
     # Timeout in seconds for HTTP requests to registered gateways and MCP servers.
@@ -1309,6 +1320,47 @@ class Settings(BaseSettings):
         "x-api-key",
         "cookie",
     ]
+    # Timeout for session/transport cleanup operations (__aexit__ calls).
+    # This prevents CPU spin loops when internal tasks (like post_writer waiting on
+    # memory streams) don't respond to cancellation. Does NOT affect tool execution
+    # time - only cleanup of idle/released sessions. Increase if you see frequent
+    # "cleanup timed out" warnings; decrease for faster recovery from spin loops.
+    mcp_session_pool_cleanup_timeout: float = 5.0
+
+    # Timeout for SSE task group cleanup (seconds).
+    # When an SSE connection is cancelled, this controls how long to wait for
+    # internal tasks to respond before forcing cleanup. Shorter values reduce
+    # CPU waste during anyio _deliver_cancellation spin loops but may interrupt
+    # legitimate cleanup. Only affects cancelled connections, not normal operation.
+    # See: https://github.com/agronholm/anyio/issues/695
+    sse_task_group_cleanup_timeout: float = 5.0
+
+    # =========================================================================
+    # EXPERIMENTAL: anyio _deliver_cancellation spin loop workaround
+    # =========================================================================
+    # When enabled, monkey-patches anyio's CancelScope._deliver_cancellation to
+    # limit the number of retry iterations. This prevents 100% CPU spin loops
+    # when tasks don't respond to CancelledError (anyio issue #695).
+    #
+    # WARNING: This is a workaround for an upstream issue. May be removed when
+    # anyio or MCP SDK fix the underlying problem. Enable only if you experience
+    # CPU spin loops during SSE/MCP connection cleanup.
+    #
+    # Trade-offs when enabled:
+    # - Prevents indefinite CPU spin (good)
+    # - May leave some tasks uncancelled after max iterations (usually harmless)
+    # - Worker recycling (GUNICORN_MAX_REQUESTS) cleans up orphaned tasks
+    #
+    # See: https://github.com/agronholm/anyio/issues/695
+    # Env: ANYIO_CANCEL_DELIVERY_PATCH_ENABLED
+    anyio_cancel_delivery_patch_enabled: bool = False
+
+    # Maximum iterations for _deliver_cancellation before giving up.
+    # Only used when anyio_cancel_delivery_patch_enabled=True.
+    # Higher values = more attempts to cancel tasks, but longer potential spin.
+    # Lower values = faster recovery, but more orphaned tasks.
+    # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
+    anyio_cancel_delivery_max_iterations: int = 100
 
     # Prompts
     prompt_cache_size: int = 100
@@ -1386,6 +1438,9 @@ class Settings(BaseSettings):
         default="auto",
         description="Pre-ping connections: auto, true, or false",
     )
+
+    # SQLite busy timeout: Maximum time (ms) SQLite will wait to acquire a database lock before returning SQLITE_BUSY.
+    db_sqlite_busy_timeout: int = Field(default=5000, ge=1000, le=60000, description="SQLite busy timeout in milliseconds (default: 5000ms)")
 
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
@@ -1569,6 +1624,7 @@ Disallow: /
     # Flexible list parsing for envs
     # -------------------------------
     @field_validator(
+        "sso_entra_admin_groups",
         "sso_trusted_domains",
         "sso_auto_admin_domains",
         "sso_github_admin_orgs",
@@ -1808,7 +1864,7 @@ Disallow: /
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
     validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
-    validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
+    validation_tool_name_pattern: str = r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"  # MCP tool naming per SEP-986
     validation_tool_method_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_\./-]*$"
 
     # MCP-compliant size limits (configurable via env)

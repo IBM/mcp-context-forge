@@ -778,11 +778,12 @@ class TestToolAPIs:
         if response.status_code == 422:
             assert "Tool name cannot be empty" in str(response.json())
 
-        # Invalid name format (special characters)
+        # Valid name format with dashes (per MCP spec - hyphens allowed in names)
         response = await client.post("/tools", json={"tool": {"name": "tool-with-dashes", "url": "https://example.com"}}, headers=TEST_AUTH_HEADER)
-        # The name might be normalized instead of rejected
+        # Tool names with hyphens are valid per MCP spec
         if response.status_code == 422:
-            assert "must start with a letter" in str(response.json())
+            # May fail for other reasons (duplicate, etc)
+            assert "must start with a letter, number, or underscore" in str(response.json()) or "already exists" in str(response.json())
         else:
             assert response.status_code == 200
 

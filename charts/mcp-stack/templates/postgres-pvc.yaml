@@ -12,7 +12,9 @@ metadata:
     {{- toYaml .Values.postgres.persistence.annotations | nindent 4 }}
   {{- end }}
 spec:
+  {{- if .Values.postgres.persistence.storageClassName }}
   storageClassName: {{ .Values.postgres.persistence.storageClassName }}
+  {{- end }}
   accessModes: {{- toYaml .Values.postgres.persistence.accessModes | nindent 4 }}
   resources:
     requests:

@@ -50,6 +50,7 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/tools/?([a-f0-9\-]+)"), "tool"),
     (re.compile(r"/resources/?([a-f0-9\-]+)"), "resource"),
     (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
+    (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
 
 # Permission map with precompiled patterns
@@ -78,6 +79,12 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_CREATE),
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
+    # Gateway permissions
+    ("GET", re.compile(r"^/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
+    ("POST", re.compile(r"^/gateways/?$"), Permissions.GATEWAYS_CREATE),  # Only exact /gateways or /gateways/
+    ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
+    ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
+    ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
     # Admin permissions
     ("GET", re.compile(r"^/admin(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
     ("POST", re.compile(r"^/admin/[^/]+(?:$|/)"), Permissions.ADMIN_USER_MANAGEMENT),
@@ -537,7 +544,7 @@ class TokenScopingMiddleware:
         from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import Gateway, get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
 
         # Track if we own the session (and thus must clean it up)
         owns_session = db is None
@@ -576,13 +583,14 @@ class TokenScopingMiddleware:
                     logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
-                # PRIVATE SERVERS: Check if server belongs to token's teams
+                # PRIVATE SERVERS: Owner-only access (per RBAC doc)
                 if server_visibility == "private":
-                    if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private server {resource_id} in token's team {server.team_id}")
+                    server_owner = getattr(server, "owner_email", None)
+                    if server_owner and server_owner == _user_email:
+                        logger.debug(f"Access granted: Private server {resource_id} owned by {_user_email}")
                         return True
 
-                    logger.warning(f"Access denied: Server {resource_id} is private to team '{server.team_id}'")
+                    logger.warning(f"Access denied: Server {resource_id} is private, owner is '{server_owner}', requester is '{_user_email}'")
                     return False
 
                 # Unknown visibility - deny by default
@@ -621,14 +629,14 @@ class TokenScopingMiddleware:
                     logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
-                # PRIVATE TOOLS: Check if tool is in token's team context
+                # PRIVATE TOOLS: Owner-only access (per RBAC doc)
                 if tool_visibility in ["private", "user"]:
-                    tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private tool {resource_id} in token's team {tool_team_id}")
+                    tool_owner = getattr(tool, "owner_email", None)
+                    if tool_owner and tool_owner == _user_email:
+                        logger.debug(f"Access granted: Private tool {resource_id} owned by {_user_email}")
                         return True
 
-                    logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility} and not in token's teams")
+                    logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility}, owner is '{tool_owner}', requester is '{_user_email}'")
                     return False
 
                 # Unknown visibility - deny by default
@@ -667,14 +675,14 @@ class TokenScopingMiddleware:
                     logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
-                # PRIVATE RESOURCES: Check if resource is in token's team context
+                # PRIVATE RESOURCES: Owner-only access (per RBAC doc)
                 if resource_visibility in ["private", "user"]:
-                    resource_team_id = getattr(resource, "team_id", None)
-                    if resource_team_id and resource_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private resource {resource_id} in token's team {resource_team_id}")
+                    resource_owner = getattr(resource, "owner_email", None)
+                    if resource_owner and resource_owner == _user_email:
+                        logger.debug(f"Access granted: Private resource {resource_id} owned by {_user_email}")
                         return True
 
-                    logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility} and not in token's teams")
+                    logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility}, owner is '{resource_owner}', requester is '{_user_email}'")
                     return False
 
                 # Unknown visibility - deny by default
@@ -713,18 +721,64 @@ class TokenScopingMiddleware:
                     logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
-                # PRIVATE PROMPTS: Check if prompt is in token's team context
+                # PRIVATE PROMPTS: Owner-only access (per RBAC doc)
                 if prompt_visibility in ["private", "user"]:
-                    prompt_team_id = getattr(prompt, "team_id", None)
-                    if prompt_team_id and prompt_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private prompt {resource_id} in token's team {prompt_team_id}")
+                    prompt_owner = getattr(prompt, "owner_email", None)
+                    if prompt_owner and prompt_owner == _user_email:
+                        logger.debug(f"Access granted: Private prompt {resource_id} owned by {_user_email}")
                         return True
 
-                    logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility} and not in token's teams")
+                    logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility}, owner is '{prompt_owner}', requester is '{_user_email}'")
                     return False
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Prompt {resource_id} has unknown visibility: {prompt_visibility}")
+                return False
+
+            # CHECK GATEWAYS
+            if resource_type == "gateway":
+                gateway = db.execute(select(Gateway).where(Gateway.id == resource_id)).scalar_one_or_none()
+
+                if not gateway:
+                    logger.warning(f"Gateway {resource_id} not found in database")
+                    return True
+
+                # Get gateway visibility (default to 'team' if field doesn't exist)
+                gateway_visibility = getattr(gateway, "visibility", "team")
+
+                # PUBLIC GATEWAYS: Accessible by everyone (including public-only tokens)
+                if gateway_visibility == "public":
+                    logger.debug(f"Access granted: Gateway {resource_id} is PUBLIC")
+                    return True
+
+                # PUBLIC-ONLY TOKEN: Can ONLY access public gateways (strict public-only policy)
+                # No owner access - if user needs own resources, use a personal team-scoped token
+                if is_public_token:
+                    logger.warning(f"Access denied: Public-only token cannot access {gateway_visibility} gateway {resource_id}")
+                    return False
+
+                # TEAM GATEWAYS: Check if gateway's team matches token's teams
+                if gateway_visibility == "team":
+                    gateway_team_id = getattr(gateway, "team_id", None)
+                    if gateway_team_id and gateway_team_id in token_team_ids:
+                        logger.debug(f"Access granted: Team gateway {resource_id} belongs to token's team {gateway_team_id}")
+                        return True
+
+                    logger.warning(f"Access denied: Gateway {resource_id} is team-scoped to '{gateway_team_id}', token is scoped to teams {token_team_ids}")
+                    return False
+
+                # PRIVATE GATEWAYS: Owner-only access (per RBAC doc)
+                if gateway_visibility in ["private", "user"]:
+                    gateway_owner = getattr(gateway, "owner_email", None)
+                    if gateway_owner and gateway_owner == _user_email:
+                        logger.debug(f"Access granted: Private gateway {resource_id} owned by {_user_email}")
+                        return True
+
+                    logger.warning(f"Access denied: Gateway {resource_id} is {gateway_visibility}, owner is '{gateway_owner}', requester is '{_user_email}'")
+                    return False
+
+                # Unknown visibility - deny by default
+                logger.warning(f"Access denied: Gateway {resource_id} has unknown visibility: {gateway_visibility}")
                 return False
 
             # UNKNOWN RESOURCE TYPE

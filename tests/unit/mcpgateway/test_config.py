@@ -39,6 +39,24 @@ def test_parse_allowed_origins_json_and_csv():
 
 
 # --------------------------------------------------------------------------- #
+#                         SSO field validators                            #
+# --------------------------------------------------------------------------- #
+def test_parse_sso_entra_admin_groups_json_and_csv():
+    """sso_entra_admin_groups should accept JSON array or comma-separated string."""
+    # Test JSON format
+    s_json = Settings(sso_entra_admin_groups='["admin", "superadmin"]', _env_file=None)
+    assert s_json.sso_entra_admin_groups == ["admin", "superadmin"]
+
+    # Test CSV format
+    s_csv = Settings(sso_entra_admin_groups="admin, superadmin", _env_file=None)
+    assert s_csv.sso_entra_admin_groups == ["admin", "superadmin"]
+
+    # Test empty list
+    s_empty = Settings(sso_entra_admin_groups="", _env_file=None)
+    assert s_empty.sso_entra_admin_groups == []
+
+
+# --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #
 def test_database_settings_sqlite_and_non_sqlite(tmp_path: Path) -> None:

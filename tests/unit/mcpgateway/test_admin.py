@@ -2389,7 +2389,7 @@ class TestOAuthFunctionality:
         # Mock OAuth encryption
         with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
             mock_encryption = MagicMock()
-            mock_encryption.encrypt_secret.return_value = "encrypted-secret"
+            mock_encryption.encrypt_secret_async = AsyncMock(return_value="encrypted-secret")
             mock_get_encryption.return_value = mock_encryption
 
             result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2401,7 +2401,7 @@ class TestOAuthFunctionality:
             assert "🔐 Authorize" in body["message"]
 
             # Verify OAuth secret was encrypted
-            mock_encryption.encrypt_secret.assert_called_with("test-secret")
+            mock_encryption.encrypt_secret_async.assert_called_with("test-secret")
             mock_register_gateway.assert_called_once()
 
     @patch.object(GatewayService, "register_gateway")
@@ -2450,7 +2450,7 @@ class TestOAuthFunctionality:
         # Mock OAuth encryption
         with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
             mock_encryption = MagicMock()
-            mock_encryption.encrypt_secret.return_value = "encrypted-edit-secret"
+            mock_encryption.encrypt_secret_async = AsyncMock(return_value="encrypted-edit-secret")
             mock_get_encryption.return_value = mock_encryption
 
             result = await admin_edit_gateway("gateway-1", mock_request, mock_db, "test-user")
@@ -2460,7 +2460,7 @@ class TestOAuthFunctionality:
             assert body["success"] is True
 
             # Verify OAuth secret was encrypted
-            mock_encryption.encrypt_secret.assert_called_with("edit-secret")
+            mock_encryption.encrypt_secret_async.assert_called_with("edit-secret")
             mock_update_gateway.assert_called_once()
 
     @patch.object(GatewayService, "update_gateway")
@@ -2479,6 +2479,7 @@ class TestOAuthFunctionality:
         # Mock OAuth encryption - should not be called for empty secret
         with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
             mock_encryption = MagicMock()
+            mock_encryption.encrypt_secret_async = AsyncMock()
             mock_get_encryption.return_value = mock_encryption
 
             result = await admin_edit_gateway("gateway-1", mock_request, mock_db, "test-user")
@@ -2486,7 +2487,7 @@ class TestOAuthFunctionality:
             assert isinstance(result, JSONResponse)
 
             # Verify OAuth encryption was not called for empty secret
-            mock_encryption.encrypt_secret.assert_not_called()
+            mock_encryption.encrypt_secret_async.assert_not_called()
             mock_update_gateway.assert_called_once()
 
 

@@ -18,6 +18,10 @@ Before using the API, you need to:
 
 2. **Generate a JWT authentication token**:
 
+    !!! warning "Security Warning: CLI Token Generation"
+        The CLI token generator has access to `JWT_SECRET_KEY` and can create tokens with ANY claims, bypassing all API security controls. Only use for development/testing. For production, use the `/tokens` API endpoint.
+
+    **Simple Token (Basic Testing):**
     ```bash
     # Generate token (replace secret with your JWT_SECRET_KEY from .env)
     export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
@@ -27,6 +31,28 @@ Before using the API, you need to:
 
     # Verify token was generated
     echo "Token: ${TOKEN:0:50}..."
+    ```
+
+    **Rich Token with Admin Privileges (⚠️ DEV/TEST ONLY):**
+    ```bash
+    # Generate admin token for testing admin operations
+    export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+      --username admin@example.com \
+      --admin \
+      --full-name "Admin User" \
+      --exp 10080 \
+      --secret my-test-key 2>/dev/null | head -1)
+    ```
+
+    **Team-Scoped Token (⚠️ DEV/TEST ONLY):**
+    ```bash
+    # Generate token scoped to specific teams
+    export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+      --username user@example.com \
+      --teams team-123,team-456 \
+      --full-name "Team User" \
+      --exp 10080 \
+      --secret my-test-key 2>/dev/null | head -1)
     ```
 
     !!! tip "Token Expiration"

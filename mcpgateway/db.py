@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -288,8 +288,8 @@ if backend == "sqlite":
         cursor = dbapi_conn.cursor()
         # Enable WAL mode for better concurrency
         cursor.execute("PRAGMA journal_mode=WAL")
-        # Set busy timeout to 30 seconds (30000 ms) to handle lock contention from observability
-        cursor.execute("PRAGMA busy_timeout=30000")
+        # Configure SQLite lock wait upper bound (ms) to prevent prolonged blocking under contention
+        cursor.execute(f"PRAGMA busy_timeout={settings.db_sqlite_busy_timeout}")
         # Synchronous=NORMAL is safe with WAL mode and improves performance
         cursor.execute("PRAGMA synchronous=NORMAL")
         # Increase cache size for better performance (negative value = KB)
@@ -598,7 +598,7 @@ def reset_connection_on_checkin(dbapi_connection, _connection_record):
 
 
 @event.listens_for(engine, "reset")
-def reset_connection_on_reset(dbapi_connection, _connection_record):
+def reset_connection_on_reset(dbapi_connection, _connection_record, _reset_state):
     """Reset connection state when the pool resets a connection.
 
     This handles the case where a connection is being reset before reuse.
@@ -936,6 +936,12 @@ class Permissions:
     RESOURCES_UPDATE = "resources.update"
     RESOURCES_DELETE = "resources.delete"
     RESOURCES_SHARE = "resources.share"
+
+    # Gateway permissions
+    GATEWAYS_CREATE = "gateways.create"
+    GATEWAYS_READ = "gateways.read"
+    GATEWAYS_UPDATE = "gateways.update"
+    GATEWAYS_DELETE = "gateways.delete"
 
     # Prompt permissions
     PROMPTS_CREATE = "prompts.create"
@@ -3210,7 +3216,8 @@ class Resource(Base):
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
     __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "uri", name="uq_team_owner_gateway_uri_resource"),
+        Index("uq_team_owner_uri_resource_local", "team_id", "owner_email", "uri", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_resources_created_at_id", "created_at", "id"),
     )
 
@@ -3626,8 +3633,9 @@ class Prompt(Base):
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
     __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "name", name="uq_team_owner_gateway_name_prompt"),
         UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name_prompt"),
+        Index("uq_team_owner_name_prompt_local", "team_id", "owner_email", "name", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_prompts_created_at_id", "created_at", "id"),
     )
 
@@ -5231,17 +5239,33 @@ def validate_tool_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
-    Raises:
-        ValueError: If the tool input schema is invalid.
     """
     # You can use mapper and connection later, if required.
     _ = mapper
     _ = connection
+
+    allowed_validator_names = {
+        "Draft4Validator",
+        "Draft6Validator",
+        "Draft7Validator",
+        "Draft201909Validator",
+        "Draft202012Validator",
+    }
+
     if hasattr(target, "input_schema"):
+        schema = target.input_schema
+        if schema is None:
+            return
+
         try:
-            jsonschema.Draft7Validator.check_schema(target.input_schema)
+            validator = jsonschema.validators.validator_for(schema)
+
+            if validator.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+
+            validator.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid tool input schema: {str(e)}") from e
+            logger.warning(f"Invalid tool input schema: {str(e)}")
 
 
 def validate_tool_name(mapper, connection, target):
@@ -5275,17 +5299,33 @@ def validate_prompt_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
-    Raises:
-        ValueError: If the prompt argument schema is invalid.
     """
     # You can use mapper and connection later, if required.
     _ = mapper
     _ = connection
+
+    allowed_validator_names = {
+        "Draft4Validator",
+        "Draft6Validator",
+        "Draft7Validator",
+        "Draft201909Validator",
+        "Draft202012Validator",
+    }
+
     if hasattr(target, "argument_schema"):
+        schema = target.argument_schema
+        if schema is None:
+            return
+
         try:
-            jsonschema.Draft7Validator.check_schema(target.argument_schema)
+            validator = jsonschema.validators.validator_for(schema)
+
+            if validator.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+
+            validator.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid prompt argument schema: {str(e)}") from e
+            logger.warning(f"Invalid prompt argument schema: {str(e)}")
 
 
 # Register validation listeners
@@ -5338,7 +5378,16 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
-def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = False, options: Optional[List] = None):
+def get_for_update(
+    db: Session,
+    model,
+    entity_id=None,
+    where: Optional[Any] = None,
+    skip_locked: bool = False,
+    nowait: bool = False,
+    lock_timeout_ms: Optional[int] = None,
+    options: Optional[List] = None,
+):
     """Get entity with row lock for update operations.
 
     Args:
@@ -5349,10 +5398,19 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
         skip_locked: If False (default), wait for locked rows. If True, skip locked
             rows (returns None if row is locked). Use False for conflict checks and
             entity updates to ensure consistency. Use True only for job-queue patterns.
+        nowait: If True, fail immediately if row is locked (raises OperationalError).
+            Use this for operations that should not block. Default False.
+        lock_timeout_ms: Optional lock timeout in milliseconds for PostgreSQL.
+            If set, the query will wait at most this long for locks before failing.
+            Only applies to PostgreSQL. Default None (use database default).
         options: Optional list of loader options (e.g., selectinload(...))
 
     Returns:
         The model instance or None
+
+    Raises:
+        sqlalchemy.exc.OperationalError: If nowait=True and row is locked, or if
+            lock_timeout_ms is exceeded.
 
     Notes:
         - On PostgreSQL this acquires a FOR UPDATE row lock.
@@ -5385,8 +5443,12 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
             return db.get(model, entity_id)
         return db.execute(stmt).scalar_one_or_none()
 
-    # PostgreSQL: apply FOR UPDATE
-    stmt = stmt.with_for_update(skip_locked=skip_locked)
+    # PostgreSQL: set lock timeout if specified
+    if lock_timeout_ms is not None:
+        db.execute(text(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'"))
+
+    # PostgreSQL: apply FOR UPDATE with optional nowait
+    stmt = stmt.with_for_update(skip_locked=skip_locked, nowait=nowait)
     return db.execute(stmt).scalar_one_or_none()
 
 

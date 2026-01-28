@@ -63,17 +63,17 @@ class AdminPage(BasePage):
     def get_server_count(self) -> int:
         """Get number of servers displayed."""
         # Make sure the server list is loaded
-        self.page.wait_for_selector(self.SERVER_LIST, state="visible")
-        return len(self.page.query_selector_all(self.SERVER_ITEM))
+        self.page.wait_for_selector(self.SERVER_LIST, state="attached")
+        return self.page.locator(f"{self.SERVER_ITEM}:visible").count()
 
     def server_exists(self, name: str) -> bool:
         """Check if server with name exists."""
         # Wait for the server list to be visible
-        self.page.wait_for_selector(self.SERVER_LIST, state="visible")
+        self.page.wait_for_selector(self.SERVER_LIST, state="attached")
 
         # Check each server item for the name
-        server_items = self.page.query_selector_all(self.SERVER_ITEM)
-        for item in server_items:
-            if name in item.text_content():
+        server_items = self.page.locator(f"{self.SERVER_ITEM}:visible")
+        for i in range(server_items.count()):
+            if name in server_items.nth(i).text_content():
                 return True
         return False

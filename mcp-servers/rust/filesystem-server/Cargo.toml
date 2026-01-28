@@ -1,0 +1,43 @@
+[package]
+name = "filesystem-server"
+version = "0.1.0"
+edition = "2024"
+authors = ["Matheus Cafalchio"]
+
+
+[dependencies]
+anyhow = "1.0.100"
+axum = "0.8.8"
+chrono = "0.4.43"
+clap = { version = "4.5.54", features = ["derive"] }
+futures = "0.3.31"
+globset = "0.4.18"
+ignore = "0.4.25"
+rmcp = { version = "0.14.0", features = [ "transport-streamable-http-server"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+similar = "2.7.0"
+tempfile = "3"
+tokio = { version = "1.49.0", features = ["full"] }
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+uuid = "1.19.0"
+
+
+[dev-dependencies]
+axum-test = "18.7.0"
+bytes = "1.11.0"
+http = "1.4.0"
+hyper = "1.8.1"
+reqwest = { version = "0.13.1", features = ["json"] }
+tokio-test = "0.4.5"
+tokio-util = "0.7.18"
+tower = "0.5.3"
+
+
+[profile.release]
+opt-level = 'z'     # Optimize for size
+lto = true          # Enable link-time optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations
+panic = 'abort'     # Abort on panic
+strip = true        # Strip symbols from binary*

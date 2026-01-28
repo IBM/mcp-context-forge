@@ -125,6 +125,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
                 mock_password_service = MockPasswordService.return_value
                 # User IS using default password
                 mock_password_service.verify_password.return_value = True
+                mock_password_service.verify_password_async = AsyncMock(return_value=True)
 
                 with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
                     mock_settings.default_user_password.get_secret_value.return_value = "default_password"
@@ -164,6 +165,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
                 mock_password_service = MockPasswordService.return_value
                 # User is NOT using default password
                 mock_password_service.verify_password.return_value = False
+                mock_password_service.verify_password_async = AsyncMock(return_value=False)
 
                 with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
                     mock_settings.default_user_password.get_secret_value.return_value = "default_password"

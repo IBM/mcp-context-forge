@@ -257,7 +257,13 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1"; \
 		echo "✅  TLS certificate written to ./certs"; \
 	fi
-	chmod 640 certs/key.pem
+	@echo "🔐  Setting file permissions for container access..."
+	@chmod 644 certs/cert.pem  # Public certificate - world-readable is OK
+	@chmod 640 certs/key.pem   # Private key - owner+group only, no world access
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key.pem certs/cert.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key.pem certs/cert.pem")
 
 certs-passphrase:                ## Generate self-signed cert with passphrase-protected key
 	@if [ -f certs/cert.pem ] && [ -f certs/key-encrypted.pem ]; then \
@@ -271,20 +277,28 @@ certs-passphrase:                ## Generate self-signed cert with passphrase-pr
 			echo "❌  Passphrases do not match!"; \
 			exit 1; \
 		fi; \
-		openssl req -x509 -newkey rsa:4096 -sha256 -days 365 \
-			-keyout certs/key-encrypted.pem -out certs/cert.pem \
+		openssl genrsa -aes256 -passout pass:"$$PASSPHRASE" -out certs/key-encrypted.pem 4096; \
+		openssl req -x509 -sha256 -days 365 \
+			-key certs/key-encrypted.pem \
+			-passin pass:"$$PASSPHRASE" \
+			-out certs/cert.pem \
 			-subj "/CN=localhost" \
-			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
-			-passout pass:"$$PASSPHRASE"; \
-		echo "✅  Passphrase-protected certificate created"; \
-		echo "📁  Certificate: ./certs/cert.pem"; \
-		echo "📁  Encrypted Key: ./certs/key-encrypted.pem"; \
-		echo ""; \
-		echo "💡  To use this certificate:"; \
-		echo "   1. Set KEY_FILE_PASSWORD environment variable"; \
-		echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"; \
+			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1"; \
+		echo "✅  Passphrase-protected certificate created (AES-256)"; \
 	fi
-	@chmod 600 certs/key-encrypted.pem
+	@echo "🔐  Setting file permissions for container access..."
+	@chmod 644 certs/cert.pem          # Public certificate - world-readable is OK
+	@chmod 640 certs/key-encrypted.pem # Private key - owner+group only, no world access
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key-encrypted.pem certs/cert.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key-encrypted.pem certs/cert.pem")
+	@echo "📁  Certificate: ./certs/cert.pem"
+	@echo "📁  Encrypted Key: ./certs/key-encrypted.pem"
+	@echo ""
+	@echo "💡  To use this certificate:"
+	@echo "   1. Set KEY_FILE_PASSWORD environment variable"
+	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"
 
 certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
 	@if [ ! -f certs/key-encrypted.pem ]; then \
@@ -294,7 +308,11 @@ certs-remove-passphrase:         ## Remove passphrase from encrypted key (create
 	fi
 	@echo "🔓  Removing passphrase from private key..."
 	@openssl rsa -in certs/key-encrypted.pem -out certs/key.pem
-	@chmod 600 certs/key.pem
+	@chmod 640 certs/key.pem
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key.pem")
 	@echo "✅  Passphrase removed - unencrypted key saved to certs/key.pem"
 	@echo "⚠️   Keep this file secure! It contains your unencrypted private key."
 
@@ -557,15 +575,22 @@ coverage:
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
+			--cov=mcpgateway mcpgateway/ || true"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 			--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
-			--dist loadgroup -n 8 -rA --cov-append --capture=tee-sys -v \
-			--durations=120 --doctest-modules app/ --cov-report=term \
-			--cov=mcpgateway --ignore=test.py tests/ || true"
+			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+			--durations=120 --cov-report=term --cov=mcpgateway \
+			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ || true"
 	@printf '\n## Coverage report\n\n' >> $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=app/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@echo "🔍  Generating annotated coverage files..."
@@ -832,7 +857,7 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 
 monitoring-down:                           ## Stop monitoring stack
 	@echo "📊 Stopping monitoring stack..."
-	$(COMPOSE_CMD_MONITOR) --profile monitoring down
+	$(COMPOSE_CMD_MONITOR) --profile monitoring down --remove-orphans
 	@echo "✅ Monitoring stack stopped."
 
 monitoring-status:                         ## Show status of monitoring services
@@ -846,7 +871,7 @@ monitoring-logs:                           ## Show monitoring stack logs
 
 monitoring-clean:                          ## Stop and remove all monitoring data (volumes)
 	@echo "📊 Stopping and cleaning monitoring stack..."
-	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v
+	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v --remove-orphans
 	@echo "✅ Monitoring stack stopped and volumes removed."
 
 # =============================================================================
@@ -874,7 +899,7 @@ testing-up:                                ## Start testing stack (fast_test_ser
 
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing down
+	$(COMPOSE_CMD_MONITOR) --profile testing down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 testing-status:                            ## Show status of testing services
@@ -1016,12 +1041,12 @@ benchmark-up:                              ## Start benchmark stack (MCP servers
 
 benchmark-down:                            ## Stop benchmark stack
 	@echo "🎯 Stopping benchmark stack..."
-	$(COMPOSE_CMD_MONITOR) --profile benchmark down
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down --remove-orphans
 	@echo "✅ Benchmark stack stopped."
 
 benchmark-clean:                           ## Stop and remove all benchmark data (volumes)
 	@echo "🎯 Stopping and cleaning benchmark stack..."
-	$(COMPOSE_CMD_MONITOR) --profile benchmark down -v
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down -v --remove-orphans
 	@echo "✅ Benchmark stack stopped and volumes removed."
 
 benchmark-status:                          ## Show status of benchmark services
@@ -1090,7 +1115,7 @@ performance-up:                            ## Start performance stack (7 gateway
 
 performance-down:                          ## Stop performance stack
 	@echo "🚀 Stopping performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down
+	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down --remove-orphans
 	@echo "✅ Performance stack stopped."
 
 performance-logs:                          ## Show performance stack logs
@@ -1111,6 +1136,7 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
 # help: load-test-stress      - Stress test (500 users, 60s, minimal wait)
+# help: load-test-spin-detector - CPU spin loop detector (spike/drop pattern, issue #2360)
 # help: load-test-report      - Show last load test HTML report
 # help: load-test-compose     - Light load test for compose stack (port 4444)
 # help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
@@ -1236,6 +1262,63 @@ load-test-stress:                          ## Stress test (500 users, 60s)
 	else \
 		echo "❌ Cancelled"; \
 	fi
+
+SPIN_DETECTOR_RUN_TIME ?= 300m
+SPIN_DETECTOR_WORKERS ?= $(LOADTEST_PROCESSES)
+
+load-test-spin-detector:                   ## CPU spin loop detector (spike/drop pattern, issue #2360)
+	@echo "🔄 CPU SPIN LOOP DETECTOR (Escalating load pattern)"
+	@echo "   Issue: https://github.com/IBM/mcp-context-forge/issues/2360"
+	@echo ""
+	@echo "   ESCALATING PATTERN (1000/s spawn rate):"
+	@echo "   ┌─────────┬─────────┬────────────┬────────────┐"
+	@echo "   │ Wave    │ Users   │ Duration   │ Pause      │"
+	@echo "   ├─────────┼─────────┼────────────┼────────────┤"
+	@echo "   │ 1       │  4,000  │ 30 seconds │ 10 seconds │"
+	@echo "   │ 2       │  6,000  │ 45 seconds │ 15 seconds │"
+	@echo "   │ 3       │  8,000  │ 60 seconds │ 20 seconds │"
+	@echo "   │ 4       │ 10,000  │ 75 seconds │ 30 seconds │"
+	@echo "   │ 5       │ 10,000  │ 90 seconds │ 30 seconds │"
+	@echo "   └─────────┴─────────┴────────────┴────────────┘"
+	@echo "   → Repeats until timeout (Ctrl+C to stop early)"
+	@echo ""
+	@echo "   🎯 Target: $(LOADTEST_HOST)"
+	@echo "   ⏱️  Runtime: $(SPIN_DETECTOR_RUN_TIME) (override: SPIN_DETECTOR_RUN_TIME=60m)"
+	@echo "   👷 Workers: $(SPIN_DETECTOR_WORKERS) (-1 = auto-detect CPUs)"
+	@echo "   📊 Shows RPS + Failure % during load phases"
+	@echo "   🔐 Authentication: JWT (auto-generated from .env settings)"
+	@echo "   🔇 Verbose logs off (set LOCUST_VERBOSE=1 to enable)"
+	@echo ""
+	@echo "   💡 Prerequisites:"
+	@echo "      docker compose up -d   # Gateway on port 8080 (via nginx)"
+	@echo ""
+	@echo "   📈 MONITORING (run in another terminal):"
+	@echo "      watch -n 2 'docker stats --no-stream | grep gateway'"
+	@echo ""
+	@echo "   ✅ PASS: CPU drops to <10% during pause phases"
+	@echo "   ❌ FAIL: CPU stays at 100%+ per worker during pauses"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@echo "Starting in 3 seconds... (Ctrl+C to cancel)"
+	@sleep 3
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		cd tests/loadtest && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
+		LOCUST_WORKERS=$(SPIN_DETECTOR_WORKERS) \
+		locust -f locustfile_spin_detector.py \
+			--host=$(LOADTEST_HOST) \
+			--headless \
+			--run-time=$(SPIN_DETECTOR_RUN_TIME) \
+			--processes=$(SPIN_DETECTOR_WORKERS) \
+			--html=../../reports/spin_detector_report.html \
+			--csv=../../reports/spin_detector \
+			--only-summary"
+	@echo ""
+	@echo "📄 HTML Report: reports/spin_detector_report.html"
+	@echo "📋 Log file: /tmp/spin_detector.log"
+	@echo "   Monitor: tail -f /tmp/spin_detector.log"
 
 load-test-report:                          ## Show last load test HTML report
 	@if [ -f "$(LOADTEST_HTML_REPORT)" ]; then \
@@ -3027,23 +3110,27 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+	@RUST_ARG=""; PROFILING_ARG=""; \
+	if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building container WITH Rust plugins..."; \
-		$(CONTAINER_RUNTIME) build \
-			--platform=$(PLATFORM) \
-			-f $(CONTAINER_FILE) \
-			--build-arg ENABLE_RUST=true \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			.; \
+		RUST_ARG="--build-arg ENABLE_RUST=true"; \
 	else \
 		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
-		$(CONTAINER_RUNTIME) build \
-			--platform=$(PLATFORM) \
-			-f $(CONTAINER_FILE) \
-			--build-arg ENABLE_RUST=false \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			.; \
-	fi
+		RUST_ARG="--build-arg ENABLE_RUST=false"; \
+	fi; \
+	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
+		echo "📊 Building container WITH profiling tools (memray)..."; \
+		PROFILING_ARG="--build-arg ENABLE_PROFILING=true"; \
+	else \
+		PROFILING_ARG="--build-arg ENABLE_PROFILING=false"; \
+	fi; \
+	$(CONTAINER_RUNTIME) build \
+		--platform=$(PLATFORM) \
+		-f $(CONTAINER_FILE) \
+		$$RUST_ARG \
+		$$PROFILING_ARG \
+		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+		.
 	@echo "✅ Built image: $(call get_image_name)"
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
 
@@ -3574,6 +3661,7 @@ podman-top:
 # help: docker-dev           - Build development Docker image
 # help: docker               - Build production Docker image
 # help: docker-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
+# help: docker-prod-profiling - Build production image WITH profiling tools (memray, py-spy) for debugging
 # help: docker-run           - Run the container on HTTP  (port 4444)
 # help: docker-run-host      - Run the container on HTTP  (port 4444) with --network-host
 # help: docker-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
@@ -3582,7 +3670,7 @@ podman-top:
 # help: docker-test          - Quick curl smoke-test against the container
 # help: docker-logs          - Follow container logs (⌃C to quit)
 
-.PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-host docker-run-ssl \
+.PHONY: docker-dev docker docker-prod docker-prod-profiling docker-build docker-run docker-run-host docker-run-ssl \
 	docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
 	docker-top docker-shell
 
@@ -3594,6 +3682,17 @@ docker:
 
 docker-prod:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+
+# Build production image with profiling tools (memray) for performance debugging
+# Usage: make docker-prod-profiling
+# Then run with SYS_PTRACE capability:
+#   docker run --cap-add=SYS_PTRACE ...
+# Inside container:
+#   memray attach <PID> -o /tmp/profile.bin
+#   memray flamegraph /tmp/profile.bin -o flamegraph.html
+docker-prod-profiling:
+	@echo "📊 Building production image WITH profiling tools..."
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite ENABLE_PROFILING_BUILD=1
 
 docker-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker
@@ -3756,7 +3855,7 @@ compose-stop:
 	$(COMPOSE) stop
 
 compose-down:
-	$(COMPOSE) down
+	$(COMPOSE) down --remove-orphans
 
 compose-rm:
 	$(COMPOSE) rm -f

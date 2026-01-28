@@ -36,6 +36,8 @@
 #    GRANIAN_BACKLOG              : Connection backlog (default: 2048)
 #    GRANIAN_BACKPRESSURE         : Max concurrent requests per worker (default: 512)
 #    GRANIAN_RESPAWN_FAILED       : Respawn failed workers (default: true)
+#    GRANIAN_WORKERS_LIFETIME     : Max worker lifetime before respawn (default: disabled, min 60s)
+#    GRANIAN_WORKERS_MAX_RSS      : Max worker RSS memory in MiB before respawn (default: disabled)
 #    GRANIAN_DEV_MODE             : Enable hot reload (default: false, requires granian[reload])
 #    GRANIAN_LOG_LEVEL            : Log level: debug, info, warning, error (default: info)
 #    SSL                          : Enable TLS/SSL (true/false, default: false)
@@ -61,6 +63,10 @@
 #
 #    # Memory-constrained (fewer workers)
 #    GRANIAN_WORKERS=2 ./run-granian.sh
+#
+#    # SSE workloads (worker recycling to prevent connection leaks)
+#    # Workaround for https://github.com/emmett-framework/granian/issues/286
+#    GRANIAN_WORKERS_LIFETIME=3600 GRANIAN_WORKERS_MAX_RSS=512 ./run-granian.sh
 #───────────────────────────────────────────────────────────────────────────────
 
 # Exit immediately on error, undefined variable, or pipe failure
@@ -282,6 +288,13 @@ echo "   Log Level: ${GRANIAN_LOG_LEVEL}"
 SSL=${SSL:-false}
 CERT_FILE=${CERT_FILE:-certs/cert.pem}
 KEY_FILE=${KEY_FILE:-certs/key.pem}
+KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}
+CERT_PASSPHRASE=${CERT_PASSPHRASE:-}
+
+# Use CERT_PASSPHRASE if KEY_FILE_PASSWORD is not set (for compatibility)
+if [[ -z "${KEY_FILE_PASSWORD}" && -n "${CERT_PASSPHRASE}" ]]; then
+    KEY_FILE_PASSWORD="${CERT_PASSPHRASE}"
+fi
 
 if [[ "${SSL}" == "true" ]]; then
     echo "🔐  Configuring TLS/SSL..."
@@ -390,6 +403,9 @@ fi
 # SSL/TLS configuration
 if [[ "${SSL}" == "true" ]]; then
     cmd+=( --ssl-certificate "${CERT_FILE}" --ssl-keyfile "${KEY_FILE}" )
+    if [[ -n "${KEY_FILE_PASSWORD:-}" ]]; then
+        cmd+=( --ssl-keyfile-password "${KEY_FILE_PASSWORD}" )
+    fi
 fi
 
 # Add the application module (Granian uses module:app format)

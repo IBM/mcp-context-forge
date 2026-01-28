@@ -10,7 +10,7 @@ authors = [
 license = { text = "Apache-2.0" }
 dependencies = [
     "faker>=40.1.2",
-    "fastmcp>=2.14.3",
+    "fastmcp>=2.14.4",
     "orjson>=3.11.5",
     "pydantic>=2.12.5",
 ]
@@ -22,7 +22,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
-    "ruff>=0.14.13",
+    "ruff>=0.14.14",
 ]
 
 [build-system]

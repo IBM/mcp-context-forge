@@ -836,11 +836,10 @@ class ToolCreate(BaseModel):
             ValueError: If any plugin is not in the allowed set.
         """
         allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
-        if v is None:
-            return v
-        for plugin in v:
-            if plugin not in allowed_plugins:
-                raise ValueError(f"Unknown plugin: {plugin}")
+        if v is not None:
+            for plugin in v:
+                if plugin not in allowed_plugins:
+                    raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
     @model_validator(mode="after")
@@ -1258,11 +1257,10 @@ class ToolUpdate(BaseModelWithConfigDict):
             ValueError: If any plugin is not in the allowed set.
         """
         allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
-        if v is None:
-            return v
-        for plugin in v:
-            if plugin not in allowed_plugins:
-                raise ValueError(f"Unknown plugin: {plugin}")
+        if v is not None:
+            for plugin in v:
+                if plugin not in allowed_plugins:
+                    raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
 
@@ -1354,9 +1352,9 @@ class ToolInvocation(BaseModelWithConfigDict):
     - Arguments matching tool's input schema (validated for depth limits)
 
     Validation Rules:
-    - Tool names must start with a letter and contain only letters, numbers,
-      underscores, and hyphens
-    - Tool names cannot contain HTML special characters (<, >, ", ', /)
+    - Tool names must start with a letter, number, or underscore and contain only
+      letters, numbers, periods, underscores, hyphens, and slashes (per SEP-986)
+    - Tool names cannot contain HTML special characters (<, >, ", ')
     - Arguments are validated to prevent excessively deep nesting (default max: 10 levels)
 
     Attributes:
@@ -1392,12 +1390,22 @@ class ToolInvocation(BaseModelWithConfigDict):
         ...     print("Validation failed: HTML tags not allowed")
         Validation failed: HTML tags not allowed
 
-        >>> # Invalid: Tool name starting with number
+        >>> # Valid: Tool name starting with number (per MCP spec)
+        >>> tool_num = ToolInvocation(name="123_tool", arguments={})
+        >>> tool_num.name
+        '123_tool'
+
+        >>> # Valid: Tool name starting with underscore (per MCP spec)
+        >>> tool_underscore = ToolInvocation(name="_5gpt_query", arguments={})
+        >>> tool_underscore.name
+        '_5gpt_query'
+
+        >>> # Invalid: Tool name starting with hyphen
         >>> try:
-        ...     ToolInvocation(name="123_tool", arguments={})
+        ...     ToolInvocation(name="-invalid_tool", arguments={})
         ... except ValidationError as e:
-        ...     print("Validation failed: Must start with letter")
-        Validation failed: Must start with letter
+        ...     print("Validation failed: Must start with letter, number, or underscore")
+        Validation failed: Must start with letter, number, or underscore
 
         >>> # Valid: Complex but not too deep arguments
         >>> args = {"level1": {"level2": {"level3": {"data": "value"}}}}
@@ -3075,14 +3083,14 @@ class GatewayUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If required fields are missing when setting query_param auth.
         """
-        if self.auth_type != "query_param":
-            return self
-        # Validate fields are provided when explicitly setting query_param auth
-        # Feature flag/allowlist check happens in service layer (has access to existing gateway)
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+        if self.auth_type == "query_param":
+            # Validate fields are provided when explicitly setting query_param auth
+            # Feature flag/allowlist check happens in service layer (has access to existing gateway)
+            if not self.auth_query_param_key:
+                raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
+            if not self.auth_query_param_value:
+                raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+
         return self
 
 
@@ -4821,14 +4829,14 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         Raises:
             ValueError: If required fields are missing when setting query_param auth.
         """
-        if self.auth_type != "query_param":
-            return self
-        # Validate fields are provided when explicitly setting query_param auth
-        # Feature flag/allowlist check happens in service layer (has access to existing agent)
-        if not self.auth_query_param_key:
-            raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
-        if not self.auth_query_param_value:
-            raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+        if self.auth_type == "query_param":
+            # Validate fields are provided when explicitly setting query_param auth
+            # Feature flag/allowlist check happens in service layer (has access to existing agent)
+            if not self.auth_query_param_key:
+                raise ValueError("auth_query_param_key is required when setting auth_type to 'query_param'")
+            if not self.auth_query_param_value:
+                raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
+
         return self
 
 
@@ -6165,7 +6173,7 @@ class TokenCreateRequest(BaseModel):
 
     name: str = Field(..., description="Human-readable token name", min_length=1, max_length=255)
     description: Optional[str] = Field(None, description="Token description", max_length=1000)
-    expires_in_days: Optional[int] = Field(default=None, description="Expiry in days")
+    expires_in_days: Optional[int] = Field(default=None, ge=1, description="Expiry in days (must be >= 1 if specified)")
     scope: Optional[TokenScopeRequest] = Field(None, description="Token scoping configuration")
     tags: List[str] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")

@@ -14,10 +14,10 @@ from __future__ import annotations
 
 # Standard
 import re
-from typing import List
+from typing import Any, List, Pattern
 
 # Third-Party
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -34,18 +34,43 @@ class CodeSafetyConfig(BaseModel):
     """Configuration for code safety linter plugin.
 
     Attributes:
-        blocked_patterns: List of regex patterns for dangerous code constructs.
+        blocked_patterns: List of compiled regex patterns for dangerous code constructs.
     """
 
-    blocked_patterns: List[str] = Field(
+    blocked_patterns: List[Pattern[str]] = Field(
         default_factory=lambda: [
-            r"\beval\s*\(",
-            r"\bexec\s*\(",
-            r"\bos\.system\s*\(",
-            r"\bsubprocess\.(Popen|call|run)\s*\(",
-            r"\brm\s+-rf\b",
+            re.compile(r"\beval\s*\("),
+            re.compile(r"\bexec\s*\("),
+            re.compile(r"\bos\.system\s*\("),
+            re.compile(r"\bsubprocess\.(Popen|call|run)\s*\("),
+            re.compile(r"\brm\s+-rf\b"),
         ]
     )
+
+    @field_validator('blocked_patterns', mode='before')
+    @classmethod
+    def compile_patterns(cls, v: Any) -> List[Pattern[str]]:
+        """Compile string patterns to regex Pattern objects.
+
+        Args:
+            v: List of regex pattern strings or Pattern objects.
+
+        Returns:
+            List of compiled Pattern objects.
+        """
+        if not isinstance(v, list):
+            return v
+        compiled = []
+        for item in v:
+            if isinstance(item, str):
+                compiled.append(re.compile(item))
+            elif isinstance(item, Pattern):
+                compiled.append(item)
+            else:
+                compiled.append(item)
+        return compiled
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class CodeSafetyLinterPlugin(Plugin):
@@ -80,8 +105,8 @@ class CodeSafetyLinterPlugin(Plugin):
 
         findings: list[str] = []
         for pat in self._cfg.blocked_patterns:
-            if re.search(pat, text):
-                findings.append(pat)
+            if pat.search(text):
+                findings.append(pat.pattern)
         if findings:
             return ToolPostInvokeResult(
                 continue_processing=False,

@@ -15,6 +15,7 @@ to filter and modify resource content. It can:
 
 # Standard
 import re
+from typing import List, Pattern
 from urllib.parse import urlparse
 
 # First-Party
@@ -54,7 +55,18 @@ class ResourceFilterPlugin(Plugin):
         self.max_content_size = plugin_config.get("max_content_size", 1048576)
         self.allowed_protocols = plugin_config.get("allowed_protocols", ["file", "http", "https"])
         self.blocked_domains = plugin_config.get("blocked_domains", [])
-        self.content_filters = plugin_config.get("content_filters", [])
+        # Precompile content filter patterns for performance
+        self.content_filters: List[tuple[Pattern[str], str]] = []
+        for filter_rule in plugin_config.get("content_filters", []):
+            pattern = filter_rule.get("pattern")
+            replacement = filter_rule.get("replacement", "***")
+            if pattern:
+                try:
+                    compiled_pattern = re.compile(pattern, re.IGNORECASE)
+                    self.content_filters.append((compiled_pattern, replacement))
+                except re.error:
+                    # Skip invalid patterns
+                    pass
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
         """Validate and potentially modify resource requests before fetching.
@@ -112,7 +124,7 @@ class ResourceFilterPlugin(Plugin):
         modified_payload = ResourcePreFetchPayload(
             uri=payload.uri,
             metadata={
-                **payload.metadata,
+                **(payload.metadata or {}),
                 "validated": True,
                 "protocol": parsed.scheme,
                 "request_id": context.global_context.request_id,
@@ -166,11 +178,8 @@ class ResourceFilterPlugin(Plugin):
                 return ResourcePostFetchResult(continue_processing=False, violation=violation)
 
             # Apply content filters
-            for filter_rule in self.content_filters:
-                pattern = filter_rule.get("pattern")
-                replacement = filter_rule.get("replacement", "***")
-                if pattern:
-                    filtered_text = re.sub(pattern, replacement, filtered_text, flags=re.IGNORECASE)
+            for compiled_pattern, replacement in self.content_filters:
+                filtered_text = compiled_pattern.sub(replacement, filtered_text)
 
             # Update content if it was modified
             if filtered_text != original_text:

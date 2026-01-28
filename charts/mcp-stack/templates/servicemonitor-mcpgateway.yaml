@@ -1,0 +1,15 @@
+{{- if and .Values.mcpContextForge.metrics.enabled .Values.mcpContextForge.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "mcp-stack.fullname" . }}
+  endpoints:
+    - port: http
+      path: /metrics/prometheus
+{{- end }}

@@ -573,7 +573,7 @@
     **Due:** 20 Jan 2026 | **Status:** Closed
     Testing, Bugfixing, Documentation, Performance and Scale
 
-???+ check "✨ Features - Completed (24)"
+???+ check "✨ Features - Completed (25)"
 
     - ✅ [**#950**](https://github.com/IBM/mcp-context-forge/issues/950) - Session Management & Tool Invocation with Gateway vs Direct MCP Client–Server
     - ✅ [**#974**](https://github.com/IBM/mcp-context-forge/issues/974) - [Feature Request]: Make users change default admin passwords and secrets for production deployments.
@@ -599,8 +599,9 @@
     - ✅ [**#2054**](https://github.com/IBM/mcp-context-forge/issues/2054) - [Feature Request]: Microsoft EntraID Role and Group Claim Mapping for SSO
     - ✅ [**#2195**](https://github.com/IBM/mcp-context-forge/issues/2195) - [FEATURE]: Add query parameter authentication support for A2A agents
     - ✅ [**#2205**](https://github.com/IBM/mcp-context-forge/issues/2205) - [FEATURE]: Add ppc64le (IBM POWER) architecture support for container builds
+    - ✅ [**#2364**](https://github.com/IBM/mcp-context-forge/pull/2364) - Default plugins setup in docker-compose
 
-???+ check "⚡ Performance - Completed (104)"
+???+ check "⚡ Performance - Completed (106)"
 
     - ✅ [**#975**](https://github.com/IBM/mcp-context-forge/issues/975) - [PERFORMANCE]: Implement Session Persistence & Pooling for Improved Performance and State Continuity
     - ✅ [**#1224**](https://github.com/IBM/mcp-context-forge/issues/1224) - [PERFORMANCE]: REST API and UI Pagination for Large-Scale Multi-Tenant Deployments
@@ -706,8 +707,10 @@
     - ✅ [**#2113**](https://github.com/IBM/mcp-context-forge/issues/2113) - [PERFORMANCE]: Replace stdlib json with orjson for consistency and performance
     - ✅ [**#2160**](https://github.com/IBM/mcp-context-forge/issues/2160) - [PERFORMANCE]: Double token scoping for /mcp requests when email_auth_enabled=True
     - ✅ [**#2164**](https://github.com/IBM/mcp-context-forge/issues/2164) - [PERFORMANCE]: Use async I/O instead of blocking calls in async functions (S7493, S7487)
+    - ✅ [**#1865**](https://github.com/IBM/mcp-context-forge/issues/1865) - [PERFORMANCE]: Logging CPU optimization
+    - ✅ [**#2355**](https://github.com/IBM/mcp-context-forge/issues/2355) - [PERFORMANCE]: Fix FOR UPDATE lock contention and CPU spin loops under high load
 
-???+ check "🐛 Bugs - Completed (81)"
+???+ check "🐛 Bugs - Completed (85)"
 
     - ✅ [**#840**](https://github.com/IBM/mcp-context-forge/issues/840) - [Bug]: For A2A Agent test not working
     - ✅ [**#1047**](https://github.com/IBM/mcp-context-forge/issues/1047) - [Bug]: MCP Server/Federated Gateway Registration is failing
@@ -790,13 +793,18 @@
     - ✅ [**#2152**](https://github.com/IBM/mcp-context-forge/issues/2152) - [Bug]: CORS preflight OPTIONS requests return 401 on /mcp endpoints
     - ✅ [**#2172**](https://github.com/IBM/mcp-context-forge/issues/2172) - [Bug]: Single entity parsing failure stops entire listing operation
     - ✅ [**#2183**](https://github.com/IBM/mcp-context-forge/issues/2183) - [Bug]: team_id is none in rbac.py when a non-admin makes an API call to list gateways
+    - ✅ [**#2213**](https://github.com/IBM/mcp-context-forge/issues/2213) - [Bug]: Pagination controls mix up query params across different tables
+    - ✅ [**#2322**](https://github.com/IBM/mcp-context-forge/issues/2322) - [Bug]: Few MCP servers are not supported due to tool schema validation
+    - ✅ [**#2352**](https://github.com/IBM/mcp-context-forge/issues/2352) - [Bug]: Multiple gateway import failing with inactive transaction during async cleanup
+    - ✅ [**#2362**](https://github.com/IBM/mcp-context-forge/issues/2362) - [Bug]: Export Config button missing from Virtual Servers table
 
-???+ check "🔒 Security - Completed (4)"
+???+ check "🔒 Security - Completed (5)"
 
     - ✅ [**#2125**](https://github.com/IBM/mcp-context-forge/issues/2125) - [SECURITY]: MCP authentication controls and team membership validation
     - ✅ [**#2127**](https://github.com/IBM/mcp-context-forge/issues/2127) - [SECURITY]: Enhanced JWT Token Lifecycle Management
     - ✅ [**#2128**](https://github.com/IBM/mcp-context-forge/issues/2128) - [SECURITY]: Add REQUIRE_USER_IN_DB Configuration Option
     - ✅ [**#2141**](https://github.com/IBM/mcp-context-forge/issues/2141) - [SECURITY]: Add environment isolation warnings and optional environment claim validation
+    - ✅ [**#2156**](https://github.com/IBM/mcp-context-forge/issues/2156) - [SECURITY]: LLM Guard - Replace unsafe code execution with safe AST evaluator and switch to orjson serialization
 
 ???+ check "🔧 Chores - Completed (6)"
 

@@ -40,7 +40,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -141,6 +141,15 @@ class ResourceURIConflictError(ResourceError):
 
 class ResourceValidationError(ResourceError):
     """Raised when resource validation fails."""
+
+
+class ResourceLockConflictError(ResourceError):
+    """Raised when a resource row is locked by another transaction.
+
+    Raises:
+        ResourceLockConflictError: When attempting to modify a resource that is
+            currently locked by another concurrent request.
+    """
 
 
 class ResourceService:
@@ -2300,9 +2309,10 @@ class ResourceService:
             The updated ResourceRead object
 
         Raises:
-            ResourceNotFoundError: If the resource is not found
-            ResourceError: For other errors
-            PermissionError: If user doesn't own the agent.
+            ResourceNotFoundError: If the resource is not found.
+            ResourceLockConflictError: If the resource is locked by another transaction.
+            ResourceError: For other errors.
+            PermissionError: If user doesn't own the resource.
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -2323,7 +2333,13 @@ class ResourceService:
             'resource_read'
         """
         try:
-            resource = get_for_update(db, DbResource, resource_id)
+            # Use nowait=True to fail fast if row is locked, preventing lock contention under high load
+            try:
+                resource = get_for_update(db, DbResource, resource_id, nowait=True)
+            except OperationalError as lock_err:
+                # Row is locked by another transaction - fail fast with 409
+                db.rollback()
+                raise ResourceLockConflictError(f"Resource {resource_id} is currently being modified by another request") from lock_err
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
@@ -2406,6 +2422,12 @@ class ResourceService:
                 db=db,
             )
             raise e
+        except ResourceLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response
+            raise
+        except ResourceNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            raise
         except Exception as e:
             db.rollback()
 
@@ -3326,6 +3348,8 @@ class ResourceService:
         include_inactive: bool = False,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        tags: Optional[List[str]] = None,
+        visibility: Optional[str] = None,
     ) -> List[ResourceTemplate]:
         """
         List resource templates with visibility-based access control.
@@ -3336,6 +3360,8 @@ class ResourceService:
             user_email: Email of requesting user (for private visibility check)
             token_teams: Teams from JWT. None = admin (no filtering),
                          [] = public-only (no owner access), [...] = team-scoped
+            tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            visibility (Optional[str]): Filter by visibility (private, team, public).
 
         Returns:
             List of ResourceTemplate objects the user has access to
@@ -3377,6 +3403,12 @@ class ResourceService:
             query = query.where(or_(*conditions))
 
         # Cursor-based pagination logic can be implemented here in the future.
+        if visibility:
+            query = query.where(DbResource.visibility == visibility)
+
+        if tags:
+            query = query.where(json_contains_tag_expr(db, DbResource.tags, tags, match_any=True))
+
         templates = db.execute(query).scalars().all()
         result = [ResourceTemplate.model_validate(t) for t in templates]
         return result

@@ -328,6 +328,106 @@ If REST and RPC endpoints return different results:
 
 ---
 
+## Bootstrap Custom Roles
+
+MCP Gateway allows you to define custom roles that are automatically created during database bootstrap. This is useful for organizations that need to pre-configure roles before deployment.
+
+### Configuration
+
+Enable custom role bootstrapping with these environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED` | `false` | Enable loading additional roles from file |
+| `MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE` | `additional_roles_in_db.json` | Path to the JSON file containing role definitions |
+
+### Role Definition Format
+
+Create a JSON file containing an array of role definitions:
+
+```json
+[
+  {
+    "name": "data_analyst",
+    "description": "Read-only access for data analysis",
+    "scope": "team",
+    "permissions": ["tools.read", "resources.read", "prompts.read"],
+    "is_system_role": true
+  },
+  {
+    "name": "auditor",
+    "description": "Compliance audit access",
+    "scope": "global",
+    "permissions": ["tools.read", "resources.read", "prompts.read", "servers.read", "gateways.read"],
+    "is_system_role": true
+  }
+]
+```
+
+**Required fields:**
+
+- `name` - Unique role name
+- `scope` - Either `team` (team-level access) or `global` (system-wide access)
+- `permissions` - Array of permission strings (e.g., `tools.read`, `resources.create`)
+
+**Optional fields:**
+
+- `description` - Human-readable description
+- `is_system_role` - Set to `true` to prevent users from modifying/deleting the role
+
+### Available Permissions
+
+| Resource | Permissions |
+|----------|-------------|
+| Tools | `tools.create`, `tools.read`, `tools.update`, `tools.delete`, `tools.execute` |
+| Resources | `resources.create`, `resources.read`, `resources.update`, `resources.delete` |
+| Prompts | `prompts.create`, `prompts.read`, `prompts.update`, `prompts.delete` |
+| Servers | `servers.create`, `servers.read`, `servers.update`, `servers.delete` |
+| Gateways | `gateways.create`, `gateways.read`, `gateways.update`, `gateways.delete` |
+| Teams | `teams.create`, `teams.read`, `teams.update`, `teams.delete`, `teams.join` |
+
+### Docker Compose Example
+
+```yaml
+services:
+  gateway:
+    environment:
+      - MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED=true
+      - MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE=/app/custom_roles.json
+    volumes:
+      - ./custom_roles.json:/app/custom_roles.json:ro
+```
+
+### Kubernetes/Helm Example
+
+```yaml
+# values.yaml
+mcpContextForge:
+  env:
+    MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED: "true"
+    MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE: "/config/custom_roles.json"
+
+  # Mount ConfigMap with role definitions
+  extraVolumes:
+    - name: custom-roles
+      configMap:
+        name: mcp-gateway-roles
+  extraVolumeMounts:
+    - name: custom-roles
+      mountPath: /config
+```
+
+### Error Handling
+
+- **File not found**: Bootstrap continues with default roles only; warning logged
+- **Invalid JSON**: Bootstrap continues with default roles only; error logged
+- **Malformed entries**: Invalid role entries are skipped with warnings; valid entries are processed
+
+!!! tip "Idempotent Bootstrap"
+    Bootstrap is idempotent - running it multiple times won't duplicate roles. Existing roles are detected and skipped.
+
+---
+
 ## Related Documentation
 
 - [Team Management](teams.md) - Setting up teams and SSO mapping

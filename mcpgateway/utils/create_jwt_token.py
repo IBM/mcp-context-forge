@@ -46,7 +46,7 @@ import argparse
 import asyncio
 import datetime as _dt
 import sys
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 import uuid
 
 # Third-Party
@@ -79,8 +79,12 @@ DEFAULT_USERNAME: str = settings.basic_auth_user
 def _create_jwt_token(
     data: Dict[str, Any],
     expires_in_minutes: int = DEFAULT_EXP_MINUTES,
-    secret: str = "",  # nosec B107 - Legacy parameter, not used for authentication
-    algorithm: str = DEFAULT_ALGO,
+    secret: str = "",  # nosec B107 - Optional override; uses config if empty
+    algorithm: str = "",  # Optional override; uses config if empty
+    user_data: Optional[Dict[str, Any]] = None,
+    teams: Optional[List[str]] = None,
+    namespaces: Optional[List[str]] = None,
+    scopes: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Create a signed JWT token with automatic key selection and validation.
 
@@ -89,11 +93,19 @@ def _create_jwt_token(
     selects the appropriate signing key based on the configured algorithm, and creates
     a properly formatted JWT token with standard claims.
 
+    Supports both simple tokens (minimal claims) and rich tokens (with user, teams,
+    namespaces, and scopes). This enables consistent token format across CLI and API
+    token creation paths.
+
     Args:
         data: Dictionary containing payload data to encode in the token.
         expires_in_minutes: Token expiration time in minutes. Set to 0 to disable expiration.
-        secret: Legacy parameter (ignored - uses configuration-based key selection).
-        algorithm: Legacy parameter (ignored - uses configured JWT_ALGORITHM).
+        secret: Optional secret key for signing. If empty, uses JWT_SECRET_KEY from config.
+        algorithm: Optional signing algorithm. If empty, uses JWT_ALGORITHM from config.
+        user_data: Optional user information dict with keys: email, full_name, is_admin, auth_provider.
+        teams: Optional list of team IDs the token is scoped to.
+        namespaces: Optional list of namespaces for access control. Auto-generated from teams if not provided.
+        scopes: Optional scopes dict with keys: server_id, permissions, ip_restrictions, time_restrictions.
 
     Returns:
         str: The signed JWT token string.
@@ -104,17 +116,18 @@ def _create_jwt_token(
 
     Note:
         This is an internal function. Use create_jwt_token() for the async interface.
-        The function automatically determines the signing key and algorithm from
-        configuration settings, ignoring the legacy secret and algorithm parameters.
+        When secret/algorithm are provided, they override the configuration values.
+        When not provided (empty), configuration values are used as defaults.
     """
-    # Validate JWT configuration before creating token
     # First-Party
     from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret, validate_jwt_algo_and_keys
 
-    validate_jwt_algo_and_keys()
-    secret = get_jwt_private_key_or_secret()
-    # Use the configured algorithm, not the passed parameter
-    algorithm = settings.jwt_algorithm
+    # Use provided secret/algorithm or fall back to configuration
+    if not secret:
+        validate_jwt_algo_and_keys()
+        secret = get_jwt_private_key_or_secret()
+    if not algorithm:
+        algorithm = settings.jwt_algorithm
 
     payload = data.copy()
     now = _dt.datetime.now(_dt.timezone.utc)
@@ -132,6 +145,24 @@ def _create_jwt_token(
     # Handle legacy username format - convert to sub for consistency
     if "username" in payload and "sub" not in payload:
         payload["sub"] = payload["username"]
+
+    # Add rich claims if provided (for API/CLI token parity)
+    if user_data:
+        payload["user"] = user_data
+
+    if teams is not None:
+        payload["teams"] = teams
+
+    # Auto-generate namespaces from teams if not explicitly provided
+    if namespaces is not None:
+        payload["namespaces"] = namespaces
+    elif teams is not None:
+        # Build namespaces: user namespace + public + team namespaces
+        user_email = data.get("sub") or data.get("username", "")
+        payload["namespaces"] = [f"user:{user_email}", "public"] + [f"team:{t}" for t in teams]
+
+    if scopes is not None:
+        payload["scopes"] = scopes
 
     payload_exp = payload.get("exp", 0)
     if payload_exp > 0:
@@ -162,6 +193,10 @@ async def create_jwt_token(
     *,
     secret: str = None,
     algorithm: str = None,
+    user_data: Optional[Dict[str, Any]] = None,
+    teams: Optional[List[str]] = None,
+    namespaces: Optional[List[str]] = None,
+    scopes: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Async facade for historic code. Internally synchronous-almost instant.
@@ -170,8 +205,12 @@ async def create_jwt_token(
         data: Dictionary containing payload data to encode in the token.
         expires_in_minutes: Token expiration time in minutes. Default is 7 days.
             Set to 0 to disable expiration.
-        secret: Secret key used for signing the token (deprecated, will use configuration-based keys).
-        algorithm: Signing algorithm to use (deprecated, will use configured algorithm).
+        secret: Optional secret key for signing. If None/empty, uses JWT_SECRET_KEY from config.
+        algorithm: Optional signing algorithm. If None/empty, uses JWT_ALGORITHM from config.
+        user_data: Optional user information dict with keys: email, full_name, is_admin, auth_provider.
+        teams: Optional list of team IDs the token is scoped to.
+        namespaces: Optional list of namespaces for access control.
+        scopes: Optional scopes dict with keys: server_id, permissions, ip_restrictions, time_restrictions.
 
     Returns:
         The JWT token string.
@@ -188,8 +227,8 @@ async def create_jwt_token(
     >>> jwt.decode(t, jwt_util.settings.jwt_secret_key, algorithms=[jwt_util.settings.jwt_algorithm], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'bob'
     True
     """
-    # Use configured values instead of parameters for consistency - secret is retrieved at runtime
-    return _create_jwt_token(data, expires_in_minutes, "", DEFAULT_ALGO)
+    # Pass through secret/algorithm; _create_jwt_token will use config as fallback
+    return _create_jwt_token(data, expires_in_minutes, secret or "", algorithm or "", user_data, teams, namespaces, scopes)
 
 
 async def get_jwt_token() -> str:
@@ -262,8 +301,8 @@ def _parse_args():
             - data: Optional JSON or key=value pairs for custom payload
             - decode: Optional token string to decode
             - exp: Expiration time in minutes (default: DEFAULT_EXP_MINUTES)
-            - secret: Secret key for signing (default: DEFAULT_SECRET)
-            - algo: Signing algorithm (default: DEFAULT_ALGO)
+            - secret: Secret key for signing (default: "" - uses JWT_SECRET_KEY from config)
+            - algo: Signing algorithm (default: "" - uses JWT_ALGORITHM from config)
             - pretty: Whether to pretty-print payload before encoding
 
     Examples:
@@ -293,9 +332,15 @@ def _parse_args():
         default=DEFAULT_EXP_MINUTES,
         help="Expiration in minutes (0 disables the exp claim).",
     )
-    p.add_argument("-s", "--secret", default="", help="Secret key for signing (will use configuration-based key if not provided).")
-    p.add_argument("--algo", default=DEFAULT_ALGO, help="Signing algorithm to use.")
+    p.add_argument("-s", "--secret", default="", help="Secret key for signing. If not provided, uses JWT_SECRET_KEY from config.")
+    p.add_argument("--algo", default="", help="Signing algorithm (e.g., HS256, RS256). If not provided, uses JWT_ALGORITHM from config.")
     p.add_argument("--pretty", action="store_true", help="Pretty-print payload before encoding.")
+
+    # Rich token creation arguments (requires JWT_SECRET_KEY)
+    p.add_argument("--admin", action="store_true", help="Mark user as admin (DEV/TEST ONLY - requires JWT_SECRET_KEY)")
+    p.add_argument("--teams", help="Comma-separated team IDs (e.g., team-123,team-456). DEV/TEST ONLY")
+    p.add_argument("--scopes", help='JSON scopes object for permission restrictions (e.g., \'{"permissions": ["tools.read"]}\'). DEV/TEST ONLY')
+    p.add_argument("--full-name", help="User's full name for the token")
 
     return p.parse_args()
 
@@ -375,6 +420,7 @@ def main() -> None:  # pragma: no cover
     In creation mode, supports:
     - Simple username payload (-u/--username)
     - Custom JSON or key=value payload (-d/--data)
+    - Rich tokens with admin/team/scope claims (--admin, --teams, --scopes)
     - Configurable expiration, secret, and algorithm
     - Optional pretty-printing of payload before encoding
 
@@ -391,8 +437,14 @@ def main() -> None:  # pragma: no cover
             $ python jwt_cli.py -u alice
             eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 
-            # Create token with custom data
-            $ python jwt_cli.py -d '{"role": "admin", "dept": "IT"}'
+            # Create admin token (DEV/TEST ONLY)
+            $ python jwt_cli.py -u admin@example.com --admin --full-name "Admin User"
+            ⚠️  WARNING: Creating token with elevated claims...
+            eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+
+            # Create team-scoped token (DEV/TEST ONLY)
+            $ python jwt_cli.py -u user@example.com --teams team-123,team-456
+            ⚠️  WARNING: Creating token with elevated claims...
             eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
 
             # Decode existing token
@@ -401,33 +453,82 @@ def main() -> None:  # pragma: no cover
               "username": "alice",
               "exp": 1234567890
             }
-
-            # Pretty print payload before encoding
-            $ python jwt_cli.py -u bob --pretty
-            Payload:
-            {
-              "username": "bob"
-            }
-            -
-            eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
     """
     args = _parse_args()
 
     # Decode mode takes precedence
     if args.decode:
-        decoded = _decode_jwt_token(args.decode, algorithms=[args.algo])
+        decoded = _decode_jwt_token(args.decode, algorithms=[args.algo or DEFAULT_ALGO])
         sys.stdout.write(orjson.dumps(decoded, default=str, option=orjson.OPT_INDENT_2).decode())
         sys.stdout.write("\n")
         return
 
+    # Validate: --algo requires --secret to avoid algorithm/key mismatch
+    if args.algo and not args.secret:
+        print(
+            "ERROR: --algo requires --secret to be specified.\n"
+            "       Using --algo alone would mix config-based keys with a different algorithm,\n"
+            "       which can produce invalid tokens. Either:\n"
+            "       - Provide both --secret and --algo for full override\n"
+            "       - Omit both to use JWT_SECRET_KEY and JWT_ALGORITHM from config",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Security warning for rich tokens
+    if args.admin or args.teams or args.scopes:
+        print(
+            "⚠️  WARNING: Creating token with elevated claims (admin/teams/scopes)\n"
+            "   This requires JWT_SECRET_KEY and is intended for development/testing only.\n"
+            "   For production token management, use the /tokens API endpoint.\n",
+            file=sys.stderr,
+        )
+
     payload = _payload_from_cli(args)
+
+    # Build rich token parameters if provided
+    user_data = None
+    teams = None
+    namespaces = None
+    scopes_dict = None
+
+    if args.admin or args.teams or args.scopes or args.full_name:
+        user_email = payload.get("sub") or payload.get("username", "admin@example.com")
+
+        # Build user data
+        user_data = {
+            "email": user_email,
+            "full_name": args.full_name or "CLI User",
+            "is_admin": bool(args.admin),
+            "auth_provider": "cli",  # Mark as CLI-generated for auditing
+        }
+
+        # Build teams list
+        if args.teams:
+            teams = [t.strip() for t in args.teams.split(",") if t.strip()]
+
+        # Build scopes
+        if args.scopes:
+            try:
+                scopes_dict = orjson.loads(args.scopes)
+            except orjson.JSONDecodeError as e:
+                print(f"ERROR: Invalid JSON for --scopes: {e}", file=sys.stderr)
+                sys.exit(1)
 
     if args.pretty:
         print("Payload:")
         print(orjson.dumps(payload, default=str, option=orjson.OPT_INDENT_2).decode())
+        if user_data:
+            print("User Data:")
+            print(orjson.dumps(user_data, default=str, option=orjson.OPT_INDENT_2).decode())
+        if teams:
+            print(f"Teams: {teams}")
+        if scopes_dict:
+            print("Scopes:")
+            print(orjson.dumps(scopes_dict, default=str, option=orjson.OPT_INDENT_2).decode())
         print("-")
 
-    token = _create_jwt_token(payload, args.exp, args.secret, args.algo)
+    token = _create_jwt_token(payload, args.exp, args.secret, args.algo, user_data, teams, namespaces, scopes_dict)
     print(token)
 
 

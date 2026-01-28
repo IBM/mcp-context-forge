@@ -364,11 +364,23 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
             proxy_user = request.headers.get(settings.proxy_user_header)
             if proxy_user:
                 return {"sub": proxy_user, "source": "proxy", "token": None}  # nosec B105 - None is not a password
-            # If no proxy header but proxy auth is trusted, treat as anonymous
+            # No proxy header - check auth_required (matches RBAC/WebSocket behavior)
+            if settings.auth_required:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Proxy authentication header required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             return "anonymous"
         else:
             # Warning: MCP auth disabled without proxy trust - security risk!
             # This case is already warned about in config validation
+            if settings.auth_required:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required but no auth method configured",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             return "anonymous"
 
     # Standard JWT authentication flow - prioritize manual cookie reading

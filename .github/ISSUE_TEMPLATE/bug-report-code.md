@@ -1,7 +1,7 @@
 ---
 name: Bug report (code)
 about: Report a bug or unexpected behavior in the gateway, wrapper, API, UI, or services
-title: "[Bug]:"
+title: "[BUG]: "
 labels: bug, triage
 assignees: ''
 

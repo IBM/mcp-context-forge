@@ -294,7 +294,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                 from mcpgateway.services.argon2_service import Argon2PasswordService
 
                 password_service = Argon2PasswordService()
-                is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
                 if is_using_default_password:
                     # Mark user for password change depending on configuration
                     if getattr(settings, "require_password_change_for_default_password", True):
@@ -709,7 +709,7 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
             auth_service.validate_password(user_request.password)
 
             # Update password hash directly
-            user.password_hash = password_service.hash_password(user_request.password)
+            user.password_hash = await password_service.hash_password_async(user_request.password)
             user.password_change_required = False  # Clear password change requirement
             user.password_changed_at = utc_now()  # Update password change timestamp
 

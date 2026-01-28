@@ -58,7 +58,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, or_, select
+from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
@@ -868,58 +868,171 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 for tool in tools
             ]
 
-            # Create resource DB models
-            db_resources = [
-                DbResource(
-                    uri=r.uri,
-                    name=r.name,
-                    description=r.description,
-                    mime_type=(mime_type := (mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream"))),
-                    uri_template=r.uri_template or None,
-                    text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
-                    binary_content=(
-                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
-                    ),
-                    size=len(r.content) if r.content else 0,
-                    tags=getattr(r, "tags", []) or [],
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",
-                    created_user_agent=created_user_agent,
-                    import_batch_id=None,
-                    federation_source=gateway.name,
-                    version=1,
-                    team_id=getattr(r, "team_id", None) or team_id,
-                    owner_email=getattr(r, "owner_email", None) or owner_email or created_by,
-                    visibility=getattr(r, "visibility", None) or visibility,
-                )
-                for r in resources
-            ]
+            # Create resource DB models with upsert logic for ORPHANED resources only
+            # Query for existing ORPHANED resources (gateway_id IS NULL or points to non-existent gateway)
+            # with same (team_id, owner_email, uri) to handle resources left behind from incomplete
+            # gateway deletions (e.g., issue #2341 crash scenarios).
+            # We only update orphaned resources - resources belonging to active gateways are not touched.
+            resource_uris = [r.uri for r in resources]
+            effective_owner = owner_email or created_by
 
-            # Create prompt DB models
-            db_prompts = [
-                DbPrompt(
-                    name=prompt.name,
-                    original_name=prompt.name,
-                    custom_name=prompt.name,
-                    display_name=prompt.name,
-                    description=prompt.description,
-                    template=prompt.template if hasattr(prompt, "template") else "",
-                    argument_schema={},  # Use argument_schema instead of arguments
-                    # Federation metadata
-                    created_by=created_by or "system",
-                    created_from_ip=created_from_ip,
-                    created_via="federation",  # These are federated prompts
-                    created_user_agent=created_user_agent,
-                    federation_source=gateway.name,
-                    version=1,
-                    # Inherit team assignment from gateway
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
-                )
-                for prompt in prompts
-            ]
+            # Build lookup map: (team_id, owner_email, uri) -> orphaned DbResource
+            # We query all resources matching our URIs, then filter to orphaned ones in Python
+            # to handle per-resource team/owner overrides correctly
+            orphaned_resources_map: Dict[tuple, DbResource] = {}
+            if resource_uris:
+                try:
+                    # Get valid gateway IDs to identify orphaned resources
+                    valid_gateway_ids = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
+                    candidate_resources = db.execute(select(DbResource).where(DbResource.uri.in_(resource_uris))).scalars().all()
+                    for res in candidate_resources:
+                        # Only consider orphaned resources (no gateway or gateway doesn't exist)
+                        is_orphaned = res.gateway_id is None or res.gateway_id not in valid_gateway_ids
+                        if is_orphaned:
+                            key = (res.team_id, res.owner_email, res.uri)
+                            orphaned_resources_map[key] = res
+                    if orphaned_resources_map:
+                        logger.info(f"Found {len(orphaned_resources_map)} orphaned resources to reassign for gateway {gateway.name}")
+                except Exception as e:
+                    # If orphan detection fails (e.g., in mocked tests), skip upsert and create new resources
+                    # This is conservative - we won't accidentally reassign resources from active gateways
+                    logger.debug(f"Orphan resource detection skipped: {e}")
+
+            db_resources = []
+            for r in resources:
+                mime_type = mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream")
+                r_team_id = getattr(r, "team_id", None) or team_id
+                r_owner_email = getattr(r, "owner_email", None) or effective_owner
+                r_visibility = getattr(r, "visibility", None) or visibility
+
+                # Check if there's an orphaned resource with matching unique key
+                lookup_key = (r_team_id, r_owner_email, r.uri)
+                if lookup_key in orphaned_resources_map:
+                    # Update orphaned resource - reassign to new gateway
+                    existing = orphaned_resources_map[lookup_key]
+                    existing.name = r.name
+                    existing.description = r.description
+                    existing.mime_type = mime_type
+                    existing.uri_template = r.uri_template or None
+                    existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
+                    existing.binary_content = (
+                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
+                    )
+                    existing.size = len(r.content) if r.content else 0
+                    existing.tags = getattr(r, "tags", []) or []
+                    existing.federation_source = gateway.name
+                    existing.modified_by = created_by
+                    existing.modified_from_ip = created_from_ip
+                    existing.modified_via = "federation"
+                    existing.modified_user_agent = created_user_agent
+                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.visibility = r_visibility
+                    # Note: gateway_id will be set when gateway is created (relationship)
+                    db_resources.append(existing)
+                else:
+                    # Create new resource
+                    db_resources.append(
+                        DbResource(
+                            uri=r.uri,
+                            name=r.name,
+                            description=r.description,
+                            mime_type=mime_type,
+                            uri_template=r.uri_template or None,
+                            text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
+                            binary_content=(
+                                r.content.encode()
+                                if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
+                                else r.content if isinstance(r.content, bytes) else None
+                            ),
+                            size=len(r.content) if r.content else 0,
+                            tags=getattr(r, "tags", []) or [],
+                            created_by=created_by or "system",
+                            created_from_ip=created_from_ip,
+                            created_via="federation",
+                            created_user_agent=created_user_agent,
+                            import_batch_id=None,
+                            federation_source=gateway.name,
+                            version=1,
+                            team_id=r_team_id,
+                            owner_email=r_owner_email,
+                            visibility=r_visibility,
+                        )
+                    )
+
+            # Create prompt DB models with upsert logic for ORPHANED prompts only
+            # Query for existing ORPHANED prompts (gateway_id IS NULL or points to non-existent gateway)
+            # with same (team_id, owner_email, name) to handle prompts left behind from incomplete
+            # gateway deletions. We only update orphaned prompts - prompts belonging to active gateways are not touched.
+            prompt_names = [p.name for p in prompts]
+
+            # Build lookup map: (team_id, owner_email, name) -> orphaned DbPrompt
+            orphaned_prompts_map: Dict[tuple, DbPrompt] = {}
+            if prompt_names:
+                try:
+                    # Get valid gateway IDs to identify orphaned prompts
+                    valid_gateway_ids_for_prompts = set(gw_id for (gw_id,) in db.execute(select(DbGateway.id)).all())
+                    candidate_prompts = db.execute(select(DbPrompt).where(DbPrompt.name.in_(prompt_names))).scalars().all()
+                    for pmt in candidate_prompts:
+                        # Only consider orphaned prompts (no gateway or gateway doesn't exist)
+                        is_orphaned = pmt.gateway_id is None or pmt.gateway_id not in valid_gateway_ids_for_prompts
+                        if is_orphaned:
+                            key = (pmt.team_id, pmt.owner_email, pmt.name)
+                            orphaned_prompts_map[key] = pmt
+                    if orphaned_prompts_map:
+                        logger.info(f"Found {len(orphaned_prompts_map)} orphaned prompts to reassign for gateway {gateway.name}")
+                except Exception as e:
+                    # If orphan detection fails (e.g., in mocked tests), skip upsert and create new prompts
+                    logger.debug(f"Orphan prompt detection skipped: {e}")
+
+            db_prompts = []
+            for prompt in prompts:
+                # Prompts inherit team/owner from gateway (no per-prompt overrides)
+                p_team_id = team_id
+                p_owner_email = owner_email or effective_owner
+
+                # Check if there's an orphaned prompt with matching unique key
+                lookup_key = (p_team_id, p_owner_email, prompt.name)
+                if lookup_key in orphaned_prompts_map:
+                    # Update orphaned prompt - reassign to new gateway
+                    existing = orphaned_prompts_map[lookup_key]
+                    existing.original_name = prompt.name
+                    existing.custom_name = prompt.name
+                    existing.display_name = prompt.name
+                    existing.description = prompt.description
+                    existing.template = prompt.template if hasattr(prompt, "template") else ""
+                    existing.federation_source = gateway.name
+                    existing.modified_by = created_by
+                    existing.modified_from_ip = created_from_ip
+                    existing.modified_via = "federation"
+                    existing.modified_user_agent = created_user_agent
+                    existing.updated_at = datetime.now(timezone.utc)
+                    existing.visibility = visibility
+                    # Note: gateway_id will be set when gateway is created (relationship)
+                    db_prompts.append(existing)
+                else:
+                    # Create new prompt
+                    db_prompts.append(
+                        DbPrompt(
+                            name=prompt.name,
+                            original_name=prompt.name,
+                            custom_name=prompt.name,
+                            display_name=prompt.name,
+                            description=prompt.description,
+                            template=prompt.template if hasattr(prompt, "template") else "",
+                            argument_schema={},  # Use argument_schema instead of arguments
+                            # Federation metadata
+                            created_by=created_by or "system",
+                            created_from_ip=created_from_ip,
+                            created_via="federation",  # These are federated prompts
+                            created_user_agent=created_user_agent,
+                            federation_source=gateway.name,
+                            version=1,
+                            # Inherit team assignment from gateway
+                            team_id=team_id,
+                            owner_email=owner_email,
+                            visibility=visibility,
+                        )
+                    )
 
             # Create DB model
             db_gateway = DbGateway(
@@ -2343,7 +2456,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
                         capabilities, tools, resources, prompts = await self._initialize_gateway(
-                            init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, auth_query_params=auth_query_params_decrypted
+                            init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, auth_query_params=auth_query_params_decrypted, oauth_auto_fetch_tool_flag=True
                         )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
@@ -2468,41 +2581,51 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Active (Enabled and Reachable)
                     await self._notify_gateway_activated(gateway)
 
-                tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
-
-                # Set tools state with skip_cache_invalidation=True to avoid N invalidations
+                # Bulk update tools - single UPDATE statement instead of N FOR UPDATE locks
+                # This prevents lock contention under high concurrent load
+                now = datetime.now(timezone.utc)
                 if only_update_reachable:
-                    for tool in tools:
-                        await self.tool_service.set_tool_state(db, tool.id, tool.enabled, reachable, skip_cache_invalidation=True)
+                    # Only update reachable status, keep enabled as-is
+                    tools_result = db.execute(update(DbTool).where(DbTool.gateway_id == gateway_id).where(DbTool.reachable != reachable).values(reachable=reachable, updated_at=now))
                 else:
-                    for tool in tools:
-                        await self.tool_service.set_tool_state(db, tool.id, activate, reachable, skip_cache_invalidation=True)
+                    # Update both enabled and reachable
+                    tools_result = db.execute(
+                        update(DbTool)
+                        .where(DbTool.gateway_id == gateway_id)
+                        .where(or_(DbTool.enabled != activate, DbTool.reachable != reachable))
+                        .values(enabled=activate, reachable=reachable, updated_at=now)
+                    )
+                tools_updated = tools_result.rowcount
 
-                # Invalidate tools cache once after all tool status changes
-                if tools:
+                # Commit tool updates
+                if tools_updated > 0:
+                    db.commit()
+
+                # Invalidate tools cache once after bulk update
+                if tools_updated > 0:
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     await tool_lookup_cache.invalidate_gateway(str(gateway.id))
 
-                # Update prompts state when gateway is deactivated/activated (skip for reachability-only updates)
+                # Bulk update prompts when gateway is deactivated/activated (skip for reachability-only updates)
+                prompts_updated = 0
                 if not only_update_reachable:
-                    prompts = db.query(DbPrompt).filter(DbPrompt.gateway_id == gateway_id).all()
-                    # Set prompts state with skip_cache_invalidation=True to avoid N invalidations
-                    for prompt in prompts:
-                        await self.prompt_service.set_prompt_state(db, prompt.id, activate, skip_cache_invalidation=True)
-                    # Invalidate prompts cache once after all prompt status changes
-                    if prompts:
+                    prompts_result = db.execute(update(DbPrompt).where(DbPrompt.gateway_id == gateway_id).where(DbPrompt.enabled != activate).values(enabled=activate, updated_at=now))
+                    prompts_updated = prompts_result.rowcount
+                    if prompts_updated > 0:
+                        db.commit()
                         await cache.invalidate_prompts()
 
-                # Update resources state when gateway is deactivated/activated (skip for reachability-only updates)
+                # Bulk update resources when gateway is deactivated/activated (skip for reachability-only updates)
+                resources_updated = 0
                 if not only_update_reachable:
-                    resources = db.query(DbResource).filter(DbResource.gateway_id == gateway_id).all()
-                    # Set resources state with skip_cache_invalidation=True to avoid N invalidations
-                    for resource in resources:
-                        await self.resource_service.set_resource_state(db, resource.id, activate, skip_cache_invalidation=True)
-                    # Invalidate resources cache once after all resource status changes
-                    if resources:
+                    resources_result = db.execute(update(DbResource).where(DbResource.gateway_id == gateway_id).where(DbResource.enabled != activate).values(enabled=activate, updated_at=now))
+                    resources_updated = resources_result.rowcount
+                    if resources_updated > 0:
+                        db.commit()
                         await cache.invalidate_resources()
+
+                logger.debug(f"Gateway {gateway.name} bulk state update: {tools_updated} tools, {prompts_updated} prompts, {resources_updated} resources")
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
@@ -3666,6 +3789,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         include_resources: bool = True,
         include_prompts: bool = True,
         auth_query_params: Optional[Dict[str, str]] = None,
+        oauth_auto_fetch_tool_flag: Optional[bool] = False,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -3684,6 +3808,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             include_resources: Whether to include resources in the fetch
             include_prompts: Whether to include prompts in the fetch
             auth_query_params: Query param names for URL sanitization in error logs (decrypted values)
+            oauth_auto_fetch_tool_flag: Whether to skip the early return for OAuth Authorization Code flow.
+                When False (default), auth_code gateways return empty lists immediately (for health checks).
+                When True, attempts to connect even for auth_code gateways (for activation after user authorization).
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -3727,24 +3854,29 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 grant_type = oauth_config.get("grant_type", "client_credentials")
 
                 if grant_type == "authorization_code":
-                    # For Authorization Code flow, we can't initialize immediately
-                    # because we need user consent. Just store the configuration
-                    # and let the user complete the OAuth flow later.
-                    logger.info("""OAuth Authorization Code flow configured for gateway. User must complete authorization before gateway can be used.""")
-                    # Don't try to get access token here - it will be obtained during tool invocation
-                    authentication = {}
+                    if not oauth_auto_fetch_tool_flag:
+                        # For Authorization Code flow during health checks, we can't initialize immediately
+                        # because we need user consent. Just store the configuration
+                        # and let the user complete the OAuth flow later.
+                        logger.info("""OAuth Authorization Code flow configured for gateway. User must complete authorization before gateway can be used.""")
+                        # Don't try to get access token here - it will be obtained during tool invocation
+                        authentication = {}
 
-                    # Skip MCP server connection for Authorization Code flow
-                    # Tools will be fetched after OAuth completion
-                    return {}, [], [], []
-                # For Client Credentials flow, we can get the token immediately
-                try:
-                    logger.debug("Obtaining OAuth access token for Client Credentials flow")
-                    access_token = await self.oauth_manager.get_access_token(oauth_config)
-                    authentication = {"Authorization": f"Bearer {access_token}"}
-                except Exception as e:
-                    logger.error(f"Failed to obtain OAuth access token: {e}")
-                    raise GatewayConnectionError(f"OAuth authentication failed: {str(e)}")
+                        # Skip MCP server connection for Authorization Code flow
+                        # Tools will be fetched after OAuth completion
+                        return {}, [], [], []
+                    # When flag is True (activation), skip token fetch but try to connect
+                    # This allows activation to proceed - actual auth happens during tool invocation
+                    logger.debug("OAuth Authorization Code gateway activation - skipping token fetch")
+                elif grant_type == "client_credentials":
+                    # For Client Credentials flow, we can get the token immediately
+                    try:
+                        logger.debug("Obtaining OAuth access token for Client Credentials flow")
+                        access_token = await self.oauth_manager.get_access_token(oauth_config)
+                        authentication = {"Authorization": f"Bearer {access_token}"}
+                    except Exception as e:
+                        logger.error(f"Failed to obtain OAuth access token: {e}")
+                        raise GatewayConnectionError(f"OAuth authentication failed: {str(e)}")
 
             capabilities = {}
             tools = []
