@@ -14,6 +14,7 @@ passphrase-protected keys.
 
 # Standard
 import atexit
+from contextlib import suppress
 import logging
 import os
 from pathlib import Path
@@ -137,12 +138,9 @@ class SSLKeyManager:
         but can also be called manually for explicit cleanup.
         """
         if self._temp_key_file and self._temp_key_file.exists():
-            try:
+            with suppress(FileNotFoundError, PermissionError, OSError):
                 self._temp_key_file.unlink()
-            except Exception:
-                pass
-            finally:
-                self._temp_key_file = None
+            self._temp_key_file = None
 
 
 # Global instance for convenience
