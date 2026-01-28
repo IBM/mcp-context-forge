@@ -555,9 +555,6 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 redis_key = f"mcpgw:session_mapping:{mcp_session_id}:{url}:{transport_type}:{gateway_id}"
 
                 # Store pool_key as JSON for easy deserialization
-                # Third-Party
-                import orjson  # pylint: disable=import-outside-toplevel
-
                 pool_key_data = {
                     "user_hash": user_hash,
                     "url": url,
@@ -1333,16 +1330,26 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
             if method == "tools/call":
                 # Import here to avoid circular dependency
+                # Use sys.modules to get the already-loaded main module
+                # Standard
+                import sys  # pylint: disable=import-outside-toplevel
+
                 # First-Party
                 from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
-                from mcpgateway.services.tool_service import tool_service  # pylint: disable=import-outside-toplevel
+
+                # Get tool_service from the loaded main module to avoid import cycle
+                main_module = sys.modules.get("mcpgateway.main")
+                if not main_module or not hasattr(main_module, "tool_service"):
+                    return {"error": {"code": -32603, "message": "Tool service not initialized"}}
+
+                tool_service = main_module.tool_service
 
                 name = params.get("name")
                 arguments = params.get("arguments", {})
                 meta_data = params.get("_meta")
 
                 # Get a database session
-                async with get_db() as db:
+                async with get_db() as db:  # pylint: disable=not-async-context-manager
                     result = await tool_service.invoke_tool(
                         db=db,
                         name=name,
