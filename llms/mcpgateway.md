@@ -5,16 +5,22 @@ MCP Gateway: Full Project Overview
 
 **Core Capabilities**
 - Unified gateway for MCP servers: tools, prompts, and resources via HTTP/SSE/WebSocket/STDIO/streamable HTTP.
-- Plugin framework: AI safety, content filtering, policy enforcement, and transformations with pre/post hooks.
+- Plugin framework: AI safety, content filtering, policy enforcement, and transformations with pre/post hooks (42 built-in plugins).
 - Federation and administration: register servers, list tools/prompts/resources, manage teams/tokens, admin UI.
+- Agent-to-Agent (A2A) communication between MCP agents.
+- LLM proxying and chat interface with integrated tools/resources.
+- RBAC (Role-Based Access Control) with team and permission management.
+- Comprehensive observability: OpenTelemetry, Prometheus metrics, structured logging.
 
 **Project Structure**
-- App: `mcpgateway/` (FastAPI entrypoints, services, transports, plugins framework, alembic migrations)
-- Plugins: `plugins/` (built‑in native plugins and external example)
+- App: `mcpgateway/` (FastAPI entrypoints, db.py ORM models, 50+ services, 19 routers, 15 middleware, transports, plugins framework, alembic migrations)
+- Plugins: `plugins/` (42 built-in native plugins and external plugin example)
+- MCP Servers: `mcp-servers/` (5 Go servers, 20 Python servers, scaffolding templates)
 - Docs: `docs/` (MkDocs site + docs Makefile)
 - Charts: `charts/` (Helm chart `mcp-stack`)
-- Tests: `tests/{unit,integration,e2e,playwright}`
-- Examples & deployment: `examples/`, `deployment/`
+- Tests: `tests/{unit,integration,e2e,performance,security,fuzz,playwright}`
+- Infrastructure: `infra/` (PostgreSQL, Redis, monitoring Docker Compose)
+- Deployment: `deployment/` (k8s, knative, terraform, ansible)
 
 **Environment & Setup**
 - Requirements: Python 3.11+, GNU Make

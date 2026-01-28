@@ -7,6 +7,10 @@ Testing: Quick Guide for LLMs
 - `tests/unit`: Fast, isolated unit tests (prefer default target here).
 - `tests/integration`: Cross-module and service integration tests.
 - `tests/e2e`: End-to-end flows (slower; may require services/containers).
+- `tests/performance`: Database performance & N+1 query detection tests.
+- `tests/security`: Security validation tests.
+- `tests/fuzz`: Fuzzing & property-based testing.
+- `tests/load`: Load testing scenarios.
 - `tests/playwright`: UI tests (requires extra setup; keep out of default runs).
 
 **Fast Commands (root)**
