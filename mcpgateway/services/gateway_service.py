@@ -2456,7 +2456,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 init_url = apply_query_param_auth(gateway.url, auth_query_params_decrypted)
 
                         capabilities, tools, resources, prompts = await self._initialize_gateway(
-                            init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, auth_query_params=auth_query_params_decrypted
+                            init_url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, auth_query_params=auth_query_params_decrypted,oath_auto_fecth_tool_flag=True
                         )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
@@ -3789,6 +3789,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         include_resources: bool = True,
         include_prompts: bool = True,
         auth_query_params: Optional[Dict[str, str]] = None,
+        oath_auto_fecth_tool_flag: Optional[bool] = False,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -3846,7 +3847,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if pre_auth_headers:
                 authentication = pre_auth_headers
             # Handle OAuth authentication
-            elif auth_type == "oauth" and oauth_config:
+            elif auth_type == "oauth" and oauth_config and not oath_auto_fecth_tool_flag:
                 grant_type = oauth_config.get("grant_type", "client_credentials")
 
                 if grant_type == "authorization_code":
