@@ -4,52 +4,51 @@
 
 ---
 
-## [1.0.0-RC1] - 2026-01-28 - Secure Defaults & RBAC Hardening
+## [1.0.0-RC1] - 2026-01-28 - Authentication Model Updates
 
 ### Overview
 
-This release introduces **secure-by-default configuration** and **RBAC hardening** to prepare for production GA:
+This release updates the authentication model with revised defaults and improved configuration clarity:
 
-- **🔐 Secure Defaults** - JWT tokens now require JTI and expiration claims by default
-- **🛡️ Admin Authentication** - Unified authentication across all admin routes
-- **🔒 SSO Security** - Server-side redirect URI validation
-- **📝 Configuration Clarity** - Prominent security settings in environment templates
+- **Token Validation** - JWT tokens now require JTI and expiration claims by default
+- **Admin Routes** - Unified authentication across all admin routes
+- **SSO** - Server-side redirect URI validation
+- **Configuration** - Prominent settings in environment templates
 
 ### Changed
 
-#### **🔐 Secure Token Defaults**
-* **REQUIRE_JTI** now defaults to `true` - All JWT tokens must include a JTI (JWT ID) claim for revocation support
-* **REQUIRE_TOKEN_EXPIRATION** now defaults to `true` - All JWT tokens must include an expiration claim
+#### Token Validation Defaults
+* **REQUIRE_JTI** now defaults to `true` - JWT tokens must include a JTI claim for revocation support
+* **REQUIRE_TOKEN_EXPIRATION** now defaults to `true` - JWT tokens must include an expiration claim
 * **PUBLIC_REGISTRATION_ENABLED** now defaults to `false` - Self-registration disabled by default
 
 > **Migration**: Existing tokens without JTI or expiration claims will be rejected. Generate new tokens with `python -m mcpgateway.utils.create_jwt_token` which includes these claims by default.
 
-#### **🛡️ AdminAuthMiddleware Enhancements**
+#### AdminAuthMiddleware
 * Added API token authentication support for `/admin/*` routes
 * Added platform admin bootstrap support for initial setup scenarios
 * Unified authentication methods with main API authentication
-* Removed non-functional Basic auth from Admin UI (use email/password login)
+* Admin UI uses session-based email/password login
 
-#### **🔒 Basic Auth Security Hardening**
+#### Basic Auth Configuration
 * **API_ALLOW_BASIC_AUTH** now defaults to `false` - Basic auth disabled for API endpoints by default
-* **DOCS_ALLOW_BASIC_AUTH** remains `false` by default - Basic auth disabled for docs endpoints
-* **FIXED**: Outbound credential leak - gateway no longer sends admin credentials to remote servers
+* **DOCS_ALLOW_BASIC_AUTH** remains `false` by default
+* Gateway credentials scoped to local authentication only
 
 > **Migration**: If you use Basic auth for API access, either:
 > 1. **(Recommended)** Migrate to JWT tokens: `export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token ...)`
 > 2. Set `API_ALLOW_BASIC_AUTH=true` to restore previous behavior
 
-> **Breaking**: Gateways without configured `auth_value` will now send unauthenticated requests to remote servers. Configure per-gateway authentication for servers that require it.
+> **Note**: Gateways without configured `auth_value` will send unauthenticated requests to remote servers. Configure per-gateway authentication for servers that require it.
 
-#### **🔒 SSO Redirect Validation**
-* Redirect URI validation now uses server-side allowlist only
-* Removed Host header trust to prevent spoofing attacks
+#### SSO Redirect Validation
+* Redirect URI validation uses server-side allowlist
 * Validates against `ALLOWED_ORIGINS` and `APP_DOMAIN` settings
 
 ### Added
 
-* **Security Defaults Section** in `.env.example` - Prominent documentation of security-related settings
-* **Deferred Issues Tracking** - Documentation for items identified during security review
+* **Configuration Section** in `.env.example` with documented settings
+* **Deferred Issues Tracking** in documentation
 
 ---
 

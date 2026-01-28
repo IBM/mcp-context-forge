@@ -37,6 +37,7 @@ token.txt
 mcpgateway.sbom.xml
 gateway_service_leader.lock
 docs/docs/test/
+docs/docs/images/coverage.svg
 tmp
 *.tgz
 *.gz
