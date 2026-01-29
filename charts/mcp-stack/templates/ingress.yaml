@@ -1,10 +1,6 @@
 {{- /*
 Ingress
-- Routes:
-   - /           → mcp-context-forge (Gateway)
-   - /fast-time  → mcp-fast-time-server   (optional)
-- All service names use the same helper so they follow the
-  <release>-mcp-stack-* naming convention.
+- Gateway and Fast-Time Server ingress are rendered independently so they can be enabled separately.
 */ -}}
 {{- if .Values.mcpContextForge.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
@@ -29,7 +25,6 @@ spec:
     - host: {{ .Values.mcpContextForge.ingress.host }}
       http:
         paths:
-          # ─── Gateway root ───
           - path: {{ .Values.mcpContextForge.ingress.path }}
             pathType: {{ .Values.mcpContextForge.ingress.pathType }}
             backend:
@@ -37,9 +32,32 @@ spec:
                 name: {{ include "mcp-stack.fullname" . }}-mcpgateway
                 port:
                   number: {{ .Values.mcpContextForge.service.port }}
+{{- end }}
 
-          # ─── Fast-Time-Server (optional) ───
-          {{- if and .Values.mcpFastTimeServer.enabled .Values.mcpFastTimeServer.ingress.enabled }}
+{{- if and .Values.mcpFastTimeServer.enabled .Values.mcpFastTimeServer.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-fast-time-ingress
+  annotations:
+    {{- range $key, $value := .Values.mcpFastTimeServer.ingress.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.mcpFastTimeServer.ingress.className }}
+  {{- if .Values.mcpFastTimeServer.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.mcpFastTimeServer.ingress.host }}
+      {{- if .Values.mcpFastTimeServer.ingress.tls.secretName }}
+      secretName: {{ .Values.mcpFastTimeServer.ingress.tls.secretName }}
+      {{- end }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.mcpFastTimeServer.ingress.host }}
+      http:
+        paths:
           - path: {{ .Values.mcpFastTimeServer.ingress.path }}
             pathType: {{ .Values.mcpFastTimeServer.ingress.pathType }}
             backend:
@@ -47,5 +65,4 @@ spec:
                 name: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
                 port:
                   number: {{ .Values.mcpFastTimeServer.ingress.servicePort }}
-          {{- end }}
 {{- end }}

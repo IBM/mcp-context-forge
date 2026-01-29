@@ -109,10 +109,24 @@ spec:
                   key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
 
             # ---------- REDIS ----------
+            {{- if .Values.redis.external.enabled }}
+            {{- if and (not .Values.redis.external.existingSecret) (not .Values.redis.external.url) }}
             - name: REDIS_HOST
-              value: {{ printf "%s-redis" (include "mcp-stack.fullname" .) }}
+              value: {{ .Values.redis.external.host | quote }}
+            - name: REDIS_PORT
+              value: "{{ .Values.redis.external.port }}"
+            {{- end }}
+            {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+            - name: REDIS_HOST
+              value: {{ .Values.mcpContextForge.env.redis.host | default (printf "%s-redis" (include "mcp-stack.fullname" .)) | quote }}
             - name: REDIS_PORT
               value: "{{ .Values.mcpContextForge.env.redis.port }}"
+            {{- else }}
+            - name: REDIS_HOST
+              value: ""
+            - name: REDIS_PORT
+              value: ""
+            {{- end }}
 
             # ---------- METRICS ----------
             {{- if .Values.mcpContextForge.metrics.enabled }}
@@ -138,7 +152,22 @@ spec:
               value: >-
                 postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
             - name: REDIS_URL
+              {{- if .Values.redis.external.enabled }}
+              {{- if .Values.redis.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.external.existingSecret }}
+                  key: {{ .Values.redis.external.urlKey | default "REDIS_URL" }}
+              {{- else if .Values.redis.external.url }}
+              value: {{ .Values.redis.external.url | quote }}
+              {{- else }}
+              value: "redis://$(REDIS_HOST):$(REDIS_PORT)/{{ .Values.redis.external.db }}"
+              {{- end }}
+              {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+              {{- else }}
+              value: ""
+              {{- end }}
 
             # ---------- EXTRA ENV (user-defined) ----------
             # Placed last so users can override any variable including derived URLs

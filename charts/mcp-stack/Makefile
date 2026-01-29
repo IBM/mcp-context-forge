@@ -91,7 +91,13 @@ lint-values: ## 📝 Validate values.yaml against schema
 lint-yaml: ## 🔍 Lint YAML files with yamllint
 	@echo "$(BLUE)Running yamllint...$(NC)"
 	@if command -v yamllint >/dev/null 2>&1; then \
-		yamllint . -c .yamllint.yml || yamllint .; \
+		if [ -f .yamllint.yml ]; then \
+			yamllint . -c .yamllint.yml; \
+		elif [ -f ../../.yamllint ]; then \
+			yamllint Chart.yaml values.yaml -c ../../.yamllint; \
+		else \
+			yamllint Chart.yaml values.yaml; \
+		fi; \
 		echo "$(GREEN)✓ YAML lint completed$(NC)"; \
 	else \
 		echo "$(YELLOW)⚠ yamllint not found, skipping$(NC)"; \

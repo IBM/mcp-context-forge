@@ -119,7 +119,7 @@ Expected output:
 
 ## 🔐 Admin UI
 
-Visit [http://localhost:4444/admin](http://localhost:4444/admin) and login using your `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` from `.env`.
+Visit [http://localhost:4444/admin](http://localhost:4444/admin) and login using your `PLATFORM_ADMIN_EMAIL` and `PLATFORM_ADMIN_PASSWORD` from `.env`.
 
 ---
 

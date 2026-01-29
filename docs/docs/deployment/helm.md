@@ -531,7 +531,7 @@ flowchart TD
 
         - **Startup Resilience**: If the pod is restarting due to database/Redis unavailability, the Gateway uses exponential backoff with jitter (default 30 retries ≈ 5 minutes). Configure via `DB_MAX_RETRIES` and `REDIS_MAX_RETRIES`. See [Startup Resilience](../architecture/performance-architecture.md#startup-resilience).
 
-    === "`Env vars missing` (e.g., BASIC_AUTH_USER)"
+    === "`Env vars missing` (e.g., JWT_SECRET_KEY)"
 
         - **Cause**: Secret or ConfigMap not mounted
         - **Fix**: Confirm `envFrom` is configured in your `my-values.yaml` and the resources exist:
@@ -540,6 +540,9 @@ flowchart TD
           kubectl get secret mcp-gateway-secret -n mcp-private
           kubectl get configmap mcp-gateway-config -n mcp-private
           ```
+
+        !!! info "Authentication Note"
+            The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). Basic auth for API endpoints is disabled by default for security.
 
     === "`RBAC access denied`"
 

@@ -1060,7 +1060,7 @@ class TeamManagementService:
         if not page and not cursor and offset > 0:
             query = query.offset(offset)
 
-        return await unified_paginate(
+        result = await unified_paginate(
             db=self.db,
             query=query,
             cursor=cursor,
@@ -1069,6 +1069,8 @@ class TeamManagementService:
             per_page=per_page,
             base_url=base_url,
         )
+        self.db.commit()  # Release transaction to avoid idle-in-transaction
+        return result
 
     async def get_all_team_ids(
         self,
@@ -1109,7 +1111,9 @@ class TeamManagementService:
             )
 
         result = self.db.execute(query)
-        return [row[0] for row in result.all()]
+        team_ids = [row[0] for row in result.all()]
+        self.db.commit()  # Release transaction to avoid idle-in-transaction
+        return team_ids
 
     async def get_teams_count(
         self,
@@ -1150,7 +1154,9 @@ class TeamManagementService:
             )
 
         result = self.db.execute(query)
-        return result.scalar() or 0
+        count = result.scalar() or 0
+        self.db.commit()  # Release transaction to avoid idle-in-transaction
+        return count
 
     async def discover_public_teams(self, user_email: str, skip: int = 0, limit: Optional[int] = None) -> List[EmailTeam]:
         """Discover public teams that user can join.

@@ -30,6 +30,7 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from functools import lru_cache
+import hashlib
 import os as _os  # local alias to avoid collisions
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -46,6 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
 import orjson
@@ -61,7 +63,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import get_current_user
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -120,6 +122,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -1351,6 +1354,8 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             >>> middleware = DocsAuthMiddleware(None)
             >>> request = Mock()
             >>> request.url.path = "/api/tools"
+            >>> request.scope = {"path": "/api/tools", "root_path": ""}
+            >>> request.method = "GET"
             >>> request.headers.get.return_value = None
             >>> call_next = AsyncMock(return_value="response")
             >>>
@@ -1369,7 +1374,17 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        if any(request.url.path.startswith(p) for p in protected_paths):
+        # Get path from scope to handle root_path correctly
+        # request.scope["path"] is the path after stripping root_path
+        # This handles deployments under sub-paths (e.g., /gateway/docs)
+        scope_path = request.scope.get("path", request.url.path)
+        root_path = request.scope.get("root_path", "")
+
+        # Check both the scope path and the full URL path to be safe
+        # This covers both direct access and sub-path deployments
+        is_protected = any(scope_path.startswith(p) for p in protected_paths) or any(request.url.path.startswith(f"{root_path}{p}") for p in protected_paths if root_path)
+
+        if is_protected:
             try:
                 token = request.headers.get("Authorization")
                 cookie_token = request.cookies.get("jwt_token")
@@ -1378,6 +1393,183 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
                 await require_docs_auth_override(token, cookie_token)
             except HTTPException as e:
                 return ORJSONResponse(status_code=e.status_code, content={"detail": e.detail}, headers=e.headers if e.headers else None)
+
+        # Proceed to next middleware or route
+        return await call_next(request)
+
+
+class AdminAuthMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to protect Admin UI routes (/admin/*) requiring admin privileges.
+
+    Exempts login-related paths and static assets:
+    - /admin/login - login page
+    - /admin/logout - logout action
+    - /admin/static/* - static assets
+
+    All other /admin/* routes require the user to be authenticated AND be an admin.
+    Non-admin authenticated users receive a 403 Forbidden response.
+
+    Note: This middleware respects the auth_required setting. When auth_required=False
+    (typically in test environments), the middleware allows requests to pass through
+    and relies on endpoint-level authentication which can be mocked in tests.
+    """
+
+    # Paths under /admin that don't require admin privileges
+    EXEMPT_PATHS = ["/admin/login", "/admin/logout", "/admin/static"]
+
+    @staticmethod
+    def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
+        """Return appropriate error response based on request Accept header.
+
+        Args:
+            request: The incoming HTTP request.
+            root_path: The root path prefix for the application.
+            status_code: HTTP status code for JSON responses.
+            detail: Error message detail.
+            error_param: Optional error parameter for login redirect URL.
+
+        Returns:
+            RedirectResponse for HTML/HTMX requests, ORJSONResponse for API requests.
+        """
+        accept_header = request.headers.get("accept", "")
+        is_htmx = request.headers.get("hx-request") == "true"
+        if "text/html" in accept_header or is_htmx:
+            login_url = f"{root_path}/admin/login" if root_path else "/admin/login"
+            if error_param:
+                login_url = f"{login_url}?error={error_param}"
+            return RedirectResponse(url=login_url, status_code=302)
+        return ORJSONResponse(status_code=status_code, content={"detail": detail})
+
+    async def dispatch(self, request: Request, call_next):  # pylint: disable=too-many-return-statements
+        """
+        Check admin privileges for admin routes.
+
+        Args:
+            request (Request): The incoming HTTP request.
+            call_next (Callable): The function to call the next middleware or endpoint.
+
+        Returns:
+            Response: Either the standard route response or a 401/403 error response.
+        """
+        # Skip admin auth check if auth is not required (e.g., test environments)
+        # This allows tests to mock authentication at the dependency level
+        if not settings.auth_required:
+            return await call_next(request)
+
+        # Get path from scope to handle root_path correctly
+        scope_path = request.scope.get("path", request.url.path)
+        root_path = request.scope.get("root_path", "")
+
+        # Allow OPTIONS requests for CORS preflight (RFC 7231)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        # Check if this is an admin route
+        is_admin_route = scope_path.startswith("/admin") or (root_path and request.url.path.startswith(f"{root_path}/admin"))
+
+        if not is_admin_route:
+            return await call_next(request)
+
+        # Check if path is exempt (login, logout, static)
+        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
+        if is_exempt:
+            return await call_next(request)
+
+        # For protected admin routes, verify admin status
+        try:
+            token = request.headers.get("Authorization")
+            cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+
+            # Extract token from header or cookie
+            jwt_token = None
+            if cookie_token:
+                jwt_token = cookie_token
+            elif token and token.startswith("Bearer "):
+                jwt_token = token.split(" ", 1)[1]
+
+            username = None
+
+            if jwt_token:
+                # Try JWT authentication first
+                try:
+                    payload = await verify_jwt_token(jwt_token)
+                    username = payload.get("sub") or payload.get("email")
+
+                    if not username:
+                        return ORJSONResponse(status_code=401, content={"detail": "Invalid token"})
+
+                    # Check if token is revoked (if JTI exists)
+                    jti = payload.get("jti")
+                    if jti:
+                        try:
+                            is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                            if is_revoked:
+                                logger.warning(f"Admin access denied for revoked token: {username}")
+                                return self._error_response(request, root_path, 401, "Token has been revoked", "token_revoked")
+                        except Exception as revoke_error:
+                            logger.warning(f"Token revocation check failed: {revoke_error}")
+                            # Continue - don't fail auth if revocation check fails
+                except Exception:
+                    # JWT validation failed, try API token
+                    token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
+                    api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
+
+                    if api_token_info:
+                        if api_token_info.get("expired"):
+                            return ORJSONResponse(status_code=401, content={"detail": "API token expired"})
+                        if api_token_info.get("revoked"):
+                            return ORJSONResponse(status_code=401, content={"detail": "API token has been revoked"})
+                        username = api_token_info["user_email"]
+                        logger.debug(f"Admin auth via API token: {username}")
+
+            # NOTE: Basic auth is NOT supported for admin UI endpoints.
+            # While AdminAuthMiddleware could validate Basic credentials, the admin
+            # endpoints use get_current_user_with_permissions which requires JWT tokens.
+            # Supporting Basic auth would require passing auth context to routes,
+            # which increases complexity and attack surface. Use JWT or API tokens instead.
+
+            if not username and settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+                # Proxy authentication path (when MCP client auth is disabled and proxy auth is trusted)
+                proxy_user = request.headers.get(settings.proxy_user_header)
+                if proxy_user:
+                    username = proxy_user
+                    logger.debug(f"Admin auth via proxy header: {username}")
+
+            if not username:
+                # No authentication method succeeded - redirect to login or return 401
+                return self._error_response(request, root_path, 401, "Authentication required")
+
+            # Check if user exists, is active, and is admin
+            db = next(get_db())
+            try:
+                auth_service = EmailAuthService(db)
+                user = await auth_service.get_user_by_email(username)
+
+                if not user:
+                    # Platform admin bootstrap (when REQUIRE_USER_IN_DB=false)
+                    platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+                    if not settings.require_user_in_db and username == platform_admin_email:
+                        logger.info(f"Platform admin bootstrap authentication for {username}")
+                        # Allow platform admin through - they have implicit admin privileges
+                    else:
+                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
+                else:
+                    # User exists in DB - check active and admin status
+                    if not user.is_active:
+                        logger.warning(f"Admin access denied for disabled user: {username}")
+                        return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
+                    if not user.is_admin:
+                        logger.warning(f"Admin access denied for non-admin user: {username}")
+                        return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
+            finally:
+                db.close()
+
+        except HTTPException as e:
+            return self._error_response(request, root_path, e.status_code, e.detail)
+        except Exception as e:
+            logger.error(f"Admin auth middleware error: {e}")
+            return ORJSONResponse(status_code=500, content={"detail": "Authentication error"})
 
         # Proceed to next middleware or route
         return await call_next(request)
@@ -1607,6 +1799,10 @@ app.add_middleware(
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
 
+# Add AdminAuthMiddleware to protect admin routes (requires admin privileges)
+# This ensures all /admin/* routes (except login/logout) require admin status
+app.add_middleware(AdminAuthMiddleware)
+
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
@@ -1654,7 +1850,12 @@ else:
 
 # Set up Jinja2 templates and store in app state for later use
 # auto_reload=False in production prevents re-parsing templates on each request (performance)
-templates = Jinja2Templates(directory=str(settings.templates_dir), auto_reload=settings.templates_auto_reload)
+jinja_env = Environment(
+    loader=FileSystemLoader(str(settings.templates_dir)),
+    autoescape=True,
+    auto_reload=settings.templates_auto_reload,
+)
+templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")
 app.state.templates = templates
@@ -2474,6 +2675,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
     Raises:
         HTTPException: If there is an error in establishing the SSE connection.
+        asyncio.CancelledError: If the request is cancelled during SSE setup.
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
@@ -2483,9 +2685,9 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
-        response = await transport.create_sse_response(request)
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
+        # MUST be computed BEFORE create_sse_response to avoid race condition (Finding 1)
         auth_token = None
         auth_header = request.headers.get("authorization", "")
         if auth_header.lower().startswith("bearer "):
@@ -2513,7 +2715,38 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         user_with_token["token_teams"] = token_teams  # Always a list, never None
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
-        asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
+        # Defensive cleanup callback - runs immediately on client disconnect
+        async def on_disconnect_cleanup() -> None:
+            """Clean up session when SSE client disconnects."""
+            try:
+                await session_registry.remove_session(transport.session_id)
+                logger.debug("Defensive session cleanup completed: %s", transport.session_id)
+            except Exception as e:
+                logger.warning("Defensive session cleanup failed for %s: %s", transport.session_id, e)
+
+        # CRITICAL: Create and register respond task BEFORE create_sse_response (Finding 1 fix)
+        # This ensures the task exists when disconnect callback runs, preventing orphaned tasks
+        respond_task = asyncio.create_task(session_registry.respond(server_id, user_with_token, session_id=transport.session_id, base_url=base_url))
+        session_registry.register_respond_task(transport.session_id, respond_task)
+
+        try:
+            response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        except asyncio.CancelledError:
+            # Request cancelled - still need to clean up to prevent orphaned tasks
+            logger.debug(f"SSE request cancelled for {transport.session_id}, cleaning up")
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup after SSE cancellation failed: {cleanup_error}")
+            raise  # Re-raise CancelledError
+        except Exception as sse_error:
+            # CRITICAL: Cleanup on failure - respond task and session would be orphaned otherwise
+            logger.error(f"create_sse_response failed for {transport.session_id}: {sse_error}")
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup after SSE failure also failed: {cleanup_error}")
+            raise
 
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
@@ -5074,9 +5307,15 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                # Release DB connection early to prevent idle-in-transaction under load
+                db.commit()
+                db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
                 tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                # Release DB connection early to prevent idle-in-transaction under load
+                db.commit()
+                db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -5091,14 +5330,20 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
                 tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_gateways":
             gateways = await gateway_service.list_gateways(db, include_inactive=False)
+            db.commit()
+            db.close()
             result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
         elif method == "list_roots":
             roots = await root_service.list_roots()
@@ -5113,9 +5358,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
                 resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -5190,9 +5439,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
                 prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams)
+                db.commit()
+                db.close()
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -5648,6 +5901,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
     Raises:
         HTTPException: Returned with **500 Internal Server Error** if the SSE connection cannot be established or an unexpected error occurs while creating the transport.
+        asyncio.CancelledError: If the request is cancelled during SSE setup.
     """
     try:
         logger.debug("User %s requested SSE connection", user)
@@ -5656,6 +5910,15 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
+
+        # Defensive cleanup callback - runs immediately on client disconnect
+        async def on_disconnect_cleanup() -> None:
+            """Clean up session when SSE client disconnects."""
+            try:
+                await session_registry.remove_session(transport.session_id)
+                logger.debug("Defensive session cleanup completed: %s", transport.session_id)
+            except Exception as e:
+                logger.warning("Defensive session cleanup failed for %s: %s", transport.session_id, e)
 
         # Extract auth token from request (header OR cookie, like get_current_user_with_permissions)
         auth_token = None
@@ -5685,9 +5948,29 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         user_with_token["token_teams"] = token_teams  # Always a list, never None
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
-        asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
+        # Create respond task and register for cancellation on disconnect
+        respond_task = asyncio.create_task(session_registry.respond(None, user_with_token, session_id=transport.session_id, base_url=base_url))
+        session_registry.register_respond_task(transport.session_id, respond_task)
 
-        response = await transport.create_sse_response(request)
+        try:
+            response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect_cleanup)
+        except asyncio.CancelledError:
+            # Request cancelled - still need to clean up to prevent orphaned tasks
+            logger.debug("SSE request cancelled for %s, cleaning up", transport.session_id)
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning("Cleanup after SSE cancellation failed: %s", cleanup_error)
+            raise  # Re-raise CancelledError
+        except Exception as sse_error:
+            # CRITICAL: Cleanup on failure - respond task and session would be orphaned otherwise
+            logger.error("create_sse_response failed for %s: %s", transport.session_id, sse_error)
+            try:
+                await session_registry.remove_session(transport.session_id)
+            except Exception as cleanup_error:
+                logger.warning("Cleanup after SSE failure also failed: %s", cleanup_error)
+            raise
+
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
         response.background = tasks

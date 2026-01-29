@@ -16,9 +16,13 @@ Pick an install method below, generate an auth token, then walk through a real t
     !!! note
         **Prereqs**: Install uv (https://docs.astral.sh/uv/getting-started/installation/)
 
+    !!! info "Authentication"
+        Basic auth is **disabled by default** for security. Use JWT tokens for API access.
+        The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`).
+
     ```bash
     # Quick start with environment variables
-    BASIC_AUTH_PASSWORD=pass \
+    PLATFORM_ADMIN_PASSWORD=changeme \
     MCPGATEWAY_UI_ENABLED=true \
     MCPGATEWAY_ADMIN_API_ENABLED=true \
     PLATFORM_ADMIN_EMAIL=admin@example.com \
@@ -65,7 +69,6 @@ Pick an install method below, generate an auth token, then walk through a real t
         mcpgateway --host 0.0.0.0 --port 4444
 
         # Option 2: Set environment variables directly
-        export BASIC_AUTH_PASSWORD=changeme
         export JWT_SECRET_KEY=my-test-key
         export MCPGATEWAY_UI_ENABLED=true
         export MCPGATEWAY_ADMIN_API_ENABLED=true
@@ -77,17 +80,18 @@ Pick an install method below, generate an auth token, then walk through a real t
 
         The terminal shows startup logs; keep it running.
 
-    4. **Generate a bearer token with an expiration time of 10080 seconds (1 week)**
+    4. **Generate a bearer token with an expiration time of 10080 minutes (1 week)**
 
         !!! warning "Development Only"
             CLI token generation is for development/testing. For production, use the `/tokens` API endpoint which enforces security controls.
 
         ```bash
         export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-            --username admin --exp 10080 --secret my-test-key)
+            --username admin@example.com --exp 10080 --secret my-test-key)
         ```
 
-        !!! tip "Use `--exp 0` for tokens that don't expire (development only)"
+        !!! tip "Non-expiring tokens require `REQUIRE_TOKEN_EXPIRATION=false`"
+            By default, tokens must have an expiration. To use `--exp 0` for non-expiring tokens (development only), set `REQUIRE_TOKEN_EXPIRATION=false`.
 
     5. **Smoke-test health + version**
 
@@ -110,8 +114,6 @@ Pick an install method below, generate an auth token, then walk through a real t
           -p 4444:4444 \
           -e HOST=0.0.0.0 \
           -e JWT_SECRET_KEY=my-test-key \
-          -e BASIC_AUTH_USER=admin \
-          -e BASIC_AUTH_PASSWORD=changeme \
           -e PLATFORM_ADMIN_EMAIL=admin@example.com \
           -e PLATFORM_ADMIN_PASSWORD=changeme \
           -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
@@ -128,8 +130,6 @@ Pick an install method below, generate an auth token, then walk through a real t
               -v $(pwd)/data:/data \
               -e DATABASE_URL=sqlite:////data/mcp.db \
               -e JWT_SECRET_KEY=my-test-key \
-              -e BASIC_AUTH_USER=admin \
-              -e BASIC_AUTH_PASSWORD=changeme \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
@@ -153,8 +153,6 @@ Pick an install method below, generate an auth token, then walk through a real t
               --link mysql-db:mysql \
               -e DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp \
               -e JWT_SECRET_KEY=my-test-key \
-              -e BASIC_AUTH_USER=admin \
-              -e BASIC_AUTH_PASSWORD=changeme \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
@@ -177,8 +175,6 @@ Pick an install method below, generate an auth token, then walk through a real t
               --link postgres-db:postgres \
               -e DATABASE_URL=postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp \
               -e JWT_SECRET_KEY=my-test-key \
-              -e BASIC_AUTH_USER=admin \
-              -e BASIC_AUTH_PASSWORD=changeme \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
@@ -189,7 +185,7 @@ Pick an install method below, generate an auth token, then walk through a real t
 
         ```bash
         docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
-          --username admin --exp 10080 --secret my-test-key
+          --username admin@example.com --exp 10080 --secret my-test-key
         ```
 
     4. **Smoke-test**
@@ -324,7 +320,7 @@ For more information see [MCP Clients](../using/index.md)
 
 | URL                             | Description                                 |
 | ------------------------------- | ------------------------------------------- |
-| `http://localhost:4444/admin`   | Admin UI (Basic Auth: `admin` / `changeme`) |
+| `http://localhost:4444/admin`   | Admin UI (login: `admin@example.com` / `changeme`) |
 | `http://localhost:4444/tools`   | Tool registry (GET)                         |
 | `http://localhost:4444/servers` | Virtual servers (GET)                       |
 | `/servers/<id>/sse`             | SSE endpoint for that server                |

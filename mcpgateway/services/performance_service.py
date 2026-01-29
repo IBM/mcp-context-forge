@@ -295,7 +295,8 @@ class PerformanceService:
 
                 # Get connections
                 try:
-                    connections = len(proc.connections(kind="inet"))
+                    connection_fetcher = getattr(proc, "net_connections", None) or proc.connections
+                    connections = len(connection_fetcher(kind="inet"))
                 except (psutil.AccessDenied, psutil.NoSuchProcess):
                     connections = 0
 

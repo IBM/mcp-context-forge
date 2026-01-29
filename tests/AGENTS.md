@@ -14,7 +14,15 @@ tests/
 ├── playwright/        # UI automation (requires extra setup)
 ├── security/          # Security validation tests
 ├── fuzz/             # Fuzzing & property-based testing
+├── load/             # Load testing scenarios
+├── loadtest/         # Load test configurations
+├── client/           # MCP client testing
+├── async/            # Async operation tests
+├── migration/        # Database migration tests
+├── differential/     # Differential testing
+├── manual/           # Manual test scenarios
 ├── helpers/           # Test utilities (query_counter.py, conftest.py)
+├── utils/            # Additional test utilities
 └── conftest.py        # Shared pytest fixtures
 ```
 

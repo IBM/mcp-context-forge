@@ -127,7 +127,7 @@
 
     - [ ] Export a token with:
         ```bash
-        export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+        export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
         ```
 
     - [ ] Verify authenticated API access:

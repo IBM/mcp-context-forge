@@ -4,6 +4,7 @@ nav:
   - "🧰 Use": using
   - "🚀 Deploy": deployment
   - "🛡️ Manage": manage
+  - "🔧 Operations": operations
   - "💻 Develop": development
   - "🧪 Test": testing
   - "📐 Design & Roadmap": architecture

@@ -598,7 +598,7 @@ def reset_connection_on_checkin(dbapi_connection, _connection_record):
 
 
 @event.listens_for(engine, "reset")
-def reset_connection_on_reset(dbapi_connection, _connection_record):
+def reset_connection_on_reset(dbapi_connection, _connection_record, _reset_state):
     """Reset connection state when the pool resets a connection.
 
     This handles the case where a connection is being reset before reuse.
@@ -3216,7 +3216,8 @@ class Resource(Base):
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
     __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "uri", name="uq_team_owner_gateway_uri_resource"),
+        Index("uq_team_owner_uri_resource_local", "team_id", "owner_email", "uri", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_resources_created_at_id", "created_at", "id"),
     )
 
@@ -3632,8 +3633,9 @@ class Prompt(Base):
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
     __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "name", name="uq_team_owner_gateway_name_prompt"),
         UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name_prompt"),
+        Index("uq_team_owner_name_prompt_local", "team_id", "owner_email", "name", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_prompts_created_at_id", "created_at", "id"),
     )
 

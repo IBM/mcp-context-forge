@@ -10,7 +10,7 @@ After launching the gateway (`make serve` or `make podman-run`), open your brows
 
 [http://localhost:4444/admin](http://localhost:4444/admin) - or the corresponding URL / port / protocol (ex: https when launching with `make podman-run-ssl`)
 
-Login using the `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD` set in your `.env`.
+Login using your `PLATFORM_ADMIN_EMAIL` and `PLATFORM_ADMIN_PASSWORD` credentials set in your `.env`.
 
 ---
 
