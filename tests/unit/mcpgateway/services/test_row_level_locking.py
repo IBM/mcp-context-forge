@@ -439,9 +439,12 @@ class TestA2AServiceLocking:
         agent_update = MagicMock(spec=A2AAgentUpdate)
         agent_update.model_dump.return_value = {"description": "Updated"}
 
+        # Mock tool_service.update_tool_from_a2a_agent using the singleton
+        from mcpgateway.services.tool_service import tool_service
+
         with patch("mcpgateway.services.a2a_service.get_for_update", return_value=mock_agent) as mock_get:
             with patch("mcpgateway.services.a2a_service._get_registry_cache"):
-                with patch("mcpgateway.services.a2a_service.ToolService"):
+                with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
                     try:
                         await service.update_agent(db, "agent-id", agent_update)
                     except Exception:

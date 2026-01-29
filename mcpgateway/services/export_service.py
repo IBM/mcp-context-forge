@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=import-outside-toplevel,no-name-in-module
 """Location: ./mcpgateway/services/export_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -31,12 +32,8 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.services.gateway_service import GatewayService
-from mcpgateway.services.prompt_service import PromptService
-from mcpgateway.services.resource_service import ResourceService
-from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerService
-from mcpgateway.services.tool_service import ToolService
+
+# Service singletons are imported lazily in __init__ to avoid circular imports
 
 logger = logging.getLogger(__name__)
 
@@ -126,12 +123,23 @@ class ExportService:
 
     def __init__(self):
         """Initialize the export service with required dependencies."""
-        self.gateway_service = GatewayService()
-        self.tool_service = ToolService()
-        self.resource_service = ResourceService()
-        self.prompt_service = PromptService()
-        self.server_service = ServerService()
-        self.root_service = RootService()
+        # Use globally-exported singletons from service modules so they
+        # share initialized EventService/Redis clients created at app startup.
+        # Import lazily to avoid circular import at module load time.
+        # First-Party
+        from mcpgateway.services.gateway_service import gateway_service
+        from mcpgateway.services.prompt_service import prompt_service
+        from mcpgateway.services.resource_service import resource_service
+        from mcpgateway.services.root_service import root_service
+        from mcpgateway.services.server_service import server_service
+        from mcpgateway.services.tool_service import tool_service
+
+        self.gateway_service = gateway_service
+        self.tool_service = tool_service
+        self.resource_service = resource_service
+        self.prompt_service = prompt_service
+        self.server_service = server_service
+        self.root_service = root_service
 
     async def initialize(self) -> None:
         """Initialize the export service."""
