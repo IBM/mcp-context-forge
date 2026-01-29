@@ -56,6 +56,7 @@ import time
 from typing import Any, Optional
 
 # First-Party
+from mcpgateway.services import Priority, task_scheduler
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -131,12 +132,14 @@ class ResourceCache:
         self._lock = threading.Lock()
         # Min-heap of (expires_at, key) for efficient expiration cleanup
         self._expiry_heap: list[tuple[float, str]] = []
+        # Background cleanup task handle (initialized when service starts)
+        self._cleanup_task: Optional[asyncio.Task] = None
 
     async def initialize(self) -> None:
         """Initialize cache service."""
         logger.info("Initializing resource cache")
         # Start cleanup task
-        asyncio.create_task(self._cleanup_loop())
+        self._cleanup_task = task_scheduler.schedule(self._cleanup_loop, Priority.NORMAL)
 
     async def shutdown(self) -> None:
         """Shutdown cache service."""

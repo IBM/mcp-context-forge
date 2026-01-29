@@ -68,7 +68,7 @@ from mcpgateway import __version__
 from mcpgateway.common.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
-from mcpgateway.services import PromptService, ResourceService, ToolService
+from mcpgateway.services import Priority, PromptService, ResourceService, task_scheduler, ToolService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
 from mcpgateway.utils.create_jwt_token import create_jwt_token
@@ -487,7 +487,7 @@ class SessionRegistry(SessionBackend):
 
         if self._backend == "database":
             # Start database cleanup task
-            self._cleanup_task = asyncio.create_task(self._db_cleanup_task())
+            self._cleanup_task = task_scheduler.schedule(self._db_cleanup_task, Priority.NORMAL)
             logger.info("Database cleanup task started")
 
         elif self._backend == "redis":
@@ -504,7 +504,7 @@ class SessionRegistry(SessionBackend):
 
         # Memory backend needs session cleanup
         elif self._backend == "memory":
-            self._cleanup_task = asyncio.create_task(self._memory_cleanup_task())
+            self._cleanup_task = task_scheduler.schedule(self._memory_cleanup_task, Priority.NORMAL)
             logger.info("Memory cleanup task started")
 
         # Start stuck task reaper for all backends
