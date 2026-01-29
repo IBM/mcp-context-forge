@@ -58,6 +58,56 @@ class DcrService:
         """
         return float(self.settings.oauth_request_timeout)
 
+    def _parse_expires_at_timestamp(self, client_secret_expires_at: Any) -> tuple[datetime | None, bool]:
+        """Parse client_secret_expires_at into a datetime.
+
+        Handles:
+        - Integer timestamps (seconds since epoch per RFC 7591)
+        - String timestamps from non-strict AS implementations
+        - Millisecond timestamps (detected via digit count >= 13 and converted to seconds)
+        - Value of 0 means "never expires" per RFC 7591
+
+        Args:
+            client_secret_expires_at: The raw value from DCR response
+
+        Returns:
+            Tuple of (datetime or None, should_update):
+            - (datetime, True): Valid timestamp, set expires_at to this value
+            - (None, True): Explicit "never expires" (value was 0), set expires_at to None
+            - (None, False): Parse failed or missing, preserve existing expires_at
+        """
+        if client_secret_expires_at is None:
+            return None, False
+
+        try:
+            expires_at_timestamp = int(client_secret_expires_at)
+
+            if expires_at_timestamp == 0:
+                # 0 means "never expires" per RFC 7591
+                return None, True
+
+            if expires_at_timestamp < 0:
+                logger.warning(f"Negative client_secret_expires_at value: {client_secret_expires_at}, ignoring")
+                return None, False
+
+            # Detect millisecond timestamps using digit count (>= 13 digits)
+            # This is more robust than a year threshold as it handles far-future dates correctly
+            # 13+ digits = milliseconds (earliest: year 2001 in ms = 1000000000000)
+            # 10-12 digits = seconds (covers years 1970-5138)
+            if len(str(expires_at_timestamp)) >= 13:
+                logger.debug(f"Detected millisecond timestamp {expires_at_timestamp}, converting to seconds")
+                expires_at_timestamp = expires_at_timestamp // 1000
+
+            return datetime.fromtimestamp(expires_at_timestamp, tz=timezone.utc), True
+
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid client_secret_expires_at value: {client_secret_expires_at}, ignoring")
+            return None, False
+        except (OSError, OverflowError):
+            # Still out of range after millisecond conversion - truly invalid
+            logger.warning(f"Out-of-range client_secret_expires_at value: {client_secret_expires_at}, ignoring")
+            return None, False
+
     async def discover_as_metadata(self, issuer: str) -> Dict[str, Any]:
         """Discover AS metadata via RFC 8414.
 
@@ -221,6 +271,10 @@ class DcrService:
         registration_access_token = registration_response.get("registration_access_token")
         registration_access_token_encrypted = await encryption.encrypt_secret_async(registration_access_token) if registration_access_token else None
 
+        # Calculate expires_at from client_secret_expires_at (RFC 7591)
+        # For new registrations, we use the parsed value (None if missing/invalid is fine for new records)
+        expires_at, _ = self._parse_expires_at_timestamp(registration_response.get("client_secret_expires_at"))
+
         # Create database record (use normalized issuer for consistent lookup)
         # Fall back to requested grant_types if AS response omits them
         registered_client = RegisteredOAuthClient(
@@ -236,7 +290,7 @@ class DcrService:
             registration_client_uri=registration_response.get("registration_client_uri"),
             registration_access_token_encrypted=registration_access_token_encrypted,
             created_at=datetime.now(timezone.utc),
-            expires_at=None,  # TODO: Calculate from client_id_issued_at + client_secret_expires_at  # pylint: disable=fixme
+            expires_at=expires_at,
             is_active=True,
         )
 
@@ -328,6 +382,14 @@ class DcrService:
                 # Update encrypted secret if changed
                 if "client_secret" in updated_response:
                     client_record.client_secret_encrypted = await encryption.encrypt_secret_async(updated_response["client_secret"])
+
+                # Update expires_at if client_secret_expires_at is provided and valid (RFC 7591)
+                # This is outside the client_secret block because an AS may refresh expiry without rotating the secret
+                # Only update if parsing succeeds; preserve existing expires_at on parse failure
+                if "client_secret_expires_at" in updated_response:
+                    parsed_expires_at, should_update = self._parse_expires_at_timestamp(updated_response.get("client_secret_expires_at"))
+                    if should_update:
+                        client_record.expires_at = parsed_expires_at
 
                 db.commit()
                 db.refresh(client_record)

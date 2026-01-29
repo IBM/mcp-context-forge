@@ -528,6 +528,251 @@ class TestRegisterClient:
             # Should be encrypted (base64-encoded)
             assert len(result.client_secret_encrypted) > 50
 
+    @pytest.mark.asyncio
+    async def test_register_client_sets_expires_at_from_client_secret_expires_at(self, test_db):
+        """Test that expires_at is set from client_secret_expires_at (RFC 7591)."""
+        from datetime import datetime, timezone
+
+        dcr_service = DcrService()
+
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+
+        # AS returns client_secret_expires_at as Unix timestamp
+        future_timestamp = int(datetime.now(timezone.utc).timestamp()) + 86400  # 1 day from now
+        mock_registration = {
+            "client_id": "test-client-expires",
+            "client_secret": "secret",
+            "client_secret_expires_at": future_timestamp,
+            "redirect_uris": ["http://localhost:4444/callback"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value=mock_registration)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-expires",
+                gateway_name="Test",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+            # expires_at should be set
+            assert result.expires_at is not None
+            # Compare as UTC datetime to avoid timezone issues with SQLite
+            expected_dt = datetime.fromtimestamp(future_timestamp, tz=timezone.utc)
+            # Normalize to UTC if timezone-naive (SQLite may strip tzinfo)
+            actual_dt = result.expires_at if result.expires_at.tzinfo else result.expires_at.replace(tzinfo=timezone.utc)
+            assert actual_dt == expected_dt
+
+    @pytest.mark.asyncio
+    async def test_register_client_expires_at_none_when_zero(self, test_db):
+        """Test that expires_at is None when client_secret_expires_at is 0 (never expires)."""
+        dcr_service = DcrService()
+
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+
+        # AS returns 0 meaning "never expires" per RFC 7591
+        mock_registration = {
+            "client_id": "test-client-never-expires",
+            "client_secret": "secret",
+            "client_secret_expires_at": 0,
+            "redirect_uris": ["http://localhost:4444/callback"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value=mock_registration)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-never-expires",
+                gateway_name="Test",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+            # expires_at should be None (never expires)
+            assert result.expires_at is None
+
+    @pytest.mark.asyncio
+    async def test_register_client_expires_at_none_when_missing(self, test_db):
+        """Test that expires_at is None when client_secret_expires_at is not in response."""
+        dcr_service = DcrService()
+
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+
+        # AS omits client_secret_expires_at entirely
+        mock_registration = {
+            "client_id": "test-client-no-expires",
+            "client_secret": "secret",
+            "redirect_uris": ["http://localhost:4444/callback"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value=mock_registration)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-no-expires",
+                gateway_name="Test",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+            # expires_at should be None
+            assert result.expires_at is None
+
+    @pytest.mark.asyncio
+    async def test_register_client_handles_string_client_secret_expires_at(self, test_db):
+        """Test that string client_secret_expires_at is coerced to int (non-strict AS)."""
+        from datetime import datetime, timezone
+
+        dcr_service = DcrService()
+
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+
+        # AS returns client_secret_expires_at as string (non-strict implementation)
+        future_timestamp = int(datetime.now(timezone.utc).timestamp()) + 86400
+        mock_registration = {
+            "client_id": "test-client-string-expires",
+            "client_secret": "secret",
+            "client_secret_expires_at": str(future_timestamp),  # String instead of int
+            "redirect_uris": ["http://localhost:4444/callback"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value=mock_registration)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-string-expires",
+                gateway_name="Test",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+            # Should handle string and set expires_at
+            assert result.expires_at is not None
+            # Compare as UTC datetime to avoid timezone issues with SQLite
+            expected_dt = datetime.fromtimestamp(future_timestamp, tz=timezone.utc)
+            # Normalize to UTC if timezone-naive (SQLite may strip tzinfo)
+            actual_dt = result.expires_at if result.expires_at.tzinfo else result.expires_at.replace(tzinfo=timezone.utc)
+            assert actual_dt == expected_dt
+
+    @pytest.mark.asyncio
+    async def test_register_client_handles_invalid_client_secret_expires_at(self, test_db):
+        """Test that invalid client_secret_expires_at is handled gracefully."""
+        dcr_service = DcrService()
+
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+
+        # AS returns invalid client_secret_expires_at
+        mock_registration = {
+            "client_id": "test-client-invalid-expires",
+            "client_secret": "secret",
+            "client_secret_expires_at": "invalid",  # Not a valid timestamp
+            "redirect_uris": ["http://localhost:4444/callback"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value=mock_registration)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            # Should not raise, just log warning and set expires_at to None
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-invalid-expires",
+                gateway_name="Test",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+            # expires_at should be None (invalid value ignored)
+            assert result.expires_at is None
+
+    @pytest.mark.asyncio
+    async def test_register_client_converts_millisecond_timestamp(self, test_db):
+        """Test that millisecond timestamps are detected and converted to seconds."""
+        from datetime import datetime, timezone
+
+        dcr_service = DcrService()
+
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+
+        # AS returns client_secret_expires_at in milliseconds (JavaScript-style)
+        ms_timestamp = 1717000000000  # Milliseconds
+        expected_seconds = 1717000000  # Converted to seconds
+        mock_registration = {
+            "client_id": "test-client-ms-expires",
+            "client_secret": "secret",
+            "client_secret_expires_at": ms_timestamp,
+            "redirect_uris": ["http://localhost:4444/callback"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value=mock_registration)
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            result = await dcr_service.register_client(
+                gateway_id="test-gw-ms-expires",
+                gateway_name="Test",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+            # expires_at should be set after converting ms to seconds
+            assert result.expires_at is not None
+            expected_dt = datetime.fromtimestamp(expected_seconds, tz=timezone.utc)
+            actual_dt = result.expires_at if result.expires_at.tzinfo else result.expires_at.replace(tzinfo=timezone.utc)
+            assert actual_dt == expected_dt
+
 
 class TestGetOrRegisterClient:
     """Test get-or-create pattern for DCR."""
@@ -694,6 +939,301 @@ class TestUpdateClientRegistration:
             call_kwargs = mock_client.put.call_args[1]
             assert "Authorization" in call_kwargs["headers"]
             assert call_kwargs["headers"]["Authorization"].startswith("Bearer ")
+
+    @pytest.mark.asyncio
+    async def test_update_client_registration_updates_expires_at(self, test_db):
+        """Test that expires_at is updated when client_secret_expires_at is in update response."""
+        from datetime import datetime, timezone
+        from mcpgateway.services.encryption_service import get_encryption_service
+        from mcpgateway.config import get_settings
+
+        dcr_service = DcrService()
+
+        from mcpgateway.db import RegisteredOAuthClient, Gateway
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-update-expires", name="Test", slug="test-update-expires", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        # Encrypt the registration access token properly
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")
+
+        # Create client with old expires_at
+        old_expires_at = datetime.now(timezone.utc)
+        client_record = RegisteredOAuthClient(
+            id="client-id-update-expires",
+            gateway_id="test-gw-update-expires",
+            issuer="https://as.example.com",
+            client_id="test-client-expires",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+            expires_at=old_expires_at,
+        )
+        test_db.add(client_record)
+        test_db.commit()
+
+        # AS returns new secret with new expiration
+        new_timestamp = int(datetime.now(timezone.utc).timestamp()) + 172800  # 2 days from now
+        mock_response = {
+            "client_id": "test-client-expires",
+            "client_secret": "new-rotated-secret",
+            "client_secret_expires_at": new_timestamp,
+        }
+
+        mock_response_obj = MagicMock()
+        mock_response_obj.status_code = 200
+        mock_response_obj.json = MagicMock(return_value=mock_response)
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response_obj)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.update_client_registration(client_record, test_db)
+
+            # expires_at should be updated to new value
+            assert result.expires_at is not None
+            expected_dt = datetime.fromtimestamp(new_timestamp, tz=timezone.utc)
+            # Normalize to UTC if timezone-naive (SQLite may strip tzinfo)
+            actual_dt = result.expires_at if result.expires_at.tzinfo else result.expires_at.replace(tzinfo=timezone.utc)
+            assert actual_dt == expected_dt
+
+    @pytest.mark.asyncio
+    async def test_update_client_registration_sets_expires_at_none_when_zero(self, test_db):
+        """Test that expires_at is set to None when client_secret_expires_at is 0 (never expires)."""
+        from datetime import datetime, timezone
+        from mcpgateway.services.encryption_service import get_encryption_service
+        from mcpgateway.config import get_settings
+
+        dcr_service = DcrService()
+
+        from mcpgateway.db import RegisteredOAuthClient, Gateway
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-update-never", name="Test", slug="test-update-never", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")
+
+        # Create client with existing expires_at
+        client_record = RegisteredOAuthClient(
+            id="client-id-update-never",
+            gateway_id="test-gw-update-never",
+            issuer="https://as.example.com",
+            client_id="test-client-never",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+            expires_at=datetime.now(timezone.utc),  # Has an expiration
+        )
+        test_db.add(client_record)
+        test_db.commit()
+
+        # AS returns new secret that never expires
+        mock_response = {
+            "client_id": "test-client-never",
+            "client_secret": "new-rotated-secret",
+            "client_secret_expires_at": 0,  # Never expires
+        }
+
+        mock_response_obj = MagicMock()
+        mock_response_obj.status_code = 200
+        mock_response_obj.json = MagicMock(return_value=mock_response)
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response_obj)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.update_client_registration(client_record, test_db)
+
+            # expires_at should be None (never expires)
+            assert result.expires_at is None
+
+    @pytest.mark.asyncio
+    async def test_update_client_registration_updates_expires_at_without_secret_rotation(self, test_db):
+        """Test that expires_at is updated even when client_secret is not rotated."""
+        from datetime import datetime, timezone
+        from mcpgateway.services.encryption_service import get_encryption_service
+        from mcpgateway.config import get_settings
+
+        dcr_service = DcrService()
+
+        from mcpgateway.db import RegisteredOAuthClient, Gateway
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-update-expiry-only", name="Test", slug="test-update-expiry-only", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")
+
+        # Create client with old expires_at
+        old_expires_at = datetime.now(timezone.utc)
+        client_record = RegisteredOAuthClient(
+            id="client-id-update-expiry-only",
+            gateway_id="test-gw-update-expiry-only",
+            issuer="https://as.example.com",
+            client_id="test-client-expiry-only",
+            client_secret_encrypted="original-encrypted-secret",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+            expires_at=old_expires_at,
+        )
+        test_db.add(client_record)
+        test_db.commit()
+
+        # AS returns new expiry but NO new secret (just refreshing expiration)
+        new_timestamp = int(datetime.now(timezone.utc).timestamp()) + 172800  # 2 days from now
+        mock_response = {
+            "client_id": "test-client-expiry-only",
+            # No client_secret - secret is not being rotated
+            "client_secret_expires_at": new_timestamp,
+        }
+
+        mock_response_obj = MagicMock()
+        mock_response_obj.status_code = 200
+        mock_response_obj.json = MagicMock(return_value=mock_response)
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response_obj)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.update_client_registration(client_record, test_db)
+
+            # Secret should remain unchanged
+            assert result.client_secret_encrypted == "original-encrypted-secret"
+
+            # expires_at should be updated to new value
+            assert result.expires_at is not None
+            expected_dt = datetime.fromtimestamp(new_timestamp, tz=timezone.utc)
+            actual_dt = result.expires_at if result.expires_at.tzinfo else result.expires_at.replace(tzinfo=timezone.utc)
+            assert actual_dt == expected_dt
+
+    @pytest.mark.asyncio
+    async def test_update_client_registration_preserves_expires_at_on_invalid_value(self, test_db):
+        """Test that invalid client_secret_expires_at preserves existing expires_at."""
+        from datetime import datetime, timezone, timedelta
+        from mcpgateway.services.encryption_service import get_encryption_service
+        from mcpgateway.config import get_settings
+
+        dcr_service = DcrService()
+
+        from mcpgateway.db import RegisteredOAuthClient, Gateway
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-update-preserve", name="Test", slug="test-update-preserve", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")
+
+        # Create client with valid expires_at
+        original_expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+        client_record = RegisteredOAuthClient(
+            id="client-id-update-preserve",
+            gateway_id="test-gw-update-preserve",
+            issuer="https://as.example.com",
+            client_id="test-client-preserve",
+            client_secret_encrypted="encrypted-secret",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+            expires_at=original_expires_at,
+        )
+        test_db.add(client_record)
+        test_db.commit()
+
+        # AS returns invalid client_secret_expires_at
+        mock_response = {
+            "client_id": "test-client-preserve",
+            "client_secret_expires_at": "invalid_value",  # Invalid - should preserve existing
+        }
+
+        mock_response_obj = MagicMock()
+        mock_response_obj.status_code = 200
+        mock_response_obj.json = MagicMock(return_value=mock_response)
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response_obj)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.update_client_registration(client_record, test_db)
+
+            # expires_at should be preserved (not cleared to None)
+            assert result.expires_at is not None
+            # Normalize for comparison
+            expected_dt = original_expires_at if original_expires_at.tzinfo else original_expires_at.replace(tzinfo=timezone.utc)
+            actual_dt = result.expires_at if result.expires_at.tzinfo else result.expires_at.replace(tzinfo=timezone.utc)
+            # Compare timestamps (allowing for small float precision differences)
+            assert abs(actual_dt.timestamp() - expected_dt.timestamp()) < 1
+
+    @pytest.mark.asyncio
+    async def test_update_client_registration_preserves_expires_at_on_negative_value(self, test_db):
+        """Test that negative client_secret_expires_at preserves existing expires_at."""
+        from datetime import datetime, timezone, timedelta
+        from mcpgateway.services.encryption_service import get_encryption_service
+        from mcpgateway.config import get_settings
+
+        dcr_service = DcrService()
+
+        from mcpgateway.db import RegisteredOAuthClient, Gateway
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-update-neg", name="Test", slug="test-update-neg", url="http://test.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
+        encrypted_token = encryption.encrypt_secret("registration-access-token")
+
+        # Create client with valid expires_at
+        original_expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+        client_record = RegisteredOAuthClient(
+            id="client-id-update-neg",
+            gateway_id="test-gw-update-neg",
+            issuer="https://as.example.com",
+            client_id="test-client-neg",
+            client_secret_encrypted="encrypted-secret",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted=encrypted_token,
+            redirect_uris='["http://localhost:4444/callback"]',
+            grant_types='["authorization_code"]',
+            expires_at=original_expires_at,
+        )
+        test_db.add(client_record)
+        test_db.commit()
+
+        # AS returns negative client_secret_expires_at
+        mock_response = {
+            "client_id": "test-client-neg",
+            "client_secret_expires_at": -100,  # Negative - should preserve existing
+        }
+
+        mock_response_obj = MagicMock()
+        mock_response_obj.status_code = 200
+        mock_response_obj.json = MagicMock(return_value=mock_response)
+
+        mock_client = AsyncMock()
+        mock_client.put = AsyncMock(return_value=mock_response_obj)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.update_client_registration(client_record, test_db)
+
+            # expires_at should be preserved (not cleared to None)
+            assert result.expires_at is not None
 
 
 class TestDeleteClientRegistration:
