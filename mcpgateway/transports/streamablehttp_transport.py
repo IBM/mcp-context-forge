@@ -470,6 +470,9 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
 
         Logs and returns an empty list on failure.
 
+    Raises:
+        Exception: Re-raises exceptions encountered during tool invocation after logging.
+
     Examples:
         >>> # Test call_tool function signature
         >>> import inspect
@@ -511,6 +514,39 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
     app_user_email = get_user_email_from_context()  # Keep for OAuth token selection
+
+    # Multi-worker session affinity: check if we should forward to another worker
+    mcp_session_id = request_headers.get("x-mcp-session-id") if request_headers else None
+    if settings.mcpgateway_session_affinity_enabled and mcp_session_id:
+        try:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            pool = get_mcp_session_pool()
+            forwarded_response = await pool.forward_request_to_owner(
+                mcp_session_id,
+                {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
+            )
+            if forwarded_response is not None:
+                # Request was handled by another worker - convert response to expected format
+                if "error" in forwarded_response:
+                    raise Exception(forwarded_response["error"].get("message", "Forwarded request failed"))  # pylint: disable=broad-exception-raised
+                result_data = forwarded_response.get("result", {})
+                # Convert result back to expected content types
+                content = result_data.get("content", [])
+                if content:
+                    return_content: list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource] = []
+                    for item in content:
+                        if item.get("type") == "text":
+                            return_content.append(types.TextContent(type="text", text=item.get("text", "")))
+                        elif item.get("type") == "image":
+                            return_content.append(types.ImageContent(type="image", data=item.get("data", ""), mimeType=item.get("mimeType", "image/png")))
+                    return return_content
+                return []
+        except RuntimeError:
+            # Pool not initialized - execute locally
+            pass
+
     try:
         async with get_db() as db:
             result = await tool_service.invoke_tool(
@@ -1219,6 +1255,14 @@ class SessionManagerWrapper:
 
         # Extract request headers from scope
         headers = dict(Headers(scope=scope))
+        # Store headers in context for tool invocations
+
+        # Extract MCP session ID from client request and add as x-mcp-session-id for upstream session affinity
+        mcp_session_id = headers.get("mcp-session-id")
+        if mcp_session_id:
+            headers["x-mcp-session-id"] = mcp_session_id
+            logger.debug(f"Injected x-mcp-session-id: {mcp_session_id} for session affinity")
+
         # Store headers in context for tool invocations
         request_headers_var.set(headers)
 
