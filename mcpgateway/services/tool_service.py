@@ -2875,7 +2875,7 @@ class ToolService:
                         # Manually trigger circuit breaker (or other plugins) on timeout
                         try:
                             # First-Party
-                            from mcpgateway.services.metrics import tool_timeout_counter
+                            from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
                             tool_timeout_counter.labels(tool_name=name).inc()
                         except Exception:
@@ -3045,7 +3045,9 @@ class ToolService:
                             ToolResult: Result of tool call
 
                         Raises:
+                            ToolInvocationError: If the tool invocation times out or fails during execution.
                             BaseException: On connection or communication errors
+
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
@@ -3128,7 +3130,7 @@ class ToolService:
                             # Manually trigger circuit breaker (or other plugins) on timeout
                             try:
                                 # First-Party
-                                from mcpgateway.services.metrics import tool_timeout_counter
+                                from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
                                 tool_timeout_counter.labels(tool_name=name).inc()
                             except Exception:
@@ -3183,6 +3185,7 @@ class ToolService:
                             ToolResult: Result of tool call
 
                         Raises:
+                            ToolInvocationError: If the tool invocation times out or fails during execution.
                             BaseException: On connection or communication errors
                         """
                         # Get correlation ID for distributed tracing
@@ -3266,7 +3269,7 @@ class ToolService:
                             # Manually trigger circuit breaker (or other plugins) on timeout
                             try:
                                 # First-Party
-                                from mcpgateway.services.metrics import tool_timeout_counter
+                                from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
                                 tool_timeout_counter.labels(tool_name=name).inc()
                             except Exception:
