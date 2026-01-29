@@ -1275,13 +1275,10 @@ class SessionManagerWrapper:
 
         # Extract request headers from scope
         headers = dict(Headers(scope=scope))
-        # Store headers in context for tool invocations
 
-        # Extract MCP session ID from client request and add as x-mcp-session-id for upstream session affinity
-        mcp_session_id = headers.get("mcp-session-id")
-        if mcp_session_id:
-            headers["x-mcp-session-id"] = mcp_session_id
-            logger.debug(f"Injected x-mcp-session-id: {mcp_session_id} for session affinity")
+        # Note: mcp-session-id from client is used for gateway-internal session affinity
+        # routing (stored in request_headers_var), but is NOT renamed or forwarded to
+        # upstream servers - it's a gateway-side concept, not an end-to-end semantic header
 
         # Store headers in context for tool invocations
         request_headers_var.set(headers)

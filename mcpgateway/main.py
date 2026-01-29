@@ -2727,8 +2727,8 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
 
-        # Pass request headers to SSETransport for session affinity support
-        transport = SSETransport(base_url=server_sse_url, request_headers=dict(request.headers))
+        # SSE transport generates its own session_id - server-initiated, not client-provided
+        transport = SSETransport(base_url=server_sse_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
 
@@ -5456,10 +5456,18 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         # The x-forwarded-internally header marks requests that have already been forwarded
         # to prevent infinite forwarding loops
         headers = {k.lower(): v for k, v in request.headers.items()}
-        mcp_session_id = headers.get("x-mcp-session-id")
+        # Session ID can come from two sources:
+        # 1. MCP-Session-Id (mcp-session-id) - MCP protocol header from Streamable HTTP clients
+        # 2. x-mcp-session-id - our internal header from SSE session_registry calls
+        mcp_session_id = headers.get("mcp-session-id") or headers.get("x-mcp-session-id")
         is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
 
         if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
+
+            session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | RPC request received, checking affinity")
             try:
                 # First-Party
                 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
@@ -5471,6 +5479,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 )
                 if forwarded_response is not None:
                     # Request was handled by another worker
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded response received")
                     if "error" in forwarded_response:
                         raise JSONRPCError(
                             forwarded_response["error"].get("code", -32603),
@@ -5480,7 +5489,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     return {"jsonrpc": "2.0", "result": result, "id": req_id}
             except RuntimeError:
                 # Pool not initialized - execute locally
-                pass
+                logger.debug(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Pool not initialized, executing locally")
+        elif is_internally_forwarded and mcp_session_id:
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import WORKER_ID  # pylint: disable=import-outside-toplevel
+
+            session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Internally forwarded request, executing locally")
 
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
@@ -6134,8 +6149,8 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         logger.debug("User %s requested SSE connection", user)
         base_url = update_url_protocol(request)
 
-        # Pass request headers to SSETransport for session affinity support
-        transport = SSETransport(base_url=base_url, request_headers=dict(request.headers))
+        # SSE transport generates its own session_id - server-initiated, not client-provided
+        transport = SSETransport(base_url=base_url)
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
 

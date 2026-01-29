@@ -2820,6 +2820,17 @@ class ToolService:
                             gateway_auth_type=None,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
+                        # Read MCP-Session-Id from downstream client (MCP protocol header)
+                        # and normalize to x-mcp-session-id for our internal session affinity logic
+                        # The pool will strip this before sending to upstream
+                        request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
+                        mcp_session_id = request_headers_lower.get("mcp-session-id")
+                        if mcp_session_id:
+                            headers["x-mcp-session-id"] = mcp_session_id
+                            import os  # pylint: disable=import-outside-toplevel
+                            worker_id = str(os.getpid())
+                            session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+                            logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
 
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -2991,12 +3002,17 @@ class ToolService:
                         headers = compute_passthrough_headers_cached(
                             request_headers, headers, passthrough_allowed, gateway_auth_type=gateway_auth_type, gateway_passthrough_headers=gateway_passthrough
                         )
-                        # Preserve x-mcp-session-id for upstream session affinity (fallback)
-                        # This ensures the header is passed even if not in passthrough config
-                        if settings.mcpgateway_session_affinity_enabled:
-                            mcp_session_id = request_headers.get("x-mcp-session-id") or request_headers.get("X-Mcp-Session-Id")
-                            if mcp_session_id and "x-mcp-session-id" not in headers:
-                                headers["x-mcp-session-id"] = mcp_session_id
+                        # Read MCP-Session-Id from downstream client (MCP protocol header)
+                        # and normalize to x-mcp-session-id for our internal session affinity logic
+                        # The pool will strip this before sending to upstream
+                        request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
+                        mcp_session_id = request_headers_lower.get("mcp-session-id")
+                        if mcp_session_id:
+                            headers["x-mcp-session-id"] = mcp_session_id
+                            import os  # pylint: disable=import-outside-toplevel
+                            worker_id = str(os.getpid())
+                            session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+                            logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
 
                     def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
                         """Create an SSL context with the provided CA certificate.

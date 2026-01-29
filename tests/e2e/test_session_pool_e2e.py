@@ -1147,3 +1147,177 @@ class TestMultiWorkerSessionAffinityE2E:
                     await pool.start_rpc_listener()
         finally:
             await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_affinity_logs_when_we_own_session(self, caplog):
+        """Verify [AFFINITY] log is emitted when we own the session."""
+        import logging
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-log-own"
+
+            # Create a mock Redis that returns our worker ID
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=WORKER_ID.encode())
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                        result = await pool.forward_request_to_owner(
+                            mcp_session_id,
+                            {"method": "tools/call", "params": {"name": "test_tool"}}
+                        )
+
+                        assert result is None
+                        # Verify affinity log was emitted
+                        affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
+                        assert len(affinity_logs) >= 1, "Expected [AFFINITY] log to be emitted"
+                        assert "We own it" in affinity_logs[0].message
+                        assert WORKER_ID in affinity_logs[0].message
+                        assert "test-ses" in affinity_logs[0].message  # First 8 chars of session ID
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_affinity_logs_when_no_owner(self, caplog):
+        """Verify [AFFINITY] log is emitted when no owner is registered."""
+        import logging
+
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-log-noowner"
+
+            # Create a mock Redis that returns None (no owner)
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=None)
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                        result = await pool.forward_request_to_owner(
+                            mcp_session_id,
+                            {"method": "resources/list", "params": {}}
+                        )
+
+                        assert result is None
+                        # Verify affinity log was emitted
+                        affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
+                        assert len(affinity_logs) >= 1, "Expected [AFFINITY] log to be emitted"
+                        assert "No owner" in affinity_logs[0].message
+                        assert "execute locally" in affinity_logs[0].message
+
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_affinity_logs_when_forwarding_to_another_worker(self, caplog):
+        """Verify [AFFINITY] logs are emitted when forwarding to another worker."""
+        import logging
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-log-forward"
+            other_worker_id = "99999"  # Different from our WORKER_ID
+
+            # Create a mock Redis
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=other_worker_id.encode())
+
+            # Mock pubsub - make get_message raise TimeoutError after being called
+            call_count = 0
+            async def mock_get_message(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count > 2:
+                    raise asyncio.TimeoutError("Mock timeout")
+                return None
+
+            mock_pubsub = AsyncMock()
+            mock_pubsub.subscribe = AsyncMock()
+            mock_pubsub.unsubscribe = AsyncMock()
+            mock_pubsub.get_message = mock_get_message
+            mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+            mock_redis.publish = AsyncMock()
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.5  # Short timeout for test
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                        try:
+                            await pool.forward_request_to_owner(
+                                mcp_session_id,
+                                {"method": "tools/call", "params": {"name": "test_tool"}}
+                            )
+                        except asyncio.TimeoutError:
+                            pass  # Expected - no actual worker to respond
+
+                        # Verify affinity logs were emitted
+                        affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
+                        assert len(affinity_logs) >= 2, f"Expected at least 2 [AFFINITY] logs, got {len(affinity_logs)}"
+
+                        # Check for forwarding decision log
+                        forwarding_log = [r for r in affinity_logs if "forwarding" in r.message.lower()]
+                        assert len(forwarding_log) >= 1, "Expected forwarding log"
+                        assert other_worker_id in forwarding_log[0].message
+
+                        # Check for publish log
+                        publish_log = [r for r in affinity_logs if "Published" in r.message]
+                        assert len(publish_log) >= 1, "Expected publish log"
+
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_affinity_logs_when_executing_forwarded_request(self, caplog):
+        """Verify [AFFINITY] logs are emitted when executing a forwarded request."""
+        import logging
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        pool = MCPSessionPool()
+
+        try:
+            with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                # This will fail with connection error since no server is running,
+                # but should still emit the log before attempting the HTTP call
+                result = await pool._execute_forwarded_request({
+                    "method": "tools/call",
+                    "params": {"name": "test_tool"},
+                    "mcp_session_id": "test-session-forwarded",
+                    "req_id": 1
+                })
+
+                # Should return error (no server running)
+                assert "error" in result
+
+                # Verify affinity logs were emitted
+                affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
+                assert len(affinity_logs) >= 1, "Expected [AFFINITY] log to be emitted"
+                assert "Received forwarded request" in affinity_logs[0].message
+                assert WORKER_ID in affinity_logs[0].message
+                assert "test-ses" in affinity_logs[0].message  # First 8 chars
+
+        finally:
+            await pool.close_all()
