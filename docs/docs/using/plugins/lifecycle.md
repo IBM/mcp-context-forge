@@ -213,6 +213,20 @@ plugins:
     mcp:
       proto: STREAMABLEHTTP
       url: http://localhost:8000/mcp
+
+To use Streamable HTTP over a Unix domain socket (no TCP port):
+
+```yaml
+plugins:
+
+  - name: "MyFilter"
+    kind: "external"
+    priority: 10
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://localhost/mcp
+      uds: /var/run/mcp-plugin.sock
+```
 ```
 
 To use STDIO instead of HTTP:

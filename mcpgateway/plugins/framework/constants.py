@@ -19,6 +19,7 @@ SCRIPT = "script"
 CMD = "cmd"
 ENV = "env"
 CWD = "cwd"
+UDS = "uds"
 
 NAME = "name"
 PYTHON = "python"

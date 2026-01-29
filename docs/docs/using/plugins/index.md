@@ -135,6 +135,7 @@ plugins:
     mcp:
       proto: STREAMABLEHTTP
       url: http://localhost:8000/mcp
+      # uds: /var/run/mcp-plugin.sock  # use UDS instead of TCP
 ```
 
 ### Plugin Configuration
@@ -324,6 +325,7 @@ For external plugins (`kind: "external"`), the `mcp` object configures the MCP s
 |-------|------|----------|-------------|---------|
 | `proto` | `string` | Yes | MCP transport protocol | `"stdio"`, `"sse"`, `"streamablehttp"`, `"websocket"` |
 | `url` | `string` |  | Service URL for HTTP-based transports | `"http://openai-plugin:3000/mcp"` |
+| `uds` | `string` |  | Unix domain socket path for Streamable HTTP | `"/var/run/mcp-plugin.sock"` |
 | `script` | `string` |  | Script path for STDIO transport | `"/opt/plugins/custom-filter.py"` |
 | `cmd` | `string[]` |  | Command + args for STDIO transport | `["/opt/plugins/custom-filter"]` |
 | `env` | `object` |  | Environment overrides for STDIO transport | `{"PLUGINS_CONFIG_PATH": "/opt/plugins/config.yaml"}` |
@@ -1312,6 +1314,7 @@ plugins:
 
 - **Native Plugins:** <1ms latency overhead per hook
 - **External Service Plugins:** 10-100ms depending on service (cached responses: <5ms)
+- **Streamable HTTP over UDS:** Typically lower overhead than STDIO, no TCP port exposure
 - **Memory Usage:** ~5MB base overhead + ~1MB per active plugin
 - **Throughput:** Tested to 1,000+ req/s with 5 active plugins
 

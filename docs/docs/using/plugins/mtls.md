@@ -303,12 +303,16 @@ Run your gateway code (YAML without `tls` section in `mcp` config).
 |----------|-------------|---------|
 | `PLUGINS_SERVER_HOST` | Server bind address | `127.0.0.1` |
 | `PLUGINS_SERVER_PORT` | Server bind port | `8000` |
+| `PLUGINS_SERVER_UDS` | Unix domain socket path (Streamable HTTP only; no TLS) | `/var/run/mcp-plugin.sock` |
 | `PLUGINS_SERVER_SSL_ENABLED` | Enable SSL/TLS | `true` |
 | `PLUGINS_SERVER_SSL_KEYFILE` | Path to server private key | `certs/.../server.key` |
 | `PLUGINS_SERVER_SSL_CERTFILE` | Path to server certificate | `certs/.../server.crt` |
 | `PLUGINS_SERVER_SSL_CA_CERTS` | Path to CA bundle | `certs/.../ca.crt` |
 | `PLUGINS_SERVER_SSL_CERT_REQS` | Client cert requirement (0-2) | `2` |
 | `PLUGINS_SERVER_SSL_KEYFILE_PASSWORD` | Password for encrypted key | `password` |
+
+!!! note
+    `PLUGINS_SERVER_UDS` and TLS are mutually exclusive. UDS runs without TLS by design.
 
 **`ssl_cert_reqs` values:**
 - `0` = `CERT_NONE` - No client certificate required

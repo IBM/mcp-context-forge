@@ -31,8 +31,8 @@
     },
     "api_allow_basic_auth": {
       "default": false,
-      "title": "API Allow Basic Auth",
       "description": "Allow Basic authentication for API endpoints. Disabled by default for security. Use JWT or API tokens instead.",
+      "title": "Api Allow Basic Auth",
       "type": "boolean"
     },
     "database_url": {
@@ -132,14 +132,14 @@
       "type": "integer"
     },
     "require_token_expiration": {
-      "default": false,
-      "description": "Require all JWT tokens to have expiration claims",
+      "default": true,
+      "description": "Require all JWT tokens to have expiration claims (secure default)",
       "title": "Require Token Expiration",
       "type": "boolean"
     },
     "require_jti": {
-      "default": false,
-      "description": "Require JTI (JWT ID) claim in all tokens for revocation support",
+      "default": true,
+      "description": "Require JTI (JWT ID) claim in all tokens for revocation support (secure default)",
       "title": "Require Jti",
       "type": "boolean"
     },
@@ -863,6 +863,12 @@
       "title": "Email Auth Enabled",
       "type": "boolean"
     },
+    "public_registration_enabled": {
+      "default": false,
+      "description": "Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
+      "title": "Public Registration Enabled",
+      "type": "boolean"
+    },
     "platform_admin_email": {
       "default": "admin@example.com",
       "description": "Platform administrator email address",
@@ -1380,8 +1386,8 @@
     },
     "allowed_origins": {
       "default": [
-        "http://localhost:4444",
-        "http://localhost"
+        "http://localhost",
+        "http://localhost:4444"
       ],
       "items": {
         "type": "string"
@@ -2450,13 +2456,13 @@
     "allowed_mime_types": {
       "default": [
         "image/png",
-        "application/xml",
-        "text/markdown",
-        "image/jpeg",
-        "text/html",
+        "text/plain",
         "image/gif",
+        "image/jpeg",
         "application/json",
-        "text/plain"
+        "text/markdown",
+        "application/xml",
+        "text/html"
       ],
       "items": {
         "type": "string"
@@ -3143,7 +3149,7 @@
       "type": "string"
     },
     "validation_tool_name_pattern": {
-      "default": "^[a-zA-Z][a-zA-Z0-9._-]*$",
+      "default": "^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$",
       "title": "Validation Tool Name Pattern",
       "type": "string"
     },

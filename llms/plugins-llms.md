@@ -75,7 +75,7 @@ Plugins: How They Work in MCP Context Forge
   - `config`: plugin-specific dict (native only; external config lives on the external server)
   - `mcp` (external only):
     - `proto`: `STDIO | STREAMABLEHTTP | SSE`
-    - `url` for HTTP-like transports, `script` for STDIO (.py required)
+    - `url` for HTTP-like transports, `script` or `cmd` for STDIO, `uds` for Streamable HTTP over unix sockets
 - Global `plugin_settings`:
   - `parallel_execution_within_band` (reserved)
   - `plugin_timeout` (seconds)
@@ -98,8 +98,8 @@ Plugins: How They Work in MCP Context Forge
     - `{ "context": <PluginContext serialized> }` (to update context)
     - `{ "error": <PluginErrorModel> }` to signal errors
 - `get_plugin_config` must return a `PluginConfig`-compatible JSON; the gateway merges remote+local with local taking precedence for gateway-owned fields. For external plugins, gateway-side `config` is disallowed (plugin's own server owns it).
-- Transports: `STDIO` (spawn python script) or `STREAMABLEHTTP` (connect to `url`).
-- Validation: `script` must exist and be `.py`; `url` must pass security validation.
+- Transports: `STDIO` (spawn script/command) or `STREAMABLEHTTP` (connect to `url`, optionally via `uds`).
+- Validation: `script` must exist (if absolute) and be `.py`/`.sh` or executable; `url` must pass security validation.
 
 **Authoring Workflow**
 - CLI: `mcpplugins bootstrap --destination <dir> [--type native|external]` creates a project from templates in `plugin_templates/`.
@@ -116,9 +116,10 @@ Plugins: How They Work in MCP Context Forge
      - name: "MyFilter"
        kind: "external"
        priority: 10
-      mcp:
-        proto: STREAMABLEHTTP
-        url: http://localhost:8000/mcp
+     mcp:
+       proto: STREAMABLEHTTP
+       url: http://localhost:8000/mcp
+       # uds: /var/run/mcp-plugin.sock  # use UDS instead of TCP
         # tls:
         #   ca_bundle: /app/certs/plugins/ca.crt
         #   client_cert: /app/certs/plugins/gateway-client.pem

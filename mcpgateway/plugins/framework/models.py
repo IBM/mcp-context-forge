@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, field_serializer, field_validator, model_
 # First-Party
 from mcpgateway.common.models import TransportType
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, URL
+from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, UDS, URL
 
 T = TypeVar("T")
 
@@ -389,12 +389,48 @@ class MCPServerConfig(BaseModel):
     Attributes:
         host (str): Server host to bind to.
         port (int): Server port to bind to.
+        uds (Optional[str]): Unix domain socket path for streamable HTTP.
         tls (Optional[MCPServerTLSConfig]): Server-side TLS configuration.
     """
 
     host: str = Field(default="127.0.0.1", description="Server host to bind to")
     port: int = Field(default=8000, description="Server port to bind to")
+    uds: Optional[str] = Field(default=None, description="Unix domain socket path for streamable HTTP")
     tls: Optional[MCPServerTLSConfig] = Field(default=None, description="Server-side TLS configuration")
+
+    @field_validator("uds", mode="after")
+    @classmethod
+    def validate_uds(cls, uds: str | None) -> str | None:
+        """Validate the Unix domain socket path.
+
+        Args:
+            uds: Unix domain socket path.
+
+        Returns:
+            The validated uds string or None if none is set.
+
+        Raises:
+            ValueError: if uds is empty or whitespace.
+        """
+        if uds is None:
+            return uds
+        if not isinstance(uds, str) or not uds.strip():
+            raise ValueError("MCP server uds must be a non-empty string.")
+        return uds
+
+    @model_validator(mode="after")
+    def validate_uds_tls(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure TLS is not configured when using a Unix domain socket.
+
+        Returns:
+            Self after validation.
+
+        Raises:
+            ValueError: if tls is set with uds.
+        """
+        if self.uds and self.tls:
+            raise ValueError("TLS configuration is not supported for Unix domain sockets.")
+        return self
 
     @staticmethod
     def _parse_bool(value: Optional[str]) -> Optional[bool]:
@@ -440,6 +476,8 @@ class MCPServerConfig(BaseModel):
                 data["port"] = int(env["PLUGINS_SERVER_PORT"])
             except ValueError:
                 raise ValueError(f"Invalid PLUGINS_SERVER_PORT: {env['PLUGINS_SERVER_PORT']}")
+        if env.get("PLUGINS_SERVER_UDS"):
+            data["uds"] = env["PLUGINS_SERVER_UDS"]
 
         # Check if SSL/TLS is enabled
         ssl_enabled = cls._parse_bool(env.get("PLUGINS_SERVER_SSL_ENABLED"))
@@ -465,6 +503,7 @@ class MCPClientConfig(BaseModel):
         cmd (Optional[list[str]]): Command + args used to start a STDIO MCP server. Only valid for STDIO type.
         env (Optional[dict[str, str]]): Environment overrides for STDIO server process.
         cwd (Optional[str]): Working directory for STDIO server process.
+        uds (Optional[str]): Unix domain socket path for streamable HTTP.
         tls (Optional[MCPClientTLSConfig]): Client-side TLS configuration for mTLS.
     """
 
@@ -474,6 +513,7 @@ class MCPClientConfig(BaseModel):
     cmd: Optional[list[str]] = None
     env: Optional[dict[str, str]] = None
     cwd: Optional[str] = None
+    uds: Optional[str] = None
     tls: Optional[MCPClientTLSConfig] = None
 
     @field_validator(URL, mode="after")
@@ -588,6 +628,26 @@ class MCPClientConfig(BaseModel):
             raise ValueError(f"MCP stdio cwd {cwd} does not exist or is not a directory.")
         return cwd
 
+    @field_validator(UDS, mode="after")
+    @classmethod
+    def validate_uds(cls, uds: str | None) -> str | None:
+        """Validate a Unix domain socket path for streamable HTTP.
+
+        Args:
+            uds: Unix domain socket path.
+
+        Returns:
+            The validated uds string or None if none is set.
+
+        Raises:
+            ValueError: if uds is empty or whitespace.
+        """
+        if uds is None:
+            return uds
+        if not isinstance(uds, str) or not uds.strip():
+            raise ValueError("MCP client uds must be a non-empty string.")
+        return uds
+
     @model_validator(mode="after")
     def validate_tls_usage(self) -> Self:  # pylint: disable=bad-classmethod-argument
         """Ensure TLS configuration is only used with HTTP-based transports.
@@ -601,6 +661,8 @@ class MCPClientConfig(BaseModel):
 
         if self.tls and self.proto not in (TransportType.SSE, TransportType.STREAMABLEHTTP):
             raise ValueError("TLS configuration is only valid for HTTP/SSE transports")
+        if self.uds and self.tls:
+            raise ValueError("TLS configuration is not supported for Unix domain sockets.")
         return self
 
     @model_validator(mode="after")
@@ -617,6 +679,8 @@ class MCPClientConfig(BaseModel):
             raise ValueError("URL is only valid for HTTP/SSE transports")
         if self.proto != TransportType.STDIO and (self.script or self.cmd or self.env or self.cwd):
             raise ValueError("script/cmd/env/cwd are only valid for STDIO transport")
+        if self.proto != TransportType.STREAMABLEHTTP and self.uds:
+            raise ValueError("uds is only valid for STREAMABLEHTTP transport")
         return self
 
 

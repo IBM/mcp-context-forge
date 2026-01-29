@@ -243,7 +243,10 @@ class ExternalPlugin(Plugin):
             PluginError: if there is an external connection error after all retries.
         """
         plugin_tls = self._config.mcp.tls if self._config and self._config.mcp else None
-        tls_config = plugin_tls or MCPClientTLSConfig.from_env()
+        uds_path = self._config.mcp.uds if self._config and self._config.mcp else None
+        if uds_path and plugin_tls:
+            logger.warning("TLS configuration is ignored for Unix domain socket connections.")
+        tls_config = None if uds_path else (plugin_tls or MCPClientTLSConfig.from_env())
 
         def _tls_httpx_client_factory(
             headers: Optional[dict[str, str]] = None,
@@ -268,6 +271,8 @@ class ExternalPlugin(Plugin):
             from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
 
             kwargs: dict[str, Any] = {"follow_redirects": True}
+            if uds_path:
+                kwargs["transport"] = httpx.AsyncHTTPTransport(uds=uds_path)
             if headers:
                 kwargs["headers"] = headers
             kwargs["timeout"] = timeout if timeout else get_http_timeout()
@@ -299,7 +304,7 @@ class ExternalPlugin(Plugin):
         for attempt in range(max_retries):
 
             try:
-                client_factory = _tls_httpx_client_factory if tls_config else None
+                client_factory = _tls_httpx_client_factory if (tls_config or uds_path) else None
                 async with AsyncExitStack() as temp_stack:
                     streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
                     http_transport = await temp_stack.enter_async_context(streamable_client)
@@ -314,7 +319,7 @@ class ExternalPlugin(Plugin):
                         " ".join([tool.name for tool in tools]),
                     )
 
-                client_factory = _tls_httpx_client_factory if tls_config else None
+                client_factory = _tls_httpx_client_factory if (tls_config or uds_path) else None
                 streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
                 http_transport = await self._exit_stack.enter_async_context(streamable_client)
                 self._http, self._write, _ = http_transport
@@ -326,7 +331,8 @@ class ExternalPlugin(Plugin):
                 logger.warning(f"Connection attempt {attempt + 1}/{max_retries} failed: {e}")
                 if attempt == max_retries - 1:
                     # Final attempt failed
-                    error_msg = f"External plugin '{self.name}' connection failed after {max_retries} attempts: {uri} is not reachable. Please ensure the MCP server is running."
+                    target = f"{uri} (uds={uds_path})" if uds_path else uri
+                    error_msg = f"External plugin '{self.name}' connection failed after {max_retries} attempts: {target} is not reachable. Please ensure the MCP server is running."
                     logger.error(error_msg)
                     raise PluginError(error=PluginErrorModel(message=error_msg, plugin_name=self.name))
                 await self.shutdown()

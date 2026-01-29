@@ -273,3 +273,21 @@ def test_mcp_config_cwd_valid():
         cwd=".",
     )
     assert cfg.cwd == "."
+
+
+def test_mcp_config_uds_invalid_transport():
+    """UDS is only valid for streamable HTTP."""
+    with pytest.raises(ValueError, match="uds is only valid for STREAMABLEHTTP transport"):
+        MCPClientConfig(proto=TransportType.STDIO, script="mcpgateway/plugins/framework/external/mcp/server/runtime.py", uds="/tmp/mcp.sock")
+
+
+def test_mcp_config_uds_accepts_streamable_http():
+    """UDS is accepted for streamable HTTP."""
+    cfg = MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds="/tmp/mcp.sock")
+    assert cfg.uds == "/tmp/mcp.sock"
+
+
+def test_mcp_config_uds_tls_rejected():
+    """UDS should not allow TLS configuration."""
+    with pytest.raises(ValueError, match="TLS configuration is not supported for Unix domain sockets"):
+        MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds="/tmp/mcp.sock", tls={})
