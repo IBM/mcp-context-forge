@@ -40,7 +40,10 @@ logger = logging.getLogger(__name__)
 
 
 class ExternalPlugin(Plugin):
-    """External plugin object for pre/post processing of inputs and outputs at various locations throughout the mcp gateway. The External Plugin connects to a remote MCP server that contains plugins."""
+    """External plugin object for pre/post processing of inputs and outputs at various locations throughout the gateway.
+
+    The External Plugin connects to a remote MCP server that contains plugins.
+    """
 
     def __init__(self, config: PluginConfig) -> None:
         """Initialize a plugin with a configuration and context.
