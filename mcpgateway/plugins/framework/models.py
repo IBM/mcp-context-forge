@@ -11,6 +11,7 @@ the base plugin layer including configurations, and contexts.
 
 # Standard
 from enum import Enum
+import logging
 import os
 from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar, Union
@@ -430,12 +431,8 @@ class MCPServerConfig(BaseModel):
             parent_mode = parent_dir.stat().st_mode
             # Warn if parent directory is world-writable (o+w = 0o002)
             if parent_mode & 0o002:
-                import logging
-
                 logging.getLogger(__name__).warning(
-                    "MCP server uds parent directory %s is world-writable. "
-                    "This may allow unauthorized socket hijacking. "
-                    "Consider using a directory with restricted permissions (e.g., 0o700).",
+                    "MCP server uds parent directory %s is world-writable. This may allow unauthorized socket hijacking. Consider using a directory with restricted permissions (e.g., 0o700).",
                     parent_dir,
                 )
         except OSError:
@@ -685,12 +682,8 @@ class MCPClientConfig(BaseModel):
             parent_mode = parent_dir.stat().st_mode
             # Warn if parent directory is world-writable (o+w = 0o002)
             if parent_mode & 0o002:
-                import logging
-
                 logging.getLogger(__name__).warning(
-                    "MCP client uds parent directory %s is world-writable. "
-                    "This may allow unauthorized socket hijacking. "
-                    "Consider using a directory with restricted permissions (e.g., 0o700).",
+                    "MCP client uds parent directory %s is world-writable. This may allow unauthorized socket hijacking. Consider using a directory with restricted permissions (e.g., 0o700).",
                     parent_dir,
                 )
         except OSError:
