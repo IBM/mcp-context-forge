@@ -9,6 +9,7 @@ Tests for external client on streamable http.
 
 # Standard
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -18,19 +19,33 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework import ConfigLoader, GlobalContext, PluginContext, PluginLoader, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import ConfigLoader, GlobalContext, PluginContext, PluginLoader, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 
 
-@pytest.fixture(autouse=True)
+def _wait_for_port(host: str, port: int, timeout: float = 5.0) -> None:
+    """Wait until a TCP port is accepting connections."""
+    start = time.time()
+    while time.time() - start < timeout:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            if sock.connect_ex((host, port)) == 0:
+                return
+        time.sleep(0.1)
+    raise RuntimeError(f"Timed out waiting for {host}:{port}")
+
+
+@pytest.fixture
 def server_proc():
     current_env = os.environ.copy()
-    current_env["CHUK_MCP_CONFIG_PATH"] = "plugins/resources/server/config-http.yaml"
     current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
     current_env["PYTHONPATH"] = "."
+    current_env["PLUGINS_TRANSPORT"] = "http"
+    current_env["PLUGINS_SERVER_HOST"] = "127.0.0.1"
+    current_env["PLUGINS_SERVER_PORT"] = "3001"
     # Start the server as a subprocess
     try:
         with subprocess.Popen([sys.executable, "mcpgateway/plugins/framework/external/mcp/server/runtime.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=current_env) as server_proc:
-            time.sleep(2)  # Give the server time to start
+            _wait_for_port("127.0.0.1", 3001)
             yield server_proc
             server_proc.terminate()
             server_proc.wait(timeout=3)  # Wait for the subprocess to complete
@@ -39,7 +54,6 @@ def server_proc():
         server_proc.wait(timeout=3)
 
 
-@pytest.mark.skip(reason="Flaky, fails on Python 3.12, need to debug.")
 @pytest.mark.asyncio
 async def test_client_load_streamable_http(server_proc):
     assert not server_proc.poll(), "Server failed to start"
@@ -48,39 +62,41 @@ async def test_client_load_streamable_http(server_proc):
 
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
-    prompt = PromptPrehookPayload(name="test_prompt", args={"user": "What a crapshow!"})
-    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
-    result = await plugin.prompt_pre_fetch(prompt, context)
-    assert result.modified_payload.args["user"] == "What a yikesshow!"
-    config = plugin.config
-    assert config.name == "ReplaceBadWordsPlugin"
-    assert config.description == "A plugin for finding and replacing words."
-    assert config.priority == 150
-    assert config.kind == "external"
-    message = Message(content=TextContent(type="text", text="What the crud?"), role=Role.USER)
-    prompt_result = PromptResult(messages=[message])
+    try:
+        prompt = PromptPrehookPayload(prompt_id="test_prompt", args={"user": "What a crapshow!"})
+        context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
+        result = await plugin.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, context)
+        assert result.modified_payload.args["user"] == "What a yikesshow!"
+        config = plugin.config
+        assert config.name == "ReplaceBadWordsPlugin"
+        assert config.description == "A plugin for finding and replacing words."
+        assert config.priority == 150
+        assert config.kind == "external"
+        message = Message(content=TextContent(type="text", text="What the crud?"), role=Role.USER)
+        prompt_result = PromptResult(messages=[message])
 
-    payload_result = PromptPosthookPayload(name="test_prompt", result=prompt_result)
+        payload_result = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
 
-    result = await plugin.prompt_post_fetch(payload_result, context=context)
-    assert len(result.modified_payload.result.messages) == 1
-    assert result.modified_payload.result.messages[0].content.text == "What the yikes?"
-    await plugin.shutdown()
-    await loader.shutdown()
-    server_proc.terminate()
-    server_proc.wait()  # Wait for the process to fully terminate
+        result = await plugin.invoke_hook(PromptHookType.PROMPT_POST_FETCH, payload_result, context)
+        assert len(result.modified_payload.result.messages) == 1
+        assert result.modified_payload.result.messages[0].content.text == "What the yikes?"
+    finally:
+        await plugin.shutdown()
+        await loader.shutdown()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def server_proc1():
     current_env = os.environ.copy()
-    current_env["CHUK_MCP_CONFIG_PATH"] = "plugins/resources/server/config-http.yaml"
     current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml"
     current_env["PYTHONPATH"] = "."
+    current_env["PLUGINS_TRANSPORT"] = "http"
+    current_env["PLUGINS_SERVER_HOST"] = "127.0.0.1"
+    current_env["PLUGINS_SERVER_PORT"] = "3001"
     # Start the server as a subprocess
     try:
         with subprocess.Popen([sys.executable, "mcpgateway/plugins/framework/external/mcp/server/runtime.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=current_env) as server_proc:
-            time.sleep(2)  # Give the server time to start
+            _wait_for_port("127.0.0.1", 3001)
             yield server_proc
             server_proc.terminate()
             server_proc.wait(timeout=3)  # Wait for the subprocess to complete
@@ -89,7 +105,6 @@ def server_proc1():
         server_proc.wait(timeout=3)
 
 
-@pytest.mark.skip(reason="Flaky, need to debug.")
 @pytest.mark.asyncio
 async def test_client_load_strhttp_overrides(server_proc1):
     assert not server_proc1.poll(), "Server failed to start"
@@ -98,35 +113,37 @@ async def test_client_load_strhttp_overrides(server_proc1):
 
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
-    prompt = PromptPrehookPayload(name="test_prompt", args={"text": "That was innovative!"})
-    result = await plugin.prompt_pre_fetch(prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
-    assert result.violation
-    assert result.violation.reason == "Prompt not allowed"
-    assert result.violation.description == "A deny word was found in the prompt"
-    assert result.violation.code == "deny"
-    config = plugin.config
-    assert config.name == "DenyListPlugin"
-    assert config.description == "a different configuration."
-    assert config.priority == 150
-    assert config.hooks[0] == "prompt_pre_fetch"
-    assert config.hooks[1] == "prompt_post_fetch"
-    assert config.kind == "external"
-    await plugin.shutdown()
-    await loader.shutdown()
-    server_proc1.terminate()
-    server_proc1.wait()  # Wait for the process to fully terminate
+    try:
+        prompt = PromptPrehookPayload(prompt_id="test_prompt", args={"text": "That was innovative!"})
+        result = await plugin.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
+        assert result.violation
+        assert result.violation.reason == "Prompt not allowed"
+        assert result.violation.description == "A deny word was found in the prompt"
+        assert result.violation.code == "deny"
+        config = plugin.config
+        assert config.name == "DenyListPlugin"
+        assert config.description == "a different configuration."
+        assert config.priority == 150
+        assert config.hooks[0] == "prompt_pre_fetch"
+        assert config.hooks[1] == "prompt_post_fetch"
+        assert config.kind == "external"
+    finally:
+        await plugin.shutdown()
+        await loader.shutdown()
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def server_proc2():
     current_env = os.environ.copy()
-    current_env["CHUK_MCP_CONFIG_PATH"] = "plugins/resources/server/config-http.yaml"
     current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml"
     current_env["PYTHONPATH"] = "."
+    current_env["PLUGINS_TRANSPORT"] = "http"
+    current_env["PLUGINS_SERVER_HOST"] = "127.0.0.1"
+    current_env["PLUGINS_SERVER_PORT"] = "3001"
     # Start the server as a subprocess
     try:
         with subprocess.Popen([sys.executable, "mcpgateway/plugins/framework/external/mcp/server/runtime.py"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=current_env) as server_proc:
-            time.sleep(2)  # Give the server time to start
+            _wait_for_port("127.0.0.1", 3001)
             yield server_proc
             server_proc.terminate()
             server_proc.wait(timeout=3)  # Wait for the subprocess to complete
@@ -135,7 +152,6 @@ def server_proc2():
         server_proc.wait(timeout=3)
 
 
-@pytest.mark.skip(reason="Flaky, fails on Python 3.12, need to debug.")
 @pytest.mark.asyncio
 async def test_client_load_strhttp_post_prompt(server_proc2):
     assert not server_proc2.poll(), "Server failed to start"
@@ -144,25 +160,25 @@ async def test_client_load_strhttp_post_prompt(server_proc2):
 
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
-    prompt = PromptPrehookPayload(name="test_prompt", args={"user": "What a crapshow!"})
-    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
-    result = await plugin.prompt_pre_fetch(prompt, context)
-    assert result.modified_payload.args["user"] == "What a yikesshow!"
-    config = plugin.config
-    assert config.name == "ReplaceBadWordsPlugin"
-    assert config.description == "A plugin for finding and replacing words."
-    assert config.priority == 150
-    assert config.kind == "external"
+    try:
+        prompt = PromptPrehookPayload(prompt_id="test_prompt", args={"user": "What a crapshow!"})
+        context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
+        result = await plugin.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, context)
+        assert result.modified_payload.args["user"] == "What a yikesshow!"
+        config = plugin.config
+        assert config.name == "ReplaceBadWordsPlugin"
+        assert config.description == "A plugin for finding and replacing words."
+        assert config.priority == 150
+        assert config.kind == "external"
 
-    message = Message(content=TextContent(type="text", text="What the crud?"), role=Role.USER)
-    prompt_result = PromptResult(messages=[message])
+        message = Message(content=TextContent(type="text", text="What the crud?"), role=Role.USER)
+        prompt_result = PromptResult(messages=[message])
 
-    payload_result = PromptPosthookPayload(name="test_prompt", result=prompt_result)
+        payload_result = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
 
-    result = await plugin.prompt_post_fetch(payload_result, context=context)
-    assert len(result.modified_payload.result.messages) == 1
-    assert result.modified_payload.result.messages[0].content.text == "What the yikes?"
-    await plugin.shutdown()
-    await loader.shutdown()
-    server_proc2.terminate()
-    server_proc2.wait()  # Wait for the process to fully terminate
+        result = await plugin.invoke_hook(PromptHookType.PROMPT_POST_FETCH, payload_result, context)
+        assert len(result.modified_payload.result.messages) == 1
+        assert result.modified_payload.result.messages[0].content.text == "What the yikes?"
+    finally:
+        await plugin.shutdown()
+        await loader.shutdown()

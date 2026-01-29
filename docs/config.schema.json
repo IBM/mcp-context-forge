@@ -1,5 +1,5 @@
 {
-  "description": "MCP Gateway configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'MCP_Gateway'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True",
+  "description": "MCP Gateway configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'MCP_Gateway'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True\n    >>> s6 = Settings(log_detailed_skip_endpoints=[\"/metrics\", \"/health\"])\n    >>> s6.log_detailed_skip_endpoints\n    ['/metrics', '/health']\n    >>> s7 = Settings(log_detailed_sample_rate=0.5)\n    >>> s7.log_detailed_sample_rate\n    0.5\n    >>> s8 = Settings(log_resolve_user_identity=True)\n    >>> s8.log_resolve_user_identity\n    True\n    >>> s9 = Settings()\n    >>> s9.log_detailed_skip_endpoints\n    []\n    >>> s9.log_detailed_sample_rate\n    1.0\n    >>> s9.log_resolve_user_identity\n    False",
   "properties": {
     "app_name": {
       "default": "MCP_Gateway",
@@ -839,6 +839,12 @@
       "title": "Dcr Client Name Template",
       "type": "string"
     },
+    "dcr_request_refresh_token_when_unsupported": {
+      "default": false,
+      "description": "Request refresh_token even when AS metadata omits grant_types_supported. Enable for AS servers that support refresh tokens but don't advertise it.",
+      "title": "Dcr Request Refresh Token When Unsupported",
+      "type": "boolean"
+    },
     "oauth_discovery_enabled": {
       "default": true,
       "description": "Enable OAuth AS metadata discovery (RFC 8414)",
@@ -1209,6 +1215,18 @@
       "title": "Mcpgateway Catalog Page Size",
       "type": "integer"
     },
+    "mcpgateway_bootstrap_roles_in_db_enabled": {
+      "default": false,
+      "description": "Enable MCP Gateway add additional roles in db",
+      "title": "Mcpgateway Bootstrap Roles In Db Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_bootstrap_roles_in_db_file": {
+      "default": "additional_roles_in_db.json",
+      "description": "Path to add additional roles in db",
+      "title": "Mcpgateway Bootstrap Roles In Db File",
+      "type": "string"
+    },
     "mcpgateway_elicitation_enabled": {
       "default": true,
       "description": "Enable elicitation passthrough support (MCP 2025-06-18)",
@@ -1362,8 +1380,8 @@
     },
     "allowed_origins": {
       "default": [
-        "http://localhost",
-        "http://localhost:4444"
+        "http://localhost:4444",
+        "http://localhost"
       ],
       "items": {
         "type": "string"
@@ -2376,6 +2394,21 @@
       "title": "Sse Keepalive Interval",
       "type": "integer"
     },
+    "sse_send_timeout": {
+      "default": 30.0,
+      "title": "Sse Send Timeout",
+      "type": "number"
+    },
+    "sse_rapid_yield_window_ms": {
+      "default": 1000,
+      "title": "Sse Rapid Yield Window Ms",
+      "type": "integer"
+    },
+    "sse_rapid_yield_max": {
+      "default": 50,
+      "title": "Sse Rapid Yield Max",
+      "type": "integer"
+    },
     "federation_timeout": {
       "default": 120,
       "title": "Federation Timeout",
@@ -2416,13 +2449,13 @@
     },
     "allowed_mime_types": {
       "default": [
-        "application/json",
-        "image/gif",
-        "image/jpeg",
+        "image/png",
         "application/xml",
         "text/markdown",
+        "image/jpeg",
         "text/html",
-        "image/png",
+        "image/gif",
+        "application/json",
         "text/plain"
       ],
       "items": {
@@ -2536,6 +2569,26 @@
       },
       "title": "Mcp Session Pool Identity Headers",
       "type": "array"
+    },
+    "mcp_session_pool_cleanup_timeout": {
+      "default": 5.0,
+      "title": "Mcp Session Pool Cleanup Timeout",
+      "type": "number"
+    },
+    "sse_task_group_cleanup_timeout": {
+      "default": 5.0,
+      "title": "Sse Task Group Cleanup Timeout",
+      "type": "number"
+    },
+    "anyio_cancel_delivery_patch_enabled": {
+      "default": false,
+      "title": "Anyio Cancel Delivery Patch Enabled",
+      "type": "boolean"
+    },
+    "anyio_cancel_delivery_max_iterations": {
+      "default": 100,
+      "title": "Anyio Cancel Delivery Max Iterations",
+      "type": "integer"
     },
     "prompt_cache_size": {
       "default": 100,
@@ -2688,6 +2741,14 @@
       ],
       "title": "Db Pool Pre Ping",
       "type": "string"
+    },
+    "db_sqlite_busy_timeout": {
+      "default": 5000,
+      "description": "SQLite busy timeout in milliseconds (default: 5000ms)",
+      "maximum": 60000,
+      "minimum": 1000,
+      "title": "Db Sqlite Busy Timeout",
+      "type": "integer"
     },
     "cache_type": {
       "default": "database",

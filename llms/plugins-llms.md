@@ -130,7 +130,11 @@ Plugins: How They Work in MCP Context Forge
        priority: 10
        mcp:
          proto: STDIO
-         script: path/to/server.py
+         cmd: ["python", "path/to/server.py"]
+         env:
+           PLUGINS_CONFIG_PATH: "/opt/plugins/config.yaml"
+         cwd: "/opt/plugins"
+         # or: script: path/to/server.py
      ```
 - Enable framework in gateway: `.env` must set `PLUGINS_ENABLED=true` and optionally `PLUGIN_CONFIG_FILE=plugins/config.yaml`. To reuse a gateway-wide mTLS client certificate for multiple external plugins, set `PLUGINS_MTLS_CA_BUNDLE`, `PLUGINS_MTLS_CLIENT_CERT`, and related `PLUGINS_MTLS_*` variables. Individual plugin `tls` blocks override these defaults.
 

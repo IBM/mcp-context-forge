@@ -193,6 +193,7 @@ class ExternalPluginServer:
             >>> import os
             >>> os.environ["PYTHONPATH"] = "."
             >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptHookType, PromptPrehookPayload, PluginContext, PromptPrehookResult, PluginManager
+            >>> PluginManager.reset()
             >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
             >>> payload = PromptPrehookPayload(prompt_id="123", name="test_prompt", args={"user": "This is a crap app"})
             >>> context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))

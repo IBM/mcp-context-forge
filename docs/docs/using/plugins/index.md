@@ -325,6 +325,9 @@ For external plugins (`kind: "external"`), the `mcp` object configures the MCP s
 | `proto` | `string` | Yes | MCP transport protocol | `"stdio"`, `"sse"`, `"streamablehttp"`, `"websocket"` |
 | `url` | `string` |  | Service URL for HTTP-based transports | `"http://openai-plugin:3000/mcp"` |
 | `script` | `string` |  | Script path for STDIO transport | `"/opt/plugins/custom-filter.py"` |
+| `cmd` | `string[]` |  | Command + args for STDIO transport | `["/opt/plugins/custom-filter"]` |
+| `env` | `object` |  | Environment overrides for STDIO transport | `{"PLUGINS_CONFIG_PATH": "/opt/plugins/config.yaml"}` |
+| `cwd` | `string` |  | Working directory for STDIO transport | `"/opt/plugins"` |
 
 #### Global Plugin Settings
 

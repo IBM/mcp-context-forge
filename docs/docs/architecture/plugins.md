@@ -266,6 +266,9 @@ For external plugins (`kind: "external"`), the `mcp` object configures the MCP s
 | `proto` | `string` | Yes | MCP transport protocol | `"stdio"`, `"sse"`, `"streamablehttp"`, `"websocket"` |
 | `url` | `string` |  | Service URL for HTTP-based transports | `"http://openai-plugin:3000/mcp"` |
 | `script` | `string` |  | Script path for STDIO transport | `"/opt/plugins/custom-filter.py"` |
+| `cmd` | `string[]` |  | Command + args for STDIO transport | `["/opt/plugins/custom-filter"]` |
+| `env` | `object` |  | Environment overrides for STDIO transport | `{"PLUGINS_CONFIG_PATH": "/opt/plugins/config.yaml"}` |
+| `cwd` | `string` |  | Working directory for STDIO transport (used to resolve relative script paths) | `"/opt/plugins"` |
 
 #### Global Plugin Settings
 
@@ -741,6 +744,9 @@ class MCPConfig(BaseModel):
     proto: TransportType                     # STDIO, SSE, or STREAMABLEHTTP
     url: Optional[str] = None                # Service URL (for HTTP transports)
     script: Optional[str] = None             # Script path (for STDIO transport)
+    cmd: Optional[list[str]] = None          # Command + args (for STDIO transport)
+    env: Optional[dict[str, str]] = None     # Environment overrides (for STDIO)
+    cwd: Optional[str] = None                # Working directory (for STDIO)
 
 class PluginMode(str, Enum):
     """Plugin execution modes"""
@@ -1125,7 +1131,7 @@ plugins:
     kind: "external"
     mcp:
       proto: "STDIO"
-      script: "/opt/plugins/go-filter"
+      cmd: ["/opt/plugins/go-filter"]
 
   # Rust plugin
   - name: "CryptoValidator"
@@ -1677,7 +1683,7 @@ plugins:
     kind: "external"
     mcp:
       proto: "STDIO"
-      script: "/opt/plugins/go-filter"
+      cmd: ["/opt/plugins/go-filter"]
 
   # Rust plugin
   - name: "CryptoValidator"
