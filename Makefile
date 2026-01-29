@@ -1143,6 +1143,8 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-fasttime    - Load test fast_time MCP tools (50 users, 60s)
 # help: load-test-1000        - High-load test (1000 users, 120s)
 # help: load-test-summary     - Parse CSV reports and show summary statistics
+# help: load-test-container-down - Stop Locust container
+# help: load-test-container-logs - Show Locust container logs
 
 # Default load test configuration (optimized for 4000+ users)
 LOADTEST_HOST ?= http://localhost:8080
@@ -1157,98 +1159,30 @@ LOADTEST_CSV_PREFIX := reports/locust
 LOADTEST_GEVENT_RESOLVER := $(shell python3 -c "from gevent.resolver.cares import Resolver; print('ares')" 2>/dev/null || echo "")
 
 load-test:                                 ## Run HTTP load test (4000 users, 5m, headless)
-	@echo "🔥 Running HTTP load test with Locust..."
-	@echo "   Host: $(LOADTEST_HOST)"
-	@echo "   Users: $(LOADTEST_USERS)"
-	@echo "   Spawn rate: $(LOADTEST_SPAWN_RATE)/s"
-	@echo "   Duration: $(LOADTEST_RUN_TIME)"
-	@echo "   Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
-	@echo ""
-	@# Check ulimits and warn if below threshold
-	@NOFILE=$$(ulimit -n 2>/dev/null || echo 0); \
-	NPROC=$$(ulimit -u 2>/dev/null || echo 0); \
-	if [ "$$NOFILE" -lt 10000 ]; then \
-		echo "   ⚠️  WARNING: ulimit -n ($$NOFILE) is below 10000 - may cause connection failures"; \
-		echo "   💡 Fix: Add to /etc/security/limits.conf and restart shell"; \
-		echo ""; \
-	fi; \
-	if [ "$$NPROC" -lt 10000 ]; then \
-		echo "   ⚠️  WARNING: ulimit -u ($$NPROC) is below 10000 - may limit worker processes"; \
-		echo ""; \
-	fi
-	@echo "   💡 Tip: Start server first with 'make dev' in another terminal"
-	@echo "   💡 Tip: For best results, run: sudo scripts/tune-loadtest.sh"
-	@echo ""
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p reports
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		ulimit -n 65536 2>/dev/null || true && \
-		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
-		locust -f $(LOADTEST_LOCUSTFILE) \
-			--host=$(LOADTEST_HOST) \
-			--users=$(LOADTEST_USERS) \
-			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
-			--run-time=$(LOADTEST_RUN_TIME) \
-			--processes=$(LOADTEST_PROCESSES) \
-			--headless \
-			--html=$(LOADTEST_HTML_REPORT) \
-			--csv=$(LOADTEST_CSV_PREFIX) \
-			--only-summary"
-	@echo ""
-	@echo "✅ Load test complete!"
-	@echo "📄 HTML Report: $(LOADTEST_HTML_REPORT)"
-	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
+	@scripts/run-locust.sh --headless --only-summary
 
 load-test-ui:                              ## Start Locust web UI at http://localhost:8089
-	@echo "🔥 Starting Locust Web UI (optimized for 4000+ users)..."
-	@echo "   🌐 Open http://localhost:8089 in your browser"
-	@echo "   🎯 Default host: $(LOADTEST_HOST)"
-	@echo "   👥 Default users: $(LOADTEST_USERS), spawn rate: $(LOADTEST_SPAWN_RATE)/s"
-	@echo "   ⏱️  Default run time: $(LOADTEST_RUN_TIME)"
-	@echo "   🚀 Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
-	@echo ""
-	@# Check ulimits and warn if below threshold
-	@NOFILE=$$(ulimit -n 2>/dev/null || echo 0); \
-	NPROC=$$(ulimit -u 2>/dev/null || echo 0); \
-	if [ "$$NOFILE" -lt 10000 ]; then \
-		echo "   ⚠️  WARNING: ulimit -n ($$NOFILE) is below 10000 - may cause connection failures"; \
-		echo "   💡 Fix: Add to /etc/security/limits.conf and restart shell:"; \
-		echo "      *  soft  nofile  65536"; \
-		echo "      *  hard  nofile  65536"; \
-		echo ""; \
-	fi; \
-	if [ "$$NPROC" -lt 10000 ]; then \
-		echo "   ⚠️  WARNING: ulimit -u ($$NPROC) is below 10000 - may limit worker processes"; \
-		echo ""; \
-	fi
-	@echo "   💡 For best results, run: sudo scripts/tune-loadtest.sh"
-	@echo "   💡 Use 'User classes' dropdown to select FastTimeUser, etc."
-	@echo "   💡 Start benchmark servers first: make benchmark-up"
-	@echo ""
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		ulimit -n 65536 2>/dev/null || true && \
-		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
-		locust -f $(LOADTEST_LOCUSTFILE) \
-			--host=$(LOADTEST_HOST) \
-			--users=$(LOADTEST_USERS) \
-			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
-			--run-time=$(LOADTEST_RUN_TIME) \
-			--processes=$(LOADTEST_PROCESSES) \
-			--class-picker"
+	@scripts/run-locust.sh --class-picker
+
+# Compose command for locust container management
+COMPOSE_CMD_LOCUST := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "podman compose")
+
+load-test-container-down:                  ## Stop Locust container
+	@echo "🛑 Stopping Locust container..."
+	@$(COMPOSE_CMD_LOCUST) -f docker-compose.yml -f docker-compose.locust.yml down locust --remove-orphans
+	@echo "✅ Locust container stopped."
+
+load-test-container-logs:                  ## Show Locust container logs
+	@$(COMPOSE_CMD_LOCUST) -f docker-compose.yml -f docker-compose.locust.yml logs -f locust
 
 load-test-light:                           ## Light load test (10 users, 30s)
-	@echo "🔥 Running LIGHT load test..."
-	@$(MAKE) load-test LOADTEST_USERS=10 LOADTEST_SPAWN_RATE=2 LOADTEST_RUN_TIME=30s
+	@scripts/run-locust.sh --headless --users 10 --spawn-rate 2 --run-time 30s --only-summary
 
 load-test-heavy:                           ## Heavy load test (200 users, 120s)
-	@echo "🔥 Running HEAVY load test..."
-	@echo "   ⚠️  This will generate significant load on your server"
-	@$(MAKE) load-test LOADTEST_USERS=200 LOADTEST_SPAWN_RATE=20 LOADTEST_RUN_TIME=120s
+	@scripts/run-locust.sh --headless --users 200 --spawn-rate 20 --run-time 120s --only-summary
 
 load-test-sustained:                       ## Sustained load test (25 users, 300s)
-	@echo "🔥 Running SUSTAINED load test (5 minutes)..."
-	@$(MAKE) load-test LOADTEST_USERS=25 LOADTEST_SPAWN_RATE=5 LOADTEST_RUN_TIME=300s
+	@scripts/run-locust.sh --headless --users 25 --spawn-rate 5 --run-time 300s --only-summary
 
 load-test-stress:                          ## Stress test (500 users, 60s)
 	@echo "🔥 Running STRESS test..."
@@ -1258,7 +1192,7 @@ load-test-stress:                          ## Stress test (500 users, 60s)
 	@read -p "Continue with stress test? [y/N] " -n 1 -r; \
 	echo; \
 	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
-		$(MAKE) load-test LOADTEST_USERS=500 LOADTEST_SPAWN_RATE=50 LOADTEST_RUN_TIME=60s; \
+		scripts/run-locust.sh --headless --users 500 --spawn-rate 50 --run-time 60s --only-summary; \
 	else \
 		echo "❌ Cancelled"; \
 	fi
