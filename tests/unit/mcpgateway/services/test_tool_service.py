@@ -3611,9 +3611,9 @@ class TestToolTimeoutsAndRetries:
         """Verify per-tool timeout_ms takes priority over global setting."""
         tool_timeout_ms = 5000  # 5 seconds
         global_timeout = 60    # 60 seconds
-        
+
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
-        
+
         assert effective_timeout == 5.0, "Per-tool timeout should take priority"
 
     @pytest.mark.asyncio
@@ -3621,10 +3621,10 @@ class TestToolTimeoutsAndRetries:
         """Verify that timeout_ms=0 falls back to global timeout."""
         tool_timeout_ms = 0
         global_timeout = 60
-        
+
         # 0 is falsy, so should fall back to global
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
-        
+
         assert effective_timeout == 60, "Zero timeout should fall back to global"
 
     @pytest.mark.asyncio
@@ -3632,9 +3632,9 @@ class TestToolTimeoutsAndRetries:
         """Verify that timeout_ms=None falls back to global timeout."""
         tool_timeout_ms = None
         global_timeout = 60
-        
+
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
-        
+
         assert effective_timeout == 60, "None timeout should fall back to global"
 
     @pytest.mark.asyncio
@@ -3647,7 +3647,7 @@ class TestToolTimeoutsAndRetries:
             (100, 0.1),
             (60000, 60.0),
         ]
-        
+
         for timeout_ms, expected_seconds in test_cases:
             effective_timeout = timeout_ms / 1000
             assert effective_timeout == expected_seconds, f"Failed for {timeout_ms}ms"
@@ -3666,16 +3666,16 @@ class TestToolTimeoutsAndRetries:
         async def slow_operation():
             await asyncio.sleep(10)
             return "completed"
-        
+
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(slow_operation(), timeout=0.01)
 
     def test_initial_state_is_closed(self):
         """Verify circuit breaker starts in closed state."""
         from plugins.circuit_breaker.circuit_breaker import _get_state
-        
+
         state = _get_state("test_tool")
-        
+
         assert state.open_until == 0.0
         assert state.half_open is False
         assert state.consecutive_failures == 0
@@ -3684,44 +3684,44 @@ class TestToolTimeoutsAndRetries:
         """Verify state tracks call timestamps."""
         import time
         from plugins.circuit_breaker.circuit_breaker import _get_state
-        
+
         state = _get_state("test_tool")
         state.calls.append(time.time())
         state.calls.append(time.time())
-        
+
         assert len(state.calls) == 2
 
     def test_state_tracks_failures_in_window(self):
         """Verify state tracks failure timestamps."""
         import time
         from plugins.circuit_breaker.circuit_breaker import _get_state
-        
+
         state = _get_state("test_tool")
         state.failures.append(time.time())
         state.failures.append(time.time())
-        
+
         assert len(state.failures) == 2
 
     def test_consecutive_failures_increment(self):
         """Verify consecutive failures counter increments."""
         from plugins.circuit_breaker.circuit_breaker import _get_state
-        
+
         state = _get_state("test_tool")
         state.consecutive_failures += 1
         state.consecutive_failures += 1
         state.consecutive_failures += 1
-        
+
         assert state.consecutive_failures == 3
 
     def test_consecutive_failures_reset_on_success(self):
         """Verify consecutive failures reset to 0 on success."""
         from plugins.circuit_breaker.circuit_breaker import _get_state
-        
+
         state = _get_state("test_tool")
         state.consecutive_failures = 5
         # Simulate success
         state.consecutive_failures = 0
-        
+
         assert state.consecutive_failures == 0
 
     @pytest.mark.asyncio
@@ -3732,29 +3732,29 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
-        
+
         # Create plugin
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1,
             config={"cooldown_seconds": 1}
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Open the circuit
         state = _get_state("test_tool")
         state.open_until = time.time() - 1  # Cooldown expired
         state.half_open = False
-        
+
         # Create payload
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
-        
+
         # Create mock context
         context = MagicMock()
         context.set_state = MagicMock()
-        
+
         # Process pre_invoke
         result = await plugin.tool_pre_invoke(payload, context)
-        
+
         # Should allow request through (transition to half-open)
         assert result.continue_processing is True
         # Verify half-open state was set in context
@@ -3768,28 +3768,28 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
-        
+
         # Create plugin with short cooldown
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1,
             config={"cooldown_seconds": 60}
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Set up half-open state
         state = _get_state("test_tool")
         state.half_open = True
-        
+
         # Create mock error result
         mock_result = MagicMock()
         mock_result.is_error = True
-        
+
         payload = ToolPostInvokePayload(
             name="test_tool",
             arguments={},
             result=mock_result
         )
-        
+
         # Create mock context indicating half-open test
         context = MagicMock()
         context.get_state = MagicMock(side_effect=lambda k, d=None: {
@@ -3797,10 +3797,10 @@ class TestToolTimeoutsAndRetries:
             "cb_half_open_test": True,
             "cb_timeout_failure": False,
         }.get(k, d))
-        
+
         # Process post_invoke
         result = await plugin.tool_post_invoke(payload, context)
-        
+
         # Circuit should be reopened
         assert state.open_until > time.time()
         assert state.half_open is False
@@ -3813,28 +3813,28 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
-        
+
         # Create plugin
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Set up half-open state
         state = _get_state("test_tool")
         state.half_open = True
         state.consecutive_failures = 4
-        
+
         # Create mock success result
         mock_result = MagicMock()
         mock_result.is_error = False
-        
+
         payload = ToolPostInvokePayload(
             name="test_tool",
             arguments={},
             result=mock_result
         )
-        
+
         # Create mock context indicating half-open test
         context = MagicMock()
         context.get_state = MagicMock(side_effect=lambda k, d=None: {
@@ -3842,10 +3842,10 @@ class TestToolTimeoutsAndRetries:
             "cb_half_open_test": True,
             "cb_timeout_failure": False,
         }.get(k, d))
-        
+
         # Process post_invoke
         result = await plugin.tool_post_invoke(payload, context)
-        
+
         # Circuit should be fully closed
         assert state.half_open is False
         assert state.consecutive_failures == 0
@@ -3859,36 +3859,36 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
-        
+
         # Create plugin with low consecutive failure threshold
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1,
             config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60}
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Pre-set consecutive failures to threshold - 1
         state = _get_state("test_tool")
         state.consecutive_failures = 2
         state.calls = deque([time.time()])
         state.failures = deque([time.time()])
-        
+
         # Create mock error result
         mock_result = MagicMock()
         mock_result.is_error = True
-        
+
         payload = ToolPostInvokePayload(
             name="test_tool",
             arguments={},
             result=mock_result
         )
-        
+
         context = MagicMock()
         context.get_state = MagicMock(return_value=None)
-        
+
         # Process post_invoke - should trip breaker
         result = await plugin.tool_post_invoke(payload, context)
-        
+
         # Circuit should be open
         assert state.open_until > time.time()
 
@@ -3901,7 +3901,7 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
-        
+
         # Create plugin with specific error rate settings
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1,
@@ -3912,30 +3912,30 @@ class TestToolTimeoutsAndRetries:
             }
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Pre-set calls and failures for 50% error rate
         now = time.time()
         state = _get_state("test_tool")
         state.calls = deque([now - 1])  # 1 previous call
         state.failures = deque([now - 1])  # 1 failure (this will be the 2nd)
         state.consecutive_failures = 1
-        
+
         # Create mock error result
         mock_result = MagicMock()
         mock_result.is_error = True
-        
+
         payload = ToolPostInvokePayload(
             name="test_tool",
             arguments={},
             result=mock_result
         )
-        
+
         context = MagicMock()
         context.get_state = MagicMock(side_effect=lambda k, d=None: now if k == "cb_call_time" else d)
-        
+
         # Process post_invoke - should trip breaker (2/2 = 100% > 50%)
         result = await plugin.tool_post_invoke(payload, context)
-        
+
         # Circuit should be open
         assert state.open_until > time.time()
 
@@ -3947,26 +3947,26 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
-        
+
         # Create plugin
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Open the circuit with future close time
         state = _get_state("test_tool")
         state.open_until = time.time() + 30  # 30 seconds from now
-        
+
         # Create payload
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
-        
+
         # Create mock context
         context = MagicMock()
-        
+
         # Process pre_invoke - should block
         result = await plugin.tool_pre_invoke(payload, context)
-        
+
         # Should block with retry_after_seconds
         assert result.continue_processing is False
         assert result.violation is not None
@@ -3980,29 +3980,29 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
-        
+
         # Create plugin
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Create mock success result
         mock_result = MagicMock()
         mock_result.is_error = False
-        
+
         payload = ToolPostInvokePayload(
             name="test_tool",
             arguments={},
             result=mock_result
         )
-        
+
         context = MagicMock()
         context.get_state = MagicMock(return_value=None)
-        
+
         # Process post_invoke
         result = await plugin.tool_post_invoke(payload, context)
-        
+
         # Verify all metadata fields are present
         required_fields = [
             "circuit_calls_in_window",
@@ -4013,7 +4013,7 @@ class TestToolTimeoutsAndRetries:
             "circuit_half_open",
             "circuit_retry_after_seconds",
         ]
-        
+
         for field in required_fields:
             assert field in result.metadata, f"Missing field: {field}"
 
@@ -4025,23 +4025,23 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
-        
+
         # Create plugin
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Create mock result that looks successful
         mock_result = MagicMock()
         mock_result.is_error = False  # Result doesn't show error
-        
+
         payload = ToolPostInvokePayload(
             name="test_tool",
             arguments={},
             result=mock_result
         )
-        
+
         # Create context with timeout flag set
         context = MagicMock()
         context.get_state = MagicMock(side_effect=lambda k, d=None: {
@@ -4049,10 +4049,10 @@ class TestToolTimeoutsAndRetries:
             "cb_half_open_test": False,
             "cb_timeout_failure": True,  # TIMEOUT OCCURRED!
         }.get(k, d))
-        
+
         # Process post_invoke
         result = await plugin.tool_post_invoke(payload, context)
-        
+
         # Should count as failure
         assert result.metadata["circuit_failures_in_window"] == 1
         assert result.metadata["circuit_consecutive_failures"] == 1
@@ -4065,27 +4065,27 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
-        
+
         # Create plugin with low threshold
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1,
             config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60}
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         state = _get_state("test_tool")
         state.consecutive_failures = 2  # Already at threshold - 1
-        
+
         # Create mock result that looks successful
         mock_result = MagicMock()
         mock_result.is_error = False
-        
+
         payload = ToolPostInvokePayload(
             name="test_tool",
             arguments={},
             result=mock_result
         )
-        
+
         # Create context with timeout flag set
         context = MagicMock()
         context.get_state = MagicMock(side_effect=lambda k, d=None: {
@@ -4093,10 +4093,10 @@ class TestToolTimeoutsAndRetries:
             "cb_half_open_test": False,
             "cb_timeout_failure": True,  # 3rd consecutive failure via timeout
         }.get(k, d))
-        
+
         # Process post_invoke
         result = await plugin.tool_post_invoke(payload, context)
-        
+
         # Should trip the breaker
         assert state.open_until > time.time()
 
@@ -4105,7 +4105,7 @@ class TestToolTimeoutsAndRetries:
         from plugins.circuit_breaker.circuit_breaker import (
             CircuitBreakerConfig, _cfg_for
         )
-        
+
         # Create base config with tool overrides
         base_config = CircuitBreakerConfig(
             error_rate_threshold=0.5,
@@ -4119,12 +4119,12 @@ class TestToolTimeoutsAndRetries:
                 }
             }
         )
-        
+
         # Get effective config for regular tool
         regular_config = _cfg_for(base_config, "regular_tool")
         assert regular_config.consecutive_failure_threshold == 5
         assert regular_config.cooldown_seconds == 60
-        
+
         # Get effective config for critical tool
         critical_config = _cfg_for(base_config, "critical_tool")
         assert critical_config.consecutive_failure_threshold == 2
@@ -4138,36 +4138,36 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state, _STATE
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
-        
+
         # Create plugin with 1-second window
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1,
             config={"window_seconds": 1}
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Add old entries
         state = _get_state("test_tool")
         old_time = time.time() - 10  # 10 seconds ago
         state.calls.append(old_time)
         state.failures.append(old_time)
-        
+
         # Create mock result
         mock_result = MagicMock()
         mock_result.is_error = False
-        
+
         payload = ToolPostInvokePayload(
             name="test_tool",
             arguments={},
             result=mock_result
         )
-        
+
         context = MagicMock()
         context.get_state = MagicMock(return_value=None)
-        
+
         # Process post_invoke - should evict old entries
         result = await plugin.tool_post_invoke(payload, context)
-        
+
         # Old entries should be evicted, new call should be recorded
         assert result.metadata["circuit_calls_in_window"] == 1
         assert result.metadata["circuit_failures_in_window"] == 0
@@ -4175,33 +4175,33 @@ class TestToolTimeoutsAndRetries:
     def test_is_error_with_tool_result_attribute(self):
         """Verify is_error detection using ToolResult.is_error attribute."""
         from plugins.circuit_breaker.circuit_breaker import _is_error
-        
+
         mock_result = MagicMock()
         mock_result.is_error = True
-        
+
         assert _is_error(mock_result) is True
-        
+
         mock_result.is_error = False
         assert _is_error(mock_result) is False
 
     def test_is_error_with_dict(self):
         """Verify is_error detection using dict key."""
         from plugins.circuit_breaker.circuit_breaker import _is_error
-        
+
         error_dict = {"is_error": True, "content": "error message"}
         assert _is_error(error_dict) is True
-        
+
         success_dict = {"is_error": False, "content": "success"}
         assert _is_error(success_dict) is False
 
     def test_is_error_with_missing_field_returns_false(self):
         """Verify is_error returns False when field is missing."""
         from plugins.circuit_breaker.circuit_breaker import _is_error
-        
+
         # Object without is_error
         mock_result = MagicMock(spec=[])  # No attributes
         del mock_result.is_error  # Remove any auto-mock
-        
+
         # Dict without is_error key
         no_error_dict = {"content": "some content"}
         assert _is_error(no_error_dict) is False
@@ -4211,7 +4211,7 @@ class TestToolTimeoutsAndRetries:
         """Verify plugin initializes correctly with config."""
         from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
         from mcpgateway.plugins.framework import PluginConfig
-        
+
         config = PluginConfig(
             name="CircuitBreaker",
             kind="plugins.circuit_breaker.circuit_breaker.CircuitBreakerPlugin",
@@ -4226,9 +4226,9 @@ class TestToolTimeoutsAndRetries:
                 "cooldown_seconds": 30,
             }
         )
-        
+
         plugin = CircuitBreakerPlugin(config)
-        
+
         assert plugin._cfg.error_rate_threshold == 0.3
         assert plugin._cfg.window_seconds == 120
         assert plugin._cfg.min_calls == 5
@@ -4240,18 +4240,18 @@ class TestToolTimeoutsAndRetries:
         """Verify plugin allows requests when circuit is closed."""
         from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
         from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
-        
+
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
         context = MagicMock()
         context.set_state = MagicMock()
-        
+
         result = await plugin.tool_pre_invoke(payload, context)
-        
+
         assert result.continue_processing is True
         assert result.violation is None
 
@@ -4263,21 +4263,21 @@ class TestToolTimeoutsAndRetries:
             CircuitBreakerPlugin, _get_state
         )
         from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
-        
+
         config = PluginConfig(
             name="test", kind="test", hooks=[], mode="enforce", priority=1
         )
         plugin = CircuitBreakerPlugin(config)
-        
+
         # Open the circuit
         state = _get_state("test_tool")
         state.open_until = time.time() + 60  # Open for next 60 seconds
-        
+
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
         context = MagicMock()
-        
+
         result = await plugin.tool_pre_invoke(payload, context)
-        
+
         assert result.continue_processing is False
         assert result.violation is not None
 
@@ -4294,7 +4294,7 @@ from mcpgateway.plugins.framework import ToolHookType, PluginConfig, ToolPreInvo
 
 class TestToolTimeoutsAndRetries:
     """Comprehensive tests for Tool Invocation Timeouts and Circuit Breaker."""
-    
+
     def setup_method(self):
         """Reset circuit breaker state."""
         try:
@@ -4327,27 +4327,27 @@ class TestToolTimeoutsAndRetries:
         )
         plugin = CircuitBreakerPlugin(config)
         context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
-        
+
         # 1. Success
         await plugin.tool_post_invoke(ToolPostInvokePayload(name="tool_a", result={"is_error": False}), context)
         st = _get_state("tool_a")
         assert st.consecutive_failures == 0
-        
+
         # 2. Failure 1
         await plugin.tool_post_invoke(ToolPostInvokePayload(name="tool_a", result={"is_error": True}), context)
         assert st.consecutive_failures == 1
         assert st.open_until == 0.0 # Not open yet
-        
+
         # 3. Failure 2 (Threshold reached)
         await plugin.tool_post_invoke(ToolPostInvokePayload(name="tool_a", result={"is_error": True}), context)
         assert st.consecutive_failures == 2
         assert st.open_until > 0.0 # TRIPPED
-        
+
         # 4. Check Pre-Invoke blocks
         pre_result = await plugin.tool_pre_invoke(ToolPreInvokePayload(name="tool_a", arguments={}), context)
         assert pre_result.continue_processing is False
         assert pre_result.violation.code == "CIRCUIT_OPEN"
-        
+
         # 5. Cooldown expiration (mock time)
         with patch("time.time", return_value=time.time() + 20):
              # Should be half-open
@@ -4356,4 +4356,3 @@ class TestToolTimeoutsAndRetries:
              # State check might require careful mocking of _now() used inside plugin
              # The plugin uses _now() which calls time.time()
              # So patch("time.time") works.
-

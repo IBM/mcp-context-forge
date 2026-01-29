@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for translate_header_utils helpers."""
 
 # Third-Party

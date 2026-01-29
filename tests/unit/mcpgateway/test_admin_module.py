@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for mcpgateway.admin helpers and auth flows."""
 
 # Standard

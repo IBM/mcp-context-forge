@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Extra schema validator tests to cover edge cases."""
 
 # Standard

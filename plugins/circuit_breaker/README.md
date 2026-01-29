@@ -59,7 +59,7 @@ config:
   error_rate_threshold: 0.5
   consecutive_failure_threshold: 5
   cooldown_seconds: 30
-  
+
   # 2. Specific Strategy (Critical Payment Tool)
   tool_overrides:
     payment_api:
@@ -77,5 +77,3 @@ config:
 | **`error_rate_threshold`** | `0.5` | **Threshold**: If 50% of calls fail (e.g., 5 out of 10), the service is likely overloaded. Stop sending requests to give it breathing room. |
 | **`consecutive_failure_threshold`** | `5` / `2` | **Fast Fail**: Even if the error rate is low, 5 hard failures in a row (e.g., 500 Internal Server Error) means it's down. **Override**: For `payment_api`, we stop after just 2 failures to avoid risking duplicate transactions or bad user experience. |
 | **`cooldown_seconds`** | `30` / `120` | **Recovery Time**: Wait 30 seconds before trying again (Half-Open state). **Override**: Payment systems often restart slowly; we give `payment_api` a full 2 minutes (120s) to recover to prevent "flapping" (rapidly opening/closing). |
-
-

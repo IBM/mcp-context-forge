@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """GatewayService helper tests."""
 
 # Third-Party

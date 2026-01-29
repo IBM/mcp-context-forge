@@ -50,7 +50,6 @@ from prometheus_fastapi_instrumentator import Instrumentator
 # First-Party
 from mcpgateway.config import settings
 
-
 # Global Metrics
 # Exposed for import by services/plugins to increment counters
 tool_timeout_counter = Counter(

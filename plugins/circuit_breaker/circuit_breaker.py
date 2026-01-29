@@ -289,4 +289,3 @@ class CircuitBreakerPlugin(Plugin):
                 "circuit_retry_after_seconds": round(retry_after_seconds, 1),
             }
         )
-
