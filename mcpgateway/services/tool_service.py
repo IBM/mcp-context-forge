@@ -4326,3 +4326,28 @@ class ToolService:
             return http_response.json()
 
         raise Exception(f"HTTP {http_response.status_code}: {http_response.text}")
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_tool_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The tool_service singleton instance if name is "tool_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "tool_service".
+    """
+    global _tool_service_instance  # pylint: disable=global-statement
+    if name == "tool_service":
+        if _tool_service_instance is None:
+            _tool_service_instance = ToolService()
+        return _tool_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
