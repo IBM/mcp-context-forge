@@ -515,6 +515,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return False
 
         # Allow alphanumeric, hyphens, and underscores (standard UUID format)
+        # Standard
         import re  # pylint: disable=import-outside-toplevel
 
         return bool(re.match(r"^[a-zA-Z0-9_-]+$", session_id))
@@ -534,6 +535,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return ""
 
         # Replace problematic characters with underscores
+        # Standard
         import re  # pylint: disable=import-outside-toplevel
 
         return re.sub(r"[^a-zA-Z0-9_-]", "_", value)
@@ -599,7 +601,10 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             self._mcp_session_mapping[mapping_key] = pool_key
             logger.debug(f"Session affinity pre-registered (local): {mcp_session_id[:8]}... → {url}, user={user_identity}")
 
-        # Store in Redis for multi-worker support
+        # Store in Redis for multi-worker support AND register ownership atomically
+        # Registering ownership HERE (during mapping) instead of in acquire() prevents
+        # a race condition where two workers could both start creating sessions before
+        # either registers ownership
         try:
             # First-Party
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
@@ -620,6 +625,23 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     "gateway_id": normalized_gateway_id,
                 }
                 await redis.setex(redis_key, settings.mcpgateway_session_affinity_ttl, orjson.dumps(pool_key_data))  # TTL from config
+
+                # CRITICAL: Register ownership atomically with mapping using SETNX
+                # This claims ownership BEFORE any session creation attempt, preventing
+                # the race condition where two workers both start creating sessions
+                owner_key = f"mcpgw:pool_owner:{mcp_session_id}"
+                # Use SETNX to only set if key doesn't exist (atomic claim)
+                was_set = await redis.setnx(owner_key, WORKER_ID)
+                if was_set:
+                    # Set expiry on the key we just created
+                    await redis.expire(owner_key, settings.mcpgateway_session_affinity_ttl)
+                    logger.debug(f"Session ownership claimed (SETNX): {mcp_session_id[:8]}... → worker {WORKER_ID}")
+                else:
+                    # Another worker already claimed ownership
+                    existing_owner = await redis.get(owner_key)
+                    owner_id = existing_owner.decode() if isinstance(existing_owner, bytes) else existing_owner
+                    logger.debug(f"Session ownership already claimed by {owner_id}: {mcp_session_id[:8]}...")
+
                 logger.debug(f"Session affinity pre-registered (Redis): {mcp_session_id[:8]}... TTL={settings.mcpgateway_session_affinity_ttl}s")
         except Exception as e:
             # Redis failure is non-fatal - local mapping still works for same-worker requests
@@ -771,6 +793,21 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         # Create new session (semaphore acquired)
         try:
+            # Verify we own this session before creating (prevents race condition)
+            # If another worker already claimed ownership, we should not create a new session
+            # Note: Ownership is registered atomically in register_session_mapping() using SETNX
+            if settings.mcpgateway_session_affinity_enabled and headers:
+                headers_lower = {k.lower(): v for k, v in headers.items()}
+                mcp_session_id = headers_lower.get("x-mcp-session-id")
+                if mcp_session_id and self._is_valid_session_id(mcp_session_id):
+                    owner = await self._get_pool_session_owner(mcp_session_id)
+                    if owner and owner != WORKER_ID:
+                        # Another worker claimed ownership - should have been forwarded
+                        # Release semaphore and raise to trigger forwarding
+                        semaphore.release()
+                        logger.warning(f"Session {mcp_session_id[:8]}... owned by worker {owner}, not us ({WORKER_ID})")
+                        raise RuntimeError(f"Session owned by another worker: {owner}")
+
             pooled = await asyncio.wait_for(
                 self._create_session(url, headers, transport_type, httpx_client_factory, effective_timeout, gateway_id),
                 timeout=self._session_create_timeout,
@@ -779,13 +816,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             pooled.identity_key = pool_key[2]
             pooled.user_identity = user_id
 
-            # Register pool session ownership for multi-worker affinity
-            # This tracks which worker owns this pool session in Redis
-            if settings.mcpgateway_session_affinity_enabled and headers:
-                headers_lower = {k.lower(): v for k, v in headers.items()}
-                mcp_session_id = headers_lower.get("x-mcp-session-id")
-                if mcp_session_id:
-                    await self._register_pool_session_owner(mcp_session_id)
+            # Note: Ownership is now registered atomically in register_session_mapping()
+            # before acquire() is called, so we don't need to register it here
 
             self._misses += 1
             self._record_success(url)
@@ -1256,6 +1288,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         which pool session. When a request with x-mcp-session-id arrives at a
         different worker, it can forward the request to the owner worker.
 
+        Note: This method is now primarily used for refreshing TTL on existing ownership.
+        Initial ownership is claimed atomically in register_session_mapping() using SETNX.
+
         Args:
             mcp_session_id: The MCP session ID from x-mcp-session-id header.
         """
@@ -1274,6 +1309,32 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         except Exception as e:
             # Redis failure is non-fatal - single worker mode still works
             logger.debug(f"Failed to register pool session owner in Redis: {e}")
+
+    async def _get_pool_session_owner(self, mcp_session_id: str) -> Optional[str]:
+        """Get the worker ID that owns a pool session.
+
+        Args:
+            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+
+        Returns:
+            The worker ID that owns this session, or None if not found or Redis unavailable.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return None
+
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if redis:
+                key = f"mcpgw:pool_owner:{mcp_session_id}"
+                owner = await redis.get(key)
+                if owner:
+                    return owner.decode() if isinstance(owner, bytes) else owner
+        except Exception as e:
+            logger.debug(f"Failed to get pool session owner from Redis: {e}")
+        return None
 
     async def forward_request_to_owner(
         self,
@@ -1409,59 +1470,54 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             logger.warning(f"RPC listener failed: {e}")
 
     async def _execute_forwarded_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute a forwarded RPC request locally.
+        """Execute a forwarded RPC request locally via internal HTTP call.
 
         This method handles RPC requests that were forwarded from another worker.
-        It invokes the tool and returns the result.
+        Instead of handling specific methods here, we make an internal HTTP call
+        to the local /rpc endpoint which reuses ALL existing method handling logic.
+
+        The x-forwarded-internally header prevents infinite forwarding loops.
 
         Args:
-            request: The forwarded RPC request containing method, params, headers, etc.
+            request: The forwarded RPC request containing method, params, headers, req_id, etc.
 
         Returns:
-            The result of the tool invocation or an error response.
+            The JSON-RPC response from the local endpoint.
         """
         try:
             method = request.get("method")
             params = request.get("params", {})
             headers = request.get("headers", {})
-            request.get("mcp_session_id")
+            req_id = request.get("req_id", 1)
 
-            if method == "tools/call":
-                # Import here to avoid circular dependency
-                # Use sys.modules to get the already-loaded main module
-                # Standard
-                import sys  # pylint: disable=import-outside-toplevel
+            # Make internal HTTP call to local /rpc endpoint
+            # This reuses ALL existing method handling logic without duplication
+            async with httpx.AsyncClient() as client:
+                # Build headers for internal request - forward original headers
+                # but add x-forwarded-internally to prevent infinite loops
+                internal_headers = dict(headers)
+                internal_headers["x-forwarded-internally"] = "true"
+                # Ensure content-type is set
+                internal_headers["content-type"] = "application/json"
 
-                # First-Party
-                from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+                response = await client.post(
+                    f"http://127.0.0.1:{settings.port}/rpc",
+                    json={"jsonrpc": "2.0", "method": method, "params": params, "id": req_id},
+                    headers=internal_headers,
+                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                )
 
-                # Get tool_service from the loaded main module to avoid import cycle
-                main_module = sys.modules.get("mcpgateway.main")
-                if not main_module or not hasattr(main_module, "tool_service"):
-                    return {"error": {"code": -32603, "message": "Tool service not initialized"}}
+                # Parse response
+                response_data = response.json()
 
-                tool_service = main_module.tool_service
+                # Extract result or error from JSON-RPC response
+                if "error" in response_data:
+                    return {"error": response_data["error"]}
+                return {"result": response_data.get("result", {})}
 
-                name = params.get("name")
-                arguments = params.get("arguments", {})
-                meta_data = params.get("_meta")
-
-                # Get a database session
-                async with get_db() as db:  # pylint: disable=not-async-context-manager
-                    result = await tool_service.invoke_tool(
-                        db=db,
-                        name=name,
-                        arguments=arguments,
-                        request_headers=headers,
-                        meta_data=meta_data,
-                    )
-
-                    if hasattr(result, "model_dump"):
-                        return {"result": result.model_dump(by_alias=True, exclude_none=True)}
-                    return {"result": result}
-            else:
-                return {"error": {"code": -32601, "message": f"Method not found: {method}"}}
-
+        except httpx.TimeoutException:
+            logger.warning(f"Timeout executing forwarded request: {request.get('method')}")
+            return {"error": {"code": -32603, "message": "Internal request timeout"}}
         except Exception as e:
             logger.warning(f"Error executing forwarded request: {e}")
             return {"error": {"code": -32603, "message": str(e)}}

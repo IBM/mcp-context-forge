@@ -1095,8 +1095,12 @@ class TestMultiWorkerSessionAffinityE2E:
             await pool.close_all()
 
     @pytest.mark.asyncio
-    async def test_execute_forwarded_request_returns_error_for_unknown_method(self):
-        """Verify _execute_forwarded_request returns error for unknown methods."""
+    async def test_execute_forwarded_request_returns_error_when_no_server(self):
+        """Verify _execute_forwarded_request returns error when internal HTTP call fails.
+
+        Since _execute_forwarded_request now makes an internal HTTP call to /rpc,
+        it will fail with a connection error when no server is running.
+        """
         pool = MCPSessionPool()
 
         try:
@@ -1107,7 +1111,8 @@ class TestMultiWorkerSessionAffinityE2E:
             })
 
             assert "error" in result
-            assert result["error"]["code"] == -32601  # Method not found
+            # -32603 is the internal error code returned when HTTP call fails
+            assert result["error"]["code"] == -32603
         finally:
             await pool.close_all()
 

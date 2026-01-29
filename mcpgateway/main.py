@@ -2727,7 +2727,8 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
 
-        transport = SSETransport(base_url=server_sse_url)
+        # Pass request headers to SSETransport for session affinity support
+        transport = SSETransport(base_url=server_sse_url, request_headers=dict(request.headers))
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
 
@@ -5450,6 +5451,37 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
+        # Multi-worker session affinity: check if we should forward to another worker
+        # This applies to ALL methods (except initialize which creates new sessions)
+        # The x-forwarded-internally header marks requests that have already been forwarded
+        # to prevent infinite forwarding loops
+        headers = {k.lower(): v for k, v in request.headers.items()}
+        mcp_session_id = headers.get("x-mcp-session-id")
+        is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
+
+        if settings.mcpgateway_session_affinity_enabled and mcp_session_id and method != "initialize" and not is_internally_forwarded:
+            try:
+                # First-Party
+                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+                pool = get_mcp_session_pool()
+                forwarded_response = await pool.forward_request_to_owner(
+                    mcp_session_id,
+                    {"method": method, "params": params, "headers": dict(headers), "req_id": req_id},
+                )
+                if forwarded_response is not None:
+                    # Request was handled by another worker
+                    if "error" in forwarded_response:
+                        raise JSONRPCError(
+                            forwarded_response["error"].get("code", -32603),
+                            forwarded_response["error"].get("message", "Forwarded request failed"),
+                        )
+                    result = forwarded_response.get("result", {})
+                    return {"jsonrpc": "2.0", "result": result, "id": req_id}
+            except RuntimeError:
+                # Pool not initialized - execute locally
+                pass
+
         if method == "initialize":
             # Extract session_id from params or query string (for capability tracking)
             init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
@@ -5663,38 +5695,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Per the MCP spec, a ping returns an empty result.
             result = {}
         elif method == "tools/call":  # pylint: disable=too-many-nested-blocks
-            # Get request headers
-            headers = {k.lower(): v for k, v in request.headers.items()}
+            # Note: Multi-worker session affinity forwarding is handled earlier
+            # (before method routing) to apply to ALL methods, not just tools/call
             name = params.get("name")
             arguments = params.get("arguments", {})
             meta_data = params.get("_meta", None)
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
-
-            # Multi-worker session affinity: check if we should forward to another worker
-            mcp_session_id = headers.get("x-mcp-session-id")
-            if settings.mcpgateway_session_affinity_enabled and mcp_session_id:
-                try:
-                    # First-Party
-                    from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
-
-                    pool = get_mcp_session_pool()
-                    forwarded_response = await pool.forward_request_to_owner(
-                        mcp_session_id,
-                        {"method": method, "params": params, "headers": dict(headers)},
-                    )
-                    if forwarded_response is not None:
-                        # Request was handled by another worker
-                        if "error" in forwarded_response:
-                            raise JSONRPCError(
-                                forwarded_response["error"].get("code", -32603),
-                                forwarded_response["error"].get("message", "Forwarded request failed"),
-                            )
-                        result = forwarded_response.get("result", {})
-                        return {"jsonrpc": "2.0", "result": result, "id": req_id}
-                except RuntimeError:
-                    # Pool not initialized - execute locally
-                    pass
 
             # Get authorization context (same as tools/list)
             auth_user_email, auth_token_teams, auth_is_admin = _get_rpc_filter_context(request, user)
@@ -6127,7 +6134,8 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         logger.debug("User %s requested SSE connection", user)
         base_url = update_url_protocol(request)
 
-        transport = SSETransport(base_url=base_url)
+        # Pass request headers to SSETransport for session affinity support
+        transport = SSETransport(base_url=base_url, request_headers=dict(request.headers))
         await transport.connect()
         await session_registry.add_session(transport.session_id, transport)
 

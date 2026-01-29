@@ -344,11 +344,57 @@ class SSETransport(Transport):
         True
     """
 
-    def __init__(self, base_url: str = None):
+    # Regex for validating session IDs (alphanumeric, hyphens, underscores, max 128 chars)
+    _SESSION_ID_PATTERN = None
+
+    @staticmethod
+    def _is_valid_session_id(session_id: str) -> bool:
+        """Validate session ID format for security.
+
+        Valid session IDs are alphanumeric with hyphens and underscores, max 128 chars.
+        This prevents injection attacks via malformed session IDs.
+
+        Args:
+            session_id: The session ID to validate.
+
+        Returns:
+            True if the session ID is valid, False otherwise.
+
+        Examples:
+            >>> SSETransport._is_valid_session_id("abc123")
+            True
+            >>> SSETransport._is_valid_session_id("abc-123_def")
+            True
+            >>> SSETransport._is_valid_session_id("a" * 128)
+            True
+            >>> SSETransport._is_valid_session_id("a" * 129)
+            False
+            >>> SSETransport._is_valid_session_id("")
+            False
+            >>> SSETransport._is_valid_session_id("abc/def")
+            False
+            >>> SSETransport._is_valid_session_id("abc:def")
+            False
+        """
+        # Standard
+        import re  # pylint: disable=import-outside-toplevel
+
+        if not session_id or len(session_id) > 128:
+            return False
+
+        # Lazy compile pattern
+        if SSETransport._SESSION_ID_PATTERN is None:
+            SSETransport._SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+        return bool(SSETransport._SESSION_ID_PATTERN.match(session_id))
+
+    def __init__(self, base_url: str = None, request_headers: dict[str, str] | None = None):
         """Initialize SSE transport.
 
         Args:
             base_url: Base URL for client message endpoints
+            request_headers: Optional request headers containing x-mcp-session-id
+                            for session affinity support
 
         Examples:
             >>> # Test default initialization
@@ -372,14 +418,36 @@ class SSETransport(Transport):
             >>> transport2 = SSETransport()
             >>> transport1.session_id != transport2.session_id
             True
+
+            >>> # Test client-provided session ID
+            >>> transport = SSETransport(request_headers={"x-mcp-session-id": "client-session-123"})
+            >>> transport.session_id
+            'client-session-123'
+
+            >>> # Test invalid session ID is rejected
+            >>> transport = SSETransport(request_headers={"x-mcp-session-id": "invalid/session"})
+            >>> transport.session_id != "invalid/session"
+            True
         """
         self._base_url = base_url or f"http://{settings.host}:{settings.port}"
         self._connected = False
         self._message_queue = asyncio.Queue()
         self._client_gone = asyncio.Event()
-        self._session_id = str(uuid.uuid4())
 
-        logger.info("Creating SSE transport with base_url=%s, session_id=%s", self._base_url, self._session_id)
+        # Extract client-provided session ID from request headers (for session affinity)
+        client_session_id = None
+        if request_headers:
+            # Normalize header names to lowercase for case-insensitive lookup
+            headers_lower = {k.lower(): v for k, v in request_headers.items()}
+            client_session_id = headers_lower.get("x-mcp-session-id")
+
+        # Use client-provided session ID if valid, otherwise generate a new one
+        if client_session_id and self._is_valid_session_id(client_session_id):
+            self._session_id = client_session_id
+            logger.info("Creating SSE transport with client-provided session_id=%s, base_url=%s", self._session_id[:8] + "...", self._base_url)
+        else:
+            self._session_id = str(uuid.uuid4())
+            logger.info("Creating SSE transport with base_url=%s, session_id=%s", self._base_url, self._session_id)
 
     async def connect(self) -> None:
         """Set up SSE connection.
