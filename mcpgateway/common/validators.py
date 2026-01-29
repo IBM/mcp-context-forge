@@ -53,7 +53,7 @@ import logging
 from pathlib import Path
 import re
 import shlex
-from typing import Any, List, Optional, Pattern
+from typing import Any, Iterable, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
 
@@ -90,18 +90,84 @@ _POLYGLOT_PATTERNS: List[Pattern[str]] = [
     re.compile(r"javascript:.*\(", re.IGNORECASE),
 ]
 
-# SSTI prevention patterns (precompiled with IGNORECASE)
-_SSTI_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}", re.IGNORECASE),
-    re.compile(r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}", re.IGNORECASE),
-    re.compile(r"\$\{.*\}", re.IGNORECASE),
-    re.compile(r"#\{.*\}", re.IGNORECASE),
-    re.compile(r"%\{.*\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\*.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\/.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\+.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\-.*\}\}", re.IGNORECASE),
-]
+# SSTI prevention - safe scanning without regex backtracking.
+_SSTI_DANGEROUS_SUBSTRINGS: tuple[str, ...] = (
+    "__",
+    ".",
+    "config",
+    "self",
+    "request",
+    "application",
+    "globals",
+    "builtins",
+    "import",
+)
+_SSTI_DANGEROUS_OPERATORS: tuple[str, ...] = ("*", "/", "+", "-")
+_SSTI_SIMPLE_TEMPLATE_PREFIXES: tuple[str, ...] = ("${", "#{", "%{")
+
+
+def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str]:
+    """Yield template expression contents for a start/end delimiter, skipping delimiters inside quotes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+        end (str): Closing delimiter.
+
+    Yields:
+        str: The template expression contents between delimiters.
+    """
+    start_len = len(start)
+    end_len = len(end)
+    i = 0
+    value_len = len(value)
+    while i <= value_len - start_len:
+        if value.startswith(start, i):
+            j = i + start_len
+            in_quote: Optional[str] = None
+            escaped = False
+            while j <= value_len - end_len:
+                ch = value[j]
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif in_quote:
+                    if ch == in_quote:
+                        in_quote = None
+                else:
+                    if ch in ("'", '"'):
+                        in_quote = ch
+                    elif value.startswith(end, j):
+                        yield value[i + start_len : j]
+                        i = j + end_len
+                        break
+                j += 1
+            else:
+                return
+        else:
+            i += 1
+
+
+def _has_simple_template_expression(value: str, start: str) -> bool:
+    """Return True if start is followed by any closing brace.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+
+    Returns:
+        bool: True if a closing brace exists after the delimiter.
+    """
+    start_len = len(start)
+    idx = value.find(start)
+    while idx != -1:
+        end_idx = value.find("}", idx + start_len)
+        if end_idx != -1:
+            return True
+        idx = value.find(start, idx + start_len)
+    return False
+
 
 # Dangerous URL protocol patterns (precompiled with IGNORECASE)
 _DANGEROUS_URL_PATTERNS: List[Pattern[str]] = [
@@ -695,10 +761,21 @@ class SecurityValidator:
         if _EVENT_HANDLER_RE.search(value):
             raise ValueError("Template contains event handlers that may cause display issues")
 
-        # SSTI Prevention - block dangerous template expressions (uses precompiled regex list)
-        for pattern in _SSTI_PATTERNS:
-            if pattern.search(value):
+        # SSTI prevention - scan expressions without regex backtracking.
+        for expr in _iter_template_expressions(value, "{{", "}}"):
+            expr_lower = expr.lower()
+            if any(token in expr_lower for token in _SSTI_DANGEROUS_SUBSTRINGS):
                 raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        for expr in _iter_template_expressions(value, "{%", "%}"):
+            expr_lower = expr.lower()
+            if any(token in expr_lower for token in _SSTI_DANGEROUS_SUBSTRINGS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        if any(_has_simple_template_expression(value, prefix) for prefix in _SSTI_SIMPLE_TEMPLATE_PREFIXES):
+            raise ValueError("Template contains potentially dangerous expressions")
 
         return value
 
