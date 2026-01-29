@@ -331,7 +331,21 @@ class ResourceService:
         else:
             resource_dict["metrics"] = None
 
-        resource_dict["tags"] = resource.tags or []
+        raw_tags = resource.tags or []
+        normalized_tags = []
+        for tag in raw_tags:
+            if isinstance(tag, str):
+                normalized_tags.append(tag)
+                continue
+            if isinstance(tag, dict):
+                label = tag.get("label") or tag.get("name")
+                if label:
+                    normalized_tags.append(label)
+                continue
+            label = getattr(tag, "label", None) or getattr(tag, "name", None)
+            if label:
+                normalized_tags.append(label)
+        resource_dict["tags"] = normalized_tags
         resource_dict["team"] = getattr(resource, "team", None)
 
         # Include metadata fields for proper API response
