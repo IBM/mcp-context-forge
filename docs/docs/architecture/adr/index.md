@@ -39,5 +39,6 @@ This page tracks all significant design decisions made for the MCP Gateway proje
 | 0032  | MCP Session Pool for Connection Reuse | Accepted | Performance | 2025-01-05 |
 | 0033  | Tool Lookup Cache for invoke_tool | Accepted | Performance | 2025-01-20 |
 | 0035  | Query Parameter Authentication for Gateways | Accepted | Security | 2026-01-19 |
+| 0037  | External Plugin STDIO Launch with Command/Env Overrides | Accepted | Extensibility | 2026-01-28 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.

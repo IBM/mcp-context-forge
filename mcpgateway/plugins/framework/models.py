@@ -11,6 +11,7 @@ the base plugin layer including configurations, and contexts.
 
 # Standard
 from enum import Enum
+import logging
 import os
 from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar, Union
@@ -21,7 +22,7 @@ from pydantic import BaseModel, Field, field_serializer, field_validator, model_
 # First-Party
 from mcpgateway.common.models import TransportType
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.plugins.framework.constants import EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, URL
+from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, UDS, URL
 
 T = TypeVar("T")
 
@@ -389,12 +390,69 @@ class MCPServerConfig(BaseModel):
     Attributes:
         host (str): Server host to bind to.
         port (int): Server port to bind to.
+        uds (Optional[str]): Unix domain socket path for streamable HTTP.
         tls (Optional[MCPServerTLSConfig]): Server-side TLS configuration.
     """
 
     host: str = Field(default="127.0.0.1", description="Server host to bind to")
     port: int = Field(default=8000, description="Server port to bind to")
+    uds: Optional[str] = Field(default=None, description="Unix domain socket path for streamable HTTP")
     tls: Optional[MCPServerTLSConfig] = Field(default=None, description="Server-side TLS configuration")
+
+    @field_validator("uds", mode="after")
+    @classmethod
+    def validate_uds(cls, uds: str | None) -> str | None:
+        """Validate the Unix domain socket path for security.
+
+        Args:
+            uds: Unix domain socket path.
+
+        Returns:
+            The validated canonical uds path or None if none is set.
+
+        Raises:
+            ValueError: if uds is empty, not absolute, or parent directory is invalid.
+        """
+        if uds is None:
+            return uds
+        if not isinstance(uds, str) or not uds.strip():
+            raise ValueError("MCP server uds must be a non-empty string.")
+
+        uds_path = Path(uds).expanduser().resolve()
+        if not uds_path.is_absolute():
+            raise ValueError(f"MCP server uds path must be absolute: {uds}")
+
+        parent_dir = uds_path.parent
+        if not parent_dir.is_dir():
+            raise ValueError(f"MCP server uds parent directory does not exist: {parent_dir}")
+
+        # Check parent directory permissions for security
+        try:
+            parent_mode = parent_dir.stat().st_mode
+            # Warn if parent directory is world-writable (o+w = 0o002)
+            if parent_mode & 0o002:
+                logging.getLogger(__name__).warning(
+                    "MCP server uds parent directory %s is world-writable. This may allow unauthorized socket hijacking. Consider using a directory with restricted permissions (e.g., 0o700).",
+                    parent_dir,
+                )
+        except OSError:
+            pass  # Best effort - continue if we can't check permissions
+
+        return str(uds_path)
+
+    @model_validator(mode="after")
+    def validate_uds_tls(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure TLS is not configured when using a Unix domain socket.
+
+        Returns:
+            Self after validation.
+
+        Raises:
+            ValueError: if tls is set with uds.
+        """
+        if self.uds and self.tls:
+            raise ValueError("TLS configuration is not supported for Unix domain sockets.")
+        return self
 
     @staticmethod
     def _parse_bool(value: Optional[str]) -> Optional[bool]:
@@ -440,6 +498,8 @@ class MCPServerConfig(BaseModel):
                 data["port"] = int(env["PLUGINS_SERVER_PORT"])
             except ValueError:
                 raise ValueError(f"Invalid PLUGINS_SERVER_PORT: {env['PLUGINS_SERVER_PORT']}")
+        if env.get("PLUGINS_SERVER_UDS"):
+            data["uds"] = env["PLUGINS_SERVER_UDS"]
 
         # Check if SSL/TLS is enabled
         ssl_enabled = cls._parse_bool(env.get("PLUGINS_SERVER_SSL_ENABLED"))
@@ -462,12 +522,20 @@ class MCPClientConfig(BaseModel):
         proto (TransportType): The MCP transport type. Can be SSE, STDIO, or STREAMABLEHTTP
         url (Optional[str]): An MCP URL. Only valid when MCP transport type is SSE or STREAMABLEHTTP.
         script (Optional[str]): The path and name to the STDIO script that runs the plugin server. Only valid for STDIO type.
+        cmd (Optional[list[str]]): Command + args used to start a STDIO MCP server. Only valid for STDIO type.
+        env (Optional[dict[str, str]]): Environment overrides for STDIO server process.
+        cwd (Optional[str]): Working directory for STDIO server process.
+        uds (Optional[str]): Unix domain socket path for streamable HTTP.
         tls (Optional[MCPClientTLSConfig]): Client-side TLS configuration for mTLS.
     """
 
     proto: TransportType
     url: Optional[str] = None
     script: Optional[str] = None
+    cmd: Optional[list[str]] = None
+    env: Optional[dict[str, str]] = None
+    cwd: Optional[str] = None
+    uds: Optional[str] = None
     tls: Optional[MCPClientTLSConfig] = None
 
     @field_validator(URL, mode="after")
@@ -498,20 +566,130 @@ class MCPClientConfig(BaseModel):
             script: the script to be validated.
 
         Raises:
-            ValueError: if the script doesn't exist or doesn't have a valid suffix.
+            ValueError: if the script doesn't exist or isn't executable when required.
 
         Returns:
             The validated string or None if none is set.
         """
         if script:
-            file_path = Path(script)
-            if not file_path.is_file():
-                raise ValueError(f"MCP server script {script} does not exist.")
-            # Allow both Python (.py) and shell scripts (.sh)
-            allowed_suffixes = {PYTHON_SUFFIX, ".sh"}
-            if file_path.suffix not in allowed_suffixes:
-                raise ValueError(f"MCP server script {script} must have a .py or .sh suffix.")
+            file_path = Path(script).expanduser()
+            # Allow relative paths; they are resolved at runtime (optionally using cwd).
+            if file_path.is_absolute():
+                if not file_path.is_file():
+                    raise ValueError(f"MCP server script {script} does not exist.")
+                # Allow Python (.py) and shell scripts (.sh). Other files must be executable.
+                if file_path.suffix not in {PYTHON_SUFFIX, ".sh"} and not os.access(file_path, os.X_OK):
+                    raise ValueError(f"MCP server script {script} must be executable.")
         return script
+
+    @field_validator(CMD, mode="after")
+    @classmethod
+    def validate_cmd(cls, cmd: list[str] | None) -> list[str] | None:
+        """Validate an MCP stdio command.
+
+        Args:
+            cmd: the command to be validated.
+
+        Raises:
+            ValueError: if cmd is empty or contains empty values.
+
+        Returns:
+            The validated command list or None if none is set.
+        """
+        if cmd is None:
+            return cmd
+        if not isinstance(cmd, list) or not cmd:
+            raise ValueError("MCP stdio cmd must be a non-empty list.")
+        if not all(isinstance(part, str) and part.strip() for part in cmd):
+            raise ValueError("MCP stdio cmd entries must be non-empty strings.")
+        return cmd
+
+    @field_validator(ENV, mode="after")
+    @classmethod
+    def validate_env(cls, env: dict[str, str] | None) -> dict[str, str] | None:
+        """Validate environment overrides for MCP stdio.
+
+        Args:
+            env: Environment overrides to set for the stdio plugin process.
+
+        Returns:
+            The validated environment dict or None if none is set.
+
+        Raises:
+            ValueError: if keys/values are invalid or the dict is empty.
+        """
+        if env is None:
+            return env
+        if not isinstance(env, dict) or not env:
+            raise ValueError("MCP stdio env must be a non-empty dict.")
+        for key, value in env.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("MCP stdio env keys must be non-empty strings.")
+            if not isinstance(value, str):
+                raise ValueError("MCP stdio env values must be strings.")
+        return env
+
+    @field_validator(CWD, mode="after")
+    @classmethod
+    def validate_cwd(cls, cwd: str | None) -> str | None:
+        """Validate the working directory for MCP stdio.
+
+        Args:
+            cwd: Working directory for the stdio plugin process.
+
+        Returns:
+            The validated canonical cwd path or None if none is set.
+
+        Raises:
+            ValueError: if cwd does not exist or is not a directory.
+        """
+        if not cwd:
+            return cwd
+        cwd_path = Path(cwd).expanduser().resolve()
+        if not cwd_path.is_dir():
+            raise ValueError(f"MCP stdio cwd {cwd} does not exist or is not a directory.")
+        return str(cwd_path)
+
+    @field_validator(UDS, mode="after")
+    @classmethod
+    def validate_uds(cls, uds: str | None) -> str | None:
+        """Validate a Unix domain socket path for streamable HTTP.
+
+        Args:
+            uds: Unix domain socket path.
+
+        Returns:
+            The validated canonical uds path or None if none is set.
+
+        Raises:
+            ValueError: if uds is empty, not absolute, or parent directory is invalid.
+        """
+        if uds is None:
+            return uds
+        if not isinstance(uds, str) or not uds.strip():
+            raise ValueError("MCP client uds must be a non-empty string.")
+
+        uds_path = Path(uds).expanduser().resolve()
+        if not uds_path.is_absolute():
+            raise ValueError(f"MCP client uds path must be absolute: {uds}")
+
+        parent_dir = uds_path.parent
+        if not parent_dir.is_dir():
+            raise ValueError(f"MCP client uds parent directory does not exist: {parent_dir}")
+
+        # Check parent directory permissions for security
+        try:
+            parent_mode = parent_dir.stat().st_mode
+            # Warn if parent directory is world-writable (o+w = 0o002)
+            if parent_mode & 0o002:
+                logging.getLogger(__name__).warning(
+                    "MCP client uds parent directory %s is world-writable. This may allow unauthorized socket hijacking. Consider using a directory with restricted permissions (e.g., 0o700).",
+                    parent_dir,
+                )
+        except OSError:
+            pass  # Best effort - continue if we can't check permissions
+
+        return str(uds_path)
 
     @model_validator(mode="after")
     def validate_tls_usage(self) -> Self:  # pylint: disable=bad-classmethod-argument
@@ -526,6 +704,26 @@ class MCPClientConfig(BaseModel):
 
         if self.tls and self.proto not in (TransportType.SSE, TransportType.STREAMABLEHTTP):
             raise ValueError("TLS configuration is only valid for HTTP/SSE transports")
+        if self.uds and self.tls:
+            raise ValueError("TLS configuration is not supported for Unix domain sockets.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_transport_fields(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure transport-specific fields are only used with matching transports.
+
+        Returns:
+            Self after validation.
+
+        Raises:
+            ValueError: if fields are incompatible with the selected transport.
+        """
+        if self.proto == TransportType.STDIO and self.url:
+            raise ValueError("URL is only valid for HTTP/SSE transports")
+        if self.proto != TransportType.STDIO and (self.script or self.cmd or self.env or self.cwd):
+            raise ValueError("script/cmd/env/cwd are only valid for STDIO transport")
+        if self.proto != TransportType.STREAMABLEHTTP and self.uds:
+            raise ValueError("uds is only valid for STREAMABLEHTTP transport")
         return self
 
 
@@ -569,15 +767,17 @@ class PluginConfig(BaseModel):
         """Checks to see that at least one of url or script are set depending on MCP server configuration.
 
         Raises:
-            ValueError: if the script attribute is not defined with STDIO set, or the URL not defined with HTTP transports.
+            ValueError: if the script/cmd attribute is not defined with STDIO set, or the URL not defined with HTTP transports.
 
         Returns:
             The model after validation.
         """
         if not self.mcp:
             return self
-        if self.mcp.proto == TransportType.STDIO and not self.mcp.script:
-            raise ValueError(f"Plugin {self.name} has transport type set to SSE but no script value")
+        if self.mcp.proto == TransportType.STDIO and not (self.mcp.script or self.mcp.cmd):
+            raise ValueError(f"Plugin {self.name} has transport type set to STDIO but no script/cmd value")
+        if self.mcp.proto == TransportType.STDIO and self.mcp.script and self.mcp.cmd:
+            raise ValueError(f"Plugin {self.name} must set either script or cmd for STDIO, not both")
         if self.mcp.proto in (TransportType.STREAMABLEHTTP, TransportType.SSE) and not self.mcp.url:
             raise ValueError(f"Plugin {self.name} has transport type set to StreamableHTTP but no url value")
         if self.mcp.proto not in (TransportType.SSE, TransportType.STREAMABLEHTTP, TransportType.STDIO):
