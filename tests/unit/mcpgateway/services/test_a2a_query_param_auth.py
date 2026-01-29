@@ -140,10 +140,10 @@ class TestA2AQueryParamAuthRegistration:
         mock_read.masked.return_value = mock_read
         monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
-        # Mock ToolService.create_tool_from_a2a_agent
-        with patch("mcpgateway.services.a2a_service.ToolService") as mock_tool_service:
-            mock_tool_service.return_value.create_tool_from_a2a_agent = AsyncMock(return_value=None)
+        # Mock tool_service.create_tool_from_a2a_agent using the singleton
+        from mcpgateway.services.tool_service import tool_service
 
+        with patch.object(tool_service, "create_tool_from_a2a_agent", new=AsyncMock(return_value=None)):
             agent_create = A2AAgentCreate(
                 name="tavily_agent",
                 endpoint_url="https://api.tavily.com/a2a",
@@ -190,9 +190,10 @@ class TestA2AQueryParamAuthRegistration:
         mock_read.masked.return_value = mock_read
         monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
-        with patch("mcpgateway.services.a2a_service.ToolService") as mock_tool_service:
-            mock_tool_service.return_value.create_tool_from_a2a_agent = AsyncMock(return_value=None)
+        # Mock tool_service.create_tool_from_a2a_agent using the singleton
+        from mcpgateway.services.tool_service import tool_service
 
+        with patch.object(tool_service, "create_tool_from_a2a_agent", new=AsyncMock(return_value=None)):
             agent_create = A2AAgentCreate(
                 name="test_agent",
                 endpoint_url="https://api.example.com/a2a",
@@ -244,9 +245,10 @@ class TestA2AQueryParamAuthUpdate:
             mock_read.masked.return_value = mock_read
             monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
-            with patch("mcpgateway.services.a2a_service.ToolService") as mock_tool_service:
-                mock_tool_service.return_value.update_tool_from_a2a_agent = AsyncMock()
+            # Mock tool_service.update_tool_from_a2a_agent using the singleton
+            from mcpgateway.services.tool_service import tool_service
 
+            with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
                 agent_update = A2AAgentUpdate(
                     auth_type="query_param",
                     auth_query_param_key="tavilyApiKey",
@@ -289,9 +291,10 @@ class TestA2AQueryParamAuthUpdate:
             mock_read.masked.return_value = mock_read
             monkeypatch.setattr(a2a_service, "convert_agent_to_read", Mock(return_value=mock_read))
 
-            with patch("mcpgateway.services.a2a_service.ToolService") as mock_tool_service:
-                mock_tool_service.return_value.update_tool_from_a2a_agent = AsyncMock()
+            # Mock tool_service.update_tool_from_a2a_agent using the singleton
+            from mcpgateway.services.tool_service import tool_service
 
+            with patch.object(tool_service, "update_tool_from_a2a_agent", new=AsyncMock()):
                 agent_update = A2AAgentUpdate(
                     auth_type="bearer",
                     auth_token="my-bearer-token",
