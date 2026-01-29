@@ -221,6 +221,12 @@ class DcrService:
         registration_access_token = registration_response.get("registration_access_token")
         registration_access_token_encrypted = await encryption.encrypt_secret_async(registration_access_token) if registration_access_token else None
 
+        # Calculate expires at
+        expires_at = None
+        client_secret_expires_at = registration_response.get("client_secret_expires_at")
+        if client_secret_expires_at and client_secret_expires_at > 0:
+            expires_at = datetime.fromtimestamp(client_secret_expires_at, tz=timezone.utc)
+
         # Create database record (use normalized issuer for consistent lookup)
         # Fall back to requested grant_types if AS response omits them
         registered_client = RegisteredOAuthClient(
@@ -236,7 +242,7 @@ class DcrService:
             registration_client_uri=registration_response.get("registration_client_uri"),
             registration_access_token_encrypted=registration_access_token_encrypted,
             created_at=datetime.now(timezone.utc),
-            expires_at=None,  # TODO: Calculate from client_id_issued_at + client_secret_expires_at  # pylint: disable=fixme
+            expires_at=expires_at,
             is_active=True,
         )
 
