@@ -2878,8 +2878,13 @@ class ToolService:
                             from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
                             tool_timeout_counter.labels(tool_name=name).inc()
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.debug(
+                                "Failed to increment tool_timeout_counter for %s: %s",
+                                name,
+                                exc,
+                                exc_info=True,
+                            )
 
                         if self._plugin_manager:
                             if context_table:
@@ -3133,8 +3138,13 @@ class ToolService:
                                 from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
                                 tool_timeout_counter.labels(tool_name=name).inc()
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to increment tool_timeout_counter for %s: %s",
+                                    name,
+                                    exc,
+                                    exc_info=True,
+                                )
 
                             if self._plugin_manager:
                                 if context_table:
@@ -3272,8 +3282,13 @@ class ToolService:
                                 from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
 
                                 tool_timeout_counter.labels(tool_name=name).inc()
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to increment tool_timeout_counter for %s: %s",
+                                    name,
+                                    exc,
+                                    exc_info=True,
+                                )
 
                             if self._plugin_manager:
                                 if context_table:
