@@ -3026,14 +3026,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     except Exception as oauth_error:
                         raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
                 else:
-                    # Handle non-OAuth authentication (existing logic)
+                    # Handle non-OAuth authentication
                     auth_data = gateway.auth_value or {}
-                    if isinstance(auth_data, str):
-                        headers = decode_auth(auth_data) if auth_data else self._get_auth_headers()
-                    elif isinstance(auth_data, dict):
+                    if isinstance(auth_data, str) and auth_data:
+                        headers = decode_auth(auth_data)
+                    elif isinstance(auth_data, dict) and auth_data:
                         headers = {str(k): str(v) for k, v in auth_data.items()}
                     else:
-                        headers = self._get_auth_headers()
+                        # No auth configured - send request without authentication
+                        # SECURITY: Never send gateway admin credentials to remote servers
+                        logger.warning(f"Gateway {gateway.name} has no authentication configured - sending unauthenticated request")
+                        headers = {"Content-Type": "application/json"}
 
                 # Directly use the persistent HTTP client (no async with)
                 response = await self._http_client.post(urljoin(gateway.url, "/rpc"), json=request, headers=headers)
@@ -4076,31 +4079,28 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await asyncio.sleep(self._health_check_interval)
 
     def _get_auth_headers(self) -> Dict[str, str]:
-        """Get headers for gateway authentication.
+        """Get default headers for gateway requests (no authentication).
+
+        SECURITY: This method intentionally does NOT include authentication credentials.
+        Each gateway should have its own auth_value configured. Never send this gateway's
+        admin credentials to remote servers.
 
         Returns:
-            dict: Authorization header dict
+            dict: Default headers without authentication
 
         Examples:
             >>> service = GatewayService()
             >>> headers = service._get_auth_headers()
             >>> isinstance(headers, dict)
             True
-            >>> 'Authorization' in headers
-            True
-            >>> 'X-API-Key' in headers
-            True
             >>> 'Content-Type' in headers
             True
             >>> headers['Content-Type']
             'application/json'
-            >>> headers['Authorization'].startswith('Basic ')
+            >>> 'Authorization' not in headers  # No credentials leaked
             True
-            >>> len(headers)
-            3
         """
-        api_key = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
-        return {"Authorization": f"Basic {api_key}", "X-API-Key": api_key, "Content-Type": "application/json"}
+        return {"Content-Type": "application/json"}
 
     async def _notify_gateway_added(self, gateway: DbGateway) -> None:
         """Notify subscribers of gateway addition.

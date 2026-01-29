@@ -262,7 +262,20 @@ class TestReverseProxyManager:
 
 
 class TestWebSocketEndpoint:
-    """Test WebSocket endpoint functionality."""
+    """Test WebSocket endpoint functionality.
+
+    Note: These tests disable authentication to test WebSocket message handling.
+    See TestWebSocketAuthentication for authentication tests.
+    """
+
+    @pytest.fixture(autouse=True)
+    def mock_auth_settings(self):
+        """Disable authentication for WebSocket endpoint tests."""
+        with patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings:
+            mock_settings.auth_required = False
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = False
+            yield mock_settings
 
     @pytest.mark.asyncio
     async def test_websocket_accept(self, mock_websocket):
@@ -463,6 +476,89 @@ class TestWebSocketEndpoint:
 
         # Should send register ack and error message
         assert mock_websocket.send_text.call_count >= 2
+
+
+class TestWebSocketAuthentication:
+    """Test WebSocket authentication functionality."""
+
+    @pytest.mark.asyncio
+    async def test_websocket_rejects_unauthenticated_when_auth_required(self, mock_websocket):
+        """Test WebSocket rejects connection when auth required but no token provided."""
+        mock_websocket.headers = {"X-Session-ID": "test-session"}  # No Authorization header
+        mock_websocket.query_params = {}
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings:
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = False
+
+            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
+                mock_get_db.return_value = Mock()
+
+                await websocket_endpoint(mock_websocket, Mock())
+
+        # Should NOT accept the connection
+        mock_websocket.accept.assert_not_called()
+        # Should close with policy violation
+        mock_websocket.close.assert_called_once()
+        assert mock_websocket.close.call_args[1]["code"] == 1008  # WS_1008_POLICY_VIOLATION
+
+    @pytest.mark.asyncio
+    async def test_websocket_accepts_with_valid_token(self, mock_websocket):
+        """Test WebSocket accepts connection with valid JWT token."""
+        mock_websocket.headers = {"X-Session-ID": "test-session", "Authorization": "Bearer valid-token"}
+        mock_websocket.query_params = {}
+        mock_websocket.receive_text.side_effect = asyncio.CancelledError()
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings:
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = False
+
+            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
+                mock_get_db.return_value = Mock()
+                mock_verify.return_value = {"sub": "test-user", "email": "test@example.com"}
+
+                try:
+                    await websocket_endpoint(mock_websocket, Mock())
+                except asyncio.CancelledError:
+                    pass
+
+        # Should accept the connection
+        mock_websocket.accept.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_websocket_accepts_proxy_auth(self, mock_websocket):
+        """Test WebSocket accepts proxy authentication."""
+        mock_websocket.headers = {"X-Session-ID": "test-session", "X-Authenticated-User": "proxy-user"}
+        mock_websocket.query_params = {}
+        mock_websocket.receive_text.side_effect = asyncio.CancelledError()
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings:
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.proxy_user_header = "X-Authenticated-User"
+
+            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
+                mock_get_db.return_value = Mock()
+
+                try:
+                    await websocket_endpoint(mock_websocket, Mock())
+                except asyncio.CancelledError:
+                    pass
+
+        # Should accept the connection
+        mock_websocket.accept.assert_called_once()
 
 
 # --------------------------------------------------------------------------- #

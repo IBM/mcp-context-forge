@@ -109,6 +109,25 @@ async def initiate_oauth_flow(
         if not gateway:
             raise HTTPException(status_code=404, detail="Gateway not found")
 
+        # Check gateway access permission
+        # Admins can access any gateway; otherwise check team membership if gateway has team_id
+        user_email = current_user.email if hasattr(current_user, "email") else current_user.get("email")
+        is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
+
+        # Get team_id safely (may not exist on all gateway objects)
+        gateway_team_id = getattr(gateway, "team_id", None)
+
+        if not is_admin and gateway_team_id:
+            # Import here to avoid circular imports
+            # First-Party
+            from mcpgateway.services.email_auth_service import EmailAuthService
+
+            auth_service = EmailAuthService(db)
+            user = await auth_service.get_user_by_email(user_email)
+            if not user or not user.is_team_member(gateway_team_id):
+                logger.warning(f"OAuth access denied: user {user_email} not member of gateway team {gateway_team_id}")
+                raise HTTPException(status_code=403, detail="You don't have access to this gateway")
+
         if not gateway.oauth_config:
             raise HTTPException(status_code=400, detail="Gateway is not configured for OAuth")
 
@@ -520,18 +539,26 @@ async def oauth_callback(
 
 
 @oauth_router.get("/status/{gateway_id}")
-async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> dict:
+async def get_oauth_status(
+    gateway_id: str,
+    current_user: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> dict:
     """Get OAuth status for a gateway.
+
+    Requires authentication and authorization to prevent information disclosure
+    about gateway OAuth configuration (client IDs, scopes, etc.).
 
     Args:
         gateway_id: ID of the gateway
+        current_user: Authenticated user (enforces authentication)
         db: Database session
 
     Returns:
         OAuth status information
 
     Raises:
-        HTTPException: If gateway not found or error retrieving status
+        HTTPException: If not authenticated, not authorized, gateway not found, or error
     """
     try:
         # Get gateway configuration
@@ -539,6 +566,24 @@ async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> di
 
         if not gateway:
             raise HTTPException(status_code=404, detail="Gateway not found")
+
+        # Check team-based authorization (same pattern as initiate_oauth_flow)
+        user_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
+        is_admin = current_user.get("is_admin", False) if isinstance(current_user, dict) else getattr(current_user, "is_admin", False)
+        # Also check nested user.is_admin for JWT tokens
+        if isinstance(current_user, dict) and not is_admin:
+            is_admin = current_user.get("user", {}).get("is_admin", False)
+
+        gateway_team_id = getattr(gateway, "team_id", None)
+
+        if not is_admin and gateway_team_id:
+            # First-Party
+            from mcpgateway.services.email_auth_service import EmailAuthService
+
+            auth_service = EmailAuthService(db)
+            user = await auth_service.get_user_by_email(user_email)
+            if not user or not user.is_team_member(gateway_team_id):
+                raise HTTPException(status_code=403, detail="You don't have access to this gateway")
 
         if not gateway.oauth_config:
             return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}

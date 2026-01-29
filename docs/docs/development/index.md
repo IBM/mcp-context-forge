@@ -116,12 +116,12 @@ make podman-run-ssl    # run with self-signed TLS at https://localhost:4444
 
 ## 🔐 Authentication
 
-Admin UI and API are protected by Basic Auth or JWT.
+Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). API endpoints require JWT tokens (Basic Auth is disabled by default).
 
 To generate a JWT token:
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
 echo $MCPGATEWAY_BEARER_TOKEN
 ```
 

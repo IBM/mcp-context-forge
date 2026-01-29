@@ -25,11 +25,17 @@ def test_gateway_service_normalize_url():
 
 
 def test_gateway_service_auth_headers():
+    """Test that _get_auth_headers returns only Content-Type (no credentials).
+
+    Gateway credentials are intentionally NOT included to prevent
+    sending this gateway's credentials to remote servers.
+    """
     service = GatewayService()
     headers = service._get_auth_headers()
     assert headers["Content-Type"] == "application/json"
-    assert headers["Authorization"].startswith("Basic ")
-    assert "X-API-Key" in headers
+    # Authorization is intentionally NOT included - each gateway should have its own auth_value
+    assert "Authorization" not in headers
+    assert "X-API-Key" not in headers
 
 
 def test_gateway_service_validate_tools():

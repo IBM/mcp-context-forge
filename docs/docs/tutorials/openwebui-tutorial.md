@@ -223,18 +223,18 @@ docker run -d \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=your-secret-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
   ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
 
-# Generate an API token for later use
+# Generate an API token for later use (expires in 1 week)
 docker exec mcpgateway \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin --exp 0 --secret your-secret-key
+  --username admin@example.com --exp 10080 --secret your-secret-key
 ```
 
-Access the MCP Gateway UI at http://localhost:4444/admin (admin/changeme).
+Access the MCP Gateway UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).
 
 ### Step 5: Deploy MCPO
 
@@ -604,9 +604,9 @@ services:
       DATABASE_URL: "sqlite:////data/mcp.db"
       HOST: "0.0.0.0"
       JWT_SECRET_KEY: "your-secret-key"
-      BASIC_AUTH_USER: "admin"
-      BASIC_AUTH_PASSWORD: "changeme"
       AUTH_REQUIRED: "true"
+      PLATFORM_ADMIN_EMAIL: "admin@example.com"
+      PLATFORM_ADMIN_PASSWORD: "changeme"
     volumes:
 
       - mcpgateway_data:/data

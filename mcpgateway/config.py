@@ -13,8 +13,8 @@ Environment variables:
 - HOST: Host to bind to (default: "127.0.0.1")
 - PORT: Port to listen on (default: 4444)
 - DATABASE_URL: SQLite database URL (default: "sqlite:///./mcp.db")
-- BASIC_AUTH_USER: Admin username (default: "admin")
-- BASIC_AUTH_PASSWORD: Admin password (default: "changeme")
+- BASIC_AUTH_USER: Username for API Basic auth when enabled (default: "admin")
+- BASIC_AUTH_PASSWORD: Password for API Basic auth when enabled (default: "changeme")
 - LOG_LEVEL: Logging level (default: "INFO")
 - SKIP_SSL_VERIFY: Disable SSL verification (default: False)
 - AUTH_REQUIRED: Require authentication (default: True)
@@ -25,8 +25,8 @@ Environment variables:
 - TOOL_TIMEOUT: Tool invocation timeout (default: 60)
 - PROMPT_CACHE_SIZE: Max cached prompts (default: 100)
 - HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 300)
-- REQUIRE_TOKEN_EXPIRATION: Require JWT tokens to have expiration (default: False)
-- REQUIRE_JTI: Require JTI claim in tokens for revocation (default: False)
+- REQUIRE_TOKEN_EXPIRATION: Require JWT tokens to have expiration (default: True)
+- REQUIRE_JTI: Require JTI claim in tokens for revocation (default: True)
 - REQUIRE_USER_IN_DB: Require all users to exist in database (default: False)
 
 Examples:
@@ -172,6 +172,10 @@ class Settings(BaseSettings):
     port: PositiveInt = Field(default=4444, ge=1, le=65535)
     client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
+    api_allow_basic_auth: bool = Field(
+        default=False,
+        description="Allow Basic authentication for API endpoints. Disabled by default for security. Use JWT or API tokens instead.",
+    )
     database_url: str = Field(
         default="sqlite:///./mcp.db",
         description=(
@@ -210,8 +214,8 @@ class Settings(BaseSettings):
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
 
-    require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
-    require_jti: bool = Field(default=False, description="Require JTI (JWT ID) claim in all tokens for revocation support")  # Default to flexible mode for backward compatibility
+    require_token_expiration: bool = Field(default=True, description="Require all JWT tokens to have expiration claims (secure default)")
+    require_jti: bool = Field(default=True, description="Require JTI (JWT ID) claim in all tokens for revocation support (secure default)")
     require_user_in_db: bool = Field(
         default=False,
         description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. WARNING: Enabling this on a fresh deployment will lock you out.",
@@ -371,6 +375,10 @@ class Settings(BaseSettings):
 
     # Email-Based Authentication
     email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
+    public_registration_enabled: bool = Field(
+        default=False,
+        description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
+    )
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
     default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
@@ -655,7 +663,7 @@ class Settings(BaseSettings):
 
         if not info.data.get("client_mode"):
             if value == "changeme":  # nosec B105 - checking for default value
-                logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
+                logger.warning("🔓 SECURITY WARNING: Default BASIC_AUTH_PASSWORD detected! Please change it if you enable API_ALLOW_BASIC_AUTH.")
 
             # Note: We can't access password_min_length here as it's not set yet during validation
             # Using default value of 8 to match the field default
