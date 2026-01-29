@@ -401,22 +401,47 @@ class MCPServerConfig(BaseModel):
     @field_validator("uds", mode="after")
     @classmethod
     def validate_uds(cls, uds: str | None) -> str | None:
-        """Validate the Unix domain socket path.
+        """Validate the Unix domain socket path for security.
 
         Args:
             uds: Unix domain socket path.
 
         Returns:
-            The validated uds string or None if none is set.
+            The validated canonical uds path or None if none is set.
 
         Raises:
-            ValueError: if uds is empty or whitespace.
+            ValueError: if uds is empty, not absolute, or parent directory is invalid.
         """
         if uds is None:
             return uds
         if not isinstance(uds, str) or not uds.strip():
             raise ValueError("MCP server uds must be a non-empty string.")
-        return uds
+
+        uds_path = Path(uds).expanduser().resolve()
+        if not uds_path.is_absolute():
+            raise ValueError(f"MCP server uds path must be absolute: {uds}")
+
+        parent_dir = uds_path.parent
+        if not parent_dir.is_dir():
+            raise ValueError(f"MCP server uds parent directory does not exist: {parent_dir}")
+
+        # Check parent directory permissions for security
+        try:
+            parent_mode = parent_dir.stat().st_mode
+            # Warn if parent directory is world-writable (o+w = 0o002)
+            if parent_mode & 0o002:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "MCP server uds parent directory %s is world-writable. "
+                    "This may allow unauthorized socket hijacking. "
+                    "Consider using a directory with restricted permissions (e.g., 0o700).",
+                    parent_dir,
+                )
+        except OSError:
+            pass  # Best effort - continue if we can't check permissions
+
+        return str(uds_path)
 
     @model_validator(mode="after")
     def validate_uds_tls(self) -> Self:  # pylint: disable=bad-classmethod-argument
@@ -616,17 +641,17 @@ class MCPClientConfig(BaseModel):
             cwd: Working directory for the stdio plugin process.
 
         Returns:
-            The validated cwd string or None if none is set.
+            The validated canonical cwd path or None if none is set.
 
         Raises:
             ValueError: if cwd does not exist or is not a directory.
         """
         if not cwd:
             return cwd
-        cwd_path = Path(cwd).expanduser()
+        cwd_path = Path(cwd).expanduser().resolve()
         if not cwd_path.is_dir():
             raise ValueError(f"MCP stdio cwd {cwd} does not exist or is not a directory.")
-        return cwd
+        return str(cwd_path)
 
     @field_validator(UDS, mode="after")
     @classmethod
@@ -637,16 +662,41 @@ class MCPClientConfig(BaseModel):
             uds: Unix domain socket path.
 
         Returns:
-            The validated uds string or None if none is set.
+            The validated canonical uds path or None if none is set.
 
         Raises:
-            ValueError: if uds is empty or whitespace.
+            ValueError: if uds is empty, not absolute, or parent directory is invalid.
         """
         if uds is None:
             return uds
         if not isinstance(uds, str) or not uds.strip():
             raise ValueError("MCP client uds must be a non-empty string.")
-        return uds
+
+        uds_path = Path(uds).expanduser().resolve()
+        if not uds_path.is_absolute():
+            raise ValueError(f"MCP client uds path must be absolute: {uds}")
+
+        parent_dir = uds_path.parent
+        if not parent_dir.is_dir():
+            raise ValueError(f"MCP client uds parent directory does not exist: {parent_dir}")
+
+        # Check parent directory permissions for security
+        try:
+            parent_mode = parent_dir.stat().st_mode
+            # Warn if parent directory is world-writable (o+w = 0o002)
+            if parent_mode & 0o002:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "MCP client uds parent directory %s is world-writable. "
+                    "This may allow unauthorized socket hijacking. "
+                    "Consider using a directory with restricted permissions (e.g., 0o700).",
+                    parent_dir,
+                )
+        except OSError:
+            pass  # Best effort - continue if we can't check permissions
+
+        return str(uds_path)
 
     @model_validator(mode="after")
     def validate_tls_usage(self) -> Self:  # pylint: disable=bad-classmethod-argument

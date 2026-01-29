@@ -176,7 +176,7 @@ async def test_hook_methods_empty_content():
         await plugin.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, payload, context)
 
     # Test resource_post_fetch with empty content - should raise PluginError
-    resource_content = ResourceContent(type="resource", id="123",uri="file://test.txt", text="content")
+    resource_content = ResourceContent(type="resource", id="123", uri="file://test.txt", text="content")
     payload = ResourcePostFetchPayload(uri="file://test.txt", content=resource_content)
     with pytest.raises(PluginError):
         await plugin.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, payload, context)
@@ -266,28 +266,35 @@ def test_mcp_config_cwd_invalid():
 
 
 def test_mcp_config_cwd_valid():
-    """STDIO cwd accepts existing directories."""
+    """STDIO cwd accepts existing directories and returns canonical path."""
     cfg = MCPClientConfig(
         proto=TransportType.STDIO,
         script="mcpgateway/plugins/framework/external/mcp/server/runtime.py",
         cwd=".",
     )
-    assert cfg.cwd == "."
+    # cwd is resolved to canonical absolute path
+    assert os.path.isabs(cfg.cwd)
+    assert os.path.isdir(cfg.cwd)
 
 
-def test_mcp_config_uds_invalid_transport():
+def test_mcp_config_uds_invalid_transport(tmp_path):
     """UDS is only valid for streamable HTTP."""
+    uds_path = str(tmp_path / "mcp.sock")
     with pytest.raises(ValueError, match="uds is only valid for STREAMABLEHTTP transport"):
-        MCPClientConfig(proto=TransportType.STDIO, script="mcpgateway/plugins/framework/external/mcp/server/runtime.py", uds="/tmp/mcp.sock")
+        MCPClientConfig(proto=TransportType.STDIO, script="mcpgateway/plugins/framework/external/mcp/server/runtime.py", uds=uds_path)
 
 
-def test_mcp_config_uds_accepts_streamable_http():
-    """UDS is accepted for streamable HTTP."""
-    cfg = MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds="/tmp/mcp.sock")
-    assert cfg.uds == "/tmp/mcp.sock"
+def test_mcp_config_uds_accepts_streamable_http(tmp_path):
+    """UDS is accepted for streamable HTTP and returns canonical path."""
+    uds_path = str(tmp_path / "mcp.sock")
+    cfg = MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds=uds_path)
+    # uds is resolved to canonical absolute path
+    assert os.path.isabs(cfg.uds)
+    assert cfg.uds.endswith("mcp.sock")
 
 
-def test_mcp_config_uds_tls_rejected():
+def test_mcp_config_uds_tls_rejected(tmp_path):
     """UDS should not allow TLS configuration."""
+    uds_path = str(tmp_path / "mcp.sock")
     with pytest.raises(ValueError, match="TLS configuration is not supported for Unix domain sockets"):
-        MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds="/tmp/mcp.sock", tls={})
+        MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds=uds_path, tls={})
