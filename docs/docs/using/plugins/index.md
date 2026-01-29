@@ -53,6 +53,13 @@ The plugin framework implements a **hybrid architecture** supporting both native
 - **Use Cases:** Advanced AI safety, complex ML inference, policy engines (e.g., OPA)
 - **Examples:** OPA external plugin server, LlamaGuard integration, OpenAI Moderation
 
+### Gunicorn Workers and External Transports
+
+When running the gateway under Gunicorn with multiple workers:
+
+- **STDIO:** Each worker spawns its own plugin subprocess and maintains a separate session. This maximizes isolation but multiplies plugin processes and does not share state across workers.
+- **Streamable HTTP over UDS:** Run the plugin server as a separate long‑lived process and point all workers to the same Unix socket. This reduces process count and allows shared plugin state, while avoiding TCP port exposure.
+
 ### Unified Plugin Interface
 
 Both plugin types implement the same interface, enabling seamless switching between deployment models:
