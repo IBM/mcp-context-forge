@@ -46,12 +46,14 @@ class _ToolState:
         calls: Deque of call timestamps within the window.
         consecutive_failures: Count of consecutive failures.
         open_until: Unix timestamp when breaker closes; 0 if closed.
+        half_open: True if breaker is in half-open state (testing recovery).
     """
 
     failures: Deque[float]
     calls: Deque[float]
     consecutive_failures: int
     open_until: float  # epoch when breaker closes; 0 if closed
+    half_open: bool = False  # half-open state for recovery testing
 
 
 class CircuitBreakerConfig(BaseModel):
@@ -97,7 +99,7 @@ def _get_state(tool: str) -> _ToolState:
     """
     st = _STATE.get(tool)
     if not st:
-        st = _ToolState(failures=deque(), calls=deque(), consecutive_failures=0, open_until=0.0)
+        st = _ToolState(failures=deque(), calls=deque(), consecutive_failures=0, open_until=0.0, half_open=False)
         _STATE[tool] = st
     return st
 
@@ -162,23 +164,36 @@ class CircuitBreakerPlugin(Plugin):
         """
         tool = payload.name
         st = _get_state(tool)
+        cfg = _cfg_for(self._cfg, tool)
         now = _now()
-        # Close breaker if cooldown elapsed
+
+        # Check if cooldown has elapsed - transition to half-open state
         if st.open_until and now >= st.open_until:
-            st.open_until = 0.0
-            st.consecutive_failures = 0
+            # Transition to half-open state (allow one test request)
+            st.half_open = True
+            st.open_until = 0.0  # Reset open_until so we allow this request through
+            # Note: consecutive_failures is NOT reset yet - that happens on successful call
+
+        # If still in open state (cooldown not elapsed), block the request
         if st.open_until and now < st.open_until:
+            retry_after_seconds = max(0.0, st.open_until - now)
             return ToolPreInvokeResult(
                 continue_processing=False,
                 violation=PluginViolation(
                     reason="Circuit open",
                     description=f"Breaker open for tool '{tool}' until {int(st.open_until)}",
                     code="CIRCUIT_OPEN",
-                    details={"open_until": st.open_until},
+                    details={
+                        "open_until": st.open_until,
+                        "retry_after_seconds": round(retry_after_seconds, 1),
+                    },
                 ),
             )
+
         # Record call timestamp for rate calculations in post hook context
         context.set_state("cb_call_time", now)
+        # Track if this is a half-open test request
+        context.set_state("cb_half_open_test", st.half_open)
         return ToolPreInvokeResult(continue_processing=True)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
@@ -207,24 +222,62 @@ class CircuitBreakerPlugin(Plugin):
         # Record this call
         start_time = context.get_state("cb_call_time", now)
         st.calls.append(start_time)
+
+        # Determine if this is an error:
+        # 1. Check is_error on the result
+        # 2. Check for timeout flag in context (set by tool_service on timeout)
         error = _is_error(payload.result)
+        timeout_occurred = context.get_state("cb_timeout_failure", False)
+        if timeout_occurred:
+            error = True
+
+        # Check if this was a half-open test request
+        was_half_open_test = context.get_state("cb_half_open_test", False)
+
         if error:
             st.failures.append(start_time)
             st.consecutive_failures += 1
+
+            # If this was a half-open test request that failed, immediately reopen the circuit
+            if was_half_open_test:
+                st.half_open = False
+                st.open_until = now + max(1, int(cfg.cooldown_seconds))
+                try:
+                    from mcpgateway.services.metrics import circuit_breaker_open_counter
+                    circuit_breaker_open_counter.labels(tool_name=tool).inc()
+                except Exception:
+                    pass
         else:
+            # Success - reset consecutive failures
             st.consecutive_failures = 0
 
-        # Evaluate breaker
+            # If this was a half-open test request that succeeded, fully close the circuit
+            if was_half_open_test:
+                st.half_open = False
+                # Don't reset the window - keep tracking for ongoing health
+
+        # Evaluate breaker (only if not already open from half-open failure)
         calls = len(st.calls)
         failure_rate = (len(st.failures) / calls) if calls > 0 else 0.0
         should_open = False
-        if calls >= max(1, int(cfg.min_calls)) and failure_rate >= cfg.error_rate_threshold:
-            should_open = True
-        if st.consecutive_failures >= max(1, int(cfg.consecutive_failure_threshold)):
-            should_open = True
 
-        if should_open and not st.open_until:
-            st.open_until = now + max(1, int(cfg.cooldown_seconds))
+        if not st.open_until:  # Only evaluate if not already open
+            if calls >= max(1, int(cfg.min_calls)) and failure_rate >= cfg.error_rate_threshold:
+                should_open = True
+            if st.consecutive_failures >= max(1, int(cfg.consecutive_failure_threshold)):
+                should_open = True
+
+            if should_open:
+                st.open_until = now + max(1, int(cfg.cooldown_seconds))
+                try:
+                    from mcpgateway.services.metrics import circuit_breaker_open_counter
+                    circuit_breaker_open_counter.labels(tool_name=tool).inc()
+                except Exception:
+                    pass
+
+        # Compute retry_after_seconds for metadata
+        retry_after_seconds = max(0.0, st.open_until - now) if st.open_until else 0.0
+
         return ToolPostInvokeResult(
             metadata={
                 "circuit_calls_in_window": calls,
@@ -232,5 +285,8 @@ class CircuitBreakerPlugin(Plugin):
                 "circuit_failure_rate": round(failure_rate, 3),
                 "circuit_consecutive_failures": st.consecutive_failures,
                 "circuit_open_until": st.open_until or 0.0,
+                "circuit_half_open": st.half_open,
+                "circuit_retry_after_seconds": round(retry_after_seconds, 1),
             }
         )
+
