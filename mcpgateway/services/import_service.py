@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=import-outside-toplevel,no-name-in-module
 """Location: ./mcpgateway/services/import_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -31,12 +32,11 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
-from mcpgateway.services.gateway_service import GatewayNameConflictError, GatewayService
-from mcpgateway.services.prompt_service import PromptNameConflictError, PromptService
-from mcpgateway.services.resource_service import ResourceService, ResourceURIConflictError
-from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerNameConflictError, ServerService
-from mcpgateway.services.tool_service import ToolNameConflictError, ToolService
+from mcpgateway.services.gateway_service import GatewayNameConflictError
+from mcpgateway.services.prompt_service import PromptNameConflictError
+from mcpgateway.services.resource_service import ResourceURIConflictError
+from mcpgateway.services.server_service import ServerNameConflictError
+from mcpgateway.services.tool_service import ToolNameConflictError
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 logger = logging.getLogger(__name__)
@@ -182,12 +182,26 @@ class ImportService:
             >>> hasattr(service, 'gateway_service')
             True
         """
-        self.gateway_service = GatewayService()
-        self.tool_service = ToolService()
-        self.resource_service = ResourceService()
-        self.prompt_service = PromptService()
-        self.server_service = ServerService()
-        self.root_service = RootService()
+        # Prefer globally-initialized singletons from mcpgateway.main to ensure
+        # services share initialized EventService/Redis clients. Import lazily
+        # to avoid circular import at module load time. Fall back to local
+        # instances if singletons are not available (tests, isolated usage).
+        # Use globally-exported singletons from service modules so they
+        # share initialized EventService/Redis clients created at app startup.
+        # First-Party
+        from mcpgateway.services.gateway_service import gateway_service
+        from mcpgateway.services.prompt_service import prompt_service
+        from mcpgateway.services.resource_service import resource_service
+        from mcpgateway.services.root_service import root_service
+        from mcpgateway.services.server_service import server_service
+        from mcpgateway.services.tool_service import tool_service
+
+        self.gateway_service = gateway_service
+        self.tool_service = tool_service
+        self.resource_service = resource_service
+        self.prompt_service = prompt_service
+        self.server_service = server_service
+        self.root_service = root_service
         self.active_imports: Dict[str, ImportStatus] = {}
 
     async def initialize(self) -> None:

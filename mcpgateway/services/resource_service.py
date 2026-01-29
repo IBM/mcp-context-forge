@@ -3494,3 +3494,28 @@ class ResourceService:
 
         metrics_cache.invalidate("resources")
         metrics_cache.invalidate_prefix("top_resources:")
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_resource_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The resource_service singleton instance if name is "resource_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "resource_service".
+    """
+    global _resource_service_instance  # pylint: disable=global-statement
+    if name == "resource_service":
+        if _resource_service_instance is None:
+            _resource_service_instance = ResourceService()
+        return _resource_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
