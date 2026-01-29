@@ -29,6 +29,12 @@
       "title": "Docs Allow Basic Auth",
       "type": "boolean"
     },
+    "api_allow_basic_auth": {
+      "default": false,
+      "title": "API Allow Basic Auth",
+      "description": "Allow Basic authentication for API endpoints. Disabled by default for security. Use JWT or API tokens instead.",
+      "type": "boolean"
+    },
     "database_url": {
       "default": "sqlite:///./mcp.db",
       "description": "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. For PostgreSQL with custom schema, use the 'options' query parameter: postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name (See Issue #1535 for details)",

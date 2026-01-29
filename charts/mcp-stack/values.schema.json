@@ -924,8 +924,14 @@
             },
             "BASIC_AUTH_PASSWORD": {
               "type": "string",
-              "description": "Basic auth password",
+              "description": "Basic auth password (when Basic auth is enabled)",
               "default": "changeme"
+            },
+            "API_ALLOW_BASIC_AUTH": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable Basic auth for API endpoints (disabled by default for security)",
+              "default": "false"
             },
             "AUTH_REQUIRED": {
               "type": "string",

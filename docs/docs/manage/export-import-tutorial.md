@@ -18,7 +18,7 @@ Choose one authentication method:
     ```bash
     # Generate a JWT token
     export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-        --username admin --exp 0 --secret my-test-key)
+        --username admin@example.com --exp 10080 --secret my-test-key)
     ```
 
 === "Basic Auth"

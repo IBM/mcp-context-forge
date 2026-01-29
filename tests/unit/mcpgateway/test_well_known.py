@@ -244,12 +244,18 @@ class TestWellKnownAdminEndpoint:
     def auth_client(self):
         """Create a test client with auth dependency override."""
         # First-Party
+        from mcpgateway.config import settings
         from mcpgateway.utils.verify_credentials import require_auth
+
+        # Disable auth_required so AdminAuthMiddleware skips its check
+        original_auth_required = settings.auth_required
+        settings.auth_required = False
 
         app.dependency_overrides[require_auth] = lambda: "test_user"
         client = TestClient(app)
         yield client
         app.dependency_overrides.pop(require_auth, None)
+        settings.auth_required = original_auth_required
 
     @patch("mcpgateway.routers.well_known.settings")
     def test_admin_well_known_status_basic(self, mock_settings, auth_client):
