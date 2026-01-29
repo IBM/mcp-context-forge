@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=invalid-name, import-outside-toplevel, unused-import, no-name-in-module
 """Location: ./mcpgateway/services/a2a_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -31,7 +32,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.services.tool_service import ToolService
+
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
@@ -477,7 +478,9 @@ class A2AAgentService:
             # even if tool creation fails (e.g., due to visibility or permission issues)
             tool_db = None
             try:
-                tool_service = ToolService()
+                # First-Party
+                from mcpgateway.services.tool_service import tool_service
+
                 tool_db = await tool_service.create_tool_from_a2a_agent(
                     db=db,
                     agent=new_agent,
@@ -1150,7 +1153,9 @@ class A2AAgentService:
             # Wrap in try/except to handle tool sync failures gracefully - the agent
             # update is the primary operation and should succeed even if tool sync fails
             try:
-                tool_service = ToolService()
+                # First-Party
+                from mcpgateway.services.tool_service import tool_service
+
                 await tool_service.update_tool_from_a2a_agent(
                     db=db,
                     agent=agent,
@@ -1276,7 +1281,9 @@ class A2AAgentService:
             agent_name = agent.name
 
             # Delete the associated tool before deleting the agent
-            tool_service = ToolService()
+            # First-Party
+            from mcpgateway.services.tool_service import tool_service
+
             await tool_service.delete_tool_from_a2a_agent(db=db, agent=agent, user_email=user_email, purge_metrics=purge_metrics)
 
             if purge_metrics:

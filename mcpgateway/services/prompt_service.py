@@ -2616,3 +2616,28 @@ class PromptService:
 
         metrics_cache.invalidate("prompts")
         metrics_cache.invalidate_prefix("top_prompts:")
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_prompt_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The prompt_service singleton instance if name is "prompt_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "prompt_service".
+    """
+    global _prompt_service_instance  # pylint: disable=global-statement
+    if name == "prompt_service":
+        if _prompt_service_instance is None:
+            _prompt_service_instance = PromptService()
+        return _prompt_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

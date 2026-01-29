@@ -1953,3 +1953,28 @@ class ServerService:
 
         logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
         return response_data
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_server_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The server_service singleton instance if name is "server_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "server_service".
+    """
+    global _server_service_instance  # pylint: disable=global-statement
+    if name == "server_service":
+        if _server_service_instance is None:
+            _server_service_instance = ServerService()
+        return _server_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

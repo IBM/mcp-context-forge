@@ -368,3 +368,28 @@ class RootService:
                 await queue.put(event)
             except Exception as e:
                 logger.error(f"Failed to notify subscriber: {e}")
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_root_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The root_service singleton instance if name is "root_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "root_service".
+    """
+    global _root_service_instance  # pylint: disable=global-statement
+    if name == "root_service":
+        if _root_service_instance is None:
+            _root_service_instance = RootService()
+        return _root_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
