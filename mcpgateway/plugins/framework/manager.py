@@ -492,6 +492,9 @@ class PluginManager:
             cls._config = None
             cls._config_path = None
             cls._async_lock = None
+            cls._registry = PluginInstanceRegistry()
+            cls._executor = PluginExecutor()
+            cls._loader = PluginLoader()
 
     @property
     def config(self) -> Config | None:

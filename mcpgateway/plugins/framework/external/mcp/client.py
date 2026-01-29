@@ -14,6 +14,8 @@ from contextlib import AsyncExitStack
 from functools import partial
 import logging
 import os
+from pathlib import Path
+import sys
 from typing import Any, Awaitable, Callable, Optional
 
 # Third-Party
@@ -28,7 +30,7 @@ import orjson
 from mcpgateway.common.models import TransportType
 from mcpgateway.config import settings
 from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
-from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, HOOK_TYPE, IGNORE_CONFIG_EXTERNAL, INVOKE_HOOK, NAME, PAYLOAD, PLUGIN_NAME, PYTHON, PYTHON_SUFFIX, RESULT
+from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, HOOK_TYPE, IGNORE_CONFIG_EXTERNAL, INVOKE_HOOK, NAME, PAYLOAD, PLUGIN_NAME, PYTHON_SUFFIX, RESULT
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
 from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
@@ -38,7 +40,10 @@ logger = logging.getLogger(__name__)
 
 
 class ExternalPlugin(Plugin):
-    """External plugin object for pre/post processing of inputs and outputs at various locations throughout the mcp gateway. The External Plugin connects to a remote MCP server that contains plugins."""
+    """External plugin object for pre/post processing of inputs and outputs at various locations throughout the gateway.
+
+    The External Plugin connects to a remote MCP server that contains plugins.
+    """
 
     def __init__(self, config: PluginConfig) -> None:
         """Initialize a plugin with a configuration and context.
@@ -53,6 +58,14 @@ class ExternalPlugin(Plugin):
         self._stdio: Optional[Any]
         self._write: Optional[Any]
         self._current_task = asyncio.current_task()
+        self._stdio_exit_stack: Optional[AsyncExitStack] = None
+        self._stdio_task: Optional[asyncio.Task[None]] = None
+        self._stdio_ready: Optional[asyncio.Event] = None
+        self._stdio_stop: Optional[asyncio.Event] = None
+        self._stdio_error: Optional[BaseException] = None
+        self._get_session_id: Optional[Callable[[], str | None]] = None
+        self._session_id: Optional[str] = None
+        self._http_client_factory: Optional[Callable[..., httpx.AsyncClient]] = None
 
     async def initialize(self) -> None:
         """Initialize the plugin's connection to the MCP server.
@@ -64,9 +77,9 @@ class ExternalPlugin(Plugin):
         if not self._config.mcp:
             raise PluginError(error=PluginErrorModel(message="The mcp section must be defined for external plugin", plugin_name=self.name))
         if self._config.mcp.proto == TransportType.STDIO:
-            if not self._config.mcp.script:
-                raise PluginError(error=PluginErrorModel(message="STDIO transport requires script", plugin_name=self.name))
-            await self.__connect_to_stdio_server(self._config.mcp.script)
+            if not (self._config.mcp.script or self._config.mcp.cmd):
+                raise PluginError(error=PluginErrorModel(message="STDIO transport requires script or cmd", plugin_name=self.name))
+            await self.__connect_to_stdio_server(self._config.mcp.script, self._config.mcp.cmd, self._config.mcp.env, self._config.mcp.cwd)
         elif self._config.mcp.proto == TransportType.STREAMABLEHTTP:
             if not self._config.mcp.url:
                 raise PluginError(error=PluginErrorModel(message="STREAMABLEHTTP transport requires url", plugin_name=self.name))
@@ -86,40 +99,142 @@ class ExternalPlugin(Plugin):
 
             self._config = PluginConfig.model_validate(remote_config, context=context)
         except PluginError as pe:
+            try:
+                await self.shutdown()
+            except Exception as shutdown_error:
+                logger.error("Error during external plugin shutdown after init failure: %s", shutdown_error)
             logger.exception(pe)
             raise
         except Exception as e:
+            try:
+                await self.shutdown()
+            except Exception as shutdown_error:
+                logger.error("Error during external plugin shutdown after init failure: %s", shutdown_error)
             logger.exception(e)
             raise PluginError(error=convert_exception_to_error(e, plugin_name=self.name))
 
-    async def __connect_to_stdio_server(self, server_script_path: str) -> None:
-        """Connect to an MCP plugin server via stdio.
+    def __resolve_stdio_command(self, script_path: str | None, cmd: list[str] | None, cwd: str | None) -> tuple[str, list[str]]:
+        """Resolve the stdio command + args from config.
 
         Args:
-            server_script_path: Path to the server script (.py).
+            script_path: Path to a server script or executable.
+            cmd: Command list to execute (command + args).
+            cwd: Working directory for resolving relative script paths.
+
+        Returns:
+            Tuple of (command, args).
 
         Raises:
-            PluginError: if stdio script is not a python script or if there is a connection error.
+            PluginError: if the script is invalid or cmd is malformed.
         """
-        is_python = server_script_path.endswith(PYTHON_SUFFIX) if server_script_path else False
-        if not is_python:
-            raise PluginError(error=PluginErrorModel(message="Server script must be a .py file", plugin_name=self.name))
+        if cmd:
+            if not isinstance(cmd, list) or not cmd or not all(isinstance(part, str) and part.strip() for part in cmd):
+                raise PluginError(error=PluginErrorModel(message="STDIO cmd must be a non-empty list of strings", plugin_name=self.name))
+            return cmd[0], cmd[1:]
 
+        if not script_path:
+            raise PluginError(error=PluginErrorModel(message="STDIO transport requires script or cmd", plugin_name=self.name))
+
+        server_path = Path(script_path).expanduser()
+        if not server_path.is_absolute() and cwd:
+            server_path = Path(cwd).expanduser() / server_path
+        resolved_script_path = str(server_path)
+        if not server_path.is_file():
+            raise PluginError(error=PluginErrorModel(message=f"Server script {resolved_script_path} does not exist.", plugin_name=self.name))
+
+        if server_path.suffix == PYTHON_SUFFIX:
+            return sys.executable, [resolved_script_path]
+        if server_path.suffix == ".sh":
+            return "sh", [resolved_script_path]
+        if not os.access(server_path, os.X_OK):
+            raise PluginError(error=PluginErrorModel(message=f"Server script {resolved_script_path} must be executable.", plugin_name=self.name))
+        return resolved_script_path, []
+
+    def __build_stdio_env(self, extra_env: dict[str, str] | None) -> dict[str, str]:
+        """Build environment for the stdio server process.
+
+        Args:
+            extra_env: Environment overrides to merge into the current process env.
+
+        Returns:
+            Combined environment dictionary for the plugin process.
+        """
         current_env = os.environ.copy()
+        if extra_env:
+            current_env.update(extra_env)
+        return current_env
 
+    async def __run_stdio_session(self, server_script_path: str | None, cmd: list[str] | None, env: dict[str, str] | None, cwd: str | None) -> None:
+        """Run a stdio session in a dedicated task for consistent setup/teardown.
+
+        Args:
+            server_script_path: Path to the server script or executable.
+            cmd: Command list to start the server (command + args).
+            env: Environment overrides for the server process.
+            cwd: Working directory for the server process.
+        """
         try:
-            server_params = StdioServerParameters(command=PYTHON, args=[server_script_path], env=current_env)
+            command, args = self.__resolve_stdio_command(server_script_path, cmd, cwd)
+            server_env = self.__build_stdio_env(env)
+            server_params = StdioServerParameters(command=command, args=args, env=server_env, cwd=cwd)
 
-            stdio_transport = await self._exit_stack.enter_async_context(stdio_client(server_params))
+            self._stdio_exit_stack = AsyncExitStack()
+            stdio_transport = await self._stdio_exit_stack.enter_async_context(stdio_client(server_params))
             self._stdio, self._write = stdio_transport
-            self._session = await self._exit_stack.enter_async_context(ClientSession(self._stdio, self._write))
+            self._session = await self._stdio_exit_stack.enter_async_context(ClientSession(self._stdio, self._write))
 
             await self._session.initialize()
 
-            # List available tools
             response = await self._session.list_tools()
             tools = response.tools
             logger.info("\nConnected to plugin MCP server (stdio) with tools: %s", " ".join([tool.name for tool in tools]))
+        except Exception as e:
+            self._stdio_error = e
+            logger.exception(e)
+        finally:
+            if self._stdio_ready and not self._stdio_ready.is_set():
+                self._stdio_ready.set()
+
+        if self._stdio_error:
+            if self._stdio_exit_stack:
+                await self._stdio_exit_stack.aclose()
+            return
+
+        if self._stdio_stop:
+            await self._stdio_stop.wait()
+
+        if self._stdio_exit_stack:
+            await self._stdio_exit_stack.aclose()
+
+    async def __connect_to_stdio_server(self, server_script_path: str | None, cmd: list[str] | None, env: dict[str, str] | None, cwd: str | None) -> None:
+        """Connect to an MCP plugin server via stdio.
+
+        Args:
+            server_script_path: Path to the server script or executable.
+            cmd: Command list to start the server (command + args).
+            env: Environment overrides for the server process.
+            cwd: Working directory for the server process.
+
+        Raises:
+            PluginError: if stdio script/cmd is invalid or if there is a connection error.
+        """
+        try:
+            if not self._stdio_ready:
+                self._stdio_ready = asyncio.Event()
+            if not self._stdio_stop:
+                self._stdio_stop = asyncio.Event()
+            self._stdio_error = None
+
+            self._stdio_task = asyncio.create_task(
+                self.__run_stdio_session(server_script_path, cmd, env, cwd),
+                name=f"external-plugin-stdio-{self.name}",
+            )
+
+            await self._stdio_ready.wait()
+            if self._stdio_error:
+                raise PluginError(error=convert_exception_to_error(self._stdio_error, plugin_name=self.name))
+        except PluginError:
+            raise
         except Exception as e:
             logger.exception(e)
             raise PluginError(error=convert_exception_to_error(e, plugin_name=self.name))
@@ -134,7 +249,10 @@ class ExternalPlugin(Plugin):
             PluginError: if there is an external connection error after all retries.
         """
         plugin_tls = self._config.mcp.tls if self._config and self._config.mcp else None
-        tls_config = plugin_tls or MCPClientTLSConfig.from_env()
+        uds_path = self._config.mcp.uds if self._config and self._config.mcp else None
+        if uds_path and plugin_tls:
+            logger.warning("TLS configuration is ignored for Unix domain socket connections.")
+        tls_config = None if uds_path else (plugin_tls or MCPClientTLSConfig.from_env())
 
         def _tls_httpx_client_factory(
             headers: Optional[dict[str, str]] = None,
@@ -159,6 +277,8 @@ class ExternalPlugin(Plugin):
             from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
 
             kwargs: dict[str, Any] = {"follow_redirects": True}
+            if uds_path:
+                kwargs["transport"] = httpx.AsyncHTTPTransport(uds=uds_path)
             if headers:
                 kwargs["headers"] = headers
             kwargs["timeout"] = timeout if timeout else get_http_timeout()
@@ -184,40 +304,35 @@ class ExternalPlugin(Plugin):
 
             return httpx.AsyncClient(**kwargs)
 
+        self._http_client_factory = _tls_httpx_client_factory
         max_retries = 3
         base_delay = 1.0
 
         for attempt in range(max_retries):
 
             try:
-                client_factory = _tls_httpx_client_factory if tls_config else None
-                async with AsyncExitStack() as temp_stack:
-                    streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
-                    http_transport = await temp_stack.enter_async_context(streamable_client)
-                    http_client, write_func, _ = http_transport
-                    session = await temp_stack.enter_async_context(ClientSession(http_client, write_func))
-                    await session.initialize()
-                    # List available tools
-                    response = await session.list_tools()
-                    tools = response.tools
-                    logger.info(
-                        "Successfully connected to plugin MCP server with tools: %s",
-                        " ".join([tool.name for tool in tools]),
-                    )
-
-                client_factory = _tls_httpx_client_factory if tls_config else None
-                streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
+                client_factory = _tls_httpx_client_factory
+                streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory, terminate_on_close=False)
                 http_transport = await self._exit_stack.enter_async_context(streamable_client)
-                self._http, self._write, _ = http_transport
+                self._http, self._write, get_session_id = http_transport
+                self._get_session_id = get_session_id
                 self._session = await self._exit_stack.enter_async_context(ClientSession(self._http, self._write))
 
                 await self._session.initialize()
+                self._session_id = self._get_session_id() if self._get_session_id else None
+                response = await self._session.list_tools()
+                tools = response.tools
+                logger.info(
+                    "Successfully connected to plugin MCP server with tools: %s",
+                    " ".join([tool.name for tool in tools]),
+                )
                 return
             except Exception as e:
                 logger.warning(f"Connection attempt {attempt + 1}/{max_retries} failed: {e}")
                 if attempt == max_retries - 1:
                     # Final attempt failed
-                    error_msg = f"External plugin '{self.name}' connection failed after {max_retries} attempts: {uri} is not reachable. Please ensure the MCP server is running."
+                    target = f"{uri} (uds={uds_path})" if uds_path else uri
+                    error_msg = f"External plugin '{self.name}' connection failed after {max_retries} attempts: {target} is not reachable. Please ensure the MCP server is running."
                     logger.error(error_msg)
                     raise PluginError(error=PluginErrorModel(message=error_msg, plugin_name=self.name))
                 await self.shutdown()
@@ -293,6 +408,8 @@ class ExternalPlugin(Plugin):
                 if not isinstance(content, TextContent):
                     continue
                 conf = orjson.loads(content.text)
+                if not conf:
+                    return None
                 return PluginConfig.model_validate(conf)
         except Exception as e:
             logger.exception(e)
@@ -302,8 +419,49 @@ class ExternalPlugin(Plugin):
 
     async def shutdown(self) -> None:
         """Plugin cleanup code."""
+        if self._stdio_task:
+            if self._stdio_stop:
+                self._stdio_stop.set()
+            try:
+                await self._stdio_task
+            except Exception as e:
+                logger.error("Error shutting down stdio session for plugin %s: %s", self.name, e)
+            self._stdio_task = None
+            self._stdio_ready = None
+            self._stdio_stop = None
+            self._stdio_exit_stack = None
+            self._stdio_error = None
+            self._stdio = None
+            self._write = None
+            if self._config and self._config.mcp and self._config.mcp.proto == TransportType.STDIO:
+                self._session = None
+
         if self._exit_stack:
             await self._exit_stack.aclose()
+        if self._config and self._config.mcp and self._config.mcp.proto == TransportType.STREAMABLEHTTP:
+            await self.__terminate_http_session()
+        self._get_session_id = None
+        self._session_id = None
+        self._http_client_factory = None
+
+    async def __terminate_http_session(self) -> None:
+        """Terminate streamable HTTP session explicitly to avoid lingering server state."""
+        if not self._session_id or not self._config or not self._config.mcp or not self._config.mcp.url:
+            return
+        # Third-Party
+        from mcp.server.streamable_http import MCP_SESSION_ID_HEADER  # pylint: disable=import-outside-toplevel
+
+        client_factory = self._http_client_factory
+        try:
+            if client_factory:
+                client = client_factory()
+            else:
+                client = httpx.AsyncClient(follow_redirects=True)
+            async with client:
+                headers = {MCP_SESSION_ID_HEADER: self._session_id}
+                await client.delete(self._config.mcp.url, headers=headers)
+        except Exception as exc:
+            logger.debug("Failed to terminate streamable HTTP session: %s", exc)
 
 
 class ExternalHookRef(HookRef):
