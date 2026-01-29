@@ -15,8 +15,6 @@ docker run -d --name mcpgateway \
   -e JWT_SECRET_KEY=my-test-key \
   -e JWT_AUDIENCE=mcpgateway-api \
   -e JWT_ISSUER=mcpgateway \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
@@ -28,7 +26,10 @@ docker run -d --name mcpgateway \
 docker logs mcpgateway
 ```
 
-You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin)
+You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin) using email/password authentication.
+
+!!! info "Authentication"
+    The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
 
 ### Multi-architecture containers
 Note: the container build process creates container images for 'amd64', 'arm64', 's390x', and 'ppc64le' architectures. The version `ghcr.io/ibm/mcp-context-forge:VERSION`
@@ -101,9 +102,9 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e DATABASE_URL=sqlite:///./mcp.db \
   mcpgateway:airgapped
 ```

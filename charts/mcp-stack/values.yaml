@@ -759,8 +759,9 @@ mcpContextForge:
   ####################################################################
   secret:
     # ─ Admin & auth ─
-    BASIC_AUTH_USER: admin                 # username for basic-auth login
+    BASIC_AUTH_USER: admin                 # username for basic-auth (when enabled)
     BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
+    API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     MCP_REQUIRE_AUTH: "false"              # require auth for /mcp endpoints (false = allow public-only access)
     JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
@@ -768,8 +769,8 @@ mcpContextForge:
     JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
     JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
     TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
-    REQUIRE_TOKEN_EXPIRATION: "false"      # require all JWT tokens to have expiration claims
-    REQUIRE_JTI: "false"                   # require JTI (JWT ID) claim for revocation support
+    REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
+    REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
     REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
     AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
 

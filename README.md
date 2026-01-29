@@ -315,7 +315,7 @@ Copy-Item .env.example .env
 # Or set environment variables (session-only)
 $Env:MCPGATEWAY_UI_ENABLED        = "true"
 $Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
-$Env:BASIC_AUTH_PASSWORD          = "changeme"      # admin/changeme
+# Note: Basic auth for API is disabled by default (API_ALLOW_BASIC_AUTH=false)
 $Env:JWT_SECRET_KEY               = "my-test-key"
 $Env:PLATFORM_ADMIN_EMAIL         = "admin@example.com"
 $Env:PLATFORM_ADMIN_PASSWORD      = "changeme"
@@ -495,7 +495,7 @@ docker compose ps
 # View logs
 docker compose logs -f gateway
 
-# Access Admin UI: http://localhost:4444/admin (admin/changeme)
+# Access Admin UI: http://localhost:4444/admin (login with PLATFORM_ADMIN_EMAIL/PASSWORD)
 # Generate API token
 docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com --exp 10080 --secret my-test-key
@@ -569,8 +569,6 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
@@ -586,10 +584,10 @@ docker logs -f mcpgateway
 
 # Generating an API key
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
 ```
 
-Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
+Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with your `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
 
 #### 2 - Persist the SQLite database
 
@@ -611,8 +609,6 @@ docker run -d --name mcpgateway \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
@@ -664,9 +660,9 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e DATABASE_URL=sqlite:///./mcp.db \
   mcpgateway:airgapped
 ```
@@ -1247,8 +1243,10 @@ The template keeps **required security-sensitive values** active plus a small **
 
 | Setting                     | Description                                                                  | Default             | Options     |
 |-----------------------------|------------------------------------------------------------------------------|---------------------|-------------|
-| `BASIC_AUTH_USER`           | Username for Admin UI login and HTTP Basic authentication                    | `admin`             | string      |
-| `BASIC_AUTH_PASSWORD`       | Password for Admin UI login and HTTP Basic authentication                    | `changeme`          | string      |
+| `BASIC_AUTH_USER`           | Username for HTTP Basic authentication (when enabled)                        | `admin`             | string      |
+| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme`          | string      |
+| `API_ALLOW_BASIC_AUTH`      | Enable Basic auth for API endpoints (disabled by default for security)       | `false`             | bool        |
+| `DOCS_ALLOW_BASIC_AUTH`     | Enable Basic auth for docs endpoints (disabled by default)                   | `false`             | bool        |
 | `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
 | `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
 | `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
@@ -1260,8 +1258,8 @@ The template keeps **required security-sensitive values** active plus a small **
 | `JWT_ISSUER_VERIFICATION`   | Disables jwt issuer verification (useful for custom auth)                    | `true`              | boolean     |
 | `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
 | `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
-| `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |
-| `REQUIRE_JTI`               | Require JTI (JWT ID) claim in all tokens for revocation support              | `false`             | bool        |
+| `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `true`              | bool        |
+| `REQUIRE_JTI`               | Require JTI (JWT ID) claim in all tokens for revocation support              | `true`              | bool        |
 | `REQUIRE_USER_IN_DB`        | Require all authenticated users to exist in the database                     | `false`             | bool        |
 | `EMBED_ENVIRONMENT_IN_TOKENS` | Embed environment claim in gateway-issued JWTs                             | `false`             | bool        |
 | `VALIDATE_TOKEN_ENVIRONMENT` | Reject tokens with mismatched environment claim                             | `false`             | bool        |
@@ -1274,10 +1272,19 @@ The template keeps **required security-sensitive values** active plus a small **
 
 > ⚠️ **Query Parameter Authentication (INSECURE)**: The `INSECURE_ALLOW_QUERYPARAM_AUTH` setting enables API key authentication via URL query parameters. This is inherently insecure (CWE-598) as API keys may appear in proxy logs, browser history, and server access logs. Only enable this when the upstream MCP server (e.g., Tavily) requires this authentication method. Always configure `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` to restrict which hosts can use this feature.
 
-> 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
+> 🔐 **Basic Authentication is DISABLED by default** for security.
 >
-> * Logging into the web-based Admin UI
-> * Accessing APIs via Basic Auth (`curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"`)
+> `BASIC_AUTH_USER`/`PASSWORD` are only used when Basic auth is explicitly enabled:
+> - `API_ALLOW_BASIC_AUTH=true` - Enable for API endpoints (e.g., `/api/metrics/*`)
+> - `DOCS_ALLOW_BASIC_AUTH=true` - Enable for docs endpoints (`/docs`, `/redoc`)
+>
+> **Recommended:** Use JWT tokens instead of Basic auth:
+> ```bash
+> export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token ...)
+> curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/api/...
+> ```
+>
+> **Note:** Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`), not Basic auth.
 >
 > 🔑 `JWT_SECRET_KEY` is used to:
 >
@@ -1285,7 +1292,7 @@ The template keeps **required security-sensitive values** active plus a small **
 > * Generate tokens via:
 >
 >   ```bash
->   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+>   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
 >   echo $MCPGATEWAY_BEARER_TOKEN
 >   ```
 > * Tokens allow non-interactive API clients to authenticate securely.

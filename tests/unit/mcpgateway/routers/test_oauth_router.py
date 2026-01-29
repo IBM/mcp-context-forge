@@ -49,6 +49,7 @@ class TestOAuthRouter:
         gateway.id = "gateway123"
         gateway.name = "Test Gateway"
         gateway.url = "https://mcp.example.com"  # MCP server URL
+        gateway.team_id = None  # No team restriction - allow all authenticated users
         gateway.oauth_config = {
             "grant_type": "authorization_code",
             "client_id": "test_client",
@@ -133,6 +134,7 @@ class TestOAuthRouter:
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.oauth_config = None
+        mock_gateway.team_id = None  # No team restriction
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         # First-Party
@@ -152,6 +154,7 @@ class TestOAuthRouter:
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.oauth_config = {"grant_type": "client_credentials"}
+        mock_gateway.team_id = None  # No team restriction
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         # First-Party
@@ -374,7 +377,7 @@ class TestOAuthRouter:
                 assert "Invalid authorization code" in result.body.decode()
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_success(self, mock_db, mock_gateway):
+    async def test_get_oauth_status_success(self, mock_db, mock_gateway, mock_current_user):
         """Test successful OAuth status retrieval."""
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
@@ -382,8 +385,8 @@ class TestOAuthRouter:
         # First-Party
         from mcpgateway.routers.oauth_router import get_oauth_status
 
-        # Execute
-        result = await get_oauth_status("gateway123", mock_db)
+        # Execute (now requires current_user for authentication)
+        result = await get_oauth_status("gateway123", mock_current_user, mock_db)
 
         # Assert
         assert result["oauth_enabled"] is True
@@ -392,18 +395,19 @@ class TestOAuthRouter:
         assert result["scopes"] == ["read", "write"]
 
     @pytest.mark.asyncio
-    async def test_get_oauth_status_no_oauth_config(self, mock_db):
+    async def test_get_oauth_status_no_oauth_config(self, mock_db, mock_current_user):
         """Test OAuth status when gateway has no OAuth config."""
         # Setup
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.oauth_config = None
+        mock_gateway.team_id = None  # No team restriction
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
         # First-Party
         from mcpgateway.routers.oauth_router import get_oauth_status
 
-        # Execute
-        result = await get_oauth_status("gateway123", mock_db)
+        # Execute (now requires current_user for authentication)
+        result = await get_oauth_status("gateway123", mock_current_user, mock_db)
 
         # Assert
         assert result["oauth_enabled"] is False

@@ -187,3 +187,57 @@ When `MCP_CLIENT_AUTH_ENABLED=false`:
 - Access control relies on `MCP_REQUIRE_AUTH` + tool/resource visibility only
 - Team membership validation is skipped (no JWT to extract teams from)
 - Use `TRUST_PROXY_AUTH=true` with a reverse proxy for user identification
+
+---
+
+## Update: API Basic Authentication Disabled by Default
+
+- *Date:* 2026-01-28
+- *Status:* Extended
+- *Enhancement By:* Core Engineering Team
+
+### Security Enhancement Overview
+
+Basic authentication for API endpoints is now **disabled by default** to improve security posture. This change follows security best practices by preferring JWT tokens for programmatic API access.
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `API_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for API endpoints (`/api/metrics/*`). Disabled by default for security. |
+| `DOCS_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for documentation endpoints (`/docs`, `/redoc`). Independent of API setting. |
+
+### Behavior Changes
+
+| Component | Before | After |
+|-----------|--------|-------|
+| **Admin UI** | Basic auth (broken - validated but not passed to routes) | Email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`) |
+| **API Endpoints** | Basic auth allowed | Basic auth **disabled by default**. Set `API_ALLOW_BASIC_AUTH=true` to enable. |
+| **Documentation** | Basic auth configurable | Unchanged - controlled by `DOCS_ALLOW_BASIC_AUTH` |
+| **CLI Tools** | Basic auth fallback | Only uses Basic auth if `API_ALLOW_BASIC_AUTH=true` |
+
+### Migration Guide
+
+**For API access:**
+```bash
+# Recommended: Use JWT tokens
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com --exp 10080 --secret $JWT_SECRET_KEY)
+
+# If Basic auth is required (development only):
+export API_ALLOW_BASIC_AUTH=true
+```
+
+**For Admin UI:**
+```bash
+# Use email/password authentication
+PLATFORM_ADMIN_EMAIL=admin@example.com
+PLATFORM_ADMIN_PASSWORD=your-secure-password
+```
+
+### Security Rationale
+
+- **JWT tokens are more secure**: They have expiration, can be revoked, and don't transmit passwords on every request
+- **Basic auth sends credentials on every request**: Higher risk of credential exposure
+- **Separation of concerns**: Admin UI authentication is now clearly separate from API authentication
+- **Defense in depth**: Disabled by default reduces attack surface

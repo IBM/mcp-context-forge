@@ -132,11 +132,10 @@ MCP Gateway is published on [PyPI](https://pypi.org/project/mcp-contextforge-gat
 
 ```bash
 # Quick start with environment variables
-BASIC_AUTH_PASSWORD=pass \
+PLATFORM_ADMIN_PASSWORD=changeme \
 MCPGATEWAY_UI_ENABLED=true \
 MCPGATEWAY_ADMIN_API_ENABLED=true \
 PLATFORM_ADMIN_EMAIL=admin@example.com \
-PLATFORM_ADMIN_PASSWORD=changeme \
 PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
 uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 
@@ -176,8 +175,8 @@ export PLATFORM_ADMIN_EMAIL=admin@example.com
 export PLATFORM_ADMIN_PASSWORD=changeme
 export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
 
-BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
-  mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
+JWT_SECRET_KEY=my-test-key \
+  mcpgateway --host 0.0.0.0 --port 4444 &
 
 # 3️⃣  Generate a bearer token & smoke-test the API
 # Note: CLI token generation is for dev/testing only. For production, use /tokens API.
@@ -207,7 +206,7 @@ Copy-Item .env.example .env
 # Or set environment variables (session-only)
 $Env:MCPGATEWAY_UI_ENABLED        = "true"
 $Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
-$Env:BASIC_AUTH_PASSWORD          = "changeme"      # admin/changeme
+# Note: Basic auth for API is disabled by default (API_ALLOW_BASIC_AUTH=false)
 $Env:JWT_SECRET_KEY               = "my-test-key"
 $Env:PLATFORM_ADMIN_EMAIL         = "admin@example.com"
 $Env:PLATFORM_ADMIN_PASSWORD      = "changeme"
@@ -362,8 +361,6 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
@@ -376,10 +373,10 @@ docker logs -f mcpgateway
 
 # Generating an API key
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
 ```
 
-Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
+Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with your `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
 
 #### 2 - Persist the SQLite database
 
@@ -995,8 +992,8 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 
 | Setting                     | Description                                                                  | Default             | Options     |
 |-----------------------------|------------------------------------------------------------------------------|---------------------|-------------|
-| `BASIC_AUTH_USER`           | Username for Admin UI login and HTTP Basic authentication                    | `admin`             | string      |
-| `BASIC_AUTH_PASSWORD`       | Password for Admin UI login and HTTP Basic authentication                    | `changeme`          | string      |
+| `BASIC_AUTH_USER`           | Username for HTTP Basic authentication (API only, disabled by default)       | `admin`             | string      |
+| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (API only, disabled by default)       | `changeme`          | string      |
 | `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
 | `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
 | `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
@@ -1008,16 +1005,19 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `JWT_ISSUER_VERIFICATION`   | Disables jwt issuer verification (useful for custom auth)                    | `true`              | boolean     |
 | `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
 | `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
-| `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |
+| `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `true`              | bool        |
+| `REQUIRE_JTI`               | Require JWT ID claim for token tracking and revocation                       | `true`              | bool        |
+| `API_ALLOW_BASIC_AUTH`      | Allow HTTP Basic authentication for API endpoints                            | `false`             | bool        |
 | `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
 | `OAUTH_DEFAULT_TIMEOUT`         | Default OAuth token timeout in seconds                                     | `3600`                 | int > 0     |
 
+> 🔐 **Admin UI Authentication**: The Admin UI uses `PLATFORM_ADMIN_EMAIL` and `PLATFORM_ADMIN_PASSWORD` (NOT Basic Auth).
+>
 > 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
 >
-> * Logging into the web-based Admin UI
-> * Accessing APIs via Basic Auth (`curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"`)
+> * HTTP Basic authentication for API endpoints (disabled by default; enable with `API_ALLOW_BASIC_AUTH=true`)
 >
 > 🔑 `JWT_SECRET_KEY` is used to:
 >
@@ -1025,7 +1025,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 > * Generate tokens via:
 >
 >   ```bash
->   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+>   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
 >   echo $MCPGATEWAY_BEARER_TOKEN
 >   ```
 > * Tokens allow non-interactive API clients to authenticate securely.

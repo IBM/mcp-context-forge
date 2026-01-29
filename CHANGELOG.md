@@ -4,6 +4,54 @@
 
 ---
 
+## [1.0.0-RC1] - 2026-01-28 - Authentication Model Updates
+
+### Overview
+
+This release updates the authentication model with revised defaults and improved configuration clarity:
+
+- **Token Validation** - JWT tokens now require JTI and expiration claims by default
+- **Admin Routes** - Unified authentication across all admin routes
+- **SSO** - Server-side redirect URI validation
+- **Configuration** - Prominent settings in environment templates
+
+### Changed
+
+#### Token Validation Defaults
+* **REQUIRE_JTI** now defaults to `true` - JWT tokens must include a JTI claim for revocation support
+* **REQUIRE_TOKEN_EXPIRATION** now defaults to `true` - JWT tokens must include an expiration claim
+* **PUBLIC_REGISTRATION_ENABLED** now defaults to `false` - Self-registration disabled by default
+
+> **Migration**: Existing tokens without JTI or expiration claims will be rejected. Generate new tokens with `python -m mcpgateway.utils.create_jwt_token` which includes these claims by default.
+
+#### AdminAuthMiddleware
+* Added API token authentication support for `/admin/*` routes
+* Added platform admin bootstrap support for initial setup scenarios
+* Unified authentication methods with main API authentication
+* Admin UI uses session-based email/password login
+
+#### Basic Auth Configuration
+* **API_ALLOW_BASIC_AUTH** now defaults to `false` - Basic auth disabled for API endpoints by default
+* **DOCS_ALLOW_BASIC_AUTH** remains `false` by default
+* Gateway credentials scoped to local authentication only
+
+> **Migration**: If you use Basic auth for API access, either:
+> 1. **(Recommended)** Migrate to JWT tokens: `export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token ...)`
+> 2. Set `API_ALLOW_BASIC_AUTH=true` to restore previous behavior
+
+> **Note**: Gateways without configured `auth_value` will send unauthenticated requests to remote servers. Configure per-gateway authentication for servers that require it.
+
+#### SSO Redirect Validation
+* Redirect URI validation uses server-side allowlist
+* Validates against `ALLOWED_ORIGINS` and `APP_DOMAIN` settings
+
+### Added
+
+* **Configuration Section** in `.env.example` with documented settings
+* **Deferred Issues Tracking** in documentation
+
+---
+
 ## [1.0.0-BETA-2] - 2026-01-20 - Performance, Scale & Reliability
 
 ### Overview

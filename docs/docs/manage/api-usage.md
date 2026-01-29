@@ -56,7 +56,7 @@ Before using the API, you need to:
     ```
 
     !!! tip "Token Expiration"
-        The `--exp` parameter sets token expiration in minutes. Use `--exp 0` for no expiration (development only).
+        The `--exp` parameter sets token expiration in minutes. Non-expiring tokens (`--exp 0`) require `REQUIRE_TOKEN_EXPIRATION=false` (disabled by default for security).
 
 3. **Set the base URL**:
 

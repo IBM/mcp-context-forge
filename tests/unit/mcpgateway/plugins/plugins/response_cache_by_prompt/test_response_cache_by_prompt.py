@@ -315,8 +315,8 @@ class TestEvictionAndIndexRebuild:
         await plugin.tool_pre_invoke(ToolPreInvokePayload(name="test_tool", args={"prompt": "temporary entry"}), ctx1)
         await plugin.tool_post_invoke(ToolPostInvokePayload(name="test_tool", result={"data": "temp"}), ctx1)
 
-        # Wait for TTL to expire
-        await asyncio.sleep(1.5)
+        # Wait for TTL to expire (use generous margin to avoid timing flakiness)
+        await asyncio.sleep(2.0)
 
         # Add new entry to trigger eviction
         ctx2 = PluginContext(global_context=GlobalContext(request_id="r2"))
