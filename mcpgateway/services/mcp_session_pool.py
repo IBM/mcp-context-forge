@@ -338,6 +338,14 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         self._rpc_listener_task: Optional[asyncio.Task[None]] = None
         self._pending_responses: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
 
+        # Session affinity metrics
+        self._session_affinity_local_hits = 0
+        self._session_affinity_redis_hits = 0
+        self._session_affinity_misses = 0
+        self._forwarded_requests = 0
+        self._forwarded_request_failures = 0
+        self._forwarded_request_timeouts = 0
+
     async def __aenter__(self) -> "MCPSessionPool":
         """Async context manager entry.
 
@@ -491,6 +499,45 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         """Record a success, resetting failure count."""
         self._failures[url] = 0
 
+    def _is_valid_session_id(self, session_id: str) -> bool:
+        """Validate mcp_session_id format to prevent Redis key injection.
+
+        Valid session IDs should be UUIDs or similar alphanumeric identifiers.
+        Rejects IDs containing special characters that could manipulate Redis keys.
+
+        Args:
+            session_id: The session ID to validate.
+
+        Returns:
+            True if the session ID is valid, False otherwise.
+        """
+        if not session_id or len(session_id) > 128:
+            return False
+
+        # Allow alphanumeric, hyphens, and underscores (standard UUID format)
+        import re  # pylint: disable=import-outside-toplevel
+
+        return bool(re.match(r"^[a-zA-Z0-9_-]+$", session_id))
+
+    def _sanitize_redis_key_component(self, value: str) -> str:
+        """Sanitize a value for use in Redis key construction.
+
+        Replaces any characters that could cause key collision or injection.
+
+        Args:
+            value: The value to sanitize.
+
+        Returns:
+            Sanitized value safe for Redis key construction.
+        """
+        if not value:
+            return ""
+
+        # Replace problematic characters with underscores
+        import re  # pylint: disable=import-outside-toplevel
+
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", value)
+
     async def register_session_mapping(
         self,
         mcp_session_id: str,
@@ -522,10 +569,18 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if not settings.mcpgateway_session_affinity_enabled:
             return
 
+        # Validate mcp_session_id to prevent Redis key injection
+        if not self._is_valid_session_id(mcp_session_id):
+            logger.warning(f"Invalid mcp_session_id format, skipping session mapping: {mcp_session_id[:20]}...")
+            return
+
         # Use user email for user_identity, or "anonymous" if not provided
         user_identity = user_email or "anonymous"
 
-        mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type, gateway_id)
+        # Normalize gateway_id to empty string if None for consistent key matching
+        normalized_gateway_id = gateway_id or ""
+
+        mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type, normalized_gateway_id)
 
         # Compute what the pool_key will be for this session
         # Use mcp_session_id as the identity basis for affinity
@@ -537,7 +592,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         else:
             user_hash = hashlib.sha256(user_identity.encode()).hexdigest()
 
-        pool_key: PoolKey = (user_hash, url, identity_hash, transport_type, gateway_id)
+        pool_key: PoolKey = (user_hash, url, identity_hash, transport_type, normalized_gateway_id)
 
         # Store in local memory
         async with self._mcp_session_mapping_lock:
@@ -552,7 +607,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             redis = await get_redis_client()
             if redis:
                 # Redis key: session_mapping:{mcp_session_id}:{url}:{transport}:{gateway_id}
-                redis_key = f"mcpgw:session_mapping:{mcp_session_id}:{url}:{transport_type}:{gateway_id}"
+                # Use sanitized session ID to prevent Redis key injection
+                sanitized_session_id = self._sanitize_redis_key_component(mcp_session_id)
+                redis_key = f"mcpgw:session_mapping:{sanitized_session_id}:{url}:{transport_type}:{normalized_gateway_id}"
 
                 # Store pool_key as JSON for easy deserialization
                 pool_key_data = {
@@ -560,7 +617,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     "url": url,
                     "identity_hash": identity_hash,
                     "transport_type": transport_type,
-                    "gateway_id": gateway_id,
+                    "gateway_id": normalized_gateway_id,
                 }
                 await redis.setex(redis_key, settings.mcpgateway_session_affinity_ttl, orjson.dumps(pool_key_data))  # TTL from config
                 logger.debug(f"Session affinity pre-registered (Redis): {mcp_session_id[:8]}... TTL={settings.mcpgateway_session_affinity_ttl}s")
@@ -617,13 +674,15 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if settings.mcpgateway_session_affinity_enabled and headers:
             headers_lower = {k.lower(): v for k, v in headers.items()}
             mcp_session_id = headers_lower.get("x-mcp-session-id")
-            if mcp_session_id:
-                mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type.value, gateway_id or "")
+            if mcp_session_id and self._is_valid_session_id(mcp_session_id):
+                normalized_gateway_id = gateway_id or ""
+                mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type.value, normalized_gateway_id)
 
                 # Check local memory first (fast path - same worker)
                 async with self._mcp_session_mapping_lock:
                     pool_key = self._mcp_session_mapping.get(mapping_key)
                     if pool_key:
+                        self._session_affinity_local_hits += 1
                         logger.debug(f"Session affinity hit (local): {mcp_session_id[:8]}...")
 
                 # If not in local memory, check Redis (multi-worker support)
@@ -634,7 +693,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                         redis = await get_redis_client()
                         if redis:
-                            redis_key = f"mcpgw:session_mapping:{mcp_session_id}:{url}:{transport_type.value}:{gateway_id or ''}"
+                            sanitized_session_id = self._sanitize_redis_key_component(mcp_session_id)
+                            redis_key = f"mcpgw:session_mapping:{sanitized_session_id}:{url}:{transport_type.value}:{normalized_gateway_id}"
                             pool_key_data = await redis.get(redis_key)
                             if pool_key_data:
                                 # Deserialize pool_key from JSON
@@ -649,12 +709,14 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                                 # Cache in local memory for future requests
                                 async with self._mcp_session_mapping_lock:
                                     self._mcp_session_mapping[mapping_key] = pool_key
+                                self._session_affinity_redis_hits += 1
                                 logger.debug(f"Session affinity hit (Redis): {mcp_session_id[:8]}...")
                     except Exception as e:
                         logger.debug(f"Failed to check Redis for session mapping: {e}")
 
         # Fallback to normal pool key computation
         if pool_key is None:
+            self._session_affinity_misses += 1
             pool_key = self._make_pool_key(url, headers, transport_type, user_id, gateway_id)
 
         pool = await self._get_or_create_pool(pool_key)
@@ -1114,6 +1176,39 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         logger.debug(f"Closed session for {sanitize_url_for_logging(pooled.url)} (uses={pooled.use_count})")
 
+        # Clean up pool_owner key in Redis for session affinity
+        if settings.mcpgateway_session_affinity_enabled and pooled.headers:
+            headers_lower = {k.lower(): v for k, v in pooled.headers.items()}
+            mcp_session_id = headers_lower.get("x-mcp-session-id")
+            if mcp_session_id and self._is_valid_session_id(mcp_session_id):
+                await self._cleanup_pool_session_owner(mcp_session_id)
+
+    async def _cleanup_pool_session_owner(self, mcp_session_id: str) -> None:
+        """Clean up pool_owner key in Redis when session is closed.
+
+        Only deletes the key if this worker owns it (to prevent removing other workers' ownership).
+
+        Args:
+            mcp_session_id: The MCP session ID from x-mcp-session-id header.
+        """
+        try:
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
+
+            redis = await get_redis_client()
+            if redis:
+                key = f"mcpgw:pool_owner:{mcp_session_id}"
+                # Only delete if we own it
+                owner = await redis.get(key)
+                if owner:
+                    owner_id = owner.decode() if isinstance(owner, bytes) else owner
+                    if owner_id == WORKER_ID:
+                        await redis.delete(key)
+                        logger.debug(f"Cleaned up pool session owner: {mcp_session_id[:8]}...")
+        except Exception as e:
+            # Cleanup failure is non-fatal
+            logger.debug(f"Failed to cleanup pool session owner in Redis: {e}")
+
     async def close_all(self) -> None:
         """
         Gracefully close all pooled and active sessions.
@@ -1244,6 +1339,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                 # Publish request to owner's channel
                 await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
+                self._forwarded_requests += 1
                 logger.debug(f"Forwarded RPC request to worker {owner_id} for session {mcp_session_id[:8]}...")
 
                 # Wait for response
@@ -1256,9 +1352,11 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 await pubsub.unsubscribe(response_channel)
 
         except asyncio.TimeoutError:
+            self._forwarded_request_timeouts += 1
             logger.warning(f"Timeout forwarding request to owner for session {mcp_session_id[:8]}...")
             raise
         except Exception as e:
+            self._forwarded_request_failures += 1
             logger.debug(f"Error forwarding request to owner: {e}")
             return None  # Execute locally on error
 
@@ -1376,6 +1474,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             Dict with hits, misses, evictions, hit_rate, and per-pool stats.
         """
         total_requests = self._hits + self._misses
+        total_affinity_requests = self._session_affinity_local_hits + self._session_affinity_redis_hits + self._session_affinity_misses
         return {
             "hits": self._hits,
             "misses": self._misses,
@@ -1387,6 +1486,16 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             "anonymous_identity_count": self._anonymous_identity_count,
             "hit_rate": self._hits / total_requests if total_requests > 0 else 0.0,
             "pool_key_count": len(self._pools),
+            # Session affinity metrics
+            "session_affinity": {
+                "local_hits": self._session_affinity_local_hits,
+                "redis_hits": self._session_affinity_redis_hits,
+                "misses": self._session_affinity_misses,
+                "hit_rate": (self._session_affinity_local_hits + self._session_affinity_redis_hits) / total_affinity_requests if total_affinity_requests > 0 else 0.0,
+                "forwarded_requests": self._forwarded_requests,
+                "forwarded_failures": self._forwarded_request_failures,
+                "forwarded_timeouts": self._forwarded_request_timeouts,
+            },
             "pools": {
                 f"{url}|{identity[:8]}|{transport}|{user}|{gw_id[:8] if gw_id else 'none'}": {
                     "available": pool.qsize(),
