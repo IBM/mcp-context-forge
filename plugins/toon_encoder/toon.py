@@ -37,7 +37,7 @@ Examples:
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # =============================================================================
@@ -334,7 +334,6 @@ def _encode_array(arr: List[Any], *, indent: int = 0, as_root: bool = True, key_
         '[3]: 1,2,3'
     """
     prefix = key_prefix if key_prefix else ""
-    ind = " " * (_INDENT_SIZE * indent)
 
     if not arr:
         return f"{prefix}[0]:"
