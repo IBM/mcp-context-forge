@@ -1117,6 +1117,26 @@ You should receive `[]` until you register a tool.
 
 ## Installation
 
+#### Installation and how to run tests
+
+Python 3.11+ is required.
+
+Install pip (if not already available):
+```bash
+python -m pip install --upgrade pip
+```
+
+Install the package:
+```bash
+pip install -e .
+```
+
+Install the package with test dependencies and run the tests:
+```bash
+pip install -e ".[test]"
+pytest tests/unit/ -v
+```
+
 ### Via Make
 
 ```bash

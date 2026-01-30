@@ -46,40 +46,40 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "aiohttp>=3.13.2",
-    "alembic>=1.17.2",
-    "argon2-cffi>=25.1.0",
-    "cryptography>=46.0.3",
-    "fastapi>=0.124.4",
-    "filelock>=3.20.0",
-    "gunicorn>=23.0.0",
-    "httpx>=0.28.1",
-    "httpx[http2]>=0.28.1",
-    "jinja2>=3.1.6",
-    "jq>=1.10.0",
-    "jsonpath-ng>=1.7.0",
-    "jsonschema>=4.25.1",
-    "mcp>=1.24.0",
-    "oauthlib>=3.3.1",
-    "orjson>=3.11.5",
-    "parse>=1.20.2",
-    "prometheus-fastapi-instrumentator>=7.1.0",
-    "prometheus_client>=0.23.1",
-    "psutil>=7.1.3",
-    "pydantic>=2.12.5",
-    "pydantic[email]>=2.12.5",
-    "pydantic-settings>=2.12.0",
-    "pyjwt>=2.10.1",
-    "python-json-logger>=4.0.0",
-    "PyYAML>=6.0.3",
-    "requests-oauthlib>=2.0.0",
-    "sqlalchemy>=2.0.45",
-    "sse-starlette>=3.0.4",
-    "starlette>=0.50.0",
-    "starlette-compress>=1.6.1",
-    "typer>=0.20.0",
-    "uvicorn[standard]>=0.38.0",
-    "zeroconf>=0.148.0",
+    "aiohttp==3.13.3",
+    "alembic==1.18.3",
+    "argon2-cffi==25.1.0",
+    "cryptography==46.0.4",
+    "fastapi==0.128.0",
+    "filelock==3.20.3",
+    "gunicorn==24.1.1",
+    "httpx==0.28.1",
+    "httpx[http2]==0.28.1",
+    "jinja2==3.1.6",
+    "jq==1.11.0",
+    "jsonpath-ng==1.7.0",
+    "jsonschema==4.26.0",
+    "mcp==1.26.0",
+    "oauthlib==3.3.1",
+    "orjson==3.11.6",
+    "parse==1.20.2",
+    "prometheus-fastapi-instrumentator==7.1.0",
+    "prometheus_client==0.24.1",
+    "psutil==7.2.2",
+    "pydantic==2.12.5",
+    "pydantic[email]==2.12.5",
+    "pydantic-settings==2.12.0",
+    "pyjwt==2.10.1",
+    "python-json-logger==4.0.0",
+    "PyYAML==6.0.3",
+    "requests-oauthlib==2.0.0",
+    "sqlalchemy==2.0.46",
+    "sse-starlette==3.2.0",
+    "starlette==0.50.0",
+    "starlette-compress==1.7.0",
+    "typer==0.21.1",
+    "uvicorn[standard]==0.40.0",
+    "zeroconf==0.148.0",
 ]
 
 # ----------------------------------------------------------------
@@ -162,6 +162,17 @@ dev = [
 # Optional dependency groups (extras)
 # ----------------------------------------------------------------
 [project.optional-dependencies]
+
+# Test dependencies (frozen versions for reproducibility)
+test = [
+    "pytest==9.0.2",
+    "pytest-asyncio==1.3.0",
+    "pytest-cov==7.0.0",
+    "pytest-env==1.2.0",
+    "pytest-httpx==0.36.0",
+    "redis==7.1.0",
+    "url-normalize==2.2.1",
+]
 
 # Optional dependency groups (runtime)
 # Redis with hiredis C parser for up to 83x faster response parsing
