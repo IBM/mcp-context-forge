@@ -6875,6 +6875,17 @@ if UI_ENABLED:
         return RedirectResponse(f"{root_path}/admin/", status_code=303)
         # return RedirectResponse(request.url_for("admin_home"))
 
+    # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon_redirect() -> RedirectResponse:
+        """Redirect /favicon.ico to /static/favicon.ico for browser compatibility.
+
+        Returns:
+            RedirectResponse: 301 redirect to /static/favicon.ico.
+        """
+        root_path = settings.app_root_path
+        return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
+
 else:
     # If UI is disabled, provide API info at root
     logger.warning("Static files not mounted - UI disabled via MCPGATEWAY_UI_ENABLED=False")
