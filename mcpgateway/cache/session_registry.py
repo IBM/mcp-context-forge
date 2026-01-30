@@ -56,7 +56,6 @@ import logging
 import time
 import traceback
 from typing import Any, Dict, Optional
-from urllib.parse import urlparse
 import uuid
 
 # Third-Party
@@ -1939,24 +1938,10 @@ class SessionRegistry(SessionBackend):
                 session_id = transport.session_id
 
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "x-mcp-session-id": session_id}
-                # Extract root URL from base_url (remove /servers/{id} path)
-                parsed_url = urlparse(base_url)
-                # Preserve the path up to the root path (before /servers/{id})
-                path_parts = parsed_url.path.split("/")
-                if "/servers/" in parsed_url.path:
-                    # Find the index of 'servers' and take everything before it
-                    try:
-                        servers_index = path_parts.index("servers")
-                        root_path = "/" + "/".join(path_parts[1:servers_index]).strip("/")
-                        if root_path == "/":
-                            root_path = ""
-                    except ValueError:
-                        root_path = ""
-                else:
-                    root_path = parsed_url.path.rstrip("/")
-
-                root_url = f"{parsed_url.scheme}://{parsed_url.netloc}{root_path}"
-                rpc_url = root_url + "/rpc"
+                # Internal RPC call must hit THIS worker (not go through load balancer)
+                # Use 127.0.0.1 if host is 0.0.0.0, otherwise use settings.host
+                internal_host = "127.0.0.1" if settings.host == "0.0.0.0" else settings.host
+                rpc_url = f"http://{internal_host}:{settings.port}/rpc"
 
                 # Pre-register session mapping for session affinity before making /rpc call
                 # This ensures the mapping is available when pool.acquire() is called
@@ -1967,7 +1952,7 @@ class SessionRegistry(SessionBackend):
                 import os  # pylint: disable=import-outside-toplevel
                 worker_id = str(os.getpid())
                 session_short = session_id[:8] if len(session_id) >= 8 else session_id
-                logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Method: {method} | SSE session making internal /rpc call")
+                logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Method: {method} | SSE session making internal /rpc call to {rpc_url}")
                 logger.info(f"SSE RPC: Making call to {rpc_url} with method={method}, params={params}")
 
                 async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
