@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """ToolService helper function tests."""
 
 # Third-Party
