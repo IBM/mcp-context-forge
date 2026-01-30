@@ -4,6 +4,115 @@ This guide explains how to configure TLS/SSL encryption for the MCP Gateway and 
 
 **⚠️ Important: TLS is OPTIONAL and DISABLED by default.** The default deployment uses HTTP-only for simplicity. Enable TLS only when needed for production or testing secure connections.
 
+---
+
+## Quick Start: Zero-Config TLS
+
+The fastest way to enable HTTPS is using the `--profile tls` Docker Compose profile. This automatically generates self-signed certificates and configures nginx with TLS—no manual configuration required.
+
+### One Command
+
+```bash
+make compose-tls
+```
+
+This starts the full stack with:
+
+- **HTTP:** `http://localhost:8080`
+- **HTTPS:** `https://localhost:8443`
+- **Admin UI:** `https://localhost:8443/admin`
+
+### What Happens
+
+1. The `cert_init` container checks if certificates exist in `./certs/`
+2. If missing, it auto-generates a self-signed certificate valid for 365 days
+3. The `nginx_tls` service starts with TLS enabled on port 8443
+4. Both HTTP (8080) and HTTPS (8443) are available
+
+### Using Custom Certificates
+
+To use your own CA-signed certificates instead of auto-generated ones:
+
+```bash
+# Create certs directory and add your certificates
+mkdir -p certs
+cp /path/to/your/certificate.pem certs/cert.pem
+cp /path/to/your/private-key.pem certs/key.pem
+
+# Start the TLS stack (will use existing certs)
+make compose-tls
+```
+
+The `cert_init` container detects existing certificates and skips generation.
+
+### TLS Profile Commands
+
+| Command | Description |
+|---------|-------------|
+| `make compose-tls` | Start with TLS (HTTP + HTTPS both available) |
+| `make compose-tls-https` | Start with forced HTTPS (HTTP redirects to HTTPS) |
+| `make compose-tls-down` | Stop TLS-enabled stack |
+| `make compose-tls-logs` | Tail logs from TLS services |
+| `make compose-tls-ps` | Show TLS stack status |
+
+### Forcing HTTPS Redirect
+
+To redirect all HTTP traffic to HTTPS (recommended for production):
+
+```bash
+# Option 1: Use the convenience command
+make compose-tls-https
+
+# Option 2: Set environment variable
+NGINX_FORCE_HTTPS=true make compose-tls
+```
+
+When enabled, requests to `http://localhost:8080` automatically redirect to `https://localhost:8443`.
+
+### Combining with Other Profiles
+
+The TLS profile works alongside other Docker Compose profiles:
+
+```bash
+# TLS + Monitoring (Prometheus, Grafana, etc.)
+docker compose --profile tls --profile monitoring up -d --scale nginx=0
+
+# TLS + Benchmark servers
+docker compose --profile tls --profile benchmark up -d --scale nginx=0
+```
+
+!!! note "Scaling nginx to 0"
+    When using `--profile tls`, add `--scale nginx=0` to prevent the default nginx from conflicting with `nginx_tls` on port 8080.
+
+### Verifying TLS
+
+```bash
+# Test HTTP endpoint
+curl http://localhost:8080/health
+
+# Test HTTPS endpoint (skip cert verification for self-signed)
+curl -sk https://localhost:8443/health
+
+# Check TLS version
+openssl s_client -connect localhost:8443 -brief 2>&1 | head -5
+```
+
+Expected output:
+```
+{"status":"healthy"}
+```
+
+### Certificate Details
+
+Auto-generated certificates include:
+
+- **Validity:** 365 days
+- **Key size:** RSA 4096-bit
+- **Subject Alternative Names:** `localhost`, `gateway`, `nginx`, `127.0.0.1`
+- **Protocols:** TLS 1.2 and TLS 1.3
+
+---
+
 ## Overview
 
 The MCP Gateway supports TLS/SSL encryption at multiple layers:

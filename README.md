@@ -508,6 +508,17 @@ docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
 - 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
 - 🌐 **Nginx Proxy** - Caching reverse proxy (optional)
 
+**Enable HTTPS (optional):**
+```bash
+# Start with TLS enabled (auto-generates self-signed certs)
+make compose-tls
+
+# Access via HTTPS: https://localhost:8443/admin
+# Or use your own certificates:
+mkdir -p certs && cp your-cert.pem certs/cert.pem && cp your-key.pem certs/key.pem
+make compose-tls
+```
+
 ### ☸️ Quick Start - Helm (Kubernetes)
 
 Deploy to Kubernetes with enterprise-grade features:

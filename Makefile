@@ -3755,6 +3755,11 @@ docker-shell:
 # help: compose-restart-service - Restart specific service (use SERVICE=name)
 # help: compose-scale         - Scale service to N instances (use SERVICE=name SCALE=N)
 # help: compose-up-safe       - Start stack with validation and health check
+# help: compose-tls           - 🔐 Start stack with TLS (HTTP:8080 + HTTPS:8443, auto-generates certs)
+# help: compose-tls-https     - 🔒 Start stack with TLS, force HTTPS redirect (HTTPS:8443 only)
+# help: compose-tls-down      - Stop TLS-enabled stack
+# help: compose-tls-logs      - Tail logs from TLS stack
+# help: compose-tls-ps        - Show TLS stack status
 
 # ─────────────────────────────────────────────────────────────────────────────
 # You may **force** a specific binary by exporting COMPOSE_CMD, e.g.:
@@ -3893,6 +3898,51 @@ compose-up-safe: compose-validate compose-up
 	@sleep 5
 	@$(COMPOSE) ps
 	@echo "✅ Stack started safely"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TLS Profile - Zero-config HTTPS via Nginx
+# ─────────────────────────────────────────────────────────────────────────────
+.PHONY: compose-tls compose-tls-https compose-tls-down compose-tls-logs compose-tls-ps
+
+compose-tls: compose-validate
+	@echo "🔐 Starting stack with TLS enabled..."
+	@echo ""
+	@echo "   Endpoints:"
+	@echo "   ├─ HTTP:     http://localhost:8080"
+	@echo "   ├─ HTTPS:    https://localhost:8443"
+	@echo "   └─ Admin UI: https://localhost:8443/admin"
+	@echo ""
+	@echo "💡 Options:"
+	@echo "   Custom certs:    mkdir -p certs && cp cert.pem certs/ && cp key.pem certs/"
+	@echo "   Force HTTPS:     make compose-tls-https  (redirects HTTP → HTTPS)"
+	@echo "   Or set env:      NGINX_FORCE_HTTPS=true make compose-tls"
+	@echo ""
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls up -d --scale nginx=0
+	@echo ""
+	@echo "✅ TLS stack started! Both HTTP and HTTPS are available."
+
+compose-tls-https: compose-validate
+	@echo "🔒 Starting stack with HTTPS-only mode (HTTP redirects to HTTPS)..."
+	@echo ""
+	@echo "   Endpoints:"
+	@echo "   ├─ HTTP:     http://localhost:8080 → redirects to HTTPS"
+	@echo "   ├─ HTTPS:    https://localhost:8443"
+	@echo "   └─ Admin UI: https://localhost:8443/admin"
+	@echo ""
+	NGINX_FORCE_HTTPS=true IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls up -d --scale nginx=0
+	@echo ""
+	@echo "✅ TLS stack started! All HTTP requests redirect to HTTPS."
+
+compose-tls-down:
+	@echo "🛑 Stopping TLS stack..."
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls down --remove-orphans
+	@echo "✅ TLS stack stopped"
+
+compose-tls-logs:
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls logs -f
+
+compose-tls-ps:
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls ps
 
 # =============================================================================
 # ☁️ IBM CLOUD CODE ENGINE
