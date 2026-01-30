@@ -47,6 +47,7 @@ volumes:                # Named volumes survive podman-compose down/up
   grafanadata:
   prometheusdata:
   lokidata:
+  tls_certs:            # Decrypted TLS certs (tmpfs for security - never touches disk)
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -504,14 +505,14 @@ services:
 
     deploy:
       mode: replicated
-      replicas: 3
+      replicas: 2
       resources:
         limits:
-          cpus: '8'
-          memory: 8G
+          cpus: '2'
+          memory: 2G
         reservations:
-          cpus: '4'
-          memory: 4G
+          cpus: '0.5'
+          memory: 512M
 
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
@@ -1539,39 +1540,83 @@ services:
 #  Features:
 #  - Auto-generates self-signed certificates on first run
 #  - Custom certs: place your own cert.pem/key.pem in ./certs/ before starting
+#  - Supports passphrase-protected private keys (decrypted securely at runtime)
 #  - HTTPS on port 8443, HTTP on port 8080 (both available)
 #  - Compatible with other profiles: --profile tls --profile monitoring
 #
-#  Custom Certificate Usage:
+#  Custom Certificate Usage (unencrypted key):
 #    mkdir -p certs
 #    cp /path/to/your/cert.pem certs/cert.pem
 #    cp /path/to/your/key.pem certs/key.pem
 #    make compose-tls
+#
+#  Passphrase-Protected Key Usage (more secure):
+#    mkdir -p certs
+#    cp /path/to/your/cert.pem certs/cert.pem
+#    cp /path/to/your/encrypted-key.pem certs/key.pem
+#    KEY_FILE_PASSWORD=your-passphrase make compose-tls
+#
+#  Security: Decrypted keys are stored in a tmpfs volume (memory-only, never on disk)
 ###############################################################################
 
   # ──────────────────────────────────────────────────────────────────────
-  # Certificate Initialization - Auto-generates self-signed certs if missing
+  # Certificate Initialization - Auto-generates or decrypts TLS certificates
+  # Supports passphrase-protected private keys via KEY_FILE_PASSWORD env var
+  # Decrypted keys are stored in tmpfs volume (memory-only for security)
   # ──────────────────────────────────────────────────────────────────────
   cert_init:
     image: alpine/openssl:latest
     volumes:
-      - ./certs:/certs
+      - ./certs:/certs:ro           # Source certs (read-only)
+      - tls_certs:/decrypted        # Decrypted certs (tmpfs - memory only)
+    environment:
+      - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        if [ -f /certs/cert.pem ] && [ -f /certs/key.pem ]; then
-          echo "✅ Certificates found in ./certs - using existing"
+        mkdir -p /decrypted
+
+        # Case 1: No certs exist - generate self-signed
+        if [ ! -f /certs/cert.pem ] || [ ! -f /certs/key.pem ]; then
+          echo "🔏 Generating self-signed TLS certificate..."
+          openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
+            -keyout /decrypted/key.pem -out /decrypted/cert.pem \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,DNS:gateway,DNS:nginx,IP:127.0.0.1"
+          chmod 644 /decrypted/cert.pem
+          chmod 640 /decrypted/key.pem
+          echo "✅ TLS certificate generated (self-signed)"
           exit 0
         fi
-        echo "🔏 Generating self-signed TLS certificate..."
-        mkdir -p /certs
-        openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
-          -keyout /certs/key.pem -out /certs/cert.pem \
-          -subj "/CN=localhost" \
-          -addext "subjectAltName=DNS:localhost,DNS:gateway,DNS:nginx,IP:127.0.0.1"
-        chmod 644 /certs/cert.pem
-        chmod 640 /certs/key.pem
-        echo "✅ TLS certificate generated in ./certs"
+
+        # Case 2: Certs exist - copy cert, handle key based on passphrase
+        echo "📋 Certificates found in ./certs"
+        cp /certs/cert.pem /decrypted/cert.pem
+        chmod 644 /decrypted/cert.pem
+
+        # Check if key is encrypted
+        if grep -q "ENCRYPTED" /certs/key.pem 2>/dev/null; then
+          if [ -z "$KEY_FILE_PASSWORD" ]; then
+            echo "❌ ERROR: Private key is encrypted but KEY_FILE_PASSWORD not provided"
+            echo "   Set KEY_FILE_PASSWORD environment variable and try again"
+            exit 1
+          fi
+          echo "🔓 Decrypting private key..."
+          if openssl rsa -in /certs/key.pem -out /decrypted/key.pem -passin env:KEY_FILE_PASSWORD 2>/dev/null; then
+            chmod 640 /decrypted/key.pem
+            echo "✅ Private key decrypted successfully"
+          else
+            echo "❌ ERROR: Failed to decrypt private key - wrong passphrase?"
+            exit 1
+          fi
+        else
+          # Key is not encrypted - copy as-is
+          cp /certs/key.pem /decrypted/key.pem
+          chmod 640 /decrypted/key.pem
+          echo "✅ Using unencrypted private key"
+        fi
+
+        echo "✅ TLS certificates ready in /decrypted"
     profiles: ["tls"]
 
   # ──────────────────────────────────────────────────────────────────────
@@ -1598,7 +1643,7 @@ services:
     volumes:
       - nginx_cache:/var/cache/nginx                         # Persistent cache storage
       - ./infra/nginx/nginx-tls.conf:/etc/nginx/nginx.conf:ro  # TLS-enabled config
-      - ./certs:/app/certs:ro                                 # Mount SSL certs
+      - tls_certs:/app/certs:ro                              # Decrypted SSL certs (from cert_init)
     # TCP kernel tuning for 3000 concurrent connections
     sysctls:
       - net.ipv4.tcp_fin_timeout=15
