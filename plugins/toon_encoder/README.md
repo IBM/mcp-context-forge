@@ -640,6 +640,11 @@ primary use case of encoding for LLMs, which parse the format themselves):
 - **Arrays of arrays** - Nested arrays like `[[1,2], [3,4]]` may have decoding issues
 - **Mixed sibling fields after columnar arrays** - When a columnar array is followed by
   primitive fields at the same nesting level, the primitives may not decode
+- **Alternative delimiters in columnar headers** - The TOON spec v3.0 allows tab (`\t`) or
+  pipe (`|`) as alternative delimiters in columnar array headers (e.g., `[2]{a|b}:` with
+  rows `1|2`). The encoder always produces comma-delimited output. The decoder regex
+  matches these alternative delimiters but does not parse them correctly—it always splits
+  on commas. This is rarely encountered in practice since most TOON producers use commas.
 
 These limitations affect the `decode()` function used for round-trip testing. The `encode()`
 function correctly handles all these cases per the TOON specification.
