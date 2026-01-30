@@ -15,7 +15,7 @@ deployment/
 docs/
 deployment/k8s/
 mcp-servers/
-tests/
+# tests/ - kept for evaluation baseline
 test/
 attic/
 *.md
