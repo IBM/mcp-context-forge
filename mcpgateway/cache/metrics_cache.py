@@ -29,11 +29,15 @@ Examples:
 
 # Standard
 import logging
+import os
 import threading
 import time
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
+# Default TTL used when settings are not yet available (e.g. during import)
+_DEFAULT_TTL_SECONDS = 10
 
 
 class MetricsCache:
@@ -57,11 +61,11 @@ class MetricsCache:
         {'total': 5}
     """
 
-    def __init__(self, ttl_seconds: int = 10):
+    def __init__(self, ttl_seconds: int = _DEFAULT_TTL_SECONDS):
         """Initialize the metrics cache.
 
         Args:
-            ttl_seconds: Time-to-live in seconds (default: 10).
+            ttl_seconds: Time-to-live in seconds (default: _DEFAULT_TTL_SECONDS).
 
         Examples:
             >>> cache = MetricsCache(ttl_seconds=15)
@@ -168,5 +172,30 @@ class MetricsCache:
         }
 
 
-# Global singleton instance
-metrics_cache = MetricsCache()
+# Global singleton instance.
+# TTL is read from the METRICS_CACHE_TTL_SECONDS environment variable so
+# operators can tune it without modifying code.  Falls back to the module
+# default when the variable is unset or not a valid integer.
+def _resolve_ttl() -> int:
+    """Return the configured TTL, coercing and clamping the env value.
+
+    Examples:
+        >>> import os
+        >>> os.environ.pop("METRICS_CACHE_TTL_SECONDS", None) is not None or True
+        True
+        >>> _resolve_ttl() == _DEFAULT_TTL_SECONDS
+        True
+    """
+    raw = os.environ.get("METRICS_CACHE_TTL_SECONDS")
+    if raw is None:
+        return _DEFAULT_TTL_SECONDS
+    try:
+        value = int(raw)
+        # Clamp to the same bounds as the Pydantic field (1-300)
+        return max(1, min(value, 300))
+    except (ValueError, TypeError):
+        logger.warning("METRICS_CACHE_TTL_SECONDS=%r is not a valid integer; using default %d", raw, _DEFAULT_TTL_SECONDS)
+        return _DEFAULT_TTL_SECONDS
+
+
+metrics_cache = MetricsCache(ttl_seconds=_resolve_ttl())
