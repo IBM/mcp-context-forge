@@ -2642,6 +2642,7 @@ class ToolService:
         gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
+        gateway_transport = gateway_payload.get("transport") if has_gateway else None
 
         # Decrypt and apply query param auth to URL if applicable
         gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
@@ -2827,7 +2828,9 @@ class ToolService:
                         mcp_session_id = request_headers_lower.get("mcp-session-id")
                         if mcp_session_id:
                             headers["x-mcp-session-id"] = mcp_session_id
+                            # Standard
                             import os  # pylint: disable=import-outside-toplevel
+
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
@@ -3009,7 +3012,9 @@ class ToolService:
                         mcp_session_id = request_headers_lower.get("mcp-session-id")
                         if mcp_session_id:
                             headers["x-mcp-session-id"] = mcp_session_id
+                            # Standard
                             import os  # pylint: disable=import-outside-toplevel
+
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
@@ -3274,10 +3279,12 @@ class ToolService:
 
                             if use_pool and pool is not None:
                                 # Pooled path: do NOT add per-request headers (they would be pinned)
+                                # Determine transport type based on current transport setting
+                                pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
                                 async with pool.session(
                                     url=server_url,
                                     headers=headers,
-                                    transport_type=TransportType.STREAMABLE_HTTP,
+                                    transport_type=pool_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
                                     user_identity=app_user_email,
                                     gateway_id=gateway_id_str,

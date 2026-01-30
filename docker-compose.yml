@@ -236,6 +236,7 @@ services:
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
+      - USE_STATEFUL_SESSIONS=true
       # ═══════════════════════════════════════════════════════════════════════════
       # SSRF Protection (Server-Side Request Forgery)
       # ═══════════════════════════════════════════════════════════════════════════

@@ -1562,6 +1562,8 @@ class Settings(BaseSettings):
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
+    streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
+    streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
 
     # Core plugin settings
     plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")

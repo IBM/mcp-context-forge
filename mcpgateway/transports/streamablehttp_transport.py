@@ -1196,7 +1196,17 @@ class SessionManagerWrapper:
         """
 
         if settings.use_stateful_sessions:
-            event_store = InMemoryEventStore()
+            # Use Redis event store for multi-worker deployments
+            if settings.cache_type == "redis" and settings.redis_url:
+                # First-Party
+                from mcpgateway.transports.redis_event_store import RedisEventStore
+
+                event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
+                logger.info("Using RedisEventStore for stateful sessions (multi-worker capable)")
+            else:
+                # Fall back to in-memory for single-worker or when Redis not available
+                event_store = InMemoryEventStore()
+                logger.warning("Using InMemoryEventStore - only works with single worker!")
             stateless = False
         else:
             event_store = None
@@ -1276,6 +1286,12 @@ class SessionManagerWrapper:
         # Extract request headers from scope
         headers = dict(Headers(scope=scope))
 
+        # Log session info for debugging stateful sessions
+        mcp_session_id = headers.get("mcp-session-id", "not-provided")
+        method = scope.get("method", "UNKNOWN")
+        query_string = scope.get("query_string", b"").decode("utf-8")
+        logger.info(f"[STATEFUL] Streamable HTTP {method} {path} | MCP-Session-Id: {mcp_session_id} | Query: {query_string} | Stateful: {settings.use_stateful_sessions}")
+
         # Note: mcp-session-id from client is used for gateway-internal session affinity
         # routing (stored in request_headers_var), but is NOT renamed or forwarded to
         # upstream servers - it's a gateway-side concept, not an end-to-end semantic header
@@ -1291,10 +1307,12 @@ class SessionManagerWrapper:
 
         try:
             await self.session_manager.handle_request(scope, receive, send)
+            logger.info(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
         except anyio.ClosedResourceError:
             # Expected when client closes one side of the stream (normal lifecycle)
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
+            logger.error(f"[STATEFUL] Streamable HTTP request failed | Session: {mcp_session_id} | Error: {e}")
             logger.exception(f"Error handling streamable HTTP request: {e}")
             raise
 
