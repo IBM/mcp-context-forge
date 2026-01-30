@@ -120,7 +120,7 @@ class ToonEncoderPlugin(Plugin):
         )
 
     async def tool_post_invoke(
-        self, payload: ToolPostInvokePayload, context: PluginContext
+        self, payload: ToolPostInvokePayload, _context: PluginContext
     ) -> ToolPostInvokeResult:
         """Convert tool result to TOON format after invocation.
 

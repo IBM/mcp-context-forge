@@ -124,9 +124,9 @@ def encode(obj: Any, *, indent: int = 0, _as_root: bool = True) -> str:
     if isinstance(obj, str):
         return _encode_string(obj)
     if isinstance(obj, (list, tuple)):
-        return _encode_array(list(obj), indent=indent, as_root=_as_root)
+        return _encode_array(list(obj), indent=indent, _as_root=_as_root)
     if isinstance(obj, dict):
-        return _encode_object(obj, indent=indent, as_root=_as_root)
+        return _encode_object(obj, indent=indent, _as_root=_as_root)
 
     # Fallback for other types - convert to string
     raise TypeError(f"Object of type {type(obj).__name__} is not TOON serializable")
@@ -309,7 +309,7 @@ def _encode_key(key: str) -> str:
     return _quote_string(key)
 
 
-def _encode_array(arr: List[Any], *, indent: int = 0, as_root: bool = True, key_prefix: str = "") -> str:
+def _encode_array(arr: List[Any], *, indent: int = 0, _as_root: bool = True, key_prefix: str = "") -> str:
     """Encode an array in TOON format.
 
     Per TOON spec:
@@ -321,7 +321,7 @@ def _encode_array(arr: List[Any], *, indent: int = 0, as_root: bool = True, key_
     Args:
         arr: Array to encode.
         indent: Current indentation level.
-        as_root: Whether this is the root array.
+        _as_root: Whether this is the root array (unused, for API consistency).
         key_prefix: Key name to prefix (for arrays in objects).
 
     Returns:
@@ -365,7 +365,7 @@ def _encode_array(arr: List[Any], *, indent: int = 0, as_root: bool = True, key_
                 lines.extend(obj_lines)
         elif isinstance(item, list):
             # Nested array as list item
-            nested = _encode_array(item, indent=indent + 2, as_root=False, key_prefix="")
+            nested = _encode_array(item, indent=indent + 2, _as_root=False, key_prefix="")
             nested_lines = nested.split("\n")
             lines.append(f"{child_ind}- {nested_lines[0]}")
             for nl in nested_lines[1:]:
@@ -511,7 +511,7 @@ def _try_columnar_encoding(arr: List[Dict[str, Any]], *, indent: int = 0, key_pr
     return header + "\n" + "\n".join(rows)
 
 
-def _encode_object(obj: Dict[str, Any], *, indent: int = 0, as_root: bool = True) -> str:
+def _encode_object(obj: Dict[str, Any], *, indent: int = 0, _as_root: bool = True) -> str:
     """Encode an object (dict) in TOON format.
 
     Per TOON spec:
@@ -522,7 +522,7 @@ def _encode_object(obj: Dict[str, Any], *, indent: int = 0, as_root: bool = True
     Args:
         obj: Dictionary to encode.
         indent: Current indentation level.
-        as_root: Whether this is the root object.
+        _as_root: Whether this is the root object (unused, for API consistency).
 
     Returns:
         TOON object representation.
@@ -546,7 +546,7 @@ def _encode_object(obj: Dict[str, Any], *, indent: int = 0, as_root: bool = True
 
         if isinstance(value, list):
             # Arrays use key[N]: format per spec
-            arr_encoded = _encode_array(value, indent=indent, as_root=False, key_prefix=encoded_key)
+            arr_encoded = _encode_array(value, indent=indent, _as_root=False, key_prefix=encoded_key)
             lines.append(arr_encoded)
         elif isinstance(value, dict):
             if not value:
@@ -555,7 +555,7 @@ def _encode_object(obj: Dict[str, Any], *, indent: int = 0, as_root: bool = True
             else:
                 # Nested object
                 lines.append(f"{encoded_key}:")
-                encoded_value = _encode_object(value, indent=indent + 1, as_root=False)
+                encoded_value = _encode_object(value, indent=indent + 1, _as_root=False)
                 for vline in encoded_value.split("\n"):
                     lines.append(f"{' ' * _INDENT_SIZE}{vline}")
         else:
@@ -1012,12 +1012,12 @@ def _decode_columnar_array(s: str, count: int, keys: List[str], delimiter: str =
     return result
 
 
-def _split_row_values(line: str, expected_count: int, delimiter: str = ",") -> List[str]:
+def _split_row_values(line: str, _expected_count: int, delimiter: str = ",") -> List[str]:
     """Split a columnar row into values, respecting quotes.
 
     Args:
         line: Row string.
-        expected_count: Expected number of values.
+        _expected_count: Expected number of values (unused, for potential validation).
         delimiter: The delimiter character to split on.
 
     Returns:
