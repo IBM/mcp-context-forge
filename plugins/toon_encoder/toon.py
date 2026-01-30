@@ -814,8 +814,10 @@ def _decode_array(s: str) -> List[Any]:
 
     # Columnar format with keys
     if keys_str:
-        keys = [k.strip() for k in keys_str.split(",")]
-        return _decode_columnar_array(remaining_stripped, count, keys)
+        # Detect delimiter from header (comma, pipe, or tab per spec)
+        delimiter = _detect_delimiter(keys_str)
+        keys = [k.strip() for k in keys_str.split(delimiter)]
+        return _decode_columnar_array(remaining_stripped, count, keys, delimiter)
 
     # Check for list item syntax (lines starting with -)
     if remaining_stripped.startswith("-") or "\n-" in remaining or "\n -" in remaining:
@@ -952,13 +954,35 @@ def _decode_simple_array(s: str, count: int) -> List[Any]:
     return result
 
 
-def _decode_columnar_array(s: str, count: int, keys: List[str]) -> List[Dict[str, Any]]:
+def _detect_delimiter(keys_str: str) -> str:
+    """Detect the delimiter used in columnar array header.
+
+    Per TOON spec v3.0, columnar headers can use comma, pipe, or tab as delimiter.
+
+    Args:
+        keys_str: The keys portion of the header (e.g., "a,b" or "a|b" or "a\\tb").
+
+    Returns:
+        The detected delimiter character.
+    """
+    # Check for pipe first (more specific)
+    if "|" in keys_str:
+        return "|"
+    # Check for tab
+    if "\t" in keys_str:
+        return "\t"
+    # Default to comma
+    return ","
+
+
+def _decode_columnar_array(s: str, count: int, keys: List[str], delimiter: str = ",") -> List[Dict[str, Any]]:
     """Decode a columnar TOON array.
 
     Args:
         s: Array content (rows).
         count: Expected number of rows.
         keys: Column keys.
+        delimiter: The delimiter character used to separate values.
 
     Returns:
         List of dictionaries.
@@ -971,7 +995,7 @@ def _decode_columnar_array(s: str, count: int, keys: List[str]) -> List[Dict[str
         if not line:
             continue
 
-        values = _split_row_values(line, len(keys))
+        values = _split_row_values(line, len(keys), delimiter)
         obj = {}
         for i, key in enumerate(keys):
             if i < len(values):
@@ -989,12 +1013,13 @@ def _decode_columnar_array(s: str, count: int, keys: List[str]) -> List[Dict[str
     return result
 
 
-def _split_row_values(line: str, expected_count: int) -> List[str]:
+def _split_row_values(line: str, expected_count: int, delimiter: str = ",") -> List[str]:
     """Split a columnar row into values, respecting quotes.
 
     Args:
         line: Row string.
         expected_count: Expected number of values.
+        delimiter: The delimiter character to split on.
 
     Returns:
         List of value strings.
@@ -1014,7 +1039,7 @@ def _split_row_values(line: str, expected_count: int) -> List[str]:
         elif char == '"':
             current.append(char)
             in_quotes = not in_quotes
-        elif char == "," and not in_quotes:
+        elif char == delimiter and not in_quotes:
             values.append("".join(current))
             current = []
         else:

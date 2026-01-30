@@ -207,6 +207,18 @@ class TestDecodeArrays:
         result = decode(toon)
         assert result == [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
 
+    def test_decode_columnar_array_pipe_delimiter(self):
+        """Columnar arrays with pipe delimiter per TOON spec v3.0."""
+        toon = "[2]{a|b}:\n  1|2\n  3|4"
+        result = decode(toon)
+        assert result == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+
+    def test_decode_columnar_array_tab_delimiter(self):
+        """Columnar arrays with tab delimiter per TOON spec v3.0."""
+        toon = "[2]{a\tb}:\n  1\t2\n  3\t4"
+        result = decode(toon)
+        assert result == [{"a": 1, "b": 2}, {"a": 3, "b": 4}]
+
 
 class TestDecodeObjects:
     """Test decoding of objects."""
