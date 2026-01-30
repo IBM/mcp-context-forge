@@ -182,6 +182,7 @@ def _get_configured_ttl() -> int:
         True
     """
     try:
+        # First-Party
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
         return settings.metrics_cache_ttl_seconds
