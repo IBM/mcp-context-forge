@@ -168,5 +168,26 @@ class MetricsCache:
         }
 
 
+def _get_configured_ttl() -> int:
+    """Read metrics cache TTL from settings, with fallback.
+
+    Returns:
+        int: TTL in seconds from METRICS_CACHE_TTL_SECONDS env var, or 10 as default.
+
+    Examples:
+        >>> ttl = _get_configured_ttl()
+        >>> isinstance(ttl, int)
+        True
+        >>> ttl >= 1
+        True
+    """
+    try:
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        return settings.metrics_cache_ttl_seconds
+    except Exception:
+        return 10
+
+
 # Global singleton instance
-metrics_cache = MetricsCache()
+metrics_cache = MetricsCache(ttl_seconds=_get_configured_ttl())
