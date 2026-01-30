@@ -726,19 +726,18 @@ class PermissionChecker:
                 ip_address=self.user_context.get("ip_address"),
                 user_agent=self.user_context.get("user_agent"),
             )
-        else:
-            # Create fresh db session
-            with fresh_db_session() as db:
-                permission_service = PermissionService(db)
-                return await permission_service.check_permission(
-                    user_email=self.user_context["email"],
-                    permission=permission,
-                    resource_type=resource_type,
-                    resource_id=resource_id,
-                    team_id=team_id,
-                    ip_address=self.user_context.get("ip_address"),
-                    user_agent=self.user_context.get("user_agent"),
-                )
+        # Create fresh db session
+        with fresh_db_session() as db:
+            permission_service = PermissionService(db)
+            return await permission_service.check_permission(
+                user_email=self.user_context["email"],
+                permission=permission,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                team_id=team_id,
+                ip_address=self.user_context.get("ip_address"),
+                user_agent=self.user_context.get("user_agent"),
+            )
 
     async def has_admin_permission(self) -> bool:
         """Check if user has admin permissions.
@@ -750,11 +749,10 @@ class PermissionChecker:
             # Use existing session
             permission_service = PermissionService(self.db_session)
             return await permission_service.check_admin_permission(self.user_context["email"])
-        else:
-            # Create fresh db session
-            with fresh_db_session() as db:
-                permission_service = PermissionService(db)
-                return await permission_service.check_admin_permission(self.user_context["email"])
+        # Create fresh db session
+        with fresh_db_session() as db:
+            permission_service = PermissionService(db)
+            return await permission_service.check_admin_permission(self.user_context["email"])
 
     async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has any of the specified permissions.
