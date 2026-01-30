@@ -97,7 +97,7 @@
           <boolProp name="LoopController.continue_forever">false</boolProp>
           <intProp name="LoopController.loops">-1</intProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">${__jexl3(${THREADS} * 0.6)}</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${THREADS}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
         <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
@@ -199,8 +199,8 @@
           <hashTree/>
         </hashTree>
 
-        <!-- Constant Throughput Timer -->
-        <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="Target 2400 RPS (60% of 4000)" enabled="true">
+        <!-- Constant Throughput Timer - disabled for flexibility, enable for strict RPS control -->
+        <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="Target RPS (optional)" enabled="false">
           <intProp name="calcMode">2</intProp>
           <doubleProp>
             <name>throughput</name>
@@ -218,7 +218,7 @@
           <boolProp name="LoopController.continue_forever">false</boolProp>
           <intProp name="LoopController.loops">-1</intProp>
         </elementProp>
-        <stringProp name="ThreadGroup.num_threads">${__jexl3(${THREADS} * 0.4)}</stringProp>
+        <stringProp name="ThreadGroup.num_threads">${THREADS}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${RAMP_UP}</stringProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
         <stringProp name="ThreadGroup.duration">${DURATION}</stringProp>
@@ -367,7 +367,7 @@
         </hashTree>
 
         <!-- Constant Throughput Timer -->
-        <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="Target 1600 RPS (40% of 4000)" enabled="true">
+        <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="Target RPS (optional)" enabled="false">
           <intProp name="calcMode">2</intProp>
           <doubleProp>
             <name>throughput</name>

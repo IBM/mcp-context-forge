@@ -6,6 +6,12 @@ This directory contains JMeter test plans for MCP Gateway performance testing, p
 
 ### Install JMeter
 
+**Recommended: Use the Makefile target** (installs JMeter 5.6.3 locally):
+```bash
+make jmeter-install
+```
+
+**Alternative: Manual installation**
 ```bash
 # macOS
 brew install jmeter
@@ -14,9 +20,11 @@ brew install jmeter
 wget https://dlcdn.apache.org/jmeter/binaries/apache-jmeter-5.6.3.tgz
 tar -xzf apache-jmeter-5.6.3.tgz
 export PATH=$PATH:$(pwd)/apache-jmeter-5.6.3/bin
+```
 
-# Verify installation
-jmeter --version
+**Verify installation** (requires JMeter 5.x+ for HTML reports):
+```bash
+make jmeter-check
 ```
 
 ### Optional Plugins
@@ -105,26 +113,52 @@ jmeter -p properties/production.properties \
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `GATEWAY_URL` | Gateway base URL | http://localhost:8080 |
+| `GATEWAY_URL` | Gateway base URL (http or https) | http://localhost:8080 |
 | `TOKEN` | JWT bearer token | (required) |
 | `SERVER_ID` | Virtual server ID for MCP tests | (required for MCP) |
 | `THREADS` | Number of concurrent users | Varies by test |
 | `RAMP_UP` | Ramp-up time in seconds | 60 |
 | `DURATION` | Test duration in seconds | Varies by test |
 
+### HTTPS/TLS Testing
+
+All test plans support HTTPS by passing an `https://` URL:
+
+```bash
+# HTTP (default port 8080)
+make jmeter-rest-baseline JMETER_GATEWAY_URL=http://localhost:8080
+
+# HTTPS/TLS (port 8443)
+make jmeter-rest-baseline JMETER_GATEWAY_URL=https://localhost:8443
+```
+
+For self-signed certificates (common in development), you may need to:
+1. Add the certificate to Java's truststore, or
+2. Run with: `JAVA_OPTS="-Djavax.net.ssl.trustStore=/path/to/truststore.jks"`
+
 ## Makefile Targets
 
 ```bash
+# Setup
+make jmeter-install                # Download and install JMeter 5.6.3 locally
+make jmeter-check                  # Verify JMeter 5.x+ is available
+make jmeter-ui                     # Launch JMeter GUI for test editing
+
+# Baseline Tests
 make jmeter-rest-baseline          # REST API baseline (1,000 RPS, 10min)
 make jmeter-mcp-baseline           # MCP JSON-RPC baseline (1,000 RPS, 15min)
 make jmeter-mcp-servers-baseline   # MCP test servers baseline
+make jmeter-sse                    # SSE streaming baseline
+make jmeter-websocket              # WebSocket baseline
+make jmeter-admin-ui               # Admin UI baseline
+
+# Load Tests
 make jmeter-load                   # Load test (4,000 RPS, 30min)
 make jmeter-stress                 # Stress test (ramp to 10,000 RPS)
 make jmeter-spike                  # Spike test (1K→10K→1K recovery)
 make jmeter-soak                   # 24-hour soak test (2,000 RPS)
-make jmeter-sse                    # SSE streaming baseline
-make jmeter-websocket              # WebSocket baseline
-make jmeter-admin-ui               # Admin UI baseline
+
+# Reporting
 make jmeter-report                 # Generate HTML report from latest JTL
 make jmeter-compare                # Compare current vs baseline results
 ```
