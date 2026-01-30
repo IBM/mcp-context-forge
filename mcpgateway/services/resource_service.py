@@ -429,16 +429,29 @@ class ResourceService:
         """
         try:
             logger.info(f"Registering resource: {resource.uri}")
+            
+            # Extract gateway_id from resource if present
+            gateway_id = getattr(resource, "gateway_id", None)
+            
             # Check for existing server with the same uri
             if visibility.lower() == "public":
                 logger.info(f"visibility:: {visibility}")
-                # Check for existing public resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                # Check for existing public resource with the same uri and gateway_id
+                existing_resource = db.execute(select(DbResource).where(
+                    DbResource.uri == resource.uri, 
+                    DbResource.visibility == "public",
+                    DbResource.gateway_id == gateway_id
+                )).scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team" and team_id:
-                # Check for existing team resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                # Check for existing team resource with the same uri and gateway_id
+                existing_resource = db.execute(select(DbResource).where(
+                    DbResource.uri == resource.uri, 
+                    DbResource.visibility == "team", 
+                    DbResource.team_id == team_id,
+                    DbResource.gateway_id == gateway_id
+                )).scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
@@ -473,6 +486,7 @@ class ResourceService:
                 owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
                 # Endpoint visibility parameter takes precedence over schema default
                 visibility=visibility if visibility is not None else getattr(resource, "visibility", "public"),
+                gateway_id=gateway_id,
             )
 
             # Add to DB

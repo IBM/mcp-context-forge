@@ -35,6 +35,7 @@ from sqlalchemy.orm import joinedload, Session
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, get_for_update
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span
@@ -480,7 +481,14 @@ class PromptService:
 
             custom_name = prompt.custom_name or prompt.name
             display_name = prompt.display_name or custom_name
-            computed_name = self._compute_prompt_name(custom_name)
+            
+            # Extract gateway_id from prompt if present
+            gateway_id = getattr(prompt, "gateway_id", None)
+            gateway = None
+            if gateway_id:
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+            
+            computed_name = self._compute_prompt_name(custom_name, gateway=gateway)
 
             # Create DB model
             db_prompt = DbPrompt(
@@ -504,16 +512,26 @@ class PromptService:
                 team_id=getattr(prompt, "team_id", None) or team_id,
                 owner_email=getattr(prompt, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(prompt, "visibility", None) or visibility,
+                gateway_id=gateway_id,
             )
             # Check for existing server with the same name
             if visibility.lower() == "public":
-                # Check for existing public prompt with the same name
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                # Check for existing public prompt with the same name and gateway_id
+                existing_prompt = db.execute(select(DbPrompt).where(
+                    DbPrompt.name == computed_name, 
+                    DbPrompt.visibility == "public",
+                    DbPrompt.gateway_id == gateway_id
+                )).scalar_one_or_none()
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
             elif visibility.lower() == "team":
-                # Check for existing team prompt with the same name
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                # Check for existing team prompt with the same name and gateway_id
+                existing_prompt = db.execute(select(DbPrompt).where(
+                    DbPrompt.name == computed_name, 
+                    DbPrompt.visibility == "team", 
+                    DbPrompt.team_id == team_id,
+                    DbPrompt.gateway_id == gateway_id
+                )).scalar_one_or_none()
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
