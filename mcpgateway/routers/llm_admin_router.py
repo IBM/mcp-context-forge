@@ -819,7 +819,13 @@ async def sync_provider_models(
     from mcpgateway.llm_schemas import LLMModelCreate
 
     # First fetch models from the provider
-    fetch_result = await fetch_provider_models(request, provider_id, db, current_user_ctx)
+    # NOTE: Must pass as kwargs - require_permission decorator only searches kwargs for user context
+    fetch_result = await fetch_provider_models(
+        request=request,
+        provider_id=provider_id,
+        db=db,
+        current_user_ctx=current_user_ctx,
+    )
 
     if not fetch_result.get("success"):
         return fetch_result
