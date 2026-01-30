@@ -537,6 +537,31 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         elif settings.metrics_aggregation_enabled:
             logger.info("Metrics aggregation auto-start disabled; performance metrics will be generated on-demand when requested.")
 
+        # Metrics cleanup: run once at startup to clear old records
+        if settings.metrics_cleanup_enabled:
+
+            async def run_metrics_cleanup() -> None:
+                """Clean up old metrics records based on retention settings."""
+                try:
+                    retention = settings.metrics_retention_days
+                    db_session = SessionLocal()
+                    try:
+                        total_deleted = 0
+                        total_deleted += await tool_service.cleanup_old_metrics(db_session, retention)
+                        total_deleted += await resource_service.cleanup_old_metrics(db_session, retention)
+                        total_deleted += await prompt_service.cleanup_old_metrics(db_session, retention)
+                        total_deleted += await server_service.cleanup_old_metrics(db_session, retention)
+                        if a2a_service:
+                            total_deleted += await a2a_service.cleanup_old_metrics(db_session, retention)
+                        if total_deleted > 0:
+                            logger.info(f"Metrics cleanup completed: {total_deleted} old records removed (retention: {retention} days)")
+                    finally:
+                        db_session.close()
+                except Exception as cleanup_error:
+                    logger.warning(f"Metrics cleanup failed: {cleanup_error}")
+
+            asyncio.create_task(run_metrics_cleanup())
+
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
@@ -4619,6 +4644,8 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
     """
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
+    Results are cached in-memory with a short TTL to prevent redundant computation under load.
+
     Args:
         db: Database session
         user: Authenticated user
@@ -4626,6 +4653,14 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
     Returns:
         A dictionary with keys for each entity type and their aggregated metrics.
     """
+    # First-Party
+    from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+    cache_key = "api_metrics_with_a2a" if (a2a_service and settings.mcpgateway_a2a_metrics_enabled) else "api_metrics"
+    cached = metrics_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     logger.debug(f"User {user} requested aggregated metrics")
     tool_metrics = await tool_service.aggregate_metrics(db)
     resource_metrics = await resource_service.aggregate_metrics(db)
@@ -4644,6 +4679,7 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
         a2a_metrics = await a2a_service.aggregate_metrics(db)
         metrics_result["a2a_agents"] = a2a_metrics
 
+    metrics_cache.set(cache_key, metrics_result)
     return metrics_result
 
 
@@ -4690,6 +4726,13 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
             raise HTTPException(status_code=400, detail="A2A features are disabled")
     else:
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
+
+    # Invalidate metrics cache after reset
+    # First-Party
+    from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+    metrics_cache.invalidate()
+
     return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
 
 

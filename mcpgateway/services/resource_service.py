@@ -21,7 +21,7 @@ Examples:
 """
 
 # Standard
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import mimetypes
 import os
 import re
@@ -2884,3 +2884,21 @@ class ResourceService:
         """
         db.execute(delete(ResourceMetric))
         db.commit()
+
+    async def cleanup_old_metrics(self, db: Session, retention_days: int = 30) -> int:
+        """Delete resource metrics older than the retention period.
+
+        Args:
+            db: Database session.
+            retention_days: Number of days to retain metrics.
+
+        Returns:
+            int: Number of deleted metric records.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        result = db.execute(delete(ResourceMetric).where(ResourceMetric.timestamp < cutoff))
+        deleted = result.rowcount
+        db.commit()
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} old resource metrics (retention: {retention_days} days)")
+        return deleted

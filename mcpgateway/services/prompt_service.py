@@ -15,7 +15,7 @@ It handles:
 """
 
 # Standard
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from string import Formatter
 import time
@@ -2141,3 +2141,21 @@ class PromptService:
 
         db.execute(delete(PromptMetric))
         db.commit()
+
+    async def cleanup_old_metrics(self, db: Session, retention_days: int = 30) -> int:
+        """Delete prompt metrics older than the retention period.
+
+        Args:
+            db: Database session.
+            retention_days: Number of days to retain metrics.
+
+        Returns:
+            int: Number of deleted metric records.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        result = db.execute(delete(PromptMetric).where(PromptMetric.timestamp < cutoff))
+        deleted = result.rowcount
+        db.commit()
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} old prompt metrics (retention: {retention_days} days)")
+        return deleted

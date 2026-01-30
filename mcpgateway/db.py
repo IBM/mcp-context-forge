@@ -31,7 +31,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Boolean, case, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -2402,6 +2402,47 @@ class Tool(Base):
             "last_execution_time": self.last_execution_time,
         }
 
+    @classmethod
+    def compute_metrics_summary(cls, db: "Session", tool_id: str) -> Dict[str, Any]:
+        """Compute metrics summary via SQL aggregation without loading metric rows.
+
+        This avoids loading all ToolMetric rows into memory by performing the
+        aggregation directly in the database.
+
+        Args:
+            db: SQLAlchemy database session.
+            tool_id: The tool ID to compute metrics for.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing the aggregated metrics.
+        """
+        result = db.execute(
+            select(
+                func.count(ToolMetric.id).label("total"),  # pylint: disable=not-callable
+                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).label("successful"),
+                func.sum(case((ToolMetric.is_success.is_(False), 1), else_=0)).label("failed"),
+                func.min(ToolMetric.response_time).label("min_rt"),
+                func.max(ToolMetric.response_time).label("max_rt"),
+                func.avg(ToolMetric.response_time).label("avg_rt"),
+                func.max(ToolMetric.timestamp).label("last_time"),
+            ).where(ToolMetric.tool_id == tool_id)
+        ).one()
+
+        total = result.total or 0
+        successful = result.successful or 0
+        failed = result.failed or 0
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": float(result.min_rt) if result.min_rt is not None else None,
+            "max_response_time": float(result.max_rt) if result.max_rt is not None else None,
+            "avg_response_time": float(result.avg_rt) if result.avg_rt is not None else None,
+            "last_execution_time": result.last_time,
+        }
+
 
 class Resource(Base):
     """
@@ -2616,6 +2657,44 @@ class Resource(Base):
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
+
+    @classmethod
+    def compute_metrics_summary(cls, db: "Session", resource_id: str) -> Dict[str, Any]:
+        """Compute metrics summary via SQL aggregation without loading metric rows.
+
+        Args:
+            db: SQLAlchemy database session.
+            resource_id: The resource ID to compute metrics for.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing the aggregated metrics.
+        """
+        result = db.execute(
+            select(
+                func.count(ResourceMetric.id).label("total"),  # pylint: disable=not-callable
+                func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).label("successful"),
+                func.sum(case((ResourceMetric.is_success.is_(False), 1), else_=0)).label("failed"),
+                func.min(ResourceMetric.response_time).label("min_rt"),
+                func.max(ResourceMetric.response_time).label("max_rt"),
+                func.avg(ResourceMetric.response_time).label("avg_rt"),
+                func.max(ResourceMetric.timestamp).label("last_time"),
+            ).where(ResourceMetric.resource_id == resource_id)
+        ).one()
+
+        total = result.total or 0
+        successful = result.successful or 0
+        failed = result.failed or 0
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": float(result.min_rt) if result.min_rt is not None else None,
+            "max_response_time": float(result.max_rt) if result.max_rt is not None else None,
+            "avg_response_time": float(result.avg_rt) if result.avg_rt is not None else None,
+            "last_execution_time": result.last_time,
+        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -2848,6 +2927,44 @@ class Prompt(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
+    @classmethod
+    def compute_metrics_summary(cls, db: "Session", prompt_id: str) -> Dict[str, Any]:
+        """Compute metrics summary via SQL aggregation without loading metric rows.
+
+        Args:
+            db: SQLAlchemy database session.
+            prompt_id: The prompt ID to compute metrics for.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing the aggregated metrics.
+        """
+        result = db.execute(
+            select(
+                func.count(PromptMetric.id).label("total"),  # pylint: disable=not-callable
+                func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).label("successful"),
+                func.sum(case((PromptMetric.is_success.is_(False), 1), else_=0)).label("failed"),
+                func.min(PromptMetric.response_time).label("min_rt"),
+                func.max(PromptMetric.response_time).label("max_rt"),
+                func.avg(PromptMetric.response_time).label("avg_rt"),
+                func.max(PromptMetric.timestamp).label("last_time"),
+            ).where(PromptMetric.prompt_id == prompt_id)
+        ).one()
+
+        total = result.total or 0
+        successful = result.successful or 0
+        failed = result.failed or 0
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": float(result.min_rt) if result.min_rt is not None else None,
+            "max_response_time": float(result.max_rt) if result.max_rt is not None else None,
+            "avg_response_time": float(result.avg_rt) if result.avg_rt is not None else None,
+            "last_execution_time": result.last_time,
+        }
+
 
 class Server(Base):
     """
@@ -3012,6 +3129,44 @@ class Server(Base):
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
+
+    @classmethod
+    def compute_metrics_summary(cls, db: "Session", server_id: str) -> Dict[str, Any]:
+        """Compute metrics summary via SQL aggregation without loading metric rows.
+
+        Args:
+            db: SQLAlchemy database session.
+            server_id: The server ID to compute metrics for.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing the aggregated metrics.
+        """
+        result = db.execute(
+            select(
+                func.count(ServerMetric.id).label("total"),  # pylint: disable=not-callable
+                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).label("successful"),
+                func.sum(case((ServerMetric.is_success.is_(False), 1), else_=0)).label("failed"),
+                func.min(ServerMetric.response_time).label("min_rt"),
+                func.max(ServerMetric.response_time).label("max_rt"),
+                func.avg(ServerMetric.response_time).label("avg_rt"),
+                func.max(ServerMetric.timestamp).label("last_time"),
+            ).where(ServerMetric.server_id == server_id)
+        ).one()
+
+        total = result.total or 0
+        successful = result.successful or 0
+        failed = result.failed or 0
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": failed / total if total > 0 else 0.0,
+            "min_response_time": float(result.min_rt) if result.min_rt is not None else None,
+            "max_response_time": float(result.max_rt) if result.max_rt is not None else None,
+            "avg_response_time": float(result.avg_rt) if result.avg_rt is not None else None,
+            "last_execution_time": result.last_time,
+        }
 
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
@@ -3273,6 +3428,44 @@ class A2AAgent(Base):
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
+
+    @classmethod
+    def compute_metrics_summary(cls, db: "Session", agent_id: str) -> Dict[str, Any]:
+        """Compute metrics summary via SQL aggregation without loading metric rows.
+
+        Args:
+            db: SQLAlchemy database session.
+            agent_id: The A2A agent ID to compute metrics for.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing the aggregated metrics.
+        """
+        result = db.execute(
+            select(
+                func.count(A2AAgentMetric.id).label("total"),  # pylint: disable=not-callable
+                func.sum(case((A2AAgentMetric.is_success.is_(True), 1), else_=0)).label("successful"),
+                func.sum(case((A2AAgentMetric.is_success.is_(False), 1), else_=0)).label("failed"),
+                func.min(A2AAgentMetric.response_time).label("min_rt"),
+                func.max(A2AAgentMetric.response_time).label("max_rt"),
+                func.avg(A2AAgentMetric.response_time).label("avg_rt"),
+                func.max(A2AAgentMetric.timestamp).label("last_time"),
+            ).where(A2AAgentMetric.a2a_agent_id == agent_id)
+        ).one()
+
+        total = result.total or 0
+        successful = result.successful or 0
+        failed = result.failed or 0
+
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "failure_rate": (failed / total * 100) if total > 0 else 0.0,
+            "min_response_time": float(result.min_rt) if result.min_rt is not None else None,
+            "max_response_time": float(result.max_rt) if result.max_rt is not None else None,
+            "avg_response_time": float(result.avg_rt) if result.avg_rt is not None else None,
+            "last_execution_time": result.last_time,
+        }
 
     def __repr__(self) -> str:
         """Return a string representation of the A2AAgent instance.

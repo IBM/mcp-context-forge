@@ -12,7 +12,7 @@ and interactions with A2A-compatible agents.
 """
 
 # Standard
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
@@ -1099,6 +1099,24 @@ class A2AAgentService:
         db.commit()
 
         logger.info("Reset A2A agent metrics" + (f" for agent {agent_id}" if agent_id else ""))
+
+    async def cleanup_old_metrics(self, db: Session, retention_days: int = 30) -> int:
+        """Delete A2A agent metrics older than the retention period.
+
+        Args:
+            db: Database session.
+            retention_days: Number of days to retain metrics.
+
+        Returns:
+            int: Number of deleted metric records.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        result = db.execute(delete(A2AAgentMetric).where(A2AAgentMetric.timestamp < cutoff))
+        deleted = result.rowcount
+        db.commit()
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} old A2A agent metrics (retention: {retention_days} days)")
+        return deleted
 
     def _prepare_a2a_agent_for_read(self, agent: DbA2AAgent) -> DbA2AAgent:
         """Prepare a a2a agent object for A2AAgentRead validation.
