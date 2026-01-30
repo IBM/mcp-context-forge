@@ -1128,7 +1128,7 @@
                 const value = Admin.safeGetElement(
                     `resource-field-${name}`,
                 ).value;
-                finalUri = finalUri.replace(`{${name}}`, Admin.encodeURIComponent(value));
+                finalUri = finalUri.replace(`{${name}}`, encodeURIComponent(value));
             });
         } else {
             finalUri = resource.uri; // direct test
