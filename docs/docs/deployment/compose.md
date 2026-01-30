@@ -246,6 +246,52 @@ SHOW SERVERS;
 
 ---
 
+## 🔐 TLS/HTTPS Support
+
+Enable HTTPS with zero configuration using the TLS profile:
+
+```bash
+make compose-tls
+```
+
+This automatically:
+
+- Generates self-signed certificates (if `./certs/` is empty)
+- Starts nginx with TLS on port 8443
+- Keeps HTTP available on port 8080
+
+### TLS Commands
+
+| Command | Description |
+|---------|-------------|
+| `make compose-tls` | Start with HTTPS (HTTP + HTTPS both work) |
+| `make compose-tls-https` | Start with forced HTTPS redirect |
+| `make compose-tls-down` | Stop TLS stack |
+| `make compose-tls-logs` | View TLS service logs |
+| `make compose-tls-ps` | Check TLS service status |
+
+### Using Custom Certificates
+
+```bash
+mkdir -p certs
+cp /path/to/cert.pem certs/cert.pem
+cp /path/to/key.pem certs/key.pem
+make compose-tls
+```
+
+### Access Points
+
+- **HTTP:** `http://localhost:8080`
+- **HTTPS:** `https://localhost:8443`
+- **Admin UI:** `https://localhost:8443/admin`
+
+!!! tip "Self-Signed Certificate Warning"
+    Browsers will show a security warning for self-signed certificates. Click "Advanced" → "Proceed" to continue, or use `curl -k` to skip verification.
+
+For advanced TLS configuration (end-to-end encryption, custom ciphers, etc.), see [TLS Configuration Guide](tls-configuration.md).
+
+---
+
 ## 🔄 Lifecycle cheatsheet
 
 | Task               | Make                   | Manual (engine-agnostic)                        |

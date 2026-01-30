@@ -11,6 +11,27 @@
 ###############################################################################
 
 ###############################################################################
+#  DOCKER COMPOSE PROFILES
+#
+#  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
+#  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
+#  --profile benchmark:   Adds benchmark MCP servers for load testing
+#  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
+#
+#  TLS Quick Start:
+#    make compose-tls                    # HTTP:8080 + HTTPS:8443
+#    make compose-tls-https              # Force HTTPS (HTTP redirects)
+#    curl -sk https://localhost:8443/health
+#
+#  Custom certificates:
+#    mkdir -p certs && cp your-cert.pem certs/cert.pem && cp your-key.pem certs/key.pem
+#    make compose-tls
+#
+#  Environment variables (TLS profile):
+#    NGINX_FORCE_HTTPS=true              # Redirect all HTTP to HTTPS
+###############################################################################
+
+###############################################################################
 #  NETWORKS + VOLUMES - declared first so they can be referenced later
 ###############################################################################
 networks:
@@ -1510,3 +1531,94 @@ services:
         print(f'✅ Registration complete: {registered}/{server_count} benchmark servers')
         "
     profiles: ["benchmark"]
+
+###############################################################################
+#  TLS PROFILE - Zero-config HTTPS via Nginx (enabled with --profile tls)
+#  Usage: make compose-tls  (or: docker compose --profile tls up -d)
+#
+#  Features:
+#  - Auto-generates self-signed certificates on first run
+#  - Custom certs: place your own cert.pem/key.pem in ./certs/ before starting
+#  - HTTPS on port 8443, HTTP on port 8080 (both available)
+#  - Compatible with other profiles: --profile tls --profile monitoring
+#
+#  Custom Certificate Usage:
+#    mkdir -p certs
+#    cp /path/to/your/cert.pem certs/cert.pem
+#    cp /path/to/your/key.pem certs/key.pem
+#    make compose-tls
+###############################################################################
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Certificate Initialization - Auto-generates self-signed certs if missing
+  # ──────────────────────────────────────────────────────────────────────
+  cert_init:
+    image: alpine/openssl:latest
+    volumes:
+      - ./certs:/certs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -f /certs/cert.pem ] && [ -f /certs/key.pem ]; then
+          echo "✅ Certificates found in ./certs - using existing"
+          exit 0
+        fi
+        echo "🔏 Generating self-signed TLS certificate..."
+        mkdir -p /certs
+        openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
+          -keyout /certs/key.pem -out /certs/cert.pem \
+          -subj "/CN=localhost" \
+          -addext "subjectAltName=DNS:localhost,DNS:gateway,DNS:nginx,IP:127.0.0.1"
+        chmod 644 /certs/cert.pem
+        chmod 640 /certs/key.pem
+        echo "✅ TLS certificate generated in ./certs"
+    profiles: ["tls"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Nginx TLS - HTTPS-enabled reverse proxy (overrides default nginx)
+  # ──────────────────────────────────────────────────────────────────────
+  nginx_tls:
+    build:
+      context: ./infra/nginx
+      dockerfile: Dockerfile
+    image: mcpgateway/nginx-cache:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"                   # HTTP caching proxy (public-facing)
+      - "8443:443"                  # HTTPS caching proxy (public-facing)
+    networks: [mcpnet]
+    environment:
+      # Set to "true" to force all HTTP requests to redirect to HTTPS
+      - NGINX_FORCE_HTTPS=${NGINX_FORCE_HTTPS:-false}
+    depends_on:
+      gateway:
+        condition: service_healthy
+      cert_init:
+        condition: service_completed_successfully
+    volumes:
+      - nginx_cache:/var/cache/nginx                         # Persistent cache storage
+      - ./infra/nginx/nginx-tls.conf:/etc/nginx/nginx.conf:ro  # TLS-enabled config
+      - ./certs:/app/certs:ro                                 # Mount SSL certs
+    # TCP kernel tuning for 3000 concurrent connections
+    sysctls:
+      - net.ipv4.tcp_fin_timeout=15
+      - net.ipv4.ip_local_port_range=1024 65535
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test: ["CMD", "curl", "-fk", "https://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 1G
+        reservations:
+          cpus: '2'
+          memory: 512M
+    profiles: ["tls"]
