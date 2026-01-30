@@ -1555,6 +1555,296 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 			--class-picker'
 
 # =============================================================================
+# 📊 JMETER PERFORMANCE TESTING
+# =============================================================================
+# help: 📊 JMETER PERFORMANCE TESTING
+# help: jmeter-install                - Download and install JMeter 5.6.3 locally
+# help: jmeter-ui                     - Launch JMeter GUI for interactive test editing
+# help: jmeter-rest-baseline          - Run REST API baseline test (1,000 RPS, 10min)
+# help: jmeter-mcp-baseline           - Run MCP JSON-RPC baseline test (1,000 RPS, 15min)
+# help: jmeter-mcp-servers-baseline   - Run MCP test servers baseline (fast_time, fast_test)
+# help: jmeter-load                   - Run load test (4,000 RPS, 30min)
+# help: jmeter-stress                 - Run stress test (ramp to 10,000 RPS)
+# help: jmeter-spike                  - Run spike test (1K→10K→1K recovery)
+# help: jmeter-soak                   - Run 24-hour soak test (2,000 RPS)
+# help: jmeter-sse                    - Run SSE streaming baseline (1,000 connections)
+# help: jmeter-websocket              - Run WebSocket baseline (500 connections)
+# help: jmeter-admin-ui               - Run Admin UI baseline (50 users)
+# help: jmeter-report                 - Generate HTML report from last JTL file
+# help: jmeter-compare                - Compare current vs baseline results
+
+JMETER_VERSION := 5.6.3
+JMETER_HOME := $(CURDIR)/.jmeter/apache-jmeter-$(JMETER_VERSION)
+JMETER_BIN := $(if $(wildcard $(JMETER_HOME)/bin/jmeter),$(JMETER_HOME)/bin/jmeter,$(shell which jmeter 2>/dev/null))
+JMETER_DIR := tests/jmeter
+JMETER_RESULTS_DIR := $(JMETER_DIR)/results
+JMETER_GATEWAY_URL ?= http://localhost:8080
+JMETER_JWT_SECRET ?= $(or $(JWT_SECRET_KEY),my-test-key)
+JMETER_TOKEN ?= $(shell python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $(JMETER_JWT_SECRET) 2>/dev/null || echo "")
+JMETER_SERVER_ID ?=
+JMETER_FAST_TIME_URL ?= http://localhost:8888
+JMETER_FAST_TEST_URL ?= http://localhost:8880
+
+.PHONY: jmeter-install jmeter-ui jmeter-check jmeter-quick jmeter-clean
+.PHONY: jmeter-rest-baseline jmeter-mcp-baseline jmeter-mcp-servers-baseline
+.PHONY: jmeter-load jmeter-stress jmeter-spike jmeter-soak
+.PHONY: jmeter-sse jmeter-websocket jmeter-admin-ui
+.PHONY: jmeter-report jmeter-compare
+
+jmeter-install:                            ## Download and install JMeter 5.6.3 locally
+	@echo "📦 Installing JMeter $(JMETER_VERSION)..."
+	@mkdir -p .jmeter
+	@if [ -d "$(JMETER_HOME)" ]; then \
+		echo "✅ JMeter $(JMETER_VERSION) already installed at $(JMETER_HOME)"; \
+	else \
+		echo "   Downloading apache-jmeter-$(JMETER_VERSION).tgz..."; \
+		curl -fsSL "https://dlcdn.apache.org/jmeter/binaries/apache-jmeter-$(JMETER_VERSION).tgz" -o .jmeter/jmeter.tgz; \
+		echo "   Extracting..."; \
+		tar -xzf .jmeter/jmeter.tgz -C .jmeter/; \
+		rm .jmeter/jmeter.tgz; \
+		echo "✅ JMeter $(JMETER_VERSION) installed to $(JMETER_HOME)"; \
+	fi
+	@echo ""
+	@echo "To use: export PATH=\$$PATH:$(JMETER_HOME)/bin"
+	@echo "Or run: make jmeter-ui"
+
+jmeter-ui: jmeter-check                    ## Launch JMeter GUI for interactive test editing
+	@echo "🖥️  Launching JMeter GUI..."
+	@echo "   Test plans: $(JMETER_DIR)/*.jmx"
+	@$(JMETER_BIN) -t $(JMETER_DIR)/rest_api_baseline.jmx &
+	@echo "✅ JMeter GUI started"
+
+jmeter-check:                              ## Check if JMeter 5.x is installed (required for HTML reports)
+	@if [ -x "$(JMETER_HOME)/bin/jmeter" ]; then \
+		JMETER_CMD="$(JMETER_HOME)/bin/jmeter"; \
+	elif which jmeter >/dev/null 2>&1; then \
+		JMETER_CMD="jmeter"; \
+	else \
+		echo "❌ JMeter not found. Install with:"; \
+		echo "   make jmeter-install     (recommended - installs $(JMETER_VERSION) locally)"; \
+		echo "   brew install jmeter     (macOS)"; \
+		exit 1; \
+	fi; \
+	VERSION=$$($$JMETER_CMD --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+	MAJOR=$$(echo "$$VERSION" | cut -d. -f1); \
+	if [ -z "$$MAJOR" ] || [ "$$MAJOR" -lt 5 ]; then \
+		echo "❌ JMeter 5.x+ required for HTML report generation (-e -o flags)"; \
+		echo "   Found: $$VERSION"; \
+		echo "   Run: make jmeter-install"; \
+		exit 1; \
+	fi; \
+	echo "✅ JMeter $$VERSION found"
+
+jmeter-quick: jmeter-check                 ## Quick 10-second test to verify setup and generate report
+	@echo "⚡ Running quick JMeter test (10 seconds)..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/rest_api_baseline.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JTHREADS=5 -JRAMP_UP=2 -JDURATION=10 \
+		-l $(JMETER_RESULTS_DIR)/quick_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/quick_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/quick_*/index.html"
+
+jmeter-rest-baseline: jmeter-check         ## Run REST API baseline test (1,000 RPS, 10min)
+	@echo "📊 Running REST API baseline test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 1,000 RPS for 10 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/rest_api_baseline.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JTHREADS=100 -JRAMP_UP=60 -JDURATION=600 \
+		-l $(JMETER_RESULTS_DIR)/rest_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/rest_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/rest_baseline_*/index.html"
+
+jmeter-mcp-baseline: jmeter-check          ## Run MCP JSON-RPC baseline test (1,000 RPS, 15min)
+	@echo "📊 Running MCP JSON-RPC baseline test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Server ID: $(JMETER_SERVER_ID)"
+	@echo "   Target: 1,000 RPS for 15 minutes"
+	@if [ -z "$(JMETER_SERVER_ID)" ]; then \
+		echo "❌ JMETER_SERVER_ID required. Set with: make jmeter-mcp-baseline JMETER_SERVER_ID=<id>"; \
+		exit 1; \
+	fi
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/mcp_jsonrpc_baseline.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JTHREADS=200 -JRAMP_UP=60 -JDURATION=900 \
+		-l $(JMETER_RESULTS_DIR)/mcp_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/mcp_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/mcp_baseline_*/index.html"
+
+jmeter-mcp-servers-baseline: jmeter-check  ## Run MCP test servers baseline (fast_time, fast_test)
+	@echo "📊 Running MCP test servers baseline..."
+	@echo "   Fast Time Server: $(JMETER_FAST_TIME_URL)"
+	@echo "   Fast Test Server: $(JMETER_FAST_TEST_URL)"
+	@echo "   Target: 2,000 RPS per server for 10 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/mcp_test_servers_baseline.jmx \
+		-JFAST_TIME_URL=$(JMETER_FAST_TIME_URL) \
+		-JFAST_TEST_URL=$(JMETER_FAST_TEST_URL) \
+		-JTHREADS=200 -JDURATION=600 \
+		-l $(JMETER_RESULTS_DIR)/mcp_servers_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/mcp_servers_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/mcp_servers_*/index.html"
+
+jmeter-load: jmeter-check                  ## Run load test (4,000 RPS, 30min)
+	@echo "🔥 Running load test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 4,000 RPS for 30 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/load_test.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JTHREADS=400 -JRAMP_UP=120 -JDURATION=1800 \
+		-l $(JMETER_RESULTS_DIR)/load_test_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/load_test_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/load_test_*/index.html"
+
+jmeter-stress: jmeter-check                ## Run stress test (ramp to 10,000 RPS)
+	@echo "💥 Running stress test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: Ramp from 1K to 10K RPS over 30 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/stress_test.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JMAX_THREADS=2000 \
+		-l $(JMETER_RESULTS_DIR)/stress_test_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/stress_test_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/stress_test_*/index.html"
+
+jmeter-spike: jmeter-check                 ## Run spike test (1K→10K→1K recovery)
+	@echo "⚡ Running spike test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Pattern: 1K RPS → 10K RPS spike → recovery to 1K RPS"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/spike_test.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JBASE_THREADS=200 -JPEAK_THREADS=2000 \
+		-l $(JMETER_RESULTS_DIR)/spike_test_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/spike_test_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/spike_test_*/index.html"
+
+jmeter-soak: jmeter-check                  ## Run 24-hour soak test (2,000 RPS)
+	@echo "🔄 Running 24-hour soak test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 2,000 RPS sustained for 24 hours"
+	@echo "   ⚠️  This test runs for 24 hours - use screen/tmux!"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/soak_test.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JTHREADS=400 -JDURATION=86400 \
+		-l $(JMETER_RESULTS_DIR)/soak_test_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/soak_test_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/soak_test_*/index.html"
+
+jmeter-sse: jmeter-check                   ## Run SSE streaming baseline (1,000 connections)
+	@echo "📡 Running SSE streaming baseline..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 1,000 concurrent SSE connections for 10 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/sse_streaming_baseline.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JCONNECTIONS=1000 -JDURATION=600 \
+		-l $(JMETER_RESULTS_DIR)/sse_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/sse_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/sse_baseline_*/index.html"
+
+jmeter-websocket: jmeter-check             ## Run WebSocket baseline (500 connections)
+	@echo "🔌 Running WebSocket baseline..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 500 concurrent WebSocket connections"
+	@echo "   Note: Requires JMeter WebSocket plugin for full support"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/websocket_baseline.jmx \
+		-JGATEWAY_URL="ws://$$(echo $(JMETER_GATEWAY_URL) | sed 's|http://||' | sed 's|https://||')" \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JCONNECTIONS=500 -JDURATION=600 \
+		-l $(JMETER_RESULTS_DIR)/websocket_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/websocket_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/websocket_baseline_*/index.html"
+
+jmeter-admin-ui: jmeter-check              ## Run Admin UI baseline (50 users)
+	@echo "🖥️  Running Admin UI baseline..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 50 concurrent admin users with think time"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/admin_ui_baseline.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JUSERS=50 -JDURATION=300 \
+		-JTHINK_TIME_MIN=3000 -JTHINK_TIME_MAX=5000 \
+		-l $(JMETER_RESULTS_DIR)/admin_ui_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/admin_ui_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/admin_ui_baseline_*/index.html"
+
+jmeter-report: jmeter-check                ## Generate HTML report from last JTL file
+	@echo "📄 Generating HTML report from latest JTL file..."
+	@LATEST_JTL=$$(find $(JMETER_RESULTS_DIR) -maxdepth 1 -name "*.jtl" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-); \
+	if [ -z "$$LATEST_JTL" ]; then \
+		echo "❌ No JTL files found in $(JMETER_RESULTS_DIR)"; \
+		echo "   Run a JMeter test first (e.g., make jmeter-rest-baseline)"; \
+		exit 1; \
+	fi; \
+	REPORT_DIR="$${LATEST_JTL%.jtl}_report"; \
+	echo "   Input: $$LATEST_JTL"; \
+	echo "   Output: $$REPORT_DIR/"; \
+	rm -rf "$$REPORT_DIR"; \
+	$(JMETER_BIN) -g "$$LATEST_JTL" -o "$$REPORT_DIR"; \
+	echo "✅ Report generated: $$REPORT_DIR/index.html"
+
+jmeter-clean:                              ## Clean JMeter results directory
+	@echo "🧹 Cleaning JMeter results..."
+	@rm -rf $(JMETER_RESULTS_DIR)/*
+	@echo "✅ Results directory cleaned: $(JMETER_RESULTS_DIR)"
+
+jmeter-compare:                            ## Compare current vs baseline results
+	@echo "📈 Comparing JMeter results..."
+	@echo "   Results directory: $(JMETER_RESULTS_DIR)"
+	@JTLS=$$(ls -t $(JMETER_RESULTS_DIR)/*.jtl 2>/dev/null | head -2); \
+	if [ $$(echo "$$JTLS" | wc -w) -lt 2 ]; then \
+		echo "❌ Need at least 2 JTL files to compare"; \
+		echo "   Found: $$(ls $(JMETER_RESULTS_DIR)/*.jtl 2>/dev/null | wc -l) file(s)"; \
+		exit 1; \
+	fi; \
+	CURRENT=$$(echo "$$JTLS" | head -1); \
+	BASELINE=$$(echo "$$JTLS" | tail -1); \
+	echo "   Current:  $$CURRENT"; \
+	echo "   Baseline: $$BASELINE"; \
+	echo ""; \
+	echo "=== Summary Comparison ==="; \
+	for JTL in $$CURRENT $$BASELINE; do \
+		echo ""; \
+		echo "File: $$(basename $$JTL)"; \
+		echo "  Samples: $$(tail -n +2 $$JTL | wc -l)"; \
+		echo "  Errors:  $$(tail -n +2 $$JTL | awk -F',' '{if($$8=="false")print}' | wc -l)"; \
+	done
+
+# =============================================================================
 # 🧬 MUTATION TESTING
 # =============================================================================
 # help: 🧬 MUTATION TESTING
