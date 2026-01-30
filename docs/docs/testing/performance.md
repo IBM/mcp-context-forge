@@ -616,6 +616,138 @@ Based on benchmark results, orjson provides:
 
 ---
 
+## 📈 JMeter Performance Testing
+
+MCP Gateway includes [Apache JMeter](https://jmeter.apache.org/) test plans for industry-standard performance baseline measurements and CI/CD integration.
+
+### Prerequisites
+
+```bash
+# macOS
+brew install jmeter
+
+# Linux
+wget https://dlcdn.apache.org/jmeter/binaries/apache-jmeter-5.6.3.tgz
+tar -xzf apache-jmeter-5.6.3.tgz
+export PATH=$PATH:$(pwd)/apache-jmeter-5.6.3/bin
+
+# Verify installation
+jmeter --version
+```
+
+### Quick Start
+
+```bash
+# Set up authentication token
+export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 10080 --secret $JWT_SECRET_KEY)
+
+# Run REST API baseline
+make jmeter-rest-baseline
+
+# Run MCP JSON-RPC baseline (requires server ID)
+make jmeter-mcp-baseline JMETER_SERVER_ID=<your-server-id>
+
+# Run production load test
+make jmeter-load JMETER_SERVER_ID=<your-server-id>
+```
+
+### Available Test Plans
+
+| Test Plan | Description | Duration | Target |
+|-----------|-------------|----------|--------|
+| `rest_api_baseline.jmx` | REST API endpoints baseline | 10 min | 1,000 RPS |
+| `mcp_jsonrpc_baseline.jmx` | MCP JSON-RPC protocol baseline | 15 min | 1,000 RPS |
+| `mcp_test_servers_baseline.jmx` | Direct MCP server testing | 10 min | 2,000 RPS |
+| `load_test.jmx` | Production load simulation | 30 min | 4,000 RPS |
+| `stress_test.jmx` | Progressive stress to breaking point | 30 min | 10,000 RPS |
+| `spike_test.jmx` | Traffic spike recovery test | 10 min | 1K→10K→1K |
+| `soak_test.jmx` | Memory leak detection | 24 hrs | 2,000 RPS |
+| `sse_streaming_baseline.jmx` | SSE connection stability | 10 min | 1,000 conn |
+| `websocket_baseline.jmx` | WebSocket performance | 10 min | 500 conn |
+| `admin_ui_baseline.jmx` | Admin UI user simulation | 5 min | 50 users |
+
+### Makefile Targets
+
+```bash
+make jmeter-rest-baseline          # REST API baseline (1,000 RPS, 10min)
+make jmeter-mcp-baseline           # MCP JSON-RPC baseline (1,000 RPS, 15min)
+make jmeter-mcp-servers-baseline   # MCP test servers baseline
+make jmeter-load                   # Load test (4,000 RPS, 30min)
+make jmeter-stress                 # Stress test (ramp to 10,000 RPS)
+make jmeter-spike                  # Spike test (1K→10K→1K recovery)
+make jmeter-soak                   # 24-hour soak test (2,000 RPS)
+make jmeter-sse                    # SSE streaming baseline
+make jmeter-websocket              # WebSocket baseline
+make jmeter-admin-ui               # Admin UI baseline
+make jmeter-report                 # Generate HTML report from latest JTL
+make jmeter-compare                # Compare current vs baseline results
+```
+
+### Command-Line Usage
+
+```bash
+# Run with default settings
+jmeter -n -t tests/jmeter/rest_api_baseline.jmx \
+  -JGATEWAY_URL=http://localhost:8080 \
+  -JTOKEN=$MCPGATEWAY_BEARER_TOKEN \
+  -l results/test.jtl \
+  -e -o results/report/
+
+# Run with properties file
+jmeter -p tests/jmeter/properties/production.properties \
+  -n -t tests/jmeter/load_test.jmx \
+  -l results/load.jtl
+```
+
+### Performance SLAs
+
+| Metric | Baseline | Load | Stress |
+|--------|----------|------|--------|
+| P50 Latency | < 100ms | < 150ms | < 300ms |
+| P95 Latency | < 200ms | < 300ms | < 500ms |
+| P99 Latency | < 300ms | < 500ms | < 1000ms |
+| Error Rate | < 0.1% | < 0.5% | < 1% |
+| Throughput | 1,000 RPS | 4,000 RPS | 10,000 RPS |
+
+### CI/CD Integration
+
+```yaml
+- name: Run JMeter baseline
+  run: |
+    jmeter -n -t tests/jmeter/rest_api_baseline.jmx \
+      -p tests/jmeter/properties/ci.properties \
+      -JGATEWAY_URL=http://gateway:8080 \
+      -JTOKEN=${{ secrets.JWT_TOKEN }} \
+      -l results.jtl \
+      -e -o report/
+
+- name: Check performance thresholds
+  run: |
+    # Parse JTL and check P95 < 300ms
+    P95=$(awk -F',' 'NR>1 {print $2}' results.jtl | sort -n | awk 'NR==int(ENVIRON["NR"]*0.95)')
+    if [ "$P95" -gt 300 ]; then
+      echo "P95 latency ($P95 ms) exceeds threshold (300ms)"
+      exit 1
+    fi
+```
+
+### JMeter vs Locust
+
+| Feature | JMeter | Locust |
+|---------|--------|--------|
+| Protocol support | HTTP, WebSocket, JDBC, etc. | HTTP primarily |
+| Configuration | XML-based GUI | Python code |
+| CI/CD integration | CLI-based, JTL reports | HTML reports |
+| Scripting | BeanShell, Groovy | Python |
+| Best for | CI/CD baselines, detailed metrics | Interactive testing, realistic scenarios |
+
+Use **JMeter** for CI/CD baselines and reproducible performance metrics. Use **Locust** for interactive load testing with complex user behaviors.
+
+For full documentation, see `tests/jmeter/README.md`.
+
+---
+
 ## 🔬 Combining Performance Optimizations
 
 For maximum performance, combine multiple optimizations:

@@ -281,3 +281,7 @@ mcpgateway/static/vendor/
 # Generated performance test files
 nginx.conf
 docker-compose.perf.yml
+
+# JMeter test results
+tests/jmeter/results/*.jtl
+tests/jmeter/results/*/
