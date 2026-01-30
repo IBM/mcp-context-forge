@@ -23,16 +23,20 @@ RUN mkdir -p /var/cache/nginx/static \
 # Copy custom nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
+# Copy entrypoint script (handles NGINX_FORCE_HTTPS env var)
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
 # Note: nginx -t validation removed from build because it requires runtime
 # DNS resolution of upstream servers (gateway:4444). Configuration is still
-# validated when nginx starts at runtime via CMD below.
+# validated when nginx starts at runtime via the entrypoint script.
 
 # Expose HTTP and HTTPS ports
 EXPOSE 80 443
 
-# Health check
+# Health check - uses HTTP by default, works with both redirect modes
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost/health || exit 1
+    CMD curl -f http://localhost/health || curl -fk https://localhost/health || exit 1
 
-# Run nginx in foreground
-CMD ["nginx", "-g", "daemon off;"]
+# Run via entrypoint (handles env var processing)
+ENTRYPOINT ["/docker-entrypoint.sh"]
