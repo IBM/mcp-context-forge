@@ -945,3 +945,27 @@ plugins:
     config:
       export_full_payload: true
       max_payload_bytes_size: 10000
+
+  # TOON Encoder - Convert JSON to TOON format for token efficiency
+  - name: "ToonEncoder"
+    kind: "plugins.toon_encoder.toon_encoder.ToonEncoderPlugin"
+    description: "Convert JSON tool results to TOON format for 30-70% token reduction"
+    version: "1.0.0"
+    author: "Joe Stein"
+    hooks: ["tool_post_invoke"]
+    tags: ["optimization", "tokens", "encoding", "toon", "llm"]
+    mode: "disabled"  # enforce | permissive | disabled
+    priority: 900  # Run very late, after all other post-processing
+    conditions: []  # Apply to all tools
+    config:
+      # Size thresholds
+      min_size_bytes: 100        # Only convert JSON larger than this
+      max_size_bytes: 1048576    # Skip very large payloads (1MB) to prevent OOM
+
+      # Tool filtering (leave empty to process all tools)
+      exclude_tools: []          # Tool names to skip (e.g., ["get_binary_file"])
+      include_tools: null        # Whitelist - if set, only these tools are converted
+
+      # Output options
+      add_format_marker: true    # Add annotations.format="toon" to converted content
+      skip_on_error: true        # Continue with original JSON if conversion fails
