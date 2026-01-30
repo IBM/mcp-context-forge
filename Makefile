@@ -1585,7 +1585,7 @@ JMETER_SERVER_ID ?=
 JMETER_FAST_TIME_URL ?= http://localhost:8888
 JMETER_FAST_TEST_URL ?= http://localhost:8880
 
-.PHONY: jmeter-install jmeter-ui jmeter-check
+.PHONY: jmeter-install jmeter-ui jmeter-check jmeter-quick jmeter-clean
 .PHONY: jmeter-rest-baseline jmeter-mcp-baseline jmeter-mcp-servers-baseline
 .PHONY: jmeter-load jmeter-stress jmeter-spike jmeter-soak
 .PHONY: jmeter-sse jmeter-websocket jmeter-admin-ui
@@ -1634,6 +1634,19 @@ jmeter-check:                              ## Check if JMeter 5.x is installed (
 		exit 1; \
 	fi; \
 	echo "✅ JMeter $$VERSION found"
+
+jmeter-quick: jmeter-check                 ## Quick 10-second test to verify setup and generate report
+	@echo "⚡ Running quick JMeter test (10 seconds)..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/rest_api_baseline.jmx \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JTHREADS=5 -JRAMP_UP=2 -JDURATION=10 \
+		-l $(JMETER_RESULTS_DIR)/quick_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/quick_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/quick_*/index.html"
 
 jmeter-rest-baseline: jmeter-check         ## Run REST API baseline test (1,000 RPS, 10min)
 	@echo "📊 Running REST API baseline test..."
