@@ -15,8 +15,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 import orjson
-
-# Third-Party
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -521,6 +519,7 @@ async def admin_test_api(
     # First-Party
     from mcpgateway.services.llm_proxy_service import LLMProxyService
     from mcpgateway.utils.orjson_response import ORJSONResponse
+
     body = orjson.loads(await request.body())
 
     test_type = body.get("test_type", "models")
