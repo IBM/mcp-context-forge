@@ -626,9 +626,9 @@
                 } else {
                     if (kpi.key === "avgResponseTime") {
                         // ensure numeric then 3 decimals + unit
-                        value = Admin.isNaN(Number(value))
+                        value = isNaN(Number(value))
                             ? "N/A"
-                            : Admin.Number(value).toFixed(3) + " ms";
+                            : Number(value).toFixed(3) + " ms";
                     } else if (
                         kpi.key === "successRate" ||
                         kpi.key === "errorRate"
@@ -684,7 +684,7 @@
         }
 
         if (key === "avgResponseTime") {
-            return Admin.isNaN(Number(value)) ? "N/A" : Admin.Number(value).toFixed(3) + " ms";
+            return isNaN(Number(value)) ? "N/A" : Number(value).toFixed(3) + " ms";
         }
 
         if (key === "successRate" || key === "errorRate") {
@@ -742,7 +742,7 @@
                     normalized[k.toString().trim().toLowerCase()] = v;
                 });
 
-                const executions = Admin.Number(
+                const executions = Number(
                     normalized["total executions"] ??
                         normalized.totalexecutions ??
                         normalized.execution_count ??
@@ -752,7 +752,7 @@
                         0,
                 );
 
-                const successful = Admin.Number(
+                const successful = Number(
                     normalized["successful executions"] ??
                         normalized.successfulexecutions ??
                         normalized.successful ??
@@ -760,7 +760,7 @@
                         0,
                 );
 
-                const failed = Admin.Number(
+                const failed = Number(
                     normalized["failed executions"] ??
                         normalized.failedexecutions ??
                         normalized.failed ??
@@ -783,10 +783,10 @@
                     avgResponseRaw !== null &&
                     avgResponseRaw !== undefined &&
                     avgResponseRaw !== "N/A" &&
-                    !Number.isNaN(Admin.Number(avgResponseRaw)) &&
+                    !isNaN(Number(avgResponseRaw)) &&
                     executions > 0
                 ) {
-                    weightedResponseSum += executions * Admin.Number(avgResponseRaw);
+                    weightedResponseSum += executions * Number(avgResponseRaw);
                 }
             });
 
@@ -1027,13 +1027,13 @@
 
         let date;
         if (typeof timestamp === "number" || /^\d+$/.test(timestamp)) {
-            const num = Admin.Number(timestamp);
+            const num = Number(timestamp);
             date = new Date(num < 1e12 ? num * 1000 : num); // epoch seconds or ms
         } else {
             date = new Date(timestamp.endsWith("Z") ? timestamp : timestamp + "Z");
         }
 
-        if (Admin.isNaN(date.getTime())) {
+        if (isNaN(date.getTime())) {
             return "Never";
         }
 
