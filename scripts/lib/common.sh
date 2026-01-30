@@ -1,17 +1,6 @@
-#!/bin/bash
-# ContextForge Ubuntu Setup Script
-# Author: Mihai Criveti
-# This script sets up a fresh Ubuntu system to run ContextForge with Docker Compose
-#
-# PREREQUISITES (run as root first):
-# ---------------------------------
-#   adduser contextforge
-#   usermod -aG sudo contextforge
-#   su - contextforge
-#
-# Then run this script as the contextforge user.
-
-set -euo pipefail
+# shellcheck shell=bash
+# ContextForge Setup - Common Functions
+# Shared helpers used by all OS-specific modules
 
 # Colors for output
 RED='\033[0;31m'
@@ -33,73 +22,35 @@ check_not_root() {
     fi
 }
 
-# Check Ubuntu version
-check_ubuntu() {
+# Detect OS family from /etc/os-release
+detect_os() {
     if [[ ! -f /etc/os-release ]]; then
-        log_error "Cannot detect OS. This script is designed for Ubuntu."
+        log_error "Cannot detect OS. /etc/os-release not found."
         exit 1
     fi
+
     source /etc/os-release
-    if [[ "$ID" != "ubuntu" ]]; then
-        log_warn "This script is designed for Ubuntu. Detected: $ID"
-        if [[ "$YES_MODE" == true ]]; then
-            log_error "Unsupported OS in non-interactive mode. Use -y only on Ubuntu."
-            exit 1
-        fi
-        read -p "Continue anyway? [y/N] " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    fi
-    log_info "Detected: $PRETTY_NAME"
-}
 
-# Install system packages
-install_system_packages() {
-    log_info "Updating package lists..."
-    sudo apt update
+    case "$ID" in
+        ubuntu|debian|linuxmint|pop)
+            DISTRO_FAMILY="debian"
+            ;;
+        rocky|rhel|centos|almalinux|fedora)
+            DISTRO_FAMILY="rhel"
+            ;;
+        *)
+            DISTRO_FAMILY="unknown"
+            ;;
+    esac
 
-    log_info "Installing essential packages..."
-    sudo apt install -y \
-        git \
-        make \
-        curl \
-        ca-certificates \
-        gnupg \
-        lsb-release
-    log_success "System packages installed"
-}
-
-# Install Docker
-install_docker() {
-    if command -v docker &> /dev/null; then
-        log_info "Docker is already installed: $(docker --version)"
-        return 0
-    fi
-
-    log_info "Installing Docker..."
-
-    # Add Docker's official GPG key
-    sudo install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-    # Add the repository to apt sources
-    echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-        sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    sudo apt update
-    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-    log_success "Docker installed: $(docker --version)"
+    DISTRO_ID="$ID"
+    DISTRO_NAME="${PRETTY_NAME:-$ID}"
+    export DISTRO_FAMILY DISTRO_ID DISTRO_NAME
 }
 
 # Configure Docker for non-root user
 configure_docker_user() {
-    if groups "$USER" | grep -q '\bdocker\b'; then
+    if groups "$USER" | grep -qw docker; then
         log_info "User $USER is already in the docker group"
         return 0
     fi
@@ -132,12 +83,124 @@ install_uv() {
     export PATH="$HOME/.local/bin:$PATH"
 
     # Add to .bashrc if not already there
+    # shellcheck disable=SC2016  # Single quotes intentional - expand at shell startup
     if ! grep -q '.local/bin' "$HOME/.bashrc" 2>/dev/null; then
         echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
         log_info "Added ~/.local/bin to PATH in .bashrc"
     fi
 
     log_success "uv installed"
+}
+
+# Run docker command, using sg if user is not yet in docker group
+run_docker_cmd() {
+    if groups | grep -qw docker; then
+        "$@"
+    else
+        # Properly quote arguments for sg -c
+        local cmd=""
+        for arg in "$@"; do
+            cmd+="${cmd:+ }$(printf '%q' "$arg")"
+        done
+        sg docker -c "$cmd"
+    fi
+}
+
+# Check if Docker is logged in to a registry
+check_docker_login() {
+    # Respect DOCKER_CONFIG env var, fall back to default location
+    local config_dir="${DOCKER_CONFIG:-$HOME/.docker}"
+    local config_file="$config_dir/config.json"
+
+    # Check if config file exists and has auth entries
+    if [[ -f "$config_file" ]]; then
+        # Check for auths section with entries, or credsStore/credHelpers configured
+        if grep -qE '"auths"\s*:\s*\{[^}]+\}|"credsStore"|"credHelpers"' "$config_file" 2>/dev/null; then
+            return 0  # Logged in or credential helper configured
+        fi
+    fi
+    return 1  # Not logged in
+}
+
+# Prompt user to log in to Docker registry (interactive only)
+prompt_docker_login() {
+    log_warn "Docker does not appear to be logged in to a registry."
+    log_info "Some container images may require authentication to pull."
+    echo
+    echo "How would you like to authenticate with Docker Hub (or another registry)?"
+    echo
+    echo "  1) Interactive login (recommended) - prompts for username and password"
+    echo "  2) Skip login - continue without authenticating"
+    echo
+    read -p "Select an option [1-2]: " -n 1 -r login_choice
+    echo
+
+    case "$login_choice" in
+        1)
+            log_info "Starting interactive Docker login..."
+            read -r -p "Registry URL (press Enter for Docker Hub): " registry_url
+            if [[ -n "$registry_url" ]]; then
+                run_docker_cmd docker login "$registry_url"
+            else
+                run_docker_cmd docker login
+            fi
+            ;;
+        2)
+            log_warn "Skipping Docker login. Image pulls may fail if authentication is required."
+            ;;
+        *)
+            log_warn "Invalid option. Skipping Docker login."
+            ;;
+    esac
+}
+
+# Ensure Docker login before pulling images
+# Supports:
+#   - SKIP_DOCKER_LOGIN=true to skip entirely
+#   - DOCKER_USERNAME + DOCKER_PASSWORD env vars for automated auth
+#   - DOCKER_REGISTRY env var for non-Docker Hub registries
+ensure_docker_login() {
+    # Skip if explicitly requested
+    if [[ "${SKIP_DOCKER_LOGIN:-false}" == true ]]; then
+        log_info "Skipping Docker login (SKIP_DOCKER_LOGIN=true)"
+        return 0
+    fi
+
+    # Already logged in
+    if check_docker_login; then
+        log_info "Docker registry credentials detected"
+        return 0
+    fi
+
+    # Try automated login via environment variables
+    if [[ -n "${DOCKER_USERNAME:-}" && -n "${DOCKER_PASSWORD:-}" ]]; then
+        log_info "Attempting Docker login via environment variables..."
+        local registry_arg=""
+        if [[ -n "${DOCKER_REGISTRY:-}" ]]; then
+            registry_arg="$DOCKER_REGISTRY"
+            log_info "Using registry: $DOCKER_REGISTRY"
+        fi
+        # Pipe password directly to avoid storing in shell variable
+        if printenv DOCKER_PASSWORD | run_docker_cmd docker login -u "$DOCKER_USERNAME" --password-stdin ${registry_arg:+"$registry_arg"}; then
+            log_success "Docker login successful"
+            return 0
+        else
+            log_error "Docker login failed with provided credentials"
+            return 1
+        fi
+    fi
+
+    # Non-interactive mode without credentials - skip with warning
+    if [[ "${YES_MODE:-false}" == true ]]; then
+        log_warn "No Docker credentials found and running in non-interactive mode (-y)"
+        log_warn "Skipping Docker login. Image pulls may fail if authentication is required."
+        log_info "To provide credentials non-interactively, set DOCKER_USERNAME and DOCKER_PASSWORD"
+        log_info "Or set SKIP_DOCKER_LOGIN=true to suppress this warning"
+        return 0
+    fi
+
+    # Interactive prompt
+    prompt_docker_login
 }
 
 # Clone ContextForge repository
@@ -156,14 +219,14 @@ clone_repository() {
         log_info "Directory $target_dir already exists"
         if [[ "$YES_MODE" == true ]]; then
             log_info "Pulling latest changes (non-interactive mode)..."
-            cd "$target_dir"
+            cd "$target_dir" || exit 1
             git pull >&2
             log_success "Repository updated"
         else
             read -p "Pull latest changes? [Y/n] " -n 1 -r
             echo >&2
             if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                cd "$target_dir"
+                cd "$target_dir" || exit 1
                 git pull >&2
                 log_success "Repository updated"
             fi
@@ -179,7 +242,7 @@ clone_repository() {
 # Setup environment file
 setup_env() {
     local project_dir="$1"
-    cd "$project_dir"
+    cd "$project_dir" || exit 1
 
     if [[ -f .env ]]; then
         log_info ".env file already exists"
@@ -200,12 +263,15 @@ setup_env() {
 # Start ContextForge with Docker Compose
 start_contextforge() {
     local project_dir="$1"
-    cd "$project_dir"
+    cd "$project_dir" || exit 1
+
+    # Ensure Docker login before attempting to pull images
+    ensure_docker_login
 
     log_info "Starting ContextForge with Docker Compose..."
 
     # Use sg to run with docker group if not already in it
-    if groups | grep -q '\bdocker\b'; then
+    if groups | grep -qw docker; then
         make compose-up
     else
         log_info "Running with docker group privileges..."
@@ -218,13 +284,13 @@ start_contextforge() {
 # Verify installation
 verify_installation() {
     local project_dir="$1"
-    cd "$project_dir"
+    cd "$project_dir" || exit 1
 
     log_info "Waiting for services to start..."
     sleep 10
 
     log_info "Checking container status..."
-    if groups | grep -q '\bdocker\b'; then
+    if groups | grep -qw docker; then
         make compose-ps
     else
         sg docker -c "make compose-ps"
@@ -271,91 +337,3 @@ print_summary() {
     echo "  make compose-logs     # View logs"
     echo
 }
-
-# Parse command line arguments
-parse_args() {
-    INSTALL_DIR="$HOME/mcp-context-forge"
-    SKIP_START=false
-    YES_MODE=false
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --skip-start)
-                SKIP_START=true
-                shift
-                ;;
-            -y|--yes)
-                YES_MODE=true
-                shift
-                ;;
-            -h|--help)
-                show_help
-                exit 0
-                ;;
-            -*)
-                log_error "Unknown option: $1"
-                show_help
-                exit 1
-                ;;
-            *)
-                INSTALL_DIR="$1"
-                shift
-                ;;
-        esac
-    done
-}
-
-# Main function
-main() {
-    echo "========================================"
-    echo "  ContextForge Ubuntu Setup Script"
-    echo "========================================"
-    echo
-
-    parse_args "$@"
-
-    check_not_root
-    check_ubuntu
-    install_system_packages
-    install_docker
-    start_docker_service
-    configure_docker_user
-    install_uv
-
-    local project_dir
-    project_dir=$(clone_repository "$INSTALL_DIR")
-    setup_env "$project_dir"
-
-    if [[ "$SKIP_START" != true ]]; then
-        start_contextforge "$project_dir"
-        verify_installation "$project_dir"
-    fi
-
-    print_summary "$project_dir"
-}
-
-# Show help
-show_help() {
-    echo "Usage: $0 [OPTIONS] [INSTALL_DIR]"
-    echo
-    echo "Prerequisites (run as root first):"
-    echo "  adduser contextforge"
-    echo "  usermod -aG sudo contextforge"
-    echo "  su - contextforge"
-    echo
-    echo "Options:"
-    echo "  --skip-start  Skip starting the services after setup"
-    echo "  -y, --yes     Non-interactive mode (auto-confirm prompts, fail on unsupported OS)"
-    echo "  -h, --help    Show this help message"
-    echo
-    echo "Arguments:"
-    echo "  INSTALL_DIR   Directory to install ContextForge (default: ~/mcp-context-forge)"
-    echo
-    echo "Examples:"
-    echo "  $0                              # Interactive install and start"
-    echo "  $0 --skip-start                 # Install but don't start services"
-    echo "  $0 ~/contextforge               # Install to ~/contextforge and start"
-    echo "  $0 -y --skip-start              # Fully non-interactive install"
-}
-
-main "$@"
