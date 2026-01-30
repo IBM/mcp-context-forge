@@ -816,7 +816,13 @@ class TestPromptGatewayNamespacing:
 
     @pytest.mark.asyncio
     async def test_prompt_namespacing_different_gateways(self, prompt_service, test_db):
-        """Test: Same `name` can be registered for **different** gateways (same team/owner)."""
+        """Test: Same `name` can be registered for **different** gateways (same team/owner).
+
+        Verifies that the conflict query includes gateway_id in the filter by capturing
+        the executed SQL and checking for the gateway_id clause.
+        """
+        from mcpgateway.db import Gateway as DbGateway
+
         # Setup prompt create data
         pc = PromptCreate(
             name="hello",
@@ -826,34 +832,60 @@ class TestPromptGatewayNamespacing:
             gateway_id="gateway-2"
         )
 
-        # Mock DB to return None (no conflict for this gateway)
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        # Track executed queries to verify gateway_id filtering
+        executed_queries = []
+
+        def capture_execute(stmt):
+            executed_queries.append(str(stmt))
+            # First call: gateway lookup (returns None - no gateway found)
+            # Second call: conflict check (returns None - no conflict)
+            return _make_execute_result(scalar=None)
+
+        test_db.execute = Mock(side_effect=capture_execute)
         test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
-        
+
         prompt_service._notify_prompt_added = AsyncMock()
 
         # Execution
-        res = await prompt_service.register_prompt(test_db, pc)
+        _ = await prompt_service.register_prompt(test_db, pc)
 
-        # Verification
+        # Verification: check that gateway_id was included in the conflict query
         test_db.add.assert_called_once()
         stmt = test_db.add.call_args[0][0]
-        assert stmt.name == "hello" # Logic might change stored name, but user checks registration success
-        # We check that the conflict check query was specific enough? 
-        # For now, we assume success means it didn't find the 'other' gateway's prompt as a conflict.
-        # This test relies on the Mock returning None, implying the SERVICE asked for a filtered query.
-        
+        assert stmt.name == "hello"
+        assert stmt.gateway_id == "gateway-2"
+
+        # Verify the conflict check query included gateway_id
+        # The second query should be the conflict check
+        assert len(executed_queries) >= 2, "Expected at least 2 queries (gateway lookup + conflict check)"
+        conflict_query = executed_queries[1]
+        assert "gateway_id" in conflict_query, f"Conflict query must filter by gateway_id: {conflict_query}"
+
     @pytest.mark.asyncio
     async def test_prompt_namespacing_same_gateway(self, prompt_service, test_db):
         """Test: Same `name` **cannot** be registered for the **same** gateway (same team/owner)."""
+        from mcpgateway.db import Gateway as DbGateway
+
         # Setup existing prompt
         existing = _build_db_prompt(name="hello")
         existing.gateway_id = "gateway-1"
         existing.visibility = "public"
-        
-        # Mock DB to return existing prompt
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
-        
+
+        call_count = [0]
+
+        def mock_execute(stmt):
+            call_count[0] += 1
+            query_str = str(stmt)
+            if call_count[0] == 1:
+                # First call: gateway lookup - return None
+                return _make_execute_result(scalar=None)
+            # Second call: conflict check - return existing prompt
+            # Verify gateway_id is in the query
+            assert "gateway_id" in query_str, f"Conflict query must include gateway_id: {query_str}"
+            return _make_execute_result(scalar=existing)
+
+        test_db.execute = Mock(side_effect=mock_execute)
+
         pc = PromptCreate(
             name="hello",
             description="",
@@ -861,12 +893,12 @@ class TestPromptGatewayNamespacing:
             arguments=[],
             gateway_id="gateway-1"
         )
-        
+
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
-            
+
         assert "already exists" in str(exc_info.value)
-        
+
     @pytest.mark.asyncio
     async def test_prompt_namespacing_local_prompts(self, prompt_service, test_db):
         """Test: Local prompts (`gateway_id=NULL`) still enforce uniqueness per team/owner."""
@@ -874,10 +906,19 @@ class TestPromptGatewayNamespacing:
         existing = _build_db_prompt(name="hello")
         existing.gateway_id = None
         existing.visibility = "public"
-        
-        # Mock DB to return existing prompt
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=existing))
-        
+
+        # Track executed queries to verify gateway_id filtering
+        executed_queries = []
+
+        def mock_execute(stmt):
+            query_str = str(stmt)
+            executed_queries.append(query_str)
+            # When gateway_id=None, no gateway lookup occurs - first call is conflict check
+            # Return existing prompt to trigger conflict error
+            return _make_execute_result(scalar=existing)
+
+        test_db.execute = Mock(side_effect=mock_execute)
+
         pc = PromptCreate(
             name="hello",
             description="",
@@ -885,8 +926,13 @@ class TestPromptGatewayNamespacing:
             arguments=[],
             gateway_id=None
         )
-        
+
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
-            
+
         assert "already exists" in str(exc_info.value)
+
+        # Verify the conflict check query included gateway_id
+        assert len(executed_queries) >= 1, "Expected at least 1 query (conflict check)"
+        conflict_query = executed_queries[0]
+        assert "gateway_id" in conflict_query, f"Conflict query must include gateway_id: {conflict_query}"
