@@ -9795,7 +9795,7 @@ async def get_aggregated_metrics(
 
     This endpoint collects usage metrics and top-performing entities for tools,
     resources, prompts, and servers by calling the respective service methods.
-    The results are compiled into a dictionary for administrative monitoring.
+    Results are cached in-memory with a short TTL to prevent redundant computation.
 
     Args:
         db (Session): Database session dependency for querying metrics.
@@ -9807,21 +9807,29 @@ async def get_aggregated_metrics(
             - 'resources': Metrics for resources.
             - 'prompts': Metrics for prompts.
             - 'servers': Metrics for servers.
-            - 'topPerformers': A nested dictionary with all tools, resources, prompts,
+            - 'topPerformers': A nested dictionary with top 10 tools, resources, prompts,
               and servers with their metrics.
     """
+    # First-Party
+    from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+    cached = metrics_cache.get("admin_metrics")
+    if cached is not None:
+        return cached
+
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
         "prompts": await prompt_service.aggregate_metrics(db),
         "servers": await server_service.aggregate_metrics(db),
         "topPerformers": {
-            "tools": await tool_service.get_top_tools(db, limit=None),
-            "resources": await resource_service.get_top_resources(db, limit=None),
-            "prompts": await prompt_service.get_top_prompts(db, limit=None),
-            "servers": await server_service.get_top_servers(db, limit=None),
+            "tools": await tool_service.get_top_tools(db, limit=10),
+            "resources": await resource_service.get_top_resources(db, limit=10),
+            "prompts": await prompt_service.get_top_prompts(db, limit=10),
+            "servers": await server_service.get_top_servers(db, limit=10),
         },
     }
+    metrics_cache.set("admin_metrics", metrics)
     return metrics
 
 
@@ -9953,6 +9961,13 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
     await resource_service.reset_metrics(db)
     await server_service.reset_metrics(db)
     await prompt_service.reset_metrics(db)
+
+    # Invalidate metrics cache after reset
+    # First-Party
+    from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+    metrics_cache.invalidate()
+
     return {"message": "All metrics reset successfully", "success": True}
 
 

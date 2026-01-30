@@ -839,7 +839,7 @@ class TestToolService:
 
         # Verify result
         assert result == tool_read
-        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool)
+        tool_service._convert_tool_to_read.assert_called_once_with(mock_tool, db=test_db)
 
     @pytest.mark.asyncio
     async def test_get_tool_not_found(self, tool_service, test_db):

@@ -16,7 +16,7 @@ It handles:
 
 # Standard
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 import re
 import ssl
@@ -35,7 +35,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload, selectinload, Session
+from sqlalchemy.orm import joinedload, Session
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
@@ -355,13 +355,15 @@ class ToolService:
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
         return team.name if team else None
 
-    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = True) -> ToolRead:
+    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = True, db: Optional[Session] = None) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
         Args:
             tool (DbTool): The ORM instance of the tool.
             include_metrics (bool): Whether to include metrics in the result. Defaults to True.
+            db (Optional[Session]): Database session for SQL-based metrics computation.
+                When provided, uses efficient SQL aggregation instead of loading all metric rows.
 
         Returns:
             ToolRead: The Pydantic model representing the tool, including aggregated metrics and new fields.
@@ -375,9 +377,21 @@ class ToolService:
         tool_dict = tool.__dict__.copy()
         tool_dict.pop("_sa_instance_state", None)
 
-        tool_dict["metrics"] = tool.metrics_summary if include_metrics else None
-
-        tool_dict["execution_count"] = tool.execution_count if include_metrics else None
+        if include_metrics and db is not None:
+            # Use SQL aggregation to avoid loading all metric rows into memory
+            try:
+                tool_dict["metrics"] = DbTool.compute_metrics_summary(db, tool.id)
+                tool_dict["execution_count"] = tool_dict["metrics"]["total_executions"]
+            except Exception:
+                # Fallback to ORM properties if SQL aggregation fails
+                tool_dict["metrics"] = tool.metrics_summary
+                tool_dict["execution_count"] = tool.execution_count
+        elif include_metrics:
+            tool_dict["metrics"] = tool.metrics_summary
+            tool_dict["execution_count"] = tool.execution_count
+        else:
+            tool_dict["metrics"] = None
+            tool_dict["execution_count"] = None
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
@@ -832,7 +846,7 @@ class ToolService:
 
             # Refresh db_tool after logging commits (they expire the session objects)
             db.refresh(db_tool)
-            return self._convert_tool_to_read(db_tool)
+            return self._convert_tool_to_read(db_tool, db=db)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
@@ -1464,18 +1478,7 @@ class ToolService:
             True
         """
 
-        if include_metrics:
-            query = (
-                select(DbTool)
-                .options(joinedload(DbTool.gateway))
-                .options(selectinload(DbTool.metrics))
-                .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
-                .where(server_tool_association.c.server_id == server_id)
-            )
-        else:
-            query = (
-                select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
-            )
+        query = select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
 
         cursor = None  # Placeholder for pagination; ignore for now
         logger.debug(f"Listing server tools for server_id={server_id} with include_inactive={include_inactive}, cursor={cursor}")
@@ -1494,7 +1497,11 @@ class ToolService:
             tool = row[0]
             team_name = row.team_name
             tool.team = team_name
-            result.append(self._convert_tool_to_read(tool, include_metrics=include_metrics))
+            if include_metrics:
+                # Use SQL aggregation for metrics instead of loading all metric rows
+                result.append(self._convert_tool_to_read(tool, include_metrics=True, db=db))
+            else:
+                result.append(self._convert_tool_to_read(tool, include_metrics=False))
 
         return result
 
@@ -1661,7 +1668,7 @@ class ToolService:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
         tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
 
-        tool_read = self._convert_tool_to_read(tool)
+        tool_read = self._convert_tool_to_read(tool, db=db)
 
         structured_logger.log(
             level="INFO",
@@ -1907,7 +1914,7 @@ class ToolService:
                     db=db,
                 )
 
-            return self._convert_tool_to_read(tool)
+            return self._convert_tool_to_read(tool, db=db)
         except PermissionError as e:
             # Structured logging: Log permission error
             structured_logger.log(
@@ -2756,7 +2763,7 @@ class ToolService:
                 db=db,
             )
 
-            return self._convert_tool_to_read(tool)
+            return self._convert_tool_to_read(tool, db=db)
         except PermissionError as pe:
             db.rollback()
 
@@ -3106,6 +3113,24 @@ class ToolService:
             db.execute(delete(ToolMetric))
         db.commit()
 
+    async def cleanup_old_metrics(self, db: Session, retention_days: int = 30) -> int:
+        """Delete tool metrics older than the retention period.
+
+        Args:
+            db: Database session.
+            retention_days: Number of days to retain metrics.
+
+        Returns:
+            int: Number of deleted metric records.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        result = db.execute(delete(ToolMetric).where(ToolMetric.timestamp < cutoff))
+        deleted = result.rowcount
+        db.commit()
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} old tool metrics (retention: {retention_days} days)")
+        return deleted
+
     async def create_tool_from_a2a_agent(
         self,
         db: Session,
@@ -3138,7 +3163,7 @@ class ToolService:
 
         if existing_tool:
             # Tool already exists, return it
-            return self._convert_tool_to_read(existing_tool)
+            return self._convert_tool_to_read(existing_tool, db=db)
 
         # Create tool entry for the A2A agent
         logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")

@@ -907,6 +907,10 @@ class Settings(BaseSettings):
     metrics_buffer_flush_interval: int = Field(default=60, ge=5, le=300, description="Seconds between automatic metrics buffer flushes")
     metrics_buffer_max_size: int = Field(default=1000, ge=100, le=10000, description="Maximum buffered metrics before forced flush")
 
+    # Metrics Cleanup Configuration
+    metrics_retention_days: int = Field(default=30, ge=1, le=365, description="Number of days to retain entity metrics (tool, resource, prompt, server, A2A)")
+    metrics_cleanup_enabled: bool = Field(default=True, description="Enable automatic cleanup of old metrics records")
+
     # Log Search Configuration
     log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
     log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")

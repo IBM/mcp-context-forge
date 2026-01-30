@@ -13,7 +13,7 @@ It also publishes event notifications for server changes.
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
@@ -1586,3 +1586,21 @@ class ServerService:
         """
         db.execute(delete(ServerMetric))
         db.commit()
+
+    async def cleanup_old_metrics(self, db: Session, retention_days: int = 30) -> int:
+        """Delete server metrics older than the retention period.
+
+        Args:
+            db: Database session.
+            retention_days: Number of days to retain metrics.
+
+        Returns:
+            int: Number of deleted metric records.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        result = db.execute(delete(ServerMetric).where(ServerMetric.timestamp < cutoff))
+        deleted = result.rowcount
+        db.commit()
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} old server metrics (retention: {retention_days} days)")
+        return deleted
