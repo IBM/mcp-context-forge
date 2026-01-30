@@ -1,91 +1,102 @@
-((Admin) => {
-    // ===================================================================
-    // ENHANCED GLOBAL STATE MANAGEMENT
-    // ===================================================================
-    Admin.AppState = {
-        parameterCount: 0,
-        currentTestTool: null,
-        toolTestResultEditor: null,
-        isInitialized: false,
-        pendingRequests: new Set(),
-        editors: {
-            gateway: {
-                headers: null,
-                body: null,
-                formHandler: null,
-                closeHandler: null,
-            },
+// ===================================================================
+// ENHANCED GLOBAL STATE MANAGEMENT
+// ===================================================================
+
+// Callback registry for cleanup functions defined in other modules
+let cleanupToolTestStateCallback = null;
+
+export function registerCleanupToolTestState(callback) {
+    cleanupToolTestStateCallback = callback;
+}
+
+export const AppState = {
+    parameterCount: 0,
+    currentTestTool: null,
+    toolTestResultEditor: null,
+    isInitialized: false,
+    pendingRequests: new Set(),
+    editors: {
+        gateway: {
+            headers: null,
+            body: null,
+            formHandler: null,
+            closeHandler: null,
         },
+    },
 
-        // Track active modals to prevent multiple opens
-        activeModals: new Set(),
+    // Track active modals to prevent multiple opens
+    activeModals: new Set(),
 
-        // Safe method to reset state
-        reset() {
-            this.parameterCount = 0;
-            this.currentTestTool = null;
-            this.toolTestResultEditor = null;
-            this.activeModals.clear();
+    // Safe method to reset state
+    reset() {
+        this.parameterCount = 0;
+        this.currentTestTool = null;
+        this.toolTestResultEditor = null;
+        this.activeModals.clear();
 
-            // Cancel pending requests
-            this.pendingRequests.forEach((controller) => {
-                try {
-                    controller.abort();
-                } catch (error) {
-                    console.warn("Error aborting request:", error);
-                }
-            });
-            this.pendingRequests.clear();
-
-            // Clean up editors
-            Object.keys(this.editors.gateway).forEach((key) => {
-                this.editors.gateway[key] = null;
-            });
-
-            // ADD THIS LINE: Clean up tool test state
-            if (typeof Admin.cleanupToolTestState === "function") {
-                Admin.cleanupToolTestState();
+        // Cancel pending requests
+        this.pendingRequests.forEach((controller) => {
+            try {
+                controller.abort();
+            } catch (error) {
+                console.warn("Error aborting request:", error);
             }
+        });
+        this.pendingRequests.clear();
 
-            console.log("✓ Application state reset");
-        },
+        // Clean up editors
+        Object.keys(this.editors.gateway).forEach((key) => {
+            this.editors.gateway[key] = null;
+        });
 
-        // Track requests for cleanup
-        addPendingRequest(controller) {
-            this.pendingRequests.add(controller);
-        },
+        // Clean up tool test state via registered callback
+        if (typeof cleanupToolTestStateCallback === "function") {
+            cleanupToolTestStateCallback();
+        }
 
-        removePendingRequest(controller) {
-            this.pendingRequests.delete(controller);
-        },
+        console.log("✓ Application state reset");
+    },
 
-        // Safe parameter count management
-        getParameterCount() {
-            return this.parameterCount;
-        },
+    // Track requests for cleanup
+    addPendingRequest(controller) {
+        this.pendingRequests.add(controller);
+    },
 
-        incrementParameterCount() {
-            return ++this.parameterCount;
-        },
+    removePendingRequest(controller) {
+        this.pendingRequests.delete(controller);
+    },
 
-        decrementParameterCount() {
-            if (this.parameterCount > 0) {
-                return --this.parameterCount;
-            }
-            return 0;
-        },
+    // Safe parameter count management
+    getParameterCount() {
+        return this.parameterCount;
+    },
 
-        // Modal management
-        isModalActive(modalId) {
-            return this.activeModals.has(modalId);
-        },
+    incrementParameterCount() {
+        return ++this.parameterCount;
+    },
 
-        setModalActive(modalId) {
-            this.activeModals.add(modalId);
-        },
+    decrementParameterCount() {
+        if (this.parameterCount > 0) {
+            return --this.parameterCount;
+        }
+        return 0;
+    },
 
-        setModalInactive(modalId) {
-            this.activeModals.delete(modalId);
-        },
-    };
-})(window.Admin);
+    // Modal management
+    isModalActive(modalId) {
+        return this.activeModals.has(modalId);
+    },
+
+    setModalActive(modalId) {
+        this.activeModals.add(modalId);
+    },
+
+    setModalInactive(modalId) {
+        this.activeModals.delete(modalId);
+    },
+};
+
+// Self-register on window.Admin for IIFE modules that depend on these
+const Admin = window.Admin;
+Admin.AppState = AppState;
+Admin.registerCleanupToolTestState = registerCleanupToolTestState;
