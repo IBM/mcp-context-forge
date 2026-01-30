@@ -26,7 +26,7 @@
         if (unsafe === null || unsafe === undefined) {
             return "";
         }
-        return Admin.String(unsafe)
+        return String(unsafe)
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
@@ -200,7 +200,7 @@
                 return JSON.stringify(content, null, 2);
             }
         }
-        return Admin.String(content || fallback);
+        return String(content || fallback);
     };
     */
 

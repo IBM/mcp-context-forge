@@ -822,7 +822,7 @@
                 const prevType = this.dataset.prevValue;
                 const selectedType = this.value;
                 if (prevType === "REST" && selectedType === "MCP") {
-                    Admin.alert("You cannot change integration type from REST to MCP.");
+                    alert("You cannot change integration type from REST to MCP.");
                     this.value = prevType;
                     // Optionally, reset any dependent fields here
                 } else {
@@ -1177,7 +1177,7 @@
                     }, 2000);
                 } catch (error) {
                     console.error("Error in Select All:", error);
-                    Admin.alert("Failed to select all tools. Please try again.");
+                    alert("Failed to select all tools. Please try again.");
                     newSelectBtn.disabled = false;
                     newSelectBtn.textContent = originalText;
                 } finally {
@@ -1625,7 +1625,7 @@
                     }, 2000);
                 } catch (error) {
                     console.error("Error selecting all resources:", error);
-                    Admin.alert("Failed to select all resources. Please try again.");
+                    alert("Failed to select all resources. Please try again.");
                 } finally {
                     newSelectBtn.disabled = false;
                 }
@@ -2058,7 +2058,7 @@
                     }, 2000);
                 } catch (error) {
                     console.error("Error selecting all prompts:", error);
-                    Admin.alert("Failed to select all prompts. Please try again.");
+                    alert("Failed to select all prompts. Please try again.");
                 } finally {
                     newSelectBtn.disabled = false;
                 }
@@ -2439,7 +2439,7 @@
                     loadedCheckboxes.forEach((cb) => {
                         const parent = cb.closest(".tool-item") || cb.parentElement;
                         const isVisible =
-                            parent && Admin.getComputedStyle(parent).display !== "none";
+                            parent && getComputedStyle(parent).display !== "none";
                         if (isVisible) {
                             cb.checked = true;
                         }
@@ -2500,7 +2500,7 @@
                     Admin.reloadAssociatedItems();
                 } catch (error) {
                     console.error("Error in Select All:", error);
-                    Admin.alert("Failed to select all gateways. Please try again.");
+                    alert("Failed to select all gateways. Please try again.");
                     newSelectBtn.disabled = false;
                     newSelectBtn.textContent = originalText;
                 } finally {
@@ -4818,8 +4818,8 @@
                                     itemType.includes("integer")
                                 ) {
                                     value = inputValues.map((v) => {
-                                        const num = Admin.Number(v);
-                                        if (Admin.isNaN(num)) {
+                                        const num = Number(v);
+                                        if (isNaN(num)) {
                                             throw new Error(`Invalid number: ${v}`);
                                         }
                                         return num;
@@ -4885,7 +4885,7 @@
                             continue;
                         }
                         if (prop.type === "number" || prop.type === "integer") {
-                            params[keyValidation.value] = Admin.Number(value);
+                            params[keyValidation.value] = Number(value);
                         } else if (prop.type === "boolean") {
                             params[keyValidation.value] =
                                 value === "true" || value === true;
@@ -5265,8 +5265,8 @@
                                     itemType.includes("integer")
                                 ) {
                                     value = inputValues.map((v) => {
-                                        const num = Admin.Number(v);
-                                        if (Admin.isNaN(num)) {
+                                        const num = Number(v);
+                                        if (isNaN(num)) {
                                             throw new Error(`Invalid number: ${v}`);
                                         }
                                         return num;
@@ -5332,7 +5332,7 @@
                             continue;
                         }
                         if (prop.type === "number" || prop.type === "integer") {
-                            params[keyValidation.value] = Admin.Number(value);
+                            params[keyValidation.value] = Number(value);
                         } else if (prop.type === "boolean") {
                             params[keyValidation.value] =
                                 value === "true" || value === true;
@@ -8444,7 +8444,7 @@
         if (editPromptForm) {
             editPromptForm.addEventListener("submit", Admin.handleEditPromptFormSubmit);
             editPromptForm.addEventListener("click", () => {
-                if (Admin.getComputedStyle(editPromptForm).display !== "none") {
+                if (getComputedStyle(editPromptForm).display !== "none") {
                     Admin.refreshEditors();
                 }
             });
@@ -8476,7 +8476,7 @@
         if (toolForm) {
             toolForm.addEventListener("submit", Admin.handleToolFormSubmit);
             toolForm.addEventListener("click", () => {
-                if (Admin.getComputedStyle(toolForm).display !== "none") {
+                if (getComputedStyle(toolForm).display !== "none") {
                     Admin.refreshEditors();
                 }
             });
@@ -8501,7 +8501,7 @@
         if (editServerForm) {
             editServerForm.addEventListener("submit", Admin.handleEditServerFormSubmit);
             editServerForm.addEventListener("click", () => {
-                if (Admin.getComputedStyle(editServerForm).display !== "none") {
+                if (getComputedStyle(editServerForm).display !== "none") {
                     Admin.refreshEditors();
                 }
             });
@@ -8511,7 +8511,7 @@
         if (editResourceForm) {
             editResourceForm.addEventListener("submit", Admin.handleEditResFormSubmit);
             editResourceForm.addEventListener("click", () => {
-                if (Admin.getComputedStyle(editResourceForm).display !== "none") {
+                if (getComputedStyle(editResourceForm).display !== "none") {
                     Admin.refreshEditors();
                 }
             });
@@ -8521,7 +8521,7 @@
         if (editToolForm) {
             editToolForm.addEventListener("submit", Admin.handleEditToolFormSubmit);
             editToolForm.addEventListener("click", () => {
-                if (Admin.getComputedStyle(editToolForm).display !== "none") {
+                if (getComputedStyle(editToolForm).display !== "none") {
                     Admin.refreshEditors();
                 }
             });
@@ -8531,7 +8531,7 @@
         if (editGatewayForm) {
             editGatewayForm.addEventListener("submit", Admin.handleEditGatewayFormSubmit);
             editGatewayForm.addEventListener("click", () => {
-                if (Admin.getComputedStyle(editGatewayForm).display !== "none") {
+                if (getComputedStyle(editGatewayForm).display !== "none") {
                     Admin.refreshEditors();
                 }
             });
@@ -8544,7 +8544,7 @@
                 Admin.handleEditA2AAgentFormSubmit,
             );
             editA2AAgentForm.addEventListener("click", () => {
-                if (Admin.getComputedStyle(editA2AAgentForm).display !== "none") {
+                if (getComputedStyle(editA2AAgentForm).display !== "none") {
                     Admin.refreshEditors();
                 }
             });
@@ -10517,7 +10517,7 @@
         if (closeBtn) {
             closeBtn.addEventListener("click", (e) => {
                 e.preventDefault();
-                Admin.close();
+                close();
             });
         }
 
@@ -10525,7 +10525,7 @@
         if (backdrop) {
             backdrop.addEventListener("click", (e) => {
                 if (e.target === backdrop) {
-                    Admin.close();
+                    close();
                 }
             });
         }
@@ -10534,7 +10534,7 @@
         modal.addEventListener("keydown", (e) => {
             if (e.key === "Escape") {
                 e.stopPropagation();
-                Admin.close();
+                close();
             }
         });
 
@@ -10863,13 +10863,13 @@
             if (show) {
                 let progress = 0;
                 const progressBar = Admin.safeGetElement("export-progress-bar");
-                const interval = Admin.setInterval(() => {
+                const interval = setInterval(() => {
                     progress += 10;
                     if (progressBar) {
                         progressBar.style.width = `${Math.min(progress, 90)}%`;
                     }
                     if (progress >= 100) {
-                        Admin.clearInterval(interval);
+                        clearInterval(interval);
                     }
                 }, 200);
             }
@@ -11604,7 +11604,7 @@
             } else {
                 // Fallback to basic auth if JWT not available
                 console.warn("JWT token not found, attempting basic auth fallback");
-                headers.Authorization = "Basic " + Admin.btoa("admin:changeme");
+                headers.Authorization = "Basic " + btoa("admin:changeme");
             }
 
             // Send test request with user query
@@ -11800,7 +11800,7 @@
                 : "";
 
             // Safely encode token data for data attribute (URL encoding preserves all characters)
-            const tokenDataEncoded = Admin.encodeURIComponent(JSON.stringify(token));
+            const tokenDataEncoded = encodeURIComponent(JSON.stringify(token));
 
             tokensHTML += `
                 <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
@@ -11888,7 +11888,7 @@
                 const tokenData = button.dataset.token;
                 if (tokenData) {
                     try {
-                        const token = JSON.parse(Admin.decodeURIComponent(tokenData));
+                        const token = JSON.parse(decodeURIComponent(tokenData));
                         Admin.showTokenDetailsModal(token);
                     } catch (e) {
                         console.error("Failed to parse token data:", e);
@@ -12038,7 +12038,7 @@
             const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
             if (teamSelector && window.Alpine) {
                 // The Alpine component will notify us of changes
-                const checkInterval = Admin.setInterval(() => {
+                const checkInterval = setInterval(() => {
                     Admin.updateTeamScopingWarning();
                 }, 500); // Check every 500ms
 
@@ -13155,7 +13155,7 @@
             const roleSelects = container.querySelectorAll(".role-select");
             roleSelects.forEach((select) => {
                 const email = select.name.replace("role_", "");
-                const decodedEmail = Admin.decodeURIComponent(email);
+                const decodedEmail = decodeURIComponent(email);
                 if (roleSelections[decodedEmail]) {
                     select.value = roleSelections[decodedEmail];
                 }
@@ -13476,7 +13476,7 @@
 
     Admin.handleAdminTeamAction = function (event) {
         const detail = event.detail || {};
-        const delayMs = Admin.Number(detail.delayMs) || 0;
+        const delayMs = Number(detail.delayMs) || 0;
         setTimeout(() => {
             if (detail.resetTeamCreateForm) {
                 Admin.resetTeamCreateForm();
@@ -13571,7 +13571,7 @@
 
     Admin.handleAdminUserAction = function (event) {
         const detail = event.detail || {};
-        const delayMs = Admin.Number(detail.delayMs) || 0;
+        const delayMs = Number(detail.delayMs) || 0;
         setTimeout(() => {
             if (
                 detail.closeUserEditModal &&
@@ -13807,7 +13807,7 @@
         }
 
         // Show confirmation dialog
-        const message = Admin.prompt("Optional: Enter a message to the team owners:");
+        const message = prompt("Optional: Enter a message to the team owners:");
 
         try {
             const response = await Admin.fetchWithTimeout(
@@ -15366,11 +15366,11 @@
                         );
                     }
                 } else {
-                    Admin.alert("Registration failed: " + (data.error || data.message));
+                    alert("Registration failed: " + (data.error || data.message));
                 }
             })
             .catch((error) => {
-                Admin.alert("Error registering server: " + error);
+                alert("Error registering server: " + error);
             });
     };
 
@@ -15421,15 +15421,15 @@
                         }
                         methodsList += "\n";
                     });
-                    Admin.alert(methodsList);
+                    alert(methodsList);
                 } else {
-                    Admin.alert(
+                    alert(
                         "No methods discovered for this service. Try re-reflecting the service.",
                     );
                 }
             })
             .catch((error) => {
-                Admin.alert("Error fetching methods: " + error);
+                alert("Error fetching methods: " + error);
             });
     };
 
@@ -15710,7 +15710,7 @@
                     ? "This is a team-level server that requires authentication for access."
                     : "This is a private server that requires authentication for access.";
 
-            const token = Admin.prompt(
+            const token = prompt(
                 `Authentication Required\n\n${visibilityMessage}\n\nPlease enter the access token for "${serverName}":`,
             );
 
@@ -16068,7 +16068,7 @@
         // Get optional temperature
         const temperatureEl = Admin.safeGetElement("llm-temperature");
         if (temperatureEl && temperatureEl.value.trim()) {
-            config.temperature = Admin.parseFloat(temperatureEl.value.trim());
+            config.temperature = parseFloat(temperatureEl.value.trim());
         }
 
         // Get optional max tokens
@@ -16118,7 +16118,7 @@
                 config.config.api_version = apiVersion;
             }
             if (temperature) {
-                config.config.temperature = Admin.parseFloat(temperature);
+                config.config.temperature = parseFloat(temperature);
             }
         } else if (provider === "openai") {
             const apiKeyEl = Admin.safeGetElement("openai-api-key");
@@ -16142,7 +16142,7 @@
                 config.config.base_url = baseUrl;
             }
             if (temperature) {
-                config.config.temperature = Admin.parseFloat(temperature);
+                config.config.temperature = parseFloat(temperature);
             }
         } else if (provider === "anthropic") {
             const apiKey = document
@@ -16164,7 +16164,7 @@
                 config.config.model = model;
             }
             if (temperature) {
-                config.config.temperature = Admin.parseFloat(temperature);
+                config.config.temperature = parseFloat(temperature);
             }
             if (maxTokens) {
                 config.config.max_tokens = parseInt(maxTokens, 10);
@@ -16203,7 +16203,7 @@
                 config.config.aws_secret_access_key = secretAccessKey;
             }
             if (temperature) {
-                config.config.temperature = Admin.parseFloat(temperature);
+                config.config.temperature = parseFloat(temperature);
             }
             if (maxTokens) {
                 config.config.max_tokens = parseInt(maxTokens, 10);
@@ -16241,7 +16241,7 @@
                 config.config.modelid = modelId;
             }
             if (temperature) {
-                config.config.temperature = Admin.parseFloat(temperature);
+                config.config.temperature = parseFloat(temperature);
             }
             if (maxNewTokens) {
                 config.config.maxnewtokens = parseInt(maxNewTokens, 10);
@@ -16264,7 +16264,7 @@
                 config.config.base_url = baseUrl;
             }
             if (temperature) {
-                config.config.temperature = Admin.parseFloat(temperature);
+                config.config.temperature = parseFloat(temperature);
             }
         }
 
@@ -19587,7 +19587,7 @@
                 feedbackEl.innerHTML = `
                     <div class="flex items-center text-red-600">
                         <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                        <span>Certificate Admin.file(s) too large. Maximum size is 10MB per file.</span>
+                        <span>Certificate file(s) too large. Maximum size is 10MB per file.</span>
                     </div>
                 `;
                 feedbackEl.className = "mt-2 text-sm";
@@ -21201,8 +21201,8 @@
         Admin.syncPerformanceAggregationSelect();
         Admin.setPerformanceAggregationVisibility(true);
         Admin.setLogFiltersVisibility(false);
-        const hoursParam = Admin.encodeURIComponent(PERFORMANCE_HISTORY_HOURS.toString());
-        const aggregationParam = Admin.encodeURIComponent(
+        const hoursParam = encodeURIComponent(PERFORMANCE_HISTORY_HOURS.toString());
+        const aggregationParam = encodeURIComponent(
             Admin.getPerformanceAggregationQuery(),
         );
 
@@ -21894,7 +21894,7 @@
                 Admin.safeGetElement("llm-provider-api-base").value || null,
             default_model:
                 Admin.safeGetElement("llm-provider-default-model").value || null,
-            default_temperature: Admin.parseFloat(
+            default_temperature: parseFloat(
                 Admin.safeGetElement("llm-provider-temperature").value,
             ),
             enabled: Admin.safeGetElement("llm-provider-enabled").checked,
@@ -21926,7 +21926,7 @@
 
                     // Convert to appropriate type
                     if (input.type === "number") {
-                        value = value ? Admin.parseFloat(value) : null;
+                        value = value ? parseFloat(value) : null;
                     } else if (input.type === "checkbox") {
                         value = input.checked;
                     } else if (value === "") {
