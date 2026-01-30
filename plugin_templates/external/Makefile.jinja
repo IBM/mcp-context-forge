@@ -318,6 +318,12 @@ install-editable: venv
 	$(foreach bin,$(REQUIRED_BUILD_BINS), $(if $(shell command -v $(bin) 2> /dev/null),,$(error Couldn't find `$(bin)`)))
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -e .[dev]"
 
+.PHONY: install-grpc
+install-grpc: venv
+	$(foreach bin,$(REQUIRED_BUILD_BINS), $(if $(shell command -v $(bin) 2> /dev/null),,$(error Couldn't find `$(bin)`)))
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -e .[dev,grpc]"
+	@echo "✅  Installed with gRPC support (enables grpc and unix transports)"
+
 .PHONY: uninstall
 uninstall:
 	pip uninstall $(PACKAGE_NAME)
@@ -412,6 +418,17 @@ serve:
 build:
 	@$(MAKE) container-build
 
+.PHONY: build-grpc
+build-grpc:
+	@echo "🔨 Building container with gRPC support..."
+	$(CONTAINER_RUNTIME) build \
+		--platform=$(PLATFORM) \
+		--build-arg INSTALL_GRPC=true \
+		-f $(CONTAINER_FILE) \
+		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+		.
+	@echo "✅ Built image with gRPC: $(call get_image_name)"
+
 .PHONY: start
 start:
 	@$(MAKE) container-run
@@ -432,7 +449,8 @@ help:
 	@echo "The following are the valid targets for this Makefile:"
 	@echo "...install           Install package from sources"
 	@echo "...install-dev       Install package from sources with dev packages"
-	@echo "...install-editable  Install package from sources in editabled mode"
+	@echo "...install-editable  Install package from sources in editable mode"
+	@echo "...install-grpc      Install package with gRPC support (enables grpc/unix transports)"
 	@echo "...uninstall         Uninstall package"
 	@echo "...dist              Clean-build wheel *and* sdist into ./dist"
 	@echo "...wheel             Build wheel only"
@@ -440,8 +458,9 @@ help:
 	@echo "...verify            Build + twine + check-manifest + pyroma (no upload)"
 	@echo "...serve             Start API server locally"
 	@echo "...build             Build API server container image"
+	@echo "...build-grpc        Build container image with gRPC support"
 	@echo "...start             Start the API server container"
-	@echo "...start             Stop the API server container"
+	@echo "...stop              Stop the API server container"
 	@echo "...lock              Lock dependencies"
 	@echo "...lint-fix          Check and fix lint errors"
 	@echo "...lint-check        Check for lint errors"

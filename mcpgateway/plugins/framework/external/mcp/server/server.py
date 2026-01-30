@@ -173,7 +173,9 @@ class ExternalPluginServer:
                     return plug.model_dump()
         return None
 
-    async def invoke_hook(self, hook_type: str, plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
+    async def invoke_hook(
+        self, hook_type: str, plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any] | PluginContext
+    ) -> dict:
         """Invoke a plugin hook.
 
         Args:
@@ -181,6 +183,7 @@ class ExternalPluginServer:
             plugin_name: The name of the plugin to execute.
             payload: The prompt name and arguments to be analyzed.
             context: The contextual and state information required for the execution of the hook.
+                    Can be a dict (for MCP transport) or PluginContext (for gRPC/Unix socket).
 
         Raises:
             ValueError: If unable to retrieve a plugin.
@@ -210,13 +213,16 @@ class ExternalPluginServer:
         """
         result_payload: dict[str, Any] = {PLUGIN_NAME: plugin_name}
         try:
-            _context = PluginContext.model_validate(context)
+            # Track if input was Pydantic (for optimized response path)
+            context_is_pydantic = isinstance(context, PluginContext)
+            _context = context if context_is_pydantic else PluginContext.model_validate(context)
 
             result = await self._plugin_manager.invoke_hook_for_plugin(plugin_name, hook_type, payload, _context, payload_as_json=True)
 
             result_payload[RESULT] = result.model_dump()
             if not _context.is_empty():
-                result_payload[CONTEXT] = _context.model_dump()
+                # Return Pydantic directly if input was Pydantic (avoids extra serialization)
+                result_payload[CONTEXT] = _context if context_is_pydantic else _context.model_dump()
             return result_payload
         except PluginError as pe:
             result_payload[ERROR] = pe.error

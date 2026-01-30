@@ -141,18 +141,17 @@ plugins:
 
 ### External Plugins
 
-External plugins run as separate MCP servers for independent scaling and isolation:
+External plugins run as separate servers for independent scaling and isolation:
 
 - **Location**: `plugins/external/` directory
-- **Protocol**: MCP (STDIO or Streamable HTTP)
-- **Performance**: 10-100ms latency (cached: <5ms)
-- **Configuration**: `kind: "external"` with MCP connection details
+- **Transports**: MCP (STDIO or Streamable HTTP) or gRPC (high-performance)
+- **Performance**: MCP ~600 calls/sec, gRPC ~4,700 calls/sec, Unix socket ~9,000 calls/sec
+- **Configuration**: `kind: "external"` with `mcp:` or `grpc:` connection details
 - **Use Cases**: Advanced AI safety, complex ML inference, policy engines
 
-Example configuration:
+Example configuration (MCP):
 ```yaml
 plugins:
-
   - name: "OPAPluginFilter"
     kind: "external"
     priority: 10
@@ -160,6 +159,18 @@ plugins:
       proto: STREAMABLEHTTP
       url: http://localhost:8000/mcp
 ```
+
+Example configuration (gRPC - high performance):
+```yaml
+plugins:
+  - name: "HighPerformanceFilter"
+    kind: "external"
+    priority: 10
+    grpc:
+      target: "localhost:50051"
+```
+
+See [gRPC Transport Guide](./grpc-transport.md) for detailed gRPC configuration including TLS/mTLS setup.
 
 ## Getting Started
 

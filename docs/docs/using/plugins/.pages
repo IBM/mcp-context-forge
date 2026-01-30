@@ -3,5 +3,6 @@ nav:
   - lifecycle.md
   - plugins.md
   - http-auth-hooks.md
+  - grpc-transport.md
   - mtls.md
   - rust-plugins.md
