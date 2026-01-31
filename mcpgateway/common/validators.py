@@ -165,7 +165,7 @@ def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str
                         break
                 j += 1
             else:
-                raise ValueError("Template contains unterminated expression")
+                raise ValueError("Template contains potentially dangerous expressions")
         else:
             i += 1
 

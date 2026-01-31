@@ -1179,6 +1179,8 @@ class TestSecurityValidation:
             "%{7*7}",
             "{{''.class.mro[2].subclasses()}}",
             "{{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}",
+            # Unterminated expressions should fail closed
+            "{{",
             # Payloads with single delimiter chars before dangerous keywords
             "{{ '}' + self.__class__ }}",
             "{% set x='%' ~ __import__('os') %}",
