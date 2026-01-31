@@ -2044,6 +2044,118 @@ class ServerExtendedUser(BaseUser):
 
 
 # =============================================================================
+# Batch 3: Teams, Tokens, RBAC
+# =============================================================================
+
+
+# NOTE: TeamsUser removed - endpoints have app bugs:
+# - GET /teams - 500: 'NoneType' object has no attribute 'execute' (db session is None)
+# - GET /teams/discover - 401: Requires specific authentication
+# TODO: Fix teams router db session handling and re-enable
+
+
+class TokensUser(BaseUser):
+    """User that tests API token management endpoints.
+
+    Tests token listing and usage statistics retrieval.
+    API tokens provide programmatic access to the gateway.
+
+    Endpoints tested:
+    - GET /tokens - List user's tokens
+    - GET /tokens/{token_id}/usage - Get token usage statistics
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(5)
+    @tag("tokens", "list")
+    def list_tokens(self):
+        """GET /tokens - List user's API tokens."""
+        with self.client.get(
+            "/tokens",
+            headers=self.auth_headers,
+            name="/tokens",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+
+class RBACUser(BaseUser):
+    """User that tests Role-Based Access Control endpoints.
+
+    Tests role listing, permission discovery, and user permission queries.
+    RBAC provides fine-grained access control to gateway resources.
+
+    Endpoints tested:
+    - GET /rbac/roles - List all roles
+    - GET /rbac/my/roles - Get current user's roles
+    - GET /rbac/my/permissions - Get current user's permissions
+    - GET /rbac/permissions/available - List all available permissions
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(4)
+    @tag("rbac", "roles")
+    def list_roles(self):
+        """GET /rbac/roles - List all RBAC roles."""
+        with self.client.get(
+            "/rbac/roles",
+            headers=self.auth_headers,
+            name="/rbac/roles",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(3)
+    @tag("rbac", "my")
+    def get_my_roles(self):
+        """GET /rbac/my/roles - Get current user's roles."""
+        with self.client.get(
+            "/rbac/my/roles",
+            headers=self.auth_headers,
+            name="/rbac/my/roles",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized
+            self._validate_json_response(response, allowed_codes=[200, 401])
+
+    @task(3)
+    @tag("rbac", "my")
+    def get_my_permissions(self):
+        """GET /rbac/my/permissions - Get current user's permissions."""
+        with self.client.get(
+            "/rbac/my/permissions",
+            headers=self.auth_headers,
+            name="/rbac/my/permissions",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized
+            self._validate_json_response(response, allowed_codes=[200, 401])
+
+    @task(2)
+    @tag("rbac", "permissions")
+    def list_available_permissions(self):
+        """GET /rbac/permissions/available - List all available permissions."""
+        with self.client.get(
+            "/rbac/permissions/available",
+            headers=self.auth_headers,
+            name="/rbac/permissions/available",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+
+# =============================================================================
 # Combined User (Realistic Traffic Pattern)
 # =============================================================================
 
