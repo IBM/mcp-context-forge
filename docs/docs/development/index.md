@@ -137,7 +137,7 @@ curl -sX GET \
 
 ## 📦 Configuration
 
-Edit `.env` or set environment variables. A complete list is documented in the [README](https://github.com/IBM/mcp-context-forge#configuration-env-or-env-vars).
+Edit `.env` or set environment variables. A complete list is documented in the [Configuration Reference](../manage/configuration.md).
 
 Use:
 
