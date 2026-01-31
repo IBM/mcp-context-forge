@@ -23,7 +23,7 @@ import pytest
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
+from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
 
