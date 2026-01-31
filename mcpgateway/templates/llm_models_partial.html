@@ -35,7 +35,7 @@
   <div class="flex justify-between items-center">
     <div class="flex items-center space-x-4">
       <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Filter by Provider:</label>
-      <select id="provider-filter" onchange="filterModelsByProvider(this.value)"
+      <select id="provider-filter" onchange="Admin.filterModelsByProvider(this.value)"
         class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white">
         <option value="">All Providers</option>
         {% for provider in providers %}
@@ -47,7 +47,7 @@
         {% endfor %}
       </select>
     </div>
-    <button onclick="showAddModelModal()"
+    <button onclick="Admin.showAddModelModal()"
       class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
       <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
@@ -127,7 +127,7 @@
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
               <div class="flex items-center space-x-2">
-                <button onclick="toggleLLMModel('{{ model.id }}')" class="focus:outline-none"
+                <button onclick="Admin.toggleLLMModel('{{ model.id }}')" class="focus:outline-none"
                   hx-post="{{ root_path }}/admin/llm/models/{{ model.id }}/state" hx-target="#model-row-{{ model.id }}"
                   hx-swap="outerHTML">
                   {% if model.enabled %}
@@ -151,7 +151,7 @@
               </div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-              <button onclick="editLLMModel('{{ model.id }}')"
+              <button onclick="Admin.editLLMModel('{{ model.id }}')"
                 class="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 mr-3"
                 title="Edit">
                 <svg class="h-5 w-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -159,7 +159,7 @@
                     d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                 </svg>
               </button>
-              <button onclick="deleteLLMModel('{{ model.id }}', '{{ model.model_name }}')"
+              <button onclick="Admin.deleteLLMModel('{{ model.id }}', '{{ model.model_name }}')"
                 class="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300" title="Delete">
                 <svg class="h-5 w-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -178,7 +178,7 @@
               <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">No models configured</h3>
               <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Add models to your configured providers.</p>
               <div class="mt-6">
-                <button onclick="showAddModelModal()"
+                <button onclick="Admin.showAddModelModal()"
                   class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700">
                   <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
