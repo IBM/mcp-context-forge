@@ -429,7 +429,9 @@ class ToolCreate(BaseModel):
         if v is None:
             return v
 
-        forbidden_patterns = ["&&", ";", "||", "$(", "`", "|", "> ", "< "]
+        # Note: backticks (`) are allowed as they are commonly used in Markdown
+        # for inline code examples in tool descriptions
+        forbidden_patterns = ["&&", ";", "||", "$(", "|", "> ", "< "]
         for pat in forbidden_patterns:
             if pat in v:
                 raise ValueError(f"Description contains unsafe characters: '{pat}'")
