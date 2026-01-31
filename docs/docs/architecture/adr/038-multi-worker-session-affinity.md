@@ -182,18 +182,28 @@ sequenceDiagram
 
 ## Streamable HTTP Transport Flow
 
-Streamable HTTP uses **independent HTTP request/response cycles**. Any worker can respond to the client, so we use direct RPC-style forwarding.
+Streamable HTTP uses **independent HTTP request/response cycles**. Any worker can respond to the client, so we use HTTP-level forwarding combined with internal `/rpc` routing.
+
+### Why Not Use SDK's Session Manager?
+
+The MCP SDK's `StreamableHTTPSessionManager` stores sessions in an in-memory `_server_instances` dictionary. This is problematic because:
+
+1. **Sessions are per-worker** - Not shared across workers
+2. **Sessions get cleaned up** - SDK clears `_server_instances` between requests
+3. **RedisEventStore only handles events** - It stores events for resumability, not session routing
+
+Our solution: **bypass the SDK for request routing** and use `/rpc` endpoint directly, which leverages `MCPSessionPool` for upstream connections.
 
 ### Key Components
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `StreamableHTTPSessionManager` | MCP SDK | Manages Streamable HTTP protocol |
-| `call_tool()` | `mcpgateway/transports/streamablehttp_transport.py:442` | Handles tool invocation |
-| `register_session_mapping()` | `mcpgateway/services/mcp_session_pool.py:543` | Registers session ownership |
-| `forward_request_to_owner()` | `mcp_session_pool.py:1346` | Forwards request to owner worker |
-| `start_rpc_listener()` | `mcp_session_pool.py:1436` | Listens for forwarded requests |
-| `_execute_forwarded_request()` | `mcp_session_pool.py:1484` | Executes forwarded request locally |
+| `handle_streamable_http()` | `streamablehttp_transport.py:1252` | ASGI handler with affinity routing |
+| `forward_streamable_http_to_owner()` | `mcp_session_pool.py:1559` | HTTP-level forwarding to owner worker |
+| `get_streamable_http_session_owner()` | `mcp_session_pool.py:1545` | Checks Redis for session ownership |
+| `/rpc` endpoint | `main.py:5259` | Unified request handler for all methods |
+| `register_session_mapping()` | `mcp_session_pool.py:545` | Registers session ownership atomically |
+| `WORKER_ID` | `mcp_session_pool.py` | Unique identifier: `{hostname}:{pid}` |
 
 ### Sequence Diagram
 
@@ -206,44 +216,38 @@ sequenceDiagram
     participant WA as WORKER_A (Session Owner)
     participant Backend as Backend MCP Server
 
-    Note over Client,Backend: First Request - Establishes Ownership
-    Client->>LB: POST /mcp {tools/call, x-mcp-session-id: ABC}
+    Note over Client,Backend: 1. Initialize - Establishes Ownership
+    Client->>LB: POST /mcp {initialize}
     LB->>WA: Route to WORKER_A
-    WA->>WA: call_tool()
-    WA->>WA: register_session_mapping()
-    WA->>Redis: SETNX mcpgw:pool_owner:ABC = WORKER_A
-    Note over WA,Redis: Success - WORKER_A owns session ABC
-    WA->>WA: forward_request_to_owner() → None (we own it)
+    WA->>WA: SDK creates session, returns mcp-session-id
+    WA->>Redis: SETNX mcpgw:pool_owner:{session_id} = host_a:1
+    WA-->>Client: HTTP Response {mcp-session-id: ABC}
+
+    Note over Client,Backend: 2. Subsequent Request - Same Worker (Owner)
+    Client->>LB: POST /mcp {tools/call}
+    LB->>WA: Route to WORKER_A
+    WA->>Redis: GET mcpgw:pool_owner:ABC → host_a:1 (us!)
+    WA->>WA: Route to /rpc (bypass SDK sessions)
     WA->>WA: tool_service.invoke_tool()
     WA->>WA: MCPSessionPool.acquire()
     WA->>Backend: Execute tool
     Backend-->>WA: Result
     WA-->>Client: HTTP Response {result}
 
-    Note over Client,Backend: Subsequent Request - Different Worker
-    Client->>LB: POST /mcp {tools/call, x-mcp-session-id: ABC}
+    Note over Client,Backend: 3. Subsequent Request - Different Worker
+    Client->>LB: POST /mcp {tools/call, mcp-session-id: ABC}
     LB->>WB: Route to WORKER_B (different worker!)
-    WB->>WB: call_tool()
-    WB->>WB: register_session_mapping()
-    WB->>Redis: SETNX mcpgw:pool_owner:ABC = WORKER_B
-    Note over WB,Redis: Fails - WORKER_A already owns
-
-    WB->>WB: forward_request_to_owner()
     WB->>Redis: GET mcpgw:pool_owner:ABC
-    Redis-->>WB: WORKER_A
-    WB->>Redis: Subscribe mcpgw:pool_rpc_response:{uuid}
-    WB->>Redis: Publish mcpgw:pool_rpc:WORKER_A {request}
+    Redis-->>WB: host_a:1 (not us!)
+    WB->>WA: HTTP Forward POST /mcp (x-forwarded-internally: true)
 
-    Note over WA: start_rpc_listener() receives
-    Redis-->>WA: Forwarded request
-    WA->>WA: _execute_forwarded_request()
-    WA->>WA: POST /rpc (x-forwarded-internally: true)
+    Note over WA: Receives forwarded request
+    WA->>WA: Route to /rpc (bypass SDK sessions)
     WA->>WA: tool_service.invoke_tool()
     WA->>Backend: Execute tool
     Backend-->>WA: Result
-    WA->>Redis: Publish mcpgw:pool_rpc_response:{uuid} {result}
+    WA-->>WB: HTTP Response {result}
 
-    Redis-->>WB: Response received
     WB-->>Client: HTTP Response {result}
 ```
 
