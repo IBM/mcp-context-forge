@@ -6197,6 +6197,11 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     - Updates name to gateway_slug + separator + custom_name_slug.
     - Sets display_name to custom_name if not provided.
 
+    Note: The gateway relationship must be explicitly set (via target.gateway = gateway_obj)
+    before adding the tool to the session if gateway namespacing is needed. If only
+    gateway_id is set without the relationship, we look up the gateway name via a direct
+    SQL query.
+
     Args:
         mapper: SQLAlchemy mapper for the Tool model.
         connection: Database connection.
@@ -6210,8 +6215,27 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
         target.display_name = target.custom_name
     # Always update custom_name_slug from custom_name
     target.custom_name_slug = slugify(target.custom_name)
-    # Update name field
-    gateway_slug = slugify(target.gateway.name) if target.gateway else ""
+
+    # Get gateway_slug - check for explicitly set gateway relationship first
+    gateway_slug = ""
+    if target.gateway:
+        # Gateway relationship is already loaded
+        gateway_slug = slugify(target.gateway.name)
+    elif target.gateway_id:
+        # Gateway relationship not loaded but gateway_id is set
+        # Use a cached gateway name if available from gateway_name_cache attribute
+        if hasattr(target, "gateway_name_cache") and target.gateway_name_cache:
+            gateway_slug = slugify(target.gateway_name_cache)
+        else:
+            # Fall back to querying the database
+            try:
+                result = connection.execute(text("SELECT name FROM gateways WHERE id = :gw_id"), {"gw_id": target.gateway_id})
+                row = result.fetchone()
+                if row:
+                    gateway_slug = slugify(row[0])
+            except Exception:  # nosec B110 - intentionally proceed without prefix on failure
+                pass
+
     if gateway_slug:
         sep = settings.gateway_tool_name_separator
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
@@ -6230,6 +6254,11 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     - Calculates custom_name_slug from custom_name.
     - Updates name to gateway_slug + separator + custom_name_slug.
 
+    Note: The gateway relationship must be explicitly set (via target.gateway = gateway_obj)
+    before adding the prompt to the session if gateway namespacing is needed. If only
+    gateway_id is set without the relationship, we look up the gateway name via a direct
+    SQL query.
+
     Args:
         mapper: SQLAlchemy mapper for the Prompt model.
         connection: Database connection for the insert/update.
@@ -6242,7 +6271,27 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     if not target.display_name:
         target.display_name = target.custom_name
     target.custom_name_slug = slugify(target.custom_name)
-    gateway_slug = slugify(target.gateway.name) if target.gateway else ""
+
+    # Get gateway_slug - check for explicitly set gateway relationship first
+    gateway_slug = ""
+    if target.gateway:
+        # Gateway relationship is already loaded
+        gateway_slug = slugify(target.gateway.name)
+    elif target.gateway_id:
+        # Gateway relationship not loaded but gateway_id is set
+        # Use a cached gateway name if available from gateway_name_cache attribute
+        if hasattr(target, "gateway_name_cache") and target.gateway_name_cache:
+            gateway_slug = slugify(target.gateway_name_cache)
+        else:
+            # Fall back to querying the database
+            try:
+                result = connection.execute(text("SELECT name FROM gateways WHERE id = :gw_id"), {"gw_id": target.gateway_id})
+                row = result.fetchone()
+                if row:
+                    gateway_slug = slugify(row[0])
+            except Exception:  # nosec B110 - intentionally proceed without prefix on failure
+                pass
+
     if gateway_slug:
         sep = settings.gateway_tool_name_separator
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"

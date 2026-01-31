@@ -34,7 +34,9 @@ from sqlalchemy.orm import joinedload, Session
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, get_for_update
+from mcpgateway.db import EmailTeam
+from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span
@@ -480,7 +482,14 @@ class PromptService:
 
             custom_name = prompt.custom_name or prompt.name
             display_name = prompt.display_name or custom_name
-            computed_name = self._compute_prompt_name(custom_name)
+
+            # Extract gateway_id from prompt if present and look up gateway for namespacing
+            gateway_id = getattr(prompt, "gateway_id", None)
+            gateway = None
+            if gateway_id:
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+            computed_name = self._compute_prompt_name(custom_name, gateway=gateway)
 
             # Create DB model
             db_prompt = DbPrompt(
@@ -504,18 +513,26 @@ class PromptService:
                 team_id=getattr(prompt, "team_id", None) or team_id,
                 owner_email=getattr(prompt, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(prompt, "visibility", None) or visibility,
+                gateway_id=gateway_id,
             )
             # Check for existing server with the same name
             if visibility.lower() == "public":
-                # Check for existing public prompt with the same name
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                # Check for existing public prompt with the same name and gateway_id
+                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "public", DbPrompt.gateway_id == gateway_id)).scalar_one_or_none()
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
             elif visibility.lower() == "team":
-                # Check for existing team prompt with the same name
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                # Check for existing team prompt with the same name and gateway_id
+                existing_prompt = db.execute(
+                    select(DbPrompt).where(DbPrompt.name == computed_name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id, DbPrompt.gateway_id == gateway_id)
+                ).scalar_one_or_none()
                 if existing_prompt:
                     raise PromptNameConflictError(computed_name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+
+            # Set gateway relationship to help the before_insert event handler compute the name correctly
+            if gateway:
+                db_prompt.gateway = gateway
+                db_prompt.gateway_name_cache = gateway.name  # type: ignore[attr-defined]
 
             # Add to DB
             db.add(db_prompt)
@@ -704,22 +721,42 @@ class PromptService:
             chunk = prompts[chunk_start : chunk_start + chunk_size]
 
             try:
+                # Collect unique gateway_ids and look them up
+                gateway_ids = set()
+                for prompt in chunk:
+                    gw_id = getattr(prompt, "gateway_id", None)
+                    if gw_id:
+                        gateway_ids.add(gw_id)
+
+                gateways_map: Dict[str, Any] = {}
+                if gateway_ids:
+                    gateways = db.execute(select(DbGateway).where(DbGateway.id.in_(gateway_ids))).scalars().all()
+                    gateways_map = {gw.id: gw for gw in gateways}
+
                 # Batch check for existing prompts to detect conflicts
+                # Build computed names with gateway context
                 prompt_names = []
                 for prompt in chunk:
                     custom_name = getattr(prompt, "custom_name", None) or prompt.name
-                    prompt_names.append(self._compute_prompt_name(custom_name))
+                    gw_id = getattr(prompt, "gateway_id", None)
+                    gateway = gateways_map.get(gw_id) if gw_id else None
+                    computed_name = self._compute_prompt_name(custom_name, gateway=gateway)
+                    prompt_names.append(computed_name)
 
+                # Query for existing prompts - need to consider gateway_id in conflict detection
+                # Build base query conditions
                 if visibility.lower() == "public":
-                    existing_prompts_query = select(DbPrompt).where(DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "public")
+                    base_conditions = [DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "public"]
                 elif visibility.lower() == "team" and team_id:
-                    existing_prompts_query = select(DbPrompt).where(DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "team", DbPrompt.team_id == team_id)
+                    base_conditions = [DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "team", DbPrompt.team_id == team_id]
                 else:
                     # Private prompts - check by owner
-                    existing_prompts_query = select(DbPrompt).where(DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "private", DbPrompt.owner_email == (owner_email or created_by))
+                    base_conditions = [DbPrompt.name.in_(prompt_names), DbPrompt.visibility == "private", DbPrompt.owner_email == (owner_email or created_by)]
 
+                existing_prompts_query = select(DbPrompt).where(*base_conditions)
                 existing_prompts = db.execute(existing_prompts_query).scalars().all()
-                existing_prompts_map = {prompt.name: prompt for prompt in existing_prompts}
+                # Use (name, gateway_id) tuple as key for proper conflict detection
+                existing_prompts_map = {(p.name, p.gateway_id): p for p in existing_prompts}
 
                 prompts_to_add = []
                 prompts_to_update = []
@@ -748,12 +785,15 @@ class PromptService:
                         prompt_team_id = team_id if team_id is not None else getattr(prompt, "team_id", None)
                         prompt_owner_email = owner_email or getattr(prompt, "owner_email", None) or created_by
                         prompt_visibility = visibility if visibility is not None else getattr(prompt, "visibility", "public")
+                        prompt_gateway_id = getattr(prompt, "gateway_id", None)
 
                         custom_name = getattr(prompt, "custom_name", None) or prompt.name
                         display_name = getattr(prompt, "display_name", None) or custom_name
-                        computed_name = self._compute_prompt_name(custom_name)
+                        gateway = gateways_map.get(prompt_gateway_id) if prompt_gateway_id else None
+                        computed_name = self._compute_prompt_name(custom_name, gateway=gateway)
 
-                        existing_prompt = existing_prompts_map.get(computed_name)
+                        # Look up existing prompt by (name, gateway_id) tuple
+                        existing_prompt = existing_prompts_map.get((computed_name, prompt_gateway_id))
 
                         if existing_prompt:
                             # Handle conflict based on strategy
@@ -786,7 +826,7 @@ class PromptService:
                                 new_name = f"{prompt.name}_imported_{int(datetime.now().timestamp())}"
                                 new_custom_name = new_name
                                 new_display_name = new_name
-                                computed_name = self._compute_prompt_name(new_custom_name)
+                                computed_name = self._compute_prompt_name(new_custom_name, gateway=gateway)
                                 db_prompt = DbPrompt(
                                     name=computed_name,
                                     original_name=prompt.name,
@@ -806,7 +846,12 @@ class PromptService:
                                     team_id=prompt_team_id,
                                     owner_email=prompt_owner_email,
                                     visibility=prompt_visibility,
+                                    gateway_id=prompt_gateway_id,
                                 )
+                                # Set gateway relationship to help the before_insert event handler
+                                if gateway:
+                                    db_prompt.gateway = gateway
+                                    db_prompt.gateway_name_cache = gateway.name  # type: ignore[attr-defined]
                                 prompts_to_add.append(db_prompt)
                                 stats["created"] += 1
                             elif conflict_strategy == "fail":
@@ -834,7 +879,12 @@ class PromptService:
                                 team_id=prompt_team_id,
                                 owner_email=prompt_owner_email,
                                 visibility=prompt_visibility,
+                                gateway_id=prompt_gateway_id,
                             )
+                            # Set gateway relationship to help the before_insert event handler
+                            if gateway:
+                                db_prompt.gateway = gateway
+                                db_prompt.gateway_name_cache = gateway.name  # type: ignore[attr-defined]
                             prompts_to_add.append(db_prompt)
                             stats["created"] += 1
 

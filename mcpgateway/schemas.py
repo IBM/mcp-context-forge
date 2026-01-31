@@ -1537,6 +1537,7 @@ class ResourceCreate(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the resource")
 
     @field_validator("tags")
     @classmethod
@@ -2077,6 +2078,7 @@ class PromptCreate(BaseModelWithConfigDict):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+    gateway_id: Optional[str] = Field(None, description="ID of the gateway for the prompt")
 
     @field_validator("tags")
     @classmethod

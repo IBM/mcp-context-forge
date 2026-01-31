@@ -25,6 +25,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 # First-Party
+from mcpgateway.db import Resource as DbResource
 from mcpgateway.schemas import ResourceCreate, ResourceRead, ResourceSubscription, ResourceUpdate
 from mcpgateway.services.resource_service import (
     ResourceError,
@@ -1994,3 +1995,154 @@ class TestResourceAccessAuthorization:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+# --------------------------------------------------------------------------- #
+# Resource Namespacing tests                                                  #
+# --------------------------------------------------------------------------- #
+
+
+class TestResourceGatewayNamespacing:
+    """Test resource namespacing by gateway_id."""
+
+    @pytest.mark.asyncio
+    async def test_resource_namespacing_different_gateways(self, resource_service, mock_db, sample_resource_create):
+        """Test: Same `uri` can be registered for **different** gateways (same team/owner).
+
+        Verifies that the conflict query includes gateway_id in the filter by capturing
+        the executed SQL and checking for the gateway_id clause.
+        """
+        # Scenario:
+        # Existing resource has gateway_id="gateway-1", uri="http://example.com/res"
+        # New resource request has gateway_id="gateway-2", uri="http://example.com/res"
+        # Should be ALLOWED.
+
+        # Setup existing resource in DB (for context, not returned by mock)
+        existing_resource = MagicMock(spec=DbResource)
+        existing_resource.uri = sample_resource_create.uri
+        existing_resource.gateway_id = "gateway-1"
+        existing_resource.visibility = "public"
+        existing_resource.enabled = True
+
+        # Track executed queries to verify gateway_id filtering
+        executed_queries = []
+
+        def capture_execute(stmt):
+            executed_queries.append(str(stmt))
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = None
+            return mock_result
+
+        mock_db.execute = MagicMock(side_effect=capture_execute)
+
+        # Set new resource gateway_id
+        sample_resource_create.gateway_id = "gateway-2"
+
+        # Mock validation/notify/convert
+        with (
+            patch.object(resource_service, "_detect_mime_type", return_value="text/plain"),
+            patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read") as mock_convert,
+        ):
+            mock_convert.return_value = ResourceRead(
+                id="new-id",
+                uri=sample_resource_create.uri,
+                name=sample_resource_create.name,
+                description="",
+                mime_type="text/plain",
+                size=0,
+                enabled=True,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                template=None,
+                metrics=None
+            )
+
+            # Execution
+            result = await resource_service.register_resource(mock_db, sample_resource_create)
+
+            # Verification
+            assert result is not None
+            mock_db.add.assert_called_once()
+
+            # Verify the added resource has the correct gateway_id
+            stmt = mock_db.add.call_args[0][0]
+            assert stmt.gateway_id == "gateway-2"
+            assert stmt.uri == sample_resource_create.uri
+
+            # Verify the conflict check query included gateway_id
+            assert len(executed_queries) >= 1, "Expected at least 1 query (conflict check)"
+            conflict_query = executed_queries[0]
+            assert "gateway_id" in conflict_query, f"Conflict query must filter by gateway_id: {conflict_query}"
+
+    @pytest.mark.asyncio
+    async def test_resource_namespacing_same_gateway(self, resource_service, mock_db, sample_resource_create):
+        """Test: Same `uri` **cannot** be registered for the **same** gateway (same team/owner)."""
+        # Scenario:
+        # Existing resource has gateway_id="gateway-1", uri="http://example.com/res"
+        # New resource request has gateway_id="gateway-1", uri="http://example.com/res"
+        # Should FAIL.
+
+        # Setup existing resource
+        existing_resource = MagicMock(spec=DbResource)
+        existing_resource.uri = sample_resource_create.uri
+        existing_resource.gateway_id = "gateway-1"
+        existing_resource.visibility = "public"
+        existing_resource.enabled = True
+        existing_resource.id = "existing-id"
+
+        # Track executed queries and verify gateway_id filtering
+        def capture_execute(stmt):
+            query_str = str(stmt)
+            assert "gateway_id" in query_str, f"Conflict query must include gateway_id: {query_str}"
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = existing_resource
+            return mock_result
+
+        mock_db.execute = MagicMock(side_effect=capture_execute)
+
+        # Set new resource gateway_id
+        sample_resource_create.gateway_id = "gateway-1"
+
+        # Execution
+        with pytest.raises(ResourceError) as exc_info:
+            await resource_service.register_resource(mock_db, sample_resource_create)
+
+        # Verification
+        assert "Resource already exists" in str(exc_info.value)
+        assert "gateway-1" in str(existing_resource.gateway_id)
+
+    @pytest.mark.asyncio
+    async def test_resource_namespacing_local_resources(self, resource_service, mock_db, sample_resource_create):
+        """Test: Local resources (`gateway_id=NULL`) still enforce uniqueness per team/owner."""
+        # Scenario:
+        # Existing resource has gateway_id=None (Global/Local), uri="http://example.com/res"
+        # New resource request has gateway_id=None
+        # Should FAIL.
+
+        # Setup existing resource
+        existing_resource = MagicMock(spec=DbResource)
+        existing_resource.uri = sample_resource_create.uri
+        existing_resource.gateway_id = None
+        existing_resource.visibility = "public"
+        existing_resource.enabled = True
+        existing_resource.id = "local-id"
+
+        # Track executed queries and verify gateway_id filtering
+        def capture_execute(stmt):
+            query_str = str(stmt)
+            assert "gateway_id" in query_str, f"Conflict query must include gateway_id: {query_str}"
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = existing_resource
+            return mock_result
+
+        mock_db.execute = MagicMock(side_effect=capture_execute)
+
+        # Set new resource gateway_id to None
+        sample_resource_create.gateway_id = None
+
+        # Execution
+        with pytest.raises(ResourceError) as exc_info:
+            await resource_service.register_resource(mock_db, sample_resource_create)
+
+        # Verification
+        assert "Resource already exists" in str(exc_info.value)

@@ -212,11 +212,7 @@ def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], matc
             # Use table_valued() for explicit column reference (elem.c.value)
             # This is the idiomatic SQLAlchemy pattern for table-valued functions
             elem_table = func.jsonb_array_elements(cast(col, JSONB)).table_valued("value").alias("elem")
-            dict_match = exists(
-                select(literal_column("1"))
-                .select_from(elem_table)
-                .where(elem_table.c.value.op("->>")(literal_column("'id'")) == bindparam(param_dict, value=tag_value))
-            )
+            dict_match = exists(select(literal_column("1")).select_from(elem_table).where(elem_table.c.value.op("->>")(literal_column("'id'")) == bindparam(param_dict, value=tag_value)))
 
             conditions.append(or_(string_match, dict_match))
 
