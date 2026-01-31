@@ -8,6 +8,10 @@ Plugins constants file.
 This module stores a collection of plugin constants used throughout the framework.
 """
 
+# Standard
+import os
+import sys
+
 # Model constants.
 # Specialized plugin types.
 EXTERNAL_PLUGIN_TYPE = "external"
@@ -22,7 +26,7 @@ CWD = "cwd"
 UDS = "uds"
 
 NAME = "name"
-PYTHON = "python"
+PYTHON = os.environ.get("MCP_PYTHON", sys.executable)
 PLUGIN_NAME = "plugin_name"
 PAYLOAD = "payload"
 CONTEXT = "context"
