@@ -174,6 +174,11 @@ except ImportError:
     DEFAULT_SSL_VERIFY = True  # Verify SSL by default when config unavailable
 
 KEEP_ALIVE_INTERVAL = DEFAULT_KEEP_ALIVE_INTERVAL  # seconds - from config or fallback to 30
+
+# Buffer limit for subprocess stdout (default 64KB is too small for large tool responses)
+# Set to 16MB to handle tools that return large amounts of data (e.g., search results)
+STDIO_BUFFER_LIMIT = 16 * 1024 * 1024  # 16MB
+
 __all__ = ["main"]  # for console-script entry-point
 
 
@@ -415,6 +420,7 @@ class StdIOEndpoint:
             stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr,  # passthrough for visibility
             env=env,  # 🔑 Add environment variable support
+            limit=STDIO_BUFFER_LIMIT,  # Increase buffer limit for large tool responses
         )
 
         # Explicit error checking
