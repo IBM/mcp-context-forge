@@ -7,6 +7,67 @@ If dependencies become temporarily unavailable, the Gateway uses **exponential b
 
 ---
 
+## 🚀 Automated Setup Script
+
+For fresh Linux systems, the **contextforge-setup.sh** script automates the entire setup process including Docker installation, user configuration, and starting the Compose stack.
+
+### Supported Distributions
+
+- Ubuntu, Debian (and derivatives like Linux Mint, Pop!_OS)
+- Rocky Linux, RHEL, CentOS, AlmaLinux, Fedora
+
+### Quick Start
+
+```bash
+# 1. Create a dedicated user (as root)
+useradd -m contextforge && passwd contextforge
+usermod -aG wheel contextforge   # RHEL-family
+usermod -aG sudo contextforge    # Debian-family
+
+# 2. Switch to the new user
+su - contextforge
+
+# 3. Clone the repository and run the setup script
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge
+./scripts/contextforge-setup.sh
+```
+
+The script will install Docker, configure the user, clone the repository (if not already present), and start the Compose stack.
+
+### Script Options
+
+| Option | Description |
+|--------|-------------|
+| `--skip-start` | Install dependencies but don't start services |
+| `--skip-docker-login` | Skip Docker registry login prompt |
+| `--remove-podman` | (RHEL-family only) Remove podman/runc without prompting |
+| `-y, --yes` | Non-interactive mode for CI/automation |
+
+### Environment Variables for Automated Docker Login
+
+| Variable | Description |
+|----------|-------------|
+| `DOCKER_USERNAME` | Docker registry username |
+| `DOCKER_PASSWORD` | Docker registry password |
+| `DOCKER_REGISTRY` | Registry URL (default: Docker Hub) |
+| `DOCKER_CONFIG` | Custom Docker config directory |
+
+### Examples
+
+```bash
+# Non-interactive install without starting services
+./scripts/contextforge-setup.sh -y --skip-start
+
+# Automated install with Docker Hub credentials
+DOCKER_USERNAME=myuser DOCKER_PASSWORD=mypass ./scripts/contextforge-setup.sh -y
+
+# Install to custom directory
+./scripts/contextforge-setup.sh ~/my-contextforge
+```
+
+---
+
 ## Configure the compose command to use
 
 For example, install and use Docker Compose v2:
