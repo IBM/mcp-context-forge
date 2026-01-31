@@ -160,6 +160,7 @@ async def create_token(
             tags=request.tags,
             team_id=request.team_id,
             caller_permissions=caller_permissions,
+            is_active=request.is_active,
         )
 
         # Create TokenResponse for the token info
@@ -365,6 +366,7 @@ async def update_token(
             scope=scope,
             tags=request.tags,
             caller_permissions=caller_permissions,
+            is_active=request.is_active,
         )
 
         if not token:
@@ -632,6 +634,7 @@ async def create_team_token(
             tags=request.tags,
             team_id=team_id,  # This will validate team ownership
             caller_permissions=caller_permissions,
+            is_active=request.is_active,
         )
 
         # Create TokenResponse for the token info

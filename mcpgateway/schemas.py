@@ -6159,6 +6159,7 @@ class TokenCreateRequest(BaseModel):
         expires_in_days: Optional expiry in days
         scope: Optional token scoping configuration
         tags: Optional organizational tags
+        is_active: Token active status (defaults to True)
 
     Examples:
         >>> request = TokenCreateRequest(
@@ -6177,6 +6178,7 @@ class TokenCreateRequest(BaseModel):
     scope: Optional[TokenScopeRequest] = Field(None, description="Token scoping configuration")
     tags: List[str] = Field(default_factory=list, description="Organizational tags")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
+    is_active: bool = Field(default=True, description="Token active status")
 
 
 class TokenUpdateRequest(BaseModel):
@@ -6187,6 +6189,7 @@ class TokenUpdateRequest(BaseModel):
         description: New token description
         scope: New token scoping configuration
         tags: New organizational tags
+        is_active: New token active status
 
     Examples:
         >>> request = TokenUpdateRequest(
@@ -6201,6 +6204,7 @@ class TokenUpdateRequest(BaseModel):
     description: Optional[str] = Field(None, description="New token description", max_length=1000)
     scope: Optional[TokenScopeRequest] = Field(None, description="New token scoping configuration")
     tags: Optional[List[str]] = Field(None, description="New organizational tags")
+    is_active: Optional[bool] = Field(None, description="New token active status")
 
 
 class TokenResponse(BaseModel):
