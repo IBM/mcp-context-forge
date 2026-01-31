@@ -128,7 +128,7 @@ _SSTI_SIMPLE_TEMPLATE_PREFIXES: tuple[str, ...] = ("${", "#{", "%{")
 def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str]:
     """Yield template expression contents for a start/end delimiter, skipping delimiters inside quotes.
 
-    Continues scanning after unterminated expressions (fail-closed behavior).
+    Raises ValueError on unterminated expressions (fail-closed behavior).
 
     Args:
         value (str): Template text to scan.
@@ -165,9 +165,7 @@ def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str
                         break
                 j += 1
             else:
-                # Unterminated expression - continue scanning from after start delimiter
-                # This ensures we don't miss later dangerous expressions (fail-closed)
-                i += start_len
+                raise ValueError("Template contains unterminated expression")
         else:
             i += 1
 

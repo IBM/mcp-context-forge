@@ -284,5 +284,3 @@ class TestAdminEditServerErrors:
 
             response = await admin_edit_server("test-id", mock_edit_request, mock_db, user=mock_user)
             assert response.status_code == 500
-
-
