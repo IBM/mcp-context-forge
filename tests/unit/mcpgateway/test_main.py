@@ -14,7 +14,7 @@ from copy import deepcopy
 import datetime
 import json
 import os
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -1248,6 +1248,365 @@ class TestRPCEndpoints:
         body = response.json()
         assert isinstance(body["result"]["tools"], list)
         mock_list_tools.assert_called_once()
+
+    @patch("mcpgateway.main.tool_service.list_server_tools", new_callable=AsyncMock)
+    def test_rpc_list_tools_with_server_id(self, mock_list_tools, test_client, auth_headers):
+        """Test listing tools via JSON-RPC for a specific server."""
+        mock_tool = MagicMock()
+        mock_tool.model_dump.return_value = MOCK_TOOL_READ
+        mock_list_tools.return_value = [mock_tool]
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "tools/list",
+            "params": {"server_id": "server-1"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["result"]["tools"][0]["name"] == "test_tool"
+        mock_list_tools.assert_called_once()
+
+    @patch("mcpgateway.main.tool_service.list_tools")
+    def test_rpc_legacy_list_tools_next_cursor(self, mock_list_tools, test_client, auth_headers):
+        """Test legacy list_tools JSON-RPC method with nextCursor."""
+        mock_tool = MagicMock()
+        mock_tool.model_dump.return_value = MOCK_TOOL_READ
+        mock_list_tools.return_value = ([mock_tool], "next-cursor")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "list_tools",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()["result"]
+        assert body["nextCursor"] == "next-cursor"
+        assert body["tools"][0]["name"] == "test_tool"
+
+    @patch("mcpgateway.main.resource_service.list_server_resources", new_callable=AsyncMock)
+    def test_rpc_resources_list_with_server_id(self, mock_list_resources, test_client, auth_headers):
+        """Test listing resources via JSON-RPC for a specific server."""
+        mock_resource = MagicMock()
+        mock_resource.model_dump.return_value = {"uri": "res://1"}
+        mock_list_resources.return_value = [mock_resource]
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/list",
+            "params": {"server_id": "server-1"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()["result"]
+        assert body["resources"][0]["uri"] == "res://1"
+
+    def test_rpc_resources_read_missing_uri(self, test_client, auth_headers):
+        """Test resources/read error when uri is missing."""
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/read",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32602
+        assert "Missing resource URI" in body["error"]["message"]
+
+    @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
+    @patch("mcpgateway.main.gateway_service.forward_request", new_callable=AsyncMock)
+    def test_rpc_resources_read_fallback(self, mock_forward, mock_read, test_client, auth_headers):
+        """Test resources/read fallback to gateway when local content missing."""
+        mock_read.side_effect = ValueError("no local content")
+        mock_forward.return_value = {"contents": [{"uri": "res://remote", "text": "ok"}]}
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/read",
+            "params": {"uri": "res://remote"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()["result"]
+        assert body["contents"][0]["uri"] == "res://remote"
+        mock_forward.assert_called_once()
+
+    @patch("mcpgateway.main.get_user_email", return_value="user_1")
+    @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
+    @patch("mcpgateway.main.resource_service.unsubscribe_resource", new_callable=AsyncMock)
+    def test_rpc_resources_subscribe_unsubscribe(self, mock_unsubscribe, mock_subscribe, _mock_get_user_email, test_client, auth_headers):
+        """Test resources/subscribe and resources/unsubscribe JSON-RPC methods."""
+        subscribe_req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/subscribe",
+            "params": {"uri": "res://1"},
+        }
+        unsubscribe_req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/unsubscribe",
+            "params": {"uri": "res://1"},
+        }
+
+        response = test_client.post("/rpc/", json=subscribe_req, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+
+        response = test_client.post("/rpc/", json=unsubscribe_req, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+
+        mock_subscribe.assert_called_once()
+        mock_unsubscribe.assert_called_once()
+
+    @patch("mcpgateway.main.resource_service.list_resource_templates", new_callable=AsyncMock)
+    def test_rpc_resource_templates_list(self, mock_list_templates, test_client, auth_headers):
+        """Test resources/templates/list JSON-RPC method."""
+        mock_template = MagicMock()
+        mock_template.model_dump.return_value = {"uri": "tpl://1"}
+        mock_list_templates.return_value = [mock_template]
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "resources/templates/list",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()["result"]
+        assert body["resourceTemplates"][0]["uri"] == "tpl://1"
+
+    @patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock)
+    def test_rpc_prompts_list_next_cursor(self, mock_list_prompts, test_client, auth_headers):
+        """Test prompts/list JSON-RPC method with nextCursor."""
+        mock_prompt = MagicMock()
+        mock_prompt.model_dump.return_value = {"name": "prompt-1"}
+        mock_list_prompts.return_value = ([mock_prompt], "next-cursor")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "prompts/list",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()["result"]
+        assert body["nextCursor"] == "next-cursor"
+        assert body["prompts"][0]["name"] == "prompt-1"
+
+    @patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock)
+    def test_rpc_list_gateways(self, mock_list_gateways, test_client, auth_headers):
+        """Test list_gateways JSON-RPC method."""
+        mock_gateway = MagicMock()
+        mock_gateway.model_dump.return_value = {"id": "gateway-1"}
+        mock_list_gateways.return_value = [mock_gateway]
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "list_gateways",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()["result"]
+        assert body["gateways"][0]["id"] == "gateway-1"
+
+    @patch("mcpgateway.main.root_service.list_roots", new_callable=AsyncMock)
+    def test_rpc_list_roots(self, mock_list_roots, test_client, auth_headers):
+        """Test list_roots JSON-RPC method."""
+        mock_root = MagicMock()
+        mock_root.model_dump.return_value = {"uri": "root://1"}
+        mock_list_roots.return_value = [mock_root]
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "list_roots",
+            "params": {},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()["result"]
+        assert body["roots"][0]["uri"] == "root://1"
+
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    @patch("mcpgateway.main.cancellation_service.cancel_run", new_callable=AsyncMock)
+    def test_rpc_notification_cancelled(self, mock_cancel_run, mock_notify, test_client, auth_headers):
+        """Test notifications/cancelled JSON-RPC method."""
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "notifications/cancelled",
+            "params": {"requestId": "123", "reason": "user"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+        mock_cancel_run.assert_called_once_with("123", reason="user")
+        mock_notify.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.forward_request", new_callable=AsyncMock)
+    @patch("mcpgateway.main.tool_service.invoke_tool", new_callable=AsyncMock)
+    def test_rpc_tools_call_fallback_to_gateway(self, mock_invoke, mock_forward, test_client, auth_headers):
+        """Test tools/call fallback to gateway when tool invocation fails."""
+        mock_invoke.side_effect = ValueError("no local tool")
+        mock_forward.return_value = {"content": [{"type": "text", "text": "fallback"}]}
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "tools/call",
+            "params": {"name": "missing_tool", "arguments": {}},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()["result"]
+        assert body["content"][0]["text"] == "fallback"
+        mock_forward.assert_called_once()
+
+    def test_rpc_elicitation_disabled(self, test_client, auth_headers, monkeypatch):
+        """Test elicitation/create JSON-RPC when feature disabled."""
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", False)
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "elicitation/create",
+            "params": {"message": "Need input", "requestedSchema": {"type": "object"}},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["error"]["code"] == -32601
+
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_rpc_notifications_initialized(self, mock_notify, test_client, auth_headers):
+        """Test notifications/initialized JSON-RPC method."""
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "notifications/initialized"}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+        mock_notify.assert_called_once()
+
+    @patch("mcpgateway.main.logging_service.notify", new_callable=AsyncMock)
+    def test_rpc_notifications_message(self, mock_notify, test_client, auth_headers):
+        """Test notifications/message JSON-RPC method."""
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "notifications/message",
+            "params": {"data": "hello", "level": "info", "logger": "test"},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+        mock_notify.assert_called_once()
+
+    @patch("mcpgateway.main.sampling_handler.create_message", new_callable=AsyncMock)
+    def test_rpc_sampling_create_message(self, mock_sampling, test_client, auth_headers):
+        """Test sampling/createMessage JSON-RPC method."""
+        mock_sampling.return_value = {"messageId": "abc"}
+        req = {
+            "jsonrpc": "2.0",
+            "id": "test-id",
+            "method": "sampling/createMessage",
+            "params": {"messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}]},
+        }
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"]["messageId"] == "abc"
+        mock_sampling.assert_called_once()
+
+    def test_rpc_sampling_other_method(self, test_client, auth_headers):
+        """Test sampling/* catch-all JSON-RPC method."""
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "sampling/unknown", "params": {}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+
+    @patch("mcpgateway.main.completion_service.handle_completion", new_callable=AsyncMock)
+    def test_rpc_completion_complete(self, mock_completion, test_client, auth_headers):
+        """Test completion/complete JSON-RPC method."""
+        mock_completion.return_value = {"result": "done"}
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p1"}}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"]["result"] == "done"
+        mock_completion.assert_called_once()
+
+    def test_rpc_completion_other_method(self, test_client, auth_headers):
+        """Test completion/* catch-all JSON-RPC method."""
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "completion/unknown", "params": {}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+
+    @patch("mcpgateway.main.logging_service.set_level", new_callable=AsyncMock)
+    def test_rpc_logging_set_level(self, mock_set_level, test_client, auth_headers):
+        """Test logging/setLevel JSON-RPC method."""
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "logging/setLevel", "params": {"level": "debug"}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+        mock_set_level.assert_called_once()
+
+    def test_rpc_logging_other_method(self, test_client, auth_headers):
+        """Test logging/* catch-all JSON-RPC method."""
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "logging/other", "params": {}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
+
+    @patch("mcpgateway.main.root_service.list_roots", new_callable=AsyncMock)
+    def test_rpc_roots_list_method(self, mock_list_roots, test_client, auth_headers):
+        """Test roots/list JSON-RPC method."""
+        mock_root = MagicMock()
+        mock_root.model_dump.return_value = {"uri": "root://2"}
+        mock_list_roots.return_value = [mock_root]
+
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "roots/list", "params": {}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"]["roots"][0]["uri"] == "root://2"
+
+    def test_rpc_roots_other_method(self, test_client, auth_headers):
+        """Test roots/* catch-all JSON-RPC method."""
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "roots/remove", "params": {}}
+        response = test_client.post("/rpc/", json=req, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {}
 
     @patch("mcpgateway.main.RPCRequest")
     def test_rpc_invalid_request(self, mock_rpc_request, test_client, auth_headers):
