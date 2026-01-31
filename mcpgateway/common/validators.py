@@ -53,7 +53,7 @@ import logging
 from pathlib import Path
 import re
 import shlex
-from typing import Any, List, Optional, Pattern
+from typing import Any, Iterable, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
 
@@ -90,18 +90,108 @@ _POLYGLOT_PATTERNS: List[Pattern[str]] = [
     re.compile(r"javascript:.*\(", re.IGNORECASE),
 ]
 
-# SSTI prevention patterns (precompiled with IGNORECASE)
-_SSTI_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}", re.IGNORECASE),
-    re.compile(r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}", re.IGNORECASE),
-    re.compile(r"\$\{.*\}", re.IGNORECASE),
-    re.compile(r"#\{.*\}", re.IGNORECASE),
-    re.compile(r"%\{.*\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\*.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\/.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\+.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\-.*\}\}", re.IGNORECASE),
-]
+# SSTI prevention - safe scanning without regex backtracking.
+_SSTI_DANGEROUS_SUBSTRINGS: tuple[str, ...] = (
+    "__",
+    ".",
+    "config",
+    "self",
+    "request",
+    "application",
+    "globals",
+    "builtins",
+    "import",
+    "getattr",  # Python getattr function
+    "|attr",  # Jinja2 attr filter (checked after whitespace normalization)
+    "|selectattr",  # Jinja2 selectattr filter (takes attribute name as arg)
+    "|sort",  # Jinja2 sort filter with attribute parameter
+    "|map",  # Jinja2 map filter with attribute parameter
+    "attribute=",  # Jinja2 filters: map(attribute=...), selectattr, sort(attribute=...)
+    "\\x",  # Hex escape sequences (e.g., \x5f for underscore)
+    "\\u",  # Unicode escape sequences (e.g., \u005f for underscore)
+    "\\n{",  # Named unicode escapes (e.g., \N{LOW LINE})
+    "\\0", "\\1", "\\2", "\\3", "\\4", "\\5", "\\6", "\\7",  # Octal escapes
+)
+# Operators that enable code execution or dynamic construction
+_SSTI_DANGEROUS_OPERATORS: tuple[str, ...] = (
+    "*",
+    "/",
+    "+",
+    "-",
+    "~",  # Jinja2 string concatenation (can build dunder names dynamically)
+    "[",  # Bracket notation for dynamic attribute access
+    "%",  # Python string formatting (e.g., '%c' % 95 produces '_')
+)
+_SSTI_SIMPLE_TEMPLATE_PREFIXES: tuple[str, ...] = ("${", "#{", "%{")
+
+
+def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str]:
+    """Yield template expression contents for a start/end delimiter, skipping delimiters inside quotes.
+
+    Continues scanning after unterminated expressions (fail-closed behavior).
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+        end (str): Closing delimiter.
+
+    Yields:
+        str: The template expression contents between delimiters.
+    """
+    start_len = len(start)
+    end_len = len(end)
+    i = 0
+    value_len = len(value)
+    while i <= value_len - start_len:
+        if value.startswith(start, i):
+            j = i + start_len
+            in_quote: Optional[str] = None
+            escaped = False
+            while j <= value_len - end_len:
+                ch = value[j]
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif in_quote:
+                    if ch == in_quote:
+                        in_quote = None
+                else:
+                    if ch in ("'", '"'):
+                        in_quote = ch
+                    elif value.startswith(end, j):
+                        yield value[i + start_len : j]
+                        i = j + end_len
+                        break
+                j += 1
+            else:
+                # Unterminated expression - continue scanning from after start delimiter
+                # This ensures we don't miss later dangerous expressions (fail-closed)
+                i += start_len
+        else:
+            i += 1
+
+
+def _has_simple_template_expression(value: str, start: str) -> bool:
+    """Return True if start is followed by any closing brace.
+
+    Uses O(n) linear scan by finding last } first, then checking prefixes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+
+    Returns:
+        bool: True if a closing brace exists after the delimiter.
+    """
+    # Find the last closing brace - if none exists, no expression can be complete
+    last_close = value.rfind("}")
+    if last_close == -1:
+        return False
+    # Check if any prefix exists before the last closing brace - O(n) single find
+    idx = value.find(start)
+    return idx != -1 and idx < last_close
+
 
 # Dangerous URL protocol patterns (precompiled with IGNORECASE)
 _DANGEROUS_URL_PATTERNS: List[Pattern[str]] = [
@@ -695,10 +785,29 @@ class SecurityValidator:
         if _EVENT_HANDLER_RE.search(value):
             raise ValueError("Template contains event handlers that may cause display issues")
 
-        # SSTI Prevention - block dangerous template expressions (uses precompiled regex list)
-        for pattern in _SSTI_PATTERNS:
-            if pattern.search(value):
+        # SSTI prevention - scan expressions without regex backtracking.
+        for expr in _iter_template_expressions(value, "{{", "}}"):
+            expr_lower = expr.lower()
+            # Normalize whitespace around | and = to catch bypass variants
+            expr_normalized = re.sub(r"\s*\|\s*", "|", expr_lower)
+            expr_normalized = re.sub(r"\s*=\s*", "=", expr_normalized)
+            if any(token in expr_normalized for token in _SSTI_DANGEROUS_SUBSTRINGS):
                 raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        for expr in _iter_template_expressions(value, "{%", "%}"):
+            expr_lower = expr.lower()
+            # Normalize whitespace around | and = to catch bypass variants
+            expr_normalized = re.sub(r"\s*\|\s*", "|", expr_lower)
+            expr_normalized = re.sub(r"\s*=\s*", "=", expr_normalized)
+            if any(token in expr_normalized for token in _SSTI_DANGEROUS_SUBSTRINGS):
+                raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        if any(_has_simple_template_expression(value, prefix) for prefix in _SSTI_SIMPLE_TEMPLATE_PREFIXES):
+            raise ValueError("Template contains potentially dangerous expressions")
 
         return value
 
@@ -1349,7 +1458,7 @@ class SecurityValidator:
         return value
 
     @classmethod
-    def validate_parameter_length(cls, value: str, max_length: int = None) -> str:
+    def validate_parameter_length(cls, value: str, max_length: Optional[int] = None) -> str:
         """Validate parameter length against configured limits.
 
         Args:
