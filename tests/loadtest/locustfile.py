@@ -2156,6 +2156,110 @@ class RBACUser(BaseUser):
 
 
 # =============================================================================
+# Batch 4: Authentication & OAuth User Classes
+# =============================================================================
+
+
+class AuthUser(BaseUser):
+    """User that tests email authentication admin endpoints.
+
+    Tests user management and authentication event logging endpoints.
+    These are read-only admin endpoints for monitoring auth activity.
+
+    Endpoints tested:
+    - GET /auth/email/events - Get current user's auth events
+    - GET /auth/email/admin/events - Admin view of all auth events
+    - GET /auth/email/admin/users - Admin list of email users
+
+    Skipped endpoints:
+    - POST /auth/login - Write operation (creates session)
+    - POST /auth/email/login - Write operation
+    - POST /auth/email/register - Write operation (creates user)
+    - GET /auth/email/me - Requires email session, not JWT auth
+    - SSO endpoints - Not available (404)
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(3)
+    @tag("auth", "events")
+    def get_auth_events(self):
+        """GET /auth/email/events - Get current user's authentication events."""
+        with self.client.get(
+            "/auth/email/events",
+            headers=self.auth_headers,
+            name="/auth/email/events",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized
+            self._validate_json_response(response, allowed_codes=[200, 401])
+
+    @task(2)
+    @tag("auth", "admin", "events")
+    def get_admin_auth_events(self):
+        """GET /auth/email/admin/events - Admin view of all authentication events."""
+        with self.client.get(
+            "/auth/email/admin/events",
+            headers=self.auth_headers,
+            name="/auth/email/admin/events",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(2)
+    @tag("auth", "admin", "users")
+    def list_admin_users(self):
+        """GET /auth/email/admin/users - Admin list of registered email users."""
+        with self.client.get(
+            "/auth/email/admin/users",
+            headers=self.auth_headers,
+            name="/auth/email/admin/users",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+
+class OAuthUser(BaseUser):
+    """User that tests OAuth client management endpoints.
+
+    Tests OAuth client registration and authorization status endpoints.
+    These endpoints support OAuth 2.0 flows for gateway authentication.
+
+    Endpoints tested:
+    - GET /oauth/registered-clients - List registered OAuth clients
+
+    Skipped endpoints:
+    - GET /oauth/authorize/{gateway_id} - Requires valid gateway with OAuth
+    - GET /oauth/status/{gateway_id} - Requires valid gateway
+    - GET /oauth/callback - Part of OAuth flow, not directly callable
+    - DELETE /oauth/registered-clients/{client_id} - Write operation
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(5)
+    @tag("oauth", "clients")
+    def list_registered_clients(self):
+        """GET /oauth/registered-clients - List registered OAuth clients."""
+        with self.client.get(
+            "/oauth/registered-clients",
+            headers=self.auth_headers,
+            name="/oauth/registered-clients",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+
+# =============================================================================
 # Combined User (Realistic Traffic Pattern)
 # =============================================================================
 
