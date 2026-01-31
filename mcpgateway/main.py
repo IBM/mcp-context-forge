@@ -29,7 +29,7 @@ Structure:
 # Standard
 import asyncio
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
 import os as _os  # local alias to avoid collisions
@@ -6259,7 +6259,7 @@ async def security_health(request: Request):
             "ui_protected": security_status["ui_protected"],
         },
         "warning_count": len(security_status["warnings"]),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     # Include warnings only if authenticated or in dev mode
