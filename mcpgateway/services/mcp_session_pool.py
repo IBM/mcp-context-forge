@@ -33,6 +33,7 @@ from enum import Enum
 import hashlib
 import logging
 import os
+import socket
 import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
 import uuid
@@ -55,8 +56,9 @@ from mcpgateway.utils.url_auth import sanitize_url_for_logging
 METHOD_NOT_FOUND = -32601
 
 # Worker ID for multi-worker session affinity
-# Each gunicorn worker has its own process ID, used to track pool session ownership
-WORKER_ID = str(os.getpid())
+# Uses hostname + PID to be unique across Docker containers (each container has PID 1)
+# and across gunicorn workers within the same container
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 
 
 def _get_cleanup_timeout() -> float:
@@ -1384,15 +1386,15 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             owner = await redis.get(f"mcpgw:pool_owner:{mcp_session_id}")
             method = request_data.get("method", "unknown")
             if not owner:
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
+                print(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
                 return None  # No owner registered - execute locally (new session)
 
             owner_id = owner.decode() if isinstance(owner, bytes) else owner
             if owner_id == WORKER_ID:
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
+                print(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
                 return None  # We own it - execute locally
 
-            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
+            print(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
 
             # Forward to owner worker via pub/sub
             response_id = str(uuid.uuid4())
@@ -1413,7 +1415,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # Publish request to owner's channel
                 await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
                 self._forwarded_requests += 1
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
+                print(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
 
                 # Wait for response
                 async with asyncio.timeout(effective_timeout):
@@ -1504,7 +1506,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             mcp_session_id = request.get("mcp_session_id", "unknown")
             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
 
-            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
+            print(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
 
             # Make internal HTTP call to local /rpc endpoint
             # This reuses ALL existing method handling logic without duplication
@@ -1528,9 +1530,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                 # Extract result or error from JSON-RPC response
                 if "error" in response_data:
-                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
+                    print(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
                     return {"error": response_data["error"]}
-                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
+                print(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
                 return {"result": response_data.get("result", {})}
 
         except httpx.TimeoutException:
@@ -1539,6 +1541,102 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         except Exception as e:
             logger.warning(f"Error executing forwarded request: {e}")
             return {"error": {"code": -32603, "message": str(e)}}
+
+    async def get_streamable_http_session_owner(self, mcp_session_id: str) -> Optional[str]:
+        """Get the worker ID that owns a Streamable HTTP session.
+
+        This is a public wrapper around _get_pool_session_owner for use by
+        streamablehttp_transport to check session ownership before handling requests.
+
+        Args:
+            mcp_session_id: The MCP session ID from mcp-session-id header.
+
+        Returns:
+            Worker ID if found, None otherwise.
+        """
+        return await self._get_pool_session_owner(mcp_session_id)
+
+    async def forward_streamable_http_to_owner(
+        self,
+        owner_worker_id: str,
+        mcp_session_id: str,
+        method: str,
+        path: str,
+        headers: Dict[str, str],
+        body: bytes,
+        query_string: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Forward a Streamable HTTP request to the worker that owns the session.
+
+        This method forwards the entire HTTP request to another worker via internal
+        HTTP call. Used when a Streamable HTTP request arrives at a worker that
+        doesn't own the session.
+
+        Args:
+            owner_worker_id: The worker ID that owns the session.
+            mcp_session_id: The MCP session ID.
+            method: HTTP method (GET, POST, DELETE).
+            path: Request path (e.g., /mcp).
+            headers: Request headers.
+            body: Request body bytes.
+            query_string: Query string if any.
+
+        Returns:
+            Dict with 'status', 'headers', and 'body' from the owner worker's response,
+            or None if forwarding fails.
+        """
+        if not settings.mcpgateway_session_affinity_enabled:
+            return None
+
+        session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+        print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")
+
+        try:
+            # Extract hostname from owner_worker_id (format: hostname:pid)
+            # In Docker, containers can reach each other by hostname
+            owner_hostname = owner_worker_id.split(":")[0] if ":" in owner_worker_id else owner_worker_id
+
+            # Build the internal URL using owner's hostname
+            url = f"http://{owner_hostname}:{settings.port}{path}"
+            if query_string:
+                url = f"{url}?{query_string}"
+            print(f"[HTTP_AFFINITY] Forwarding to URL: {url}")
+
+            # Forward headers but add marker to prevent infinite loops
+            forward_headers = dict(headers)
+            forward_headers["x-forwarded-internally"] = "true"
+            forward_headers["x-original-worker"] = WORKER_ID
+            # Update Host header to match the target (required for proper routing)
+            forward_headers["host"] = f"{owner_hostname}:{settings.port}"
+
+            async with httpx.AsyncClient() as client:
+                response = await client.request(
+                    method=method,
+                    url=url,
+                    headers=forward_headers,
+                    content=body,
+                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                )
+
+                self._forwarded_requests += 1
+                print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarded response: {response.status_code}")
+                if response.status_code >= 400:
+                    print(f"[HTTP_AFFINITY] Error response body: {response.content[:500]}")
+
+                return {
+                    "status": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response.content,
+                }
+
+        except httpx.TimeoutException:
+            self._forwarded_request_timeouts += 1
+            logger.warning(f"Timeout forwarding Streamable HTTP request to owner {owner_worker_id}")
+            return None
+        except Exception as e:
+            self._forwarded_request_failures += 1
+            logger.warning(f"Error forwarding Streamable HTTP request to owner: {e}")
+            return None
 
     def get_metrics(self) -> Dict[str, Any]:
         """

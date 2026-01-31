@@ -2833,7 +2833,7 @@ class ToolService:
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                            logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
+                            print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
 
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -3017,7 +3017,7 @@ class ToolService:
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                            logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
+                            print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
 
                     def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
                         """Create an SSL context with the provided CA certificate.

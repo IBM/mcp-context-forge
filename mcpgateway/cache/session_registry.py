@@ -1952,7 +1952,7 @@ class SessionRegistry(SessionBackend):
                 import os  # pylint: disable=import-outside-toplevel
                 worker_id = str(os.getpid())
                 session_short = session_id[:8] if len(session_id) >= 8 else session_id
-                logger.info(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Method: {method} | SSE session making internal /rpc call to {rpc_url}")
+                print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Method: {method} | SSE session making internal /rpc call to {rpc_url}")
                 logger.info(f"SSE RPC: Making call to {rpc_url} with method={method}, params={params}")
 
                 async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:

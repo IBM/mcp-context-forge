@@ -36,3 +36,8 @@ nav:
   - 32 MCP Session Pool: 032-mcp-session-pool.md
   - 33 Tool Lookup Cache: 033-tool-lookup-cache.md
   - 34 SSO Admin Sync & Config Precedence: 034-sso-admin-sync-config-precedence.md
+  - 34 Centralized Notification Service: 034-centralized-notification-service.md
+  - 35 Query Parameter Authentication: 035-query-parameter-authentication.md
+  - 36 Bootstrap Custom Roles: 036-bootstrap-custom-roles.md
+  - 37 External Plugin Stdio Launch: 037-external-plugin-stdio-launch.md
+  - 38 Multi-Worker Session Affinity: 038-multi-worker-session-affinity.md
