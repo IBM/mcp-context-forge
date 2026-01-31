@@ -236,6 +236,8 @@ services:
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
+      - USE_STATEFUL_SESSIONS=true
+      - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
@@ -504,14 +506,14 @@ services:
 
     deploy:
       mode: replicated
-      replicas: 3
+      replicas: 2
       resources:
         limits:
-          cpus: '8'
-          memory: 8G
+          cpus: '2'
+          memory: 2G
         reservations:
-          cpus: '4'
-          memory: 4G
+          cpus: '0.5'
+          memory: 512M
 
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
