@@ -261,114 +261,124 @@ sequenceDiagram
 │  CLIENT                                                                         │
 │    │                                                                            │
 │    │ POST /mcp                                                                  │
-│    │ Headers: x-mcp-session-id: ABC123                                          │
+│    │ Headers: mcp-session-id: ABC123                                            │
 │    │ Body: {"method": "tools/call", "params": {"name": "my_tool"}}              │
 │    ▼                                                                            │
-│  WORKER_B (receives HTTP request)                                               │
+│  WORKER_B (receives HTTP request) - hostname:pid = "host_b:1"                   │
 │    │                                                                            │
-│    ├─► StreamableHTTPSessionManager.handle_streamable_http()                    │
-│    │     │                                                                      │
-│    │     └─► @mcp_app.call_tool() decorator invokes call_tool()                 │
-│    │                                                                            │
-│    └─► call_tool(name, arguments)                                               │
+│    └─► handle_streamable_http(scope, receive, send)                             │
 │          │                                                                      │
-│          ├─► mcp_session_id = request_headers.get("x-mcp-session-id")           │
+│          ├─► Extract mcp_session_id from headers                                │
+│          │     (checks both "mcp-session-id" and "x-mcp-session-id")            │
 │          │                                                                      │
-│          ├─► pool = get_mcp_session_pool()                                      │
+│          ├─► pool.get_streamable_http_session_owner(mcp_session_id)             │
+│          │     │                                                                │
+│          │     └─► Redis GET mcpgw:pool_owner:{session_id}                      │
+│          │           └─► Returns: "host_a:1" (WORKER_A owns it)                 │
 │          │                                                                      │
-│          ├─► Register session mapping (before forwarding check)                 │
-│          │     │                                                                │
-│          │     ├─► tool_lookup_cache.get(name)                                  │
-│          │     │     └─► Returns: {gateway: {url, id, transport}}               │
-│          │     │                                                                │
-│          │     └─► pool.register_session_mapping(session_id, url, ...)          │
-│          │           │                                                          │
-│          │           ├─► Redis SETNX mcpgw:pool_owner:{session_id} = WORKER_B   │
-│          │           │     └─► Returns False (WORKER_A already owns)            │
-│          │           │                                                          │
-│          │           └─► Log: "Session ownership already claimed by WORKER_A"   │
+│          ├─► owner != WORKER_ID → Forward HTTP request                          │
 │          │                                                                      │
-│          ├─► forward_request_to_owner(mcp_session_id, request_data)             │
-│          │     │                                                                │
-│          │     ├─► Redis GET mcpgw:pool_owner:{session_id}                      │
-│          │     │     └─► Returns: "WORKER_A"                                    │
-│          │     │                                                                │
-│          │     ├─► owner_id != WORKER_ID → Need to forward                      │
-│          │     │                                                                │
-│          │     ├─► response_channel = mcpgw:pool_rpc_response:{uuid}            │
-│          │     │                                                                │
-│          │     ├─► Redis SUBSCRIBE response_channel                             │
-│          │     │                                                                │
-│          │     ├─► Redis PUBLISH mcpgw:pool_rpc:{WORKER_A}                      │
-│          │     │     {method, params, response_channel, mcp_session_id}         │
-│          │     │                                                                │
-│          │     └─► WAIT for response on response_channel (with timeout)         │
-│          │           │                                                          │
-│          │           :                                                          │
-│          │           : (see WORKER_A processing below)                          │
-│          │           :                                                          │
-│          │           ▼                                                          │
-│          │         Response received via Redis pub/sub                          │
-│          │           │                                                          │
-│          │           └─► return response                                        │
-│          │                                                                      │
-│          ├─► forwarded_response is not None                                     │
-│          │                                                                      │
-│          ├─► Convert response to MCP content types                              │
-│          │     └─► TextContent, ImageContent, etc.                              │
-│          │                                                                      │
-│          └─► return content                                                     │
+│          └─► pool.forward_streamable_http_to_owner(...)                         │
 │                │                                                                │
-│                └─► MCP SDK sends HTTP response ─────────────────────► CLIENT    │
+│                ├─► Extract hostname from owner: "host_a"                        │
+│                │                                                                │
+│                ├─► HTTP POST http://host_a:4444/mcp/                            │
+│                │     Headers:                                                   │
+│                │       x-forwarded-internally: true                             │
+│                │       x-original-worker: host_b:1                              │
+│                │       mcp-session-id: ABC123                                   │
+│                │     Body: (original request body)                              │
+│                │                                                                │
+│                :     (see WORKER_A processing below)                            │
+│                :                                                                │
+│                ▼                                                                │
+│              Response received from WORKER_A                                    │
+│                │                                                                │
+│                └─► Forward response to client ──────────────────────► CLIENT    │
 │                                                                                 │
 │  ─────────────────────────────────────────────────────────────────────────────  │
 │                                                                                 │
-│  WORKER_A (start_rpc_listener() running since startup)                          │
+│  WORKER_A (receives forwarded HTTP request) - hostname:pid = "host_a:1"         │
 │    │                                                                            │
-│    ├─► Subscribed to: mcpgw:pool_rpc:{WORKER_A}                                 │
-│    │                                                                            │
-│    ├─► Receives forwarded request from WORKER_B                                 │
-│    │                                                                            │
-│    └─► _execute_forwarded_request(request)                                      │
+│    └─► handle_streamable_http(scope, receive, send)                             │
 │          │                                                                      │
-│          ├─► Extract: method, params, response_channel                          │
+│          ├─► is_internally_forwarded = True (x-forwarded-internally header)     │
 │          │                                                                      │
-│          ├─► POST http://127.0.0.1:{port}/rpc                                   │
-│          │     Headers: x-forwarded-internally: true (prevents loops)           │
-│          │     Body: {jsonrpc, method, params, id}                              │
-│          │     │                                                                │
-│          │     └─► /rpc handler in main.py                                      │
-│          │           │                                                          │
-│          │           ├─► Sees x-forwarded-internally: true                      │
-│          │           │     └─► Skip session affinity check (no infinite loop)   │
-│          │           │                                                          │
-│          │           └─► tool_service.invoke_tool()                             │
-│          │                 │                                                    │
-│          │                 └─► MCPSessionPool.acquire()                         │
-│          │                       │                                              │
-│          │                       ├─► Pool key includes session_id               │
-│          │                       │                                              │
-│          │                       └─► Reuse pooled connection to backend         │
+│          ├─► Read request body, parse JSON-RPC                                  │
 │          │                                                                      │
-│          ├─► Get response from /rpc                                             │
-│          │                                                                      │
-│          └─► Redis PUBLISH {response_channel} {response}                        │
+│          └─► Route to /rpc (bypass SDK's broken session manager)                │
 │                │                                                                │
-│                └─► WORKER_B receives response (see above)                       │
+│                ├─► HTTP POST http://127.0.0.1:4444/rpc                          │
+│                │     Headers:                                                   │
+│                │       content-type: application/json                           │
+│                │       x-mcp-session-id: ABC123                                 │
+│                │       x-forwarded-internally: true                             │
+│                │       authorization: Bearer ...                                │
+│                │                                                                │
+│                └─► /rpc handler (main.py)                                       │
+│                      │                                                          │
+│                      ├─► Sees x-forwarded-internally: true                      │
+│                      │     └─► Skip session affinity check (no loops)           │
+│                      │                                                          │
+│                      └─► tool_service.invoke_tool()                             │
+│                            │                                                    │
+│                            ├─► Normalize session ID from headers                │
+│                            │     (both mcp-session-id and x-mcp-session-id)     │
+│                            │                                                    │
+│                            └─► MCPSessionPool.acquire()                         │
+│                                  │                                              │
+│                                  └─► Reuse pooled connection to backend         │
+│                                        │                                        │
+│                                        └─► Execute tool on upstream server      │
+│                                                                                 │
+│  ─────────────────────────────────────────────────────────────────────────────  │
+│                                                                                 │
+│  ALTERNATE: WORKER_A is the owner AND receives request directly                 │
+│    │                                                                            │
+│    └─► handle_streamable_http(scope, receive, send)                             │
+│          │                                                                      │
+│          ├─► is_internally_forwarded = False                                    │
+│          │                                                                      │
+│          ├─► pool.get_streamable_http_session_owner(mcp_session_id)             │
+│          │     └─► Returns: "host_a:1" (that's us!)                             │
+│          │                                                                      │
+│          ├─► owner == WORKER_ID → We own it, but DON'T use SDK                  │
+│          │     (SDK's _server_instances is empty between requests)              │
+│          │                                                                      │
+│          └─► Route to /rpc (same path as forwarded requests)                    │
+│                │                                                                │
+│                └─► tool_service.invoke_tool() → MCPSessionPool → Backend        │
 │                                                                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Why Route to /rpc Instead of SDK?
+
+The MCP SDK's `StreamableHTTPSessionManager` has a fundamental issue:
+
+```python
+# SDK stores sessions in memory
+self._server_instances: dict[str, ServerInstance] = {}
+```
+
+**Problem:** This dictionary is cleared between requests, causing "Session not found" errors.
+
+**Solution:** Route ALL requests with session IDs to `/rpc`, which:
+1. Uses `MCPSessionPool` for upstream connections (Redis-backed)
+2. Doesn't depend on SDK's in-memory session storage
+3. Works identically for forwarded and local requests
 
 ## Comparison: SSE vs Streamable HTTP
 
 | Aspect | SSE | Streamable HTTP |
 |--------|-----|-----------------|
 | **Client Connection** | Persistent SSE stream | Independent HTTP requests |
-| **Response Path** | Via SSE stream on owner worker | Via HTTP on request worker |
-| **Routing Mechanism** | `broadcast()` → Redis → `respond()` | `forward_request_to_owner()` → Redis pub/sub |
-| **Message Storage** | Redis/DB (persistent until consumed) | Redis pub/sub only (ephemeral) |
-| **Latency** | Higher (message queue + polling) | Lower (direct RPC) |
-| **Why Different?** | SSE stream constraint | No such constraint |
+| **Response Path** | Via SSE stream on owner worker | Via HTTP on any worker (forwarded if needed) |
+| **Routing Mechanism** | `broadcast()` → Redis → `respond()` | HTTP forward → `/rpc` endpoint |
+| **Message Storage** | Redis/DB (persistent until consumed) | HTTP only (synchronous) |
+| **Latency** | Higher (message queue + polling) | Lower (direct HTTP) |
+| **SDK Dependency** | Uses SDK for SSE streaming | Bypasses SDK for session routing |
+| **Why Different?** | SSE stream constraint | SDK session issues require bypass |
 
 ### Why Two Implementations?
 
@@ -388,10 +398,15 @@ sequenceDiagram
 
 | Key Pattern | Purpose | TTL |
 |-------------|---------|-----|
-| `mcpgw:pool_owner:{session_id}` | Worker that owns the session | Configurable (default 5min) |
+| `mcpgw:pool_owner:{session_id}` | Worker ID that owns the session (e.g., `host_a:1`) | Configurable (default 5min) |
 | `mcpgw:session_mapping:{session_id}:{url}:{transport}:{gateway_id}` | Pool key for session | Configurable |
-| `mcpgw:pool_rpc:{worker_id}` | Pub/sub channel for forwarded requests | N/A (pub/sub) |
-| `mcpgw:pool_rpc_response:{uuid}` | Pub/sub channel for responses | N/A (pub/sub) |
+| `mcpgw:pool_rpc:{worker_id}` | Pub/sub channel for SSE forwarded requests | N/A (pub/sub) |
+| `mcpgw:pool_rpc_response:{uuid}` | Pub/sub channel for SSE responses | N/A (pub/sub) |
+| `mcpgw:eventstore:{stream_id}:events` | Sorted set for event storage (resumability) | Configurable |
+| `mcpgw:eventstore:{stream_id}:meta` | Hash for stream metadata | Configurable |
+| `mcpgw:eventstore:event_index` | Hash mapping event_id to stream | Configurable |
+
+**Note:** Streamable HTTP uses direct HTTP forwarding, not Redis pub/sub for request routing. The `pool_rpc` channels are primarily for SSE transport.
 
 ## Configuration
 
@@ -428,20 +443,40 @@ This ensures:
 2. **No race conditions** - SETNX is atomic
 3. **Subsequent calls respect ownership** - SETNX fails, existing owner returned
 
+## Worker Identification
+
+Each worker has a unique `WORKER_ID` using the format `{hostname}:{pid}`:
+
+```python
+# In mcp_session_pool.py
+import socket
+import os
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+# Example: "gateway-container-abc:1"
+```
+
+**Why hostname:pid?**
+- In Docker, each container has PID 1 for the main process
+- Using PID alone would cause collisions (`1` vs `1`)
+- Hostname is unique per container (container ID or configured hostname)
+- Combined format ensures uniqueness across containers and processes
+
 ## Loop Prevention
 
 When forwarding requests, we prevent infinite loops with the `x-forwarded-internally` header:
 
 ```python
-# In _execute_forwarded_request()
-internal_headers["x-forwarded-internally"] = "true"
-response = await client.post(f"http://127.0.0.1:{port}/rpc", headers=internal_headers, ...)
+# In handle_streamable_http() when forwarding
+forward_headers["x-forwarded-internally"] = "true"
+forward_headers["x-original-worker"] = WORKER_ID
+
+# In handle_streamable_http() when receiving
+is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
+if is_internally_forwarded:
+    # Route to /rpc, don't check affinity again
 
 # In /rpc handler (main.py)
-is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
-if ... and not is_internally_forwarded:
-    # Try to forward
-elif is_internally_forwarded:
+if is_internally_forwarded and mcp_session_id:
     # Execute locally - don't forward again
 ```
 
@@ -460,18 +495,31 @@ if settings.mcpgateway_session_affinity_enabled:
 
 ### Positive
 - Enables horizontal scaling with session affinity
-- Reuses upstream MCP sessions efficiently
+- Reuses upstream MCP sessions efficiently via `MCPSessionPool`
 - Works transparently for both SSE and Streamable HTTP
-- Atomic ownership prevents race conditions
+- Atomic ownership prevents race conditions (SETNX)
+- Bypasses SDK session issues for reliable operation
 
 ### Negative
 - Requires Redis for multi-worker deployments
-- Adds latency for cross-worker requests
+- Adds latency for cross-worker requests (HTTP forwarding)
 - More complex debugging (requests may span workers)
+- SDK is partially bypassed, requiring maintenance of parallel path
 
 ### Neutral
-- Two different implementations for historical and architectural reasons
-- Could potentially unify in the future, but current design is fit-for-purpose
+- Two different implementations (SSE uses message queue, Streamable HTTP uses HTTP forwarding)
+- Streamable HTTP routing could be simplified further by eliminating SDK dependency entirely
+
+## Future Improvements
+
+The current implementation works around SDK limitations. A cleaner approach would be:
+
+1. **Remove SDK session manager** for Streamable HTTP entirely
+2. **Parse JSON-RPC directly** in `handle_streamable_http()`
+3. **Route all requests to `/rpc`** from the start
+4. **Handle SSE streaming** separately without SDK session state
+
+This would eliminate the SDK dependency for session routing while keeping it only for protocol compliance (JSON-RPC formatting, SSE streaming).
 
 ## References
 
