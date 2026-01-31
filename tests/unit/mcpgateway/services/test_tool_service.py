@@ -11,6 +11,7 @@ Tests for tool service implementation.
 import base64
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import logging
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
@@ -366,6 +367,23 @@ class TestToolService:
         # Test with include_auth=False
         tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=False)
         assert tool_read.auth is None
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_includes_metrics(self, tool_service, mock_tool):
+        """Verify include_metrics populates metrics and execution_count."""
+        mock_tool.metrics_summary = {
+            "total_executions": 3,
+            "successful_executions": 2,
+            "failed_executions": 1,
+            "failure_rate": 0.333,
+            "min_response_time": 0.1,
+            "max_response_time": 1.0,
+            "avg_response_time": 0.5,
+            "last_execution_time": datetime.now(timezone.utc),
+        }
+        tool_read = tool_service.convert_tool_to_read(mock_tool, include_metrics=True, include_auth=False)
+        assert tool_read.metrics.total_executions == 3
+        assert tool_read.execution_count == 3
 
     @pytest.mark.asyncio
     async def test_register_tool(self, tool_service, mock_tool, test_db):

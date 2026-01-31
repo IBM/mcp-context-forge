@@ -943,3 +943,159 @@ def test_extract_json_field_postgresql(monkeypatch):
     compiled = str(expr.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "->>" in compiled
     assert "tool.name" in compiled
+
+
+# --- RBAC role helpers ---
+def test_role_effective_permissions_includes_parent():
+    parent = db.Role(permissions=["resources.read", "tools.read"])
+    child = db.Role(permissions=["tools.write"])
+    child.parent_role = parent
+    assert child.get_effective_permissions() == ["resources.read", "tools.read", "tools.write"]
+
+
+def test_user_role_is_expired():
+    role = db.UserRole(expires_at=None)
+    assert role.is_expired() is False
+
+    role.expires_at = db.utc_now() - timedelta(minutes=5)
+    assert role.is_expired() is True
+
+
+def test_permissions_helpers():
+    permissions = db.Permissions.get_all_permissions()
+    assert "tools.read" in permissions
+    assert db.Permissions.ALL_PERMISSIONS not in permissions
+
+    by_resource = db.Permissions.get_permissions_by_resource()
+    assert "tools" in by_resource
+    assert "tools.read" in by_resource["tools"]
+
+
+# --- Email user helpers ---
+def test_email_user_account_helpers():
+    user = db.EmailUser(email="user@example.com", password_hash="hash")
+    assert user.is_email_verified() is False
+    user.email_verified_at = db.utc_now()
+    assert user.is_email_verified() is True
+
+    assert user.is_account_locked() is False
+    user.locked_until = db.utc_now() + timedelta(minutes=10)
+    assert user.is_account_locked() is True
+
+    user.full_name = "Test User"
+    assert user.get_display_name() == "Test User"
+    user.full_name = None
+    assert user.get_display_name() == "user"
+
+
+def test_email_user_failed_attempts_flow():
+    user = db.EmailUser(email="user@example.com", password_hash="hash", failed_login_attempts=2)
+    user.locked_until = db.utc_now() + timedelta(minutes=5)
+    user.reset_failed_attempts()
+    assert user.failed_login_attempts == 0
+    assert user.locked_until is None
+    assert user.last_login is not None
+
+    user.failed_login_attempts = 0
+    assert user.increment_failed_attempts(max_attempts=2, lockout_duration_minutes=1) is False
+    assert user.increment_failed_attempts(max_attempts=2, lockout_duration_minutes=1) is True
+    assert user.locked_until is not None
+
+
+def test_email_user_team_helpers():
+    team = db.EmailTeam(name="Team", slug="team", created_by="user@example.com", is_personal=False)
+    personal_team = db.EmailTeam(name="Personal", slug="personal", created_by="user@example.com", is_personal=True)
+    inactive_team = db.EmailTeam(name="Inactive", slug="inactive", created_by="user@example.com", is_personal=True)
+    personal_team.is_active = True
+    inactive_team.is_active = False
+
+    member_active = db.EmailTeamMember(user_email="user@example.com", team_id="team-1", role="owner", is_active=True)
+    member_active.team = team
+    member_inactive = db.EmailTeamMember(user_email="user@example.com", team_id="team-2", role="member", is_active=False)
+    member_inactive.team = inactive_team
+
+    user = db.EmailUser(email="user@example.com", password_hash="hash")
+    user.team_memberships = [member_active, member_inactive]
+    user.created_teams = [personal_team, inactive_team]
+
+    assert user.get_teams() == [team]
+    assert user.get_personal_team() == personal_team
+    assert user.is_team_member("team-1") is True
+    assert user.is_team_member("team-2") is False
+    assert user.get_team_role("team-1") == "owner"
+    assert user.get_team_role("team-2") is None
+
+
+# --- Email team helpers ---
+def test_email_team_member_helpers_detached():
+    team = db.EmailTeam(name="Team", slug="team", created_by="user@example.com")
+    member_active = db.EmailTeamMember(user_email="user@example.com", team_id="team-1", role="owner", is_active=True)
+    member_inactive = db.EmailTeamMember(user_email="user@example.com", team_id="team-1", role="member", is_active=False)
+    team.members = [member_active, member_inactive]
+
+    assert team.get_member_count() == 1
+    assert team.is_member("user@example.com") is True
+    assert team.get_member_role("user@example.com") == "owner"
+    assert team.is_member("other@example.com") is False
+    assert team.get_member_role("other@example.com") is None
+
+
+def test_email_team_member_helpers_session_path(monkeypatch):
+    team = db.EmailTeam(name="Team", slug="team", created_by="user@example.com")
+    team.id = "team-1"
+
+    count_query = MagicMock()
+    count_query.filter.return_value = count_query
+    count_query.scalar.return_value = 3
+
+    exists_query = MagicMock()
+    exists_query.filter.return_value = exists_query
+    exists_query.first.return_value = object()
+
+    role_query = MagicMock()
+    role_query.filter.return_value = role_query
+    role_query.first.return_value = ("owner",)
+
+    mock_session = MagicMock()
+    mock_session.query.side_effect = [count_query, exists_query, role_query]
+
+    monkeypatch.setattr("sqlalchemy.orm.object_session", lambda obj: mock_session)
+
+    assert team.get_member_count() == 3
+    assert team.is_member("user@example.com") is True
+    assert team.get_member_role("user@example.com") == "owner"
+
+
+# --- API token helpers ---
+def test_email_api_token_helpers():
+    token = db.EmailApiToken(
+        user_email="user@example.com",
+        name="token",
+        token_hash="hash",
+        server_id="server-1",
+        resource_scopes=["tools.read"],
+    )
+    assert token.is_scoped_to_server("server-1") is True
+    assert token.is_scoped_to_server("server-2") is False
+    assert token.has_permission("tools.read") is True
+    assert token.has_permission("tools.write") is False
+    assert token.is_team_token() is False
+
+    token.team_id = "team-1"
+    assert token.is_team_token() is True
+
+    token.expires_at = db.utc_now() - timedelta(minutes=1)
+    token.is_active = True
+    assert token.is_expired() is True
+    assert token.is_valid() is False
+
+    token.expires_at = None
+    token.is_active = True
+    assert token.is_valid() is True
+
+
+# --- SSO auth session helpers ---
+def test_sso_auth_session_is_expired_handles_naive_datetime():
+    session = db.SSOAuthSession(provider_id="github", state="state", redirect_uri="http://example.com")
+    session.expires_at = datetime.now() - timedelta(minutes=1)
+    assert session.is_expired is True
