@@ -3373,22 +3373,23 @@ class TestToolListingGracefulErrorHandling:
                 return tool_read_3
 
         service = ToolService()
-        service.convert_tool_to_read = Mock(side_effect=mock_convert)
+        
+        # Use patch.object to properly mock the instance method
+        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+            # Call list_tools - should NOT raise an exception
+            result, next_cursor = await service.list_tools(mock_db)
 
-        # Call list_tools - should NOT raise an exception
-        result, next_cursor = await service.list_tools(mock_db)
+            # Verify we got the two valid tools
+            assert len(result) == 2
+            assert tool_read_1 in result
+            assert tool_read_3 in result
 
-        # Verify we got the two valid tools
-        assert len(result) == 2
-        assert tool_read_1 in result
-        assert tool_read_3 in result
+            # Verify convert_tool_to_read was called for all three tools
+            assert service.convert_tool_to_read.call_count == 3
 
-        # Verify convert_tool_to_read was called for all three tools
-        assert service.convert_tool_to_read.call_count == 3
-
-        # Verify the error was logged (format: "Failed to convert tool {id} ({name}): {error}")
-        assert "Failed to convert tool 2" in caplog.text
-        assert "bad-tool" in caplog.text
+            # Verify the error was logged (format: "Failed to convert tool {id} ({name}): {error}")
+            assert "Failed to convert tool 2" in caplog.text
+            assert "bad-tool" in caplog.text
 
     @pytest.mark.asyncio
     async def test_list_server_tools_continues_on_conversion_error(self, caplog):
@@ -3417,19 +3418,19 @@ class TestToolListingGracefulErrorHandling:
                 raise ValueError("Simulated conversion error")
             return f"converted_{tool.original_name}"
 
-        service.convert_tool_to_read = Mock(side_effect=mock_convert)
+        # Use patch.object to properly mock the instance method
+        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+            # Call list_server_tools - should NOT raise an exception
+            tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
 
-        # Call list_server_tools - should NOT raise an exception
-        tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
+            # Verify we got the two valid tools
+            assert len(tools) == 2
+            assert "converted_good_tool_1" in tools
+            assert "converted_good_tool_2" in tools
 
-        # Verify we got the two valid tools
-        assert len(tools) == 2
-        assert "converted_good_tool_1" in tools
-        assert "converted_good_tool_2" in tools
-
-        # Verify the error was logged
-        assert "Failed to convert tool 2" in caplog.text
-        assert "bad-tool" in caplog.text
+            # Verify the error was logged
+            assert "Failed to convert tool 2" in caplog.text
+            assert "bad-tool" in caplog.text
 
     @pytest.mark.asyncio
     async def test_list_tools_for_user_continues_on_conversion_error(self, caplog):
@@ -3468,16 +3469,17 @@ class TestToolListingGracefulErrorHandling:
                 return tool_read_3
 
         service = ToolService()
-        service.convert_tool_to_read = Mock(side_effect=mock_convert)
 
         # Mock TeamManagementService for user context
         mock_team = MagicMock(id="team-1", is_personal=True)
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
 
-            # Call list_tools_for_user - should NOT raise an exception
-            # Returns tuple[List[ToolRead], Optional[str]]
-            result, next_cursor = await service.list_tools_for_user(mock_db, user_email="user@example.com")
+            # Use patch.object to properly mock the instance method
+            with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+                # Call list_tools_for_user - should NOT raise an exception
+                # Returns tuple[List[ToolRead], Optional[str]]
+                result, next_cursor = await service.list_tools_for_user(mock_db, user_email="user@example.com")
 
         # Verify we got the two valid tools
         assert len(result) == 2
