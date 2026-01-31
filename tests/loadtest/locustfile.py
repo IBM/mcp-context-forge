@@ -2260,6 +2260,213 @@ class OAuthUser(BaseUser):
 
 
 # =============================================================================
+# Batch 5: Logs, Metrics, Observability User Classes
+# =============================================================================
+
+
+class LogSearchUser(BaseUser):
+    """User that tests structured log search and audit endpoints.
+
+    Tests log search, security events, audit trails, and performance metrics.
+    These endpoints provide visibility into system activity and security.
+
+    Endpoints tested:
+    - GET /api/logs/security-events - Security event log
+    - GET /api/logs/audit-trails - Audit trail entries
+    - GET /api/logs/performance-metrics - Performance metrics log
+
+    Skipped endpoints:
+    - POST /api/logs/search - Complex search payload
+    - GET /api/logs/trace/{correlation_id} - Requires valid correlation ID
+
+    Weight: Low (monitoring operations)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(3)
+    @tag("logs", "security")
+    def get_security_events(self):
+        """GET /api/logs/security-events - Get security event log."""
+        with self.client.get(
+            "/api/logs/security-events",
+            headers=self.auth_headers,
+            name="/api/logs/security-events",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(3)
+    @tag("logs", "audit")
+    def get_audit_trails(self):
+        """GET /api/logs/audit-trails - Get audit trail entries."""
+        with self.client.get(
+            "/api/logs/audit-trails",
+            headers=self.auth_headers,
+            name="/api/logs/audit-trails",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(2)
+    @tag("logs", "performance")
+    def get_performance_metrics(self):
+        """GET /api/logs/performance-metrics - Get performance metrics log."""
+        with self.client.get(
+            "/api/logs/performance-metrics",
+            headers=self.auth_headers,
+            name="/api/logs/performance-metrics",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+
+class MetricsUser(BaseUser):
+    """User that tests metrics and statistics endpoints.
+
+    Tests system metrics, configuration, and Prometheus export endpoints.
+    These endpoints provide operational visibility and monitoring integration.
+
+    Endpoints tested:
+    - GET /metrics - Aggregated system metrics
+    - GET /api/metrics/stats - Detailed metrics statistics
+    - GET /api/metrics/config - Metrics configuration
+    - GET /metrics/prometheus - Prometheus-format metrics export
+
+    Skipped endpoints:
+    - POST /api/metrics/cleanup - Write operation
+    - POST /api/metrics/rollup - Write operation
+    - POST /metrics/reset - Write operation
+
+    Weight: Low (monitoring operations)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(4)
+    @tag("metrics", "aggregated")
+    def get_metrics(self):
+        """GET /metrics - Get aggregated system metrics."""
+        with self.client.get(
+            "/metrics",
+            headers=self.auth_headers,
+            name="/metrics",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized
+            self._validate_json_response(response, allowed_codes=[200, 401])
+
+    @task(3)
+    @tag("metrics", "stats")
+    def get_metrics_stats(self):
+        """GET /api/metrics/stats - Get detailed metrics statistics."""
+        with self.client.get(
+            "/api/metrics/stats",
+            headers=self.auth_headers,
+            name="/api/metrics/stats",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(2)
+    @tag("metrics", "config")
+    def get_metrics_config(self):
+        """GET /api/metrics/config - Get metrics configuration."""
+        with self.client.get(
+            "/api/metrics/config",
+            headers=self.auth_headers,
+            name="/api/metrics/config",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(2)
+    @tag("metrics", "prometheus")
+    def get_prometheus_metrics(self):
+        """GET /metrics/prometheus - Get Prometheus-format metrics."""
+        with self.client.get(
+            "/metrics/prometheus",
+            headers=self.auth_headers,
+            name="/metrics/prometheus",
+            catch_response=True,
+        ) as response:
+            # 200=Success - Prometheus format is plain text, not JSON
+            if response.status_code == 200:
+                response.success()
+            else:
+                response.failure(f"Expected [200], got {response.status_code}")
+
+
+class ObservabilityUser(BaseUser):
+    """User that tests admin observability JSON endpoints.
+
+    Tests observability endpoints that return JSON data (not HTML templates).
+    These provide tool usage, performance, and volume analytics.
+
+    Endpoints tested:
+    - GET /admin/observability/tools/usage - Tool usage statistics
+    - GET /admin/observability/tools/performance - Tool performance data
+    - GET /admin/observability/metrics/top-volume - Top volume endpoints
+
+    Skipped endpoints:
+    - HTML-returning endpoints (already covered by admin UI tests)
+    - POST /admin/observability/queries - Write operation
+    - Endpoints requiring specific IDs
+
+    Weight: Low (admin analytics)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(3)
+    @tag("observability", "tools")
+    def get_tools_usage(self):
+        """GET /admin/observability/tools/usage - Get tool usage statistics."""
+        with self.client.get(
+            "/admin/observability/tools/usage",
+            headers=self.auth_headers,
+            name="/admin/observability/tools/usage",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(3)
+    @tag("observability", "performance")
+    def get_tools_performance(self):
+        """GET /admin/observability/tools/performance - Get tool performance data."""
+        with self.client.get(
+            "/admin/observability/tools/performance",
+            headers=self.auth_headers,
+            name="/admin/observability/tools/performance",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(2)
+    @tag("observability", "volume")
+    def get_top_volume(self):
+        """GET /admin/observability/metrics/top-volume - Get top volume endpoints."""
+        with self.client.get(
+            "/admin/observability/metrics/top-volume",
+            headers=self.auth_headers,
+            name="/admin/observability/metrics/top-volume",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+
+# =============================================================================
 # Combined User (Realistic Traffic Pattern)
 # =============================================================================
 
