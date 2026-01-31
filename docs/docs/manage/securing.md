@@ -564,7 +564,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
 
 - [Security Policy](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) - Full security documentation
 - [Deployment Options](index.md) - Various deployment methods
-- [Environment Variables](../index.md#configuration-env-or-env-vars) - Complete configuration reference
+- [Environment Variables](configuration.md) - Complete configuration reference
 
 ## ⚡ Quick Start Security Commands
 
