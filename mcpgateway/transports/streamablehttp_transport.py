@@ -534,7 +534,11 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     app_user_email = get_user_email_from_context()  # Keep for OAuth token selection
 
     # Multi-worker session affinity: check if we should forward to another worker
-    mcp_session_id = request_headers.get("x-mcp-session-id") or request.headers.get("mcp-session-id") if request_headers else None
+    # Check both x-mcp-session-id (internal/forwarded) and mcp-session-id (client protocol header)
+    mcp_session_id = None
+    if request_headers:
+        request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
+        mcp_session_id = request_headers_lower.get("x-mcp-session-id") or request_headers_lower.get("mcp-session-id")
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id:
         try:
             # First-Party
@@ -1215,13 +1219,13 @@ class SessionManagerWrapper:
         """
 
         if settings.use_stateful_sessions:
-            # Use Redis event store for multi-worker deployments
+            # Use Redis event store for single-worker stateful deployments
             if settings.cache_type == "redis" and settings.redis_url:
                 # First-Party
                 from mcpgateway.transports.redis_event_store import RedisEventStore
 
                 event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
-                print("Using RedisEventStore for stateful sessions (multi-worker capable)")
+                print("Using RedisEventStore for stateful sessions (single-worker)")
             else:
                 # Fall back to in-memory for single-worker or when Redis not available
                 event_store = InMemoryEventStore()
@@ -1323,17 +1327,91 @@ class SessionManagerWrapper:
         print(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)} | Sessions: {list(self.session_manager._server_instances.keys())}")
 
         if is_internally_forwarded:
-            print(f"[HTTP_AFFINITY_FORWARDED] Received forwarded request | Session: {mcp_session_id}")
-            # Strip mcp-session-id header so SDK treats this as a fresh request
-            # This works around the SDK's session cleanup issue - each forwarded request
-            # gets its own lightweight SDK session, but upstream pool is still reused
-            original_headers = scope.get("headers", [])
-            scope["headers"] = [(k, v) for k, v in original_headers if k.lower() != b"mcp-session-id"]
-            # Update our local headers dict too
-            headers = {k: v for k, v in headers.items() if k.lower() != "mcp-session-id"}
-            mcp_session_id = "not-provided"
-            headers["mcp-session-id"] = mcp_session_id
-            print(f"[HTTP_AFFINITY_FORWARDED] Stripped session header for SDK, treating as new request")
+            print(f"[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: {method} | Session: {mcp_session_id}")
+
+            # Only route POST requests with JSON-RPC body to /rpc
+            # DELETE and other methods should return success (session cleanup is local)
+            if method != "POST":
+                print(f"[HTTP_AFFINITY_FORWARDED] Non-POST method, returning 200 OK")
+                await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+                await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","result":{}}'})
+                return
+
+            # For POST requests, bypass SDK session manager and use /rpc directly
+            # This avoids SDK's session cleanup issues while maintaining stateful upstream connections
+            try:
+                # Read request body
+                body_parts = []
+                while True:
+                    message = await receive()
+                    if message["type"] == "http.request":
+                        body_parts.append(message.get("body", b""))
+                        if not message.get("more_body", False):
+                            break
+                    elif message["type"] == "http.disconnect":
+                        return
+                body = b"".join(body_parts)
+
+                if not body:
+                    print(f"[HTTP_AFFINITY_FORWARDED] Empty body, returning 202 Accepted")
+                    await send({"type": "http.response.start", "status": 202, "headers": []})
+                    await send({"type": "http.response.body", "body": b""})
+                    return
+
+                # Parse JSON-RPC
+                import orjson
+                json_body = orjson.loads(body)
+                rpc_method = json_body.get("method", "")
+                print(f"[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: {rpc_method}")
+
+                # Notifications don't need /rpc routing - just acknowledge
+                if rpc_method.startswith("notifications/"):
+                    print(f"[HTTP_AFFINITY_FORWARDED] Notification, returning 202 Accepted")
+                    await send({"type": "http.response.start", "status": 202, "headers": []})
+                    await send({"type": "http.response.body", "body": b""})
+                    return
+
+                # Call /rpc internally
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    rpc_headers = {
+                        "content-type": "application/json",
+                        "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
+                        "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
+                    }
+                    # Copy auth header if present
+                    if "authorization" in headers:
+                        rpc_headers["authorization"] = headers["authorization"]
+
+                    response = await client.post(
+                        f"http://127.0.0.1:{settings.port}/rpc",
+                        content=body,
+                        headers=rpc_headers,
+                        timeout=30.0,
+                    )
+
+                    # Return response to client
+                    response_headers = [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(response.content)).encode()),
+                    ]
+                    if mcp_session_id != "not-provided":
+                        response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
+
+                    await send({
+                        "type": "http.response.start",
+                        "status": response.status_code,
+                        "headers": response_headers,
+                    })
+                    await send({
+                        "type": "http.response.body",
+                        "body": response.content,
+                    })
+                    print(f"[HTTP_AFFINITY_FORWARDED] Response sent | Status: {response.status_code}")
+                    return
+            except Exception as e:
+                logger.error(f"[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: {e}")
+                # Fall through to SDK handling as fallback
 
         if (
             settings.mcpgateway_session_affinity_enabled
@@ -1400,6 +1478,82 @@ class SessionManagerWrapper:
                         # Forwarding failed - fall through to local handling
                         # This may result in "session not found" but it's better than no response
                         print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
+
+                elif owner == WORKER_ID and method == "POST":
+                    # We own this session - route POST requests to /rpc to avoid SDK session issues
+                    # The SDK's _server_instances gets cleared between requests, so we can't rely on it
+                    print(f"[HTTP_AFFINITY_LOCAL] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner is us, routing to /rpc")
+
+                    # Read request body
+                    body_parts = []
+                    while True:
+                        message = await receive()
+                        if message["type"] == "http.request":
+                            body_parts.append(message.get("body", b""))
+                            if not message.get("more_body", False):
+                                break
+                        elif message["type"] == "http.disconnect":
+                            return
+                    body = b"".join(body_parts)
+
+                    if not body:
+                        print(f"[HTTP_AFFINITY_LOCAL] Empty body, returning 202 Accepted")
+                        await send({"type": "http.response.start", "status": 202, "headers": []})
+                        await send({"type": "http.response.body", "body": b""})
+                        return
+
+                    # Parse JSON-RPC and route to /rpc
+                    try:
+                        import orjson
+                        json_body = orjson.loads(body)
+                        rpc_method = json_body.get("method", "")
+                        print(f"[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: {rpc_method}")
+
+                        # Notifications don't need /rpc routing
+                        if rpc_method.startswith("notifications/"):
+                            print(f"[HTTP_AFFINITY_LOCAL] Notification, returning 202 Accepted")
+                            await send({"type": "http.response.start", "status": 202, "headers": []})
+                            await send({"type": "http.response.body", "body": b""})
+                            return
+
+                        # Call /rpc internally
+                        import httpx
+                        async with httpx.AsyncClient() as client:
+                            rpc_headers = {
+                                "content-type": "application/json",
+                                "x-mcp-session-id": mcp_session_id,
+                                "x-forwarded-internally": "true",
+                            }
+                            if "authorization" in headers:
+                                rpc_headers["authorization"] = headers["authorization"]
+
+                            response = await client.post(
+                                f"http://127.0.0.1:{settings.port}/rpc",
+                                content=body,
+                                headers=rpc_headers,
+                                timeout=30.0,
+                            )
+
+                            response_headers = [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(response.content)).encode()),
+                                (b"mcp-session-id", mcp_session_id.encode()),
+                            ]
+
+                            await send({
+                                "type": "http.response.start",
+                                "status": response.status_code,
+                                "headers": response_headers,
+                            })
+                            await send({
+                                "type": "http.response.body",
+                                "body": response.content,
+                            })
+                            print(f"[HTTP_AFFINITY_LOCAL] Response sent | Status: {response.status_code}")
+                            return
+                    except Exception as e:
+                        logger.error(f"[HTTP_AFFINITY_LOCAL] Error routing to /rpc: {e}")
+                        # Fall through to SDK handling as fallback
 
             except RuntimeError:
                 # Pool not initialized - proceed with local handling

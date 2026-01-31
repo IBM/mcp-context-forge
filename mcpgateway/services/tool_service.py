@@ -2824,8 +2824,9 @@ class ToolService:
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
                         # and normalize to x-mcp-session-id for our internal session affinity logic
                         # The pool will strip this before sending to upstream
+                        # Check both mcp-session-id (direct client) and x-mcp-session-id (forwarded requests)
                         request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
-                        mcp_session_id = request_headers_lower.get("mcp-session-id")
+                        mcp_session_id = request_headers_lower.get("mcp-session-id") or request_headers_lower.get("x-mcp-session-id")
                         if mcp_session_id:
                             headers["x-mcp-session-id"] = mcp_session_id
                             # Standard
@@ -2833,7 +2834,7 @@ class ToolService:
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                            print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
+                            print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
 
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -3008,8 +3009,9 @@ class ToolService:
                         # Read MCP-Session-Id from downstream client (MCP protocol header)
                         # and normalize to x-mcp-session-id for our internal session affinity logic
                         # The pool will strip this before sending to upstream
+                        # Check both mcp-session-id (direct client) and x-mcp-session-id (forwarded requests)
                         request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
-                        mcp_session_id = request_headers_lower.get("mcp-session-id")
+                        mcp_session_id = request_headers_lower.get("mcp-session-id") or request_headers_lower.get("x-mcp-session-id")
                         if mcp_session_id:
                             headers["x-mcp-session-id"] = mcp_session_id
                             # Standard
@@ -3017,7 +3019,7 @@ class ToolService:
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-                            print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {tool_name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
+                            print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
 
                     def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
                         """Create an SSL context with the provided CA certificate.
