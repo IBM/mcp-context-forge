@@ -47,6 +47,7 @@ from mcpgateway.common.models import (
     Tool,
     ToolResult,
 )
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.schemas import (
     AdminGatewayCreate,
     AdminToolCreate,
@@ -61,6 +62,8 @@ from mcpgateway.schemas import (
     StatusToggleResponse,
     TeamCreateRequest,
     TeamUpdateRequest,
+    ToolCreate,
+    ToolUpdate,
 )
 
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
@@ -966,3 +969,107 @@ class TestTeamXSSValidation:
         """Event handlers in description should be rejected via XSS check."""
         with pytest.raises(ValidationError, match="contains script patterns"):
             TeamCreateRequest(name="Valid Team", description='test onerror="alert(1)"')
+
+
+class TestSchemaValidators:
+    """Targeted validator coverage for tool/resource/global config schemas."""
+
+    def test_tool_create_request_type_by_integration(self):
+        """MCP and A2A integrations should accept only allowed request types."""
+        with pytest.raises(ValidationError, match="Cannot manually create MCP tools"):
+            ToolCreate(name="mcp-tool", integration_type="MCP", request_type="STDIO", url="http://example.com")
+
+        with pytest.raises(ValidationError, match="Cannot manually create A2A tools"):
+            ToolCreate(name="a2a-tool", integration_type="A2A", request_type="POST", url="http://example.com")
+
+        with pytest.raises(ValidationError, match="not allowed"):
+            ToolCreate(name="bad-tool", integration_type="REST", request_type="SSE", url="http://example.com")
+
+    def test_tool_create_auth_assembly(self):
+        """Auth fields should assemble into encoded auth values."""
+        basic_tool = ToolCreate(
+            name="basic-tool",
+            integration_type="REST",
+            request_type="GET",
+            url="http://example.com",
+            auth_type="basic",
+            auth_username="user",
+            auth_password="pass",
+        )
+        assert basic_tool.auth.auth_type == "basic"
+        assert basic_tool.auth.auth_value
+
+        bearer_tool = ToolCreate(
+            name="bearer-tool",
+            integration_type="REST",
+            request_type="GET",
+            url="http://example.com",
+            auth_type="bearer",
+            auth_token="token123",
+        )
+        assert bearer_tool.auth.auth_type == "bearer"
+        assert bearer_tool.auth.auth_value
+
+        headers_tool = ToolCreate(
+            name="headers-tool",
+            integration_type="REST",
+            request_type="GET",
+            url="http://example.com",
+            auth_type="authheaders",
+            auth_header_key="X-Auth",
+            auth_header_value="secret",
+        )
+        assert headers_tool.auth.auth_type == "authheaders"
+        assert headers_tool.auth.auth_value
+
+        empty_headers_tool = ToolCreate(
+            name="headers-tool-empty",
+            integration_type="REST",
+            request_type="GET",
+            url="http://example.com",
+            auth_type="authheaders",
+        )
+        assert empty_headers_tool.auth.auth_type == "authheaders"
+        assert empty_headers_tool.auth.auth_value is None
+
+    def test_tool_create_sets_default_timeout(self):
+        """REST passthrough tools should default timeout_ms when missing."""
+        tool = ToolCreate(name="rest-tool", integration_type="REST", request_type="GET", url="http://example.com")
+        assert tool.timeout_ms == 20000
+
+    def test_tool_update_extracts_base_url_and_path(self):
+        """ToolUpdate should parse URL into base_url and path_template."""
+        update = ToolUpdate(integration_type="REST", url="https://example.com/api/v1")
+        assert update.base_url == "https://example.com"
+        assert update.path_template == "/api/v1"
+
+    def test_tool_update_validation_errors(self):
+        """ToolUpdate validators should reject invalid passthrough configs."""
+        with pytest.raises(ValidationError, match="path_template must start"):
+            ToolUpdate(path_template="no-leading-slash")
+
+        with pytest.raises(ValidationError, match="timeout_ms must be a positive integer"):
+            ToolUpdate(timeout_ms=0)
+
+        with pytest.raises(ValidationError, match="Invalid host/scheme"):
+            ToolUpdate(allowlist=["not a host"])
+
+        with pytest.raises(ValidationError, match="Unknown plugin"):
+            ToolUpdate(plugin_chain_pre=["unknown_plugin"])
+
+    def test_tool_update_validator_helpers(self):
+        """Directly exercise allowlist/plugin validators for edge cases."""
+        assert ToolUpdate.validate_allowlist(None) is None
+        with pytest.raises(ValueError, match="allowlist must be a list"):
+            ToolUpdate.validate_allowlist("not-a-list")
+        with pytest.raises(ValueError, match="Invalid type in allowlist"):
+            ToolUpdate.validate_allowlist([123])
+
+        with pytest.raises(ValueError, match="Unknown plugin"):
+            ToolUpdate.validate_plugin_chain(["unknown_plugin"])
+
+    def test_resource_description_truncation(self):
+        """ResourceCreate should truncate overly long descriptions."""
+        long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
+        resource = ResourceCreate(uri="resource://test", name="resource", description=long_desc, content="data")
+        assert len(resource.description) == SecurityValidator.MAX_DESCRIPTION_LENGTH
