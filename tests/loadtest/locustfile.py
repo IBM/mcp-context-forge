@@ -2467,6 +2467,121 @@ class ObservabilityUser(BaseUser):
 
 
 # =============================================================================
+# Batch 6: LLM, Reverse Proxy User Classes
+# =============================================================================
+
+
+class LLMUser(BaseUser):
+    """User that tests LLM provider and model configuration endpoints.
+
+    Tests LLM gateway models and provider configuration endpoints.
+    These endpoints provide LLM integration capabilities.
+
+    Endpoints tested:
+    - GET /llm/gateway/models - List gateway-available models
+    - GET /llmchat/gateway/models - List chat gateway models
+    - GET /admin/llm/provider-configs - LLM provider configurations
+    - GET /admin/llm/provider-defaults - Default provider settings
+
+    Skipped endpoints:
+    - GET /llm/providers - 500 (requires LLM providers configured)
+    - GET /llm/models - 500 (requires LLM providers configured)
+    - POST endpoints - Write operations
+    - LLMChat status/config - Require specific user ID
+
+    Weight: Low (configuration endpoints)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(3)
+    @tag("llm", "models")
+    def get_gateway_models(self):
+        """GET /llm/gateway/models - List gateway-available LLM models."""
+        with self.client.get(
+            "/llm/gateway/models",
+            headers=self.auth_headers,
+            name="/llm/gateway/models",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized
+            self._validate_json_response(response, allowed_codes=[200, 401])
+
+    @task(3)
+    @tag("llm", "chat", "models")
+    def get_chat_gateway_models(self):
+        """GET /llmchat/gateway/models - List chat gateway LLM models."""
+        with self.client.get(
+            "/llmchat/gateway/models",
+            headers=self.auth_headers,
+            name="/llmchat/gateway/models",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized
+            self._validate_json_response(response, allowed_codes=[200, 401])
+
+    @task(2)
+    @tag("llm", "admin", "config")
+    def get_provider_configs(self):
+        """GET /admin/llm/provider-configs - Get LLM provider configurations."""
+        with self.client.get(
+            "/admin/llm/provider-configs",
+            headers=self.auth_headers,
+            name="/admin/llm/provider-configs",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+    @task(2)
+    @tag("llm", "admin", "defaults")
+    def get_provider_defaults(self):
+        """GET /admin/llm/provider-defaults - Get default LLM provider settings."""
+        with self.client.get(
+            "/admin/llm/provider-defaults",
+            headers=self.auth_headers,
+            name="/admin/llm/provider-defaults",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+
+class ReverseProxyUser(BaseUser):
+    """User that tests reverse proxy session management endpoints.
+
+    Tests reverse proxy session listing for managing proxy connections.
+
+    Endpoints tested:
+    - GET /reverse-proxy/sessions - List active proxy sessions
+
+    Skipped endpoints:
+    - DELETE /reverse-proxy/sessions/{session_id} - Write operation
+    - POST /reverse-proxy/sessions/{session_id}/request - Write operation
+    - GET /reverse-proxy/sse/{session_id} - SSE streaming
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(1.0, 3.0)
+
+    @task(5)
+    @tag("reverse-proxy", "sessions")
+    def list_sessions(self):
+        """GET /reverse-proxy/sessions - List active reverse proxy sessions."""
+        with self.client.get(
+            "/reverse-proxy/sessions",
+            headers=self.auth_headers,
+            name="/reverse-proxy/sessions",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 403=Forbidden
+            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+
+
+# =============================================================================
 # Combined User (Realistic Traffic Pattern)
 # =============================================================================
 
