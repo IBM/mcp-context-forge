@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # First-Party
 from mcpgateway import admin
+from mcpgateway.services.permission_service import PermissionService
 
 
 def _make_request(root_path: str = "/admin") -> MagicMock:
@@ -26,6 +27,86 @@ def _make_request(root_path: str = "/admin") -> MagicMock:
     request.app = SimpleNamespace(state=SimpleNamespace(templates=templates))
     request.cookies = {}
     return request
+
+
+def _response_text(response: HTMLResponse) -> str:
+    return response.body.decode()
+
+
+def _allow_permissions(monkeypatch):
+    async def _ok(self, **kwargs):  # type: ignore[no-self-use]
+        return True
+
+    monkeypatch.setattr(PermissionService, "check_permission", _ok)
+
+
+class _StubTeamService:
+    def __init__(
+        self,
+        db: object,
+        *,
+        team: object | None = None,
+        user_role: str | None = None,
+        existing_requests: list | None = None,
+        create_request: object | None = None,
+        cancel_ok: bool = True,
+        remove_member_ok: bool = True,
+        owner_count: int | None = None,
+        join_requests: list | None = None,
+        approve_member: object | None = None,
+        reject_ok: bool = True,
+    ) -> None:
+        self.db = db
+        self.team = team
+        self.user_role = user_role
+        self.existing_requests = existing_requests or []
+        self.create_request = create_request
+        self.cancel_ok = cancel_ok
+        self.remove_member_ok = remove_member_ok
+        self.owner_count = owner_count
+        self.join_requests = join_requests or []
+        self.approve_member = approve_member
+        self.reject_ok = reject_ok
+        self.create_args = None
+        self.cancel_args = None
+        self.approve_args = None
+        self.reject_args = None
+        self.remove_member_args = None
+
+    async def get_team_by_id(self, team_id: str):
+        return self.team
+
+    async def get_user_role_in_team(self, user_email: str, team_id: str):
+        return self.user_role
+
+    async def get_user_join_requests(self, user_email: str, team_id: str):
+        return self.existing_requests
+
+    async def create_join_request(self, *, team_id: str, user_email: str, message: str):
+        self.create_args = (team_id, user_email, message)
+        return self.create_request
+
+    async def cancel_join_request(self, request_id: str, user_email: str):
+        self.cancel_args = (request_id, user_email)
+        return self.cancel_ok
+
+    async def list_join_requests(self, team_id: str):
+        return self.join_requests
+
+    async def approve_join_request(self, request_id: str, approved_by: str):
+        self.approve_args = (request_id, approved_by)
+        return self.approve_member
+
+    async def reject_join_request(self, request_id: str, rejected_by: str):
+        self.reject_args = (request_id, rejected_by)
+        return self.reject_ok
+
+    def count_team_owners(self, team_id: str) -> int:
+        return self.owner_count if self.owner_count is not None else 0
+
+    async def remove_member_from_team(self, *, team_id: str, user_email: str, removed_by: str):
+        self.remove_member_args = (team_id, user_email, removed_by)
+        return self.remove_member_ok
 
 
 def test_team_id_helpers():
@@ -263,3 +344,210 @@ async def test_change_password_required_handler(monkeypatch):
 
     assert response.headers["location"].endswith("/root/admin")
     assert set_cookie.called
+
+
+@pytest.mark.asyncio
+async def test_admin_create_join_request_team_not_found(monkeypatch):
+    request = _make_request()
+    mock_db = MagicMock()
+    user = {"email": "user@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: _StubTeamService(db, team=None))
+
+    response = await admin.admin_create_join_request("team-1", request, mock_db, user)
+    assert response.status_code == 404
+    assert "Team not found" in _response_text(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_create_join_request_pending(monkeypatch):
+    request = _make_request()
+    request.form = AsyncMock(return_value={"message": "hello"})
+    mock_db = MagicMock()
+    user = {"email": "user@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team = SimpleNamespace(id="team-1", visibility="public")
+    pending = SimpleNamespace(id="req-1", status="pending")
+    team_service = _StubTeamService(db=mock_db, team=team, existing_requests=[pending])
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    response = await admin.admin_create_join_request("team-1", request, mock_db, user)
+    assert response.status_code == 200
+    body = _response_text(response)
+    assert "pending request" in body
+    assert "Cancel Request" in body
+
+
+@pytest.mark.asyncio
+async def test_admin_create_join_request_success(monkeypatch):
+    request = _make_request()
+    request.form = AsyncMock(return_value={"message": "please add me"})
+    mock_db = MagicMock()
+    user = {"email": "user@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team = SimpleNamespace(id="team-1", visibility="public")
+    created = SimpleNamespace(id="req-2")
+    team_service = _StubTeamService(db=mock_db, team=team, existing_requests=[], create_request=created)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    response = await admin.admin_create_join_request("team-1", request, mock_db, user)
+    assert response.status_code == 201
+    assert team_service.create_args == ("team-1", "user@example.com", "please add me")
+    assert "Join request submitted successfully" in _response_text(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_cancel_join_request_failure(monkeypatch):
+    mock_db = MagicMock()
+    user = {"email": "user@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    team_service = _StubTeamService(db=mock_db, cancel_ok=False)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_cancel_join_request("team-1", "req-1", db=mock_db, user=user)
+    assert response.status_code == 400
+    assert "Failed to cancel join request" in _response_text(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_cancel_join_request_success(monkeypatch):
+    mock_db = MagicMock()
+    user = {"email": "user@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    team_service = _StubTeamService(db=mock_db, cancel_ok=True)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_cancel_join_request("team-1", "req-2", db=mock_db, user=user)
+    assert response.status_code == 200
+    assert "Request to Join" in _response_text(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_list_join_requests_owner_no_pending(monkeypatch):
+    request = _make_request()
+    mock_db = MagicMock()
+    user = {"email": "owner@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team = SimpleNamespace(id="team-1", name="Alpha")
+    team_service = _StubTeamService(db=mock_db, team=team, user_role="owner", join_requests=[])
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_list_join_requests("team-1", request, db=mock_db, user=user)
+    assert response.status_code == 200
+    assert "No pending join requests" in _response_text(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_list_join_requests_with_entries(monkeypatch):
+    request = _make_request()
+    mock_db = MagicMock()
+    user = {"email": "owner@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team = SimpleNamespace(id="team-1", name="Alpha")
+    join_request = SimpleNamespace(
+        id="req-9",
+        user_email="member@example.com",
+        message="hello",
+        status="pending",
+        requested_at=datetime(2025, 1, 10, 12, 0, 0),
+    )
+    team_service = _StubTeamService(db=mock_db, team=team, user_role="owner", join_requests=[join_request])
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_list_join_requests("team-1", request, db=mock_db, user=user)
+    assert response.status_code == 200
+    body = _response_text(response)
+    assert "member@example.com" in body
+    assert "Message: hello" in body
+    assert "PENDING" in body
+
+
+@pytest.mark.asyncio
+async def test_admin_approve_join_request_success(monkeypatch):
+    mock_db = MagicMock()
+    user = {"email": "owner@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    member = SimpleNamespace(user_email="new@example.com")
+    team_service = _StubTeamService(db=mock_db, user_role="owner", approve_member=member)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_approve_join_request("team-1", "req-1", db=mock_db, user=user)
+    assert response.status_code == 200
+    assert "Join request approved" in _response_text(response)
+    assert "HX-Trigger" in response.headers
+
+
+@pytest.mark.asyncio
+async def test_admin_reject_join_request_not_owner(monkeypatch):
+    mock_db = MagicMock()
+    user = {"email": "viewer@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team_service = _StubTeamService(db=mock_db, user_role="member")
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_reject_join_request("team-1", "req-1", db=mock_db, user=user)
+    assert response.status_code == 403
+    assert "Only team owners can reject join requests" in _response_text(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_leave_team_personal(monkeypatch):
+    request = _make_request()
+    mock_db = MagicMock()
+    user = {"email": "user@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team = SimpleNamespace(id="team-1", is_personal=True)
+    team_service = _StubTeamService(db=mock_db, team=team, user_role="member")
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_leave_team("team-1", request, db=mock_db, user=user)
+    assert response.status_code == 400
+    assert "Cannot leave your personal team" in _response_text(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_leave_team_last_owner(monkeypatch):
+    request = _make_request()
+    mock_db = MagicMock()
+    user = {"email": "owner@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team = SimpleNamespace(id="team-1", is_personal=False)
+    team_service = _StubTeamService(db=mock_db, team=team, user_role="owner", owner_count=1)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_leave_team("team-1", request, db=mock_db, user=user)
+    assert response.status_code == 400
+    assert "Cannot leave team as the last owner" in _response_text(response)
+
+
+@pytest.mark.asyncio
+async def test_admin_leave_team_success(monkeypatch):
+    request = _make_request()
+    mock_db = MagicMock()
+    user = {"email": "member@example.com"}
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+
+    team = SimpleNamespace(id="team-1", is_personal=False)
+    team_service = _StubTeamService(db=mock_db, team=team, user_role="member", remove_member_ok=True)
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
+
+    _allow_permissions(monkeypatch)
+    response = await admin.admin_leave_team("team-1", request, db=mock_db, user=user)
+    assert response.status_code == 200
+    assert "Successfully left the team" in _response_text(response)
