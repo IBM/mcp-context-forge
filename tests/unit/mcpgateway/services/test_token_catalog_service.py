@@ -397,6 +397,48 @@ class TestTokenCatalogService:
             assert added_token.team_id == "team-123"
 
     @pytest.mark.asyncio
+    async def test_create_token_with_is_active_false(self, token_service, mock_db, mock_user):
+        """Test create_token with is_active=False persists the inactive state."""
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,  # User exists
+            None,  # No existing token with same name
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
+            mock_gen_token.return_value = "jwt_token_inactive"
+
+            token, raw_token = await token_service.create_token(
+                user_email="test@example.com",
+                name="Inactive Token",
+                is_active=False,
+            )
+
+            assert raw_token == "jwt_token_inactive"
+            # Verify the token added to DB has is_active=False
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_create_token_default_is_active_true(self, token_service, mock_db, mock_user):
+        """Test create_token defaults to is_active=True when not specified."""
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,  # User exists
+            None,  # No existing token with same name
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
+            mock_gen_token.return_value = "jwt_token_active"
+
+            token, raw_token = await token_service.create_token(
+                user_email="test@example.com",
+                name="Default Active Token",
+            )
+
+            # Verify the token added to DB has is_active=True by default
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.is_active is True
+
+    @pytest.mark.asyncio
     async def test_create_token_team_not_found(self, token_service, mock_db, mock_user):
         """Test create_token method - team not found."""
         mock_db.execute.return_value.scalar_one_or_none.side_effect = [
@@ -605,6 +647,60 @@ class TestTokenCatalogService:
             assert mock_api_token.ip_restrictions == ["192.168.1.0/24"]
             assert mock_api_token.time_restrictions == {"business_hours_only": True}
             assert mock_api_token.usage_limits == {"max_requests_per_hour": 100}
+
+    @pytest.mark.asyncio
+    async def test_update_token_deactivate(self, token_service, mock_db, mock_api_token):
+        """Test update_token to deactivate a token by setting is_active=False."""
+        mock_api_token.is_active = True  # Start as active
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_api_token
+
+            await token_service.update_token(
+                token_id="token-123",
+                user_email="test@example.com",
+                is_active=False,
+            )
+
+            # Verify token was deactivated
+            assert mock_api_token.is_active is False
+            mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_update_token_reactivate(self, token_service, mock_db, mock_api_token):
+        """Test update_token to reactivate a token by setting is_active=True."""
+        mock_api_token.is_active = False  # Start as inactive
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_api_token
+
+            await token_service.update_token(
+                token_id="token-123",
+                user_email="test@example.com",
+                is_active=True,
+            )
+
+            # Verify token was reactivated
+            assert mock_api_token.is_active is True
+            mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_update_token_is_active_none_no_change(self, token_service, mock_db, mock_api_token):
+        """Test update_token with is_active=None does not change the active status."""
+        mock_api_token.is_active = True  # Start as active
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_api_token
+
+            await token_service.update_token(
+                token_id="token-123",
+                user_email="test@example.com",
+                description="Updated description",  # Only update description, not name
+                is_active=None,  # Explicitly None - should not change
+            )
+
+            # Verify is_active was not changed
+            assert mock_api_token.is_active is True
 
     @pytest.mark.asyncio
     async def test_revoke_token_success(self, token_service, mock_db, mock_api_token):
