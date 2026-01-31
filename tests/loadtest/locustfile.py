@@ -1257,8 +1257,9 @@ class WriteAPIUser(BaseUser):
                 name="/servers/[id]/state",
                 catch_response=True,
             ) as response:
-                # 403/404 are acceptable - entity may not exist or may be read-only
-                self._validate_json_response(response, allowed_codes=[200, 403, 404])
+                # 403/404 acceptable - entity may not exist or may be read-only
+                # 409 acceptable - concurrent state changes due to optimistic locking
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 409])
 
     @task(2)
     @tag("api", "write", "state")
@@ -1272,8 +1273,9 @@ class WriteAPIUser(BaseUser):
                 name="/tools/[id]/state",
                 catch_response=True,
             ) as response:
-                # 403/404 are acceptable - entity may not exist or may be read-only
-                self._validate_json_response(response, allowed_codes=[200, 403, 404])
+                # 403/404 acceptable - entity may not exist or may be read-only
+                # 409 acceptable - concurrent state changes due to optimistic locking
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 409])
 
     @task(2)
     @tag("api", "write", "state")
@@ -1287,8 +1289,9 @@ class WriteAPIUser(BaseUser):
                 name="/resources/[id]/state",
                 catch_response=True,
             ) as response:
-                # 403/404 are acceptable - entity may not exist or may be read-only
-                self._validate_json_response(response, allowed_codes=[200, 403, 404])
+                # 403/404 acceptable - entity may not exist or may be read-only
+                # 409 acceptable - concurrent state changes due to optimistic locking
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 409])
 
     @task(2)
     @tag("api", "write", "state")
@@ -1302,8 +1305,9 @@ class WriteAPIUser(BaseUser):
                 name="/prompts/[id]/state",
                 catch_response=True,
             ) as response:
-                # 403/404 are acceptable - entity may not exist or may be read-only
-                self._validate_json_response(response, allowed_codes=[200, 403, 404])
+                # 403/404 acceptable - entity may not exist or may be read-only
+                # 409 acceptable - concurrent state changes due to optimistic locking
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 409])
 
     @task(2)
     @tag("api", "write", "state")
@@ -1317,8 +1321,9 @@ class WriteAPIUser(BaseUser):
                 name="/gateways/[id]/state",
                 catch_response=True,
             ) as response:
-                # 403/404/502 are acceptable - gateway may not exist or may be unreachable
-                self._validate_json_response(response, allowed_codes=[200, 403, 404])
+                # 403/404 acceptable - gateway may not exist or may be unreachable
+                # 409 acceptable - concurrent state changes due to optimistic locking
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 409])
 
     @task(2)
     @tag("api", "write", "resources")
