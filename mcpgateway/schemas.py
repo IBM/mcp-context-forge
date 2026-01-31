@@ -1812,7 +1812,7 @@ class ResourceRead(BaseModelWithConfigDict):
     updated_at: datetime
     enabled: bool
     metrics: Optional[ResourceMetrics] = Field(None, description="Resource metrics (may be None in list operations)")
-    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the resource")
+    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the resource")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -6879,7 +6879,7 @@ class GrpcServiceRead(BaseModel):
     last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
 
     # Tags
-    tags: List[Dict[str, str]] = Field(default_factory=list, description="Service tags")
+    tags: List[str] = Field(default_factory=list, description="Service tags")
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation timestamp")

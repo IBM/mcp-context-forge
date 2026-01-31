@@ -580,6 +580,11 @@ class PluginManager:
                 logger.debug("Plugin manager already initialized")
                 return
 
+            # Defensive cleanup: registry should be empty when not initialized
+            if self._registry.plugin_count:
+                logger.debug("Plugin registry not empty before initialize; clearing stale plugins")
+                await self._registry.shutdown()
+
             plugins = self._config.plugins if self._config and self._config.plugins else []
             loaded_count = 0
 
