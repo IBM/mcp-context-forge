@@ -1111,6 +1111,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
 
 **GitHub OAuth:**
+
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `SSO_GITHUB_ENABLED`          | Enable GitHub OAuth authentication               | `false`               | bool    |
@@ -1119,6 +1120,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `SSO_GITHUB_ADMIN_ORGS`       | GitHub orgs granting admin privileges (JSON)     | `[]`                  | JSON array |
 
 **Google OAuth:**
+
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `SSO_GOOGLE_ENABLED`          | Enable Google OAuth authentication               | `false`               | bool    |
@@ -1127,6 +1129,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `SSO_GOOGLE_ADMIN_DOMAINS`    | Google admin domains (JSON)                      | `[]`                  | JSON array |
 
 **IBM Security Verify OIDC:**
+
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `SSO_IBM_VERIFY_ENABLED`      | Enable IBM Security Verify OIDC authentication   | `false`               | bool    |
@@ -1135,6 +1138,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `SSO_IBM_VERIFY_ISSUER`       | IBM Security Verify OIDC issuer URL             | (none)                | string  |
 
 **Okta OIDC:**
+
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `SSO_OKTA_ENABLED`            | Enable Okta OIDC authentication                  | `false`               | bool    |
@@ -1143,6 +1147,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `SSO_OKTA_ISSUER`             | Okta issuer URL                                  | (none)                | string  |
 
 **SSO Admin Assignment:**
+
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
