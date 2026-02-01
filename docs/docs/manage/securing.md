@@ -252,7 +252,7 @@ python3 -m mcpgateway.utils.create_jwt_token \
 **Security Features:**
 
 - Server-scoped tokens **cannot access `/admin`** endpoints (security hardening)
-- Only truly public endpoints (`/health`, `/metrics`) bypass server restrictions
+- Only truly public endpoints (`/health`, `/ready`) bypass server restrictions
 - Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are exempt from server scoping but still require auth by default
 - RBAC permission checks still apply to all endpoints
 

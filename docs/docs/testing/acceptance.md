@@ -79,11 +79,11 @@ graph TB
 
 | Feature | URL/Command | Actions | Expected Result | Status | Notes |
 |---------|-------------|---------|-----------------|--------|-------|
-| Set Gateway URL | `export GW_URL=http://localhost:4444` | Set base URL (can be remote) | Variable exported | ☐ | Change to your gateway URL if remote |
+| Set Gateway URL | `export GW_URL=http://localhost:4444` | Set base URL (can be remote) | Variable exported | ☐ | Use 8080 for docker-compose, 4444 for make serve, 8000 for make dev |
 | Install Gateway Package | `pip install mcp-contextforge-gateway` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation and wrapper testing |
 | Generate JWT Token | `export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)` | Generate auth token using installed package | Token generated and exported | ☐ | Default expiry 10080 (7 days) |
 | Verify Health | `curl -s $GW_URL/health` | GET request (no auth required) | `{"status":"healthy"}` | ☐ | Basic connectivity check |
-| Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"ready":true,"database":"ok","redis":"ok"}` | ☐ | All subsystems ready |
+| Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"status":"ready"}` | ☐ | Returns 503 with `{"status":"not ready","error":"..."}` when not ready |
 | Test Auth Required | `curl -s $GW_URL/version` | GET without auth | `{"detail":"Not authenticated"}` | ☐ | Confirms auth is enforced |
 | Test Auth Works | `curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/version \| jq '.app.name'` | GET with auth | `"MCP_Gateway"` | ☐ | JWT authentication working |
 

@@ -73,7 +73,7 @@ Before using the API, you need to:
 
 ## Authentication
 
-Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/metrics`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default:
+Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
@@ -213,6 +213,23 @@ Expected output:
 ```bash
 # Readiness check (for load balancers)
 curl -s $BASE_URL/ready | jq '.'
+```
+
+Expected output:
+
+```json
+{
+  "status": "ready"
+}
+```
+
+If the gateway is not ready, this endpoint returns HTTP 503 with:
+
+```json
+{
+  "status": "not ready",
+  "error": "..."
+}
 ```
 
 ### Get Version Information
