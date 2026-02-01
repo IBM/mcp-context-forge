@@ -238,7 +238,7 @@ async def test_get_entities_by_tag(tag_service, mock_db):
     """Test getting entities by a specific tag."""
     # Mock database dialect for json_contains_tag_expr
     mock_db.get_bind.return_value.dialect.name = "sqlite"
-    
+
     # Create mock entities
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
@@ -299,7 +299,7 @@ async def test_get_entities_by_tag_no_entity_types(tag_service, mock_db):
     """Test getting entities by tag with no entity type filter."""
     # Mock database dialect for json_contains_tag_expr
     mock_db.get_bind.return_value.dialect.name = "sqlite"
-    
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -323,7 +323,7 @@ async def test_get_entities_by_tag_invalid_entity_type(tag_service, mock_db):
     """Test getting entities by tag with invalid entity types."""
     # Mock database dialect for json_contains_tag_expr
     mock_db.get_bind.return_value.dialect.name = "sqlite"
-    
+
     mock_db.execute.return_value.scalars.return_value = []
 
     entities = await tag_service.get_entities_by_tag(mock_db, "api", ["invalid_type"])
@@ -338,7 +338,7 @@ async def test_get_entities_by_tag_empty_tags(tag_service, mock_db):
     """Test entity lookup when entity has empty tags."""
     # Mock database dialect for json_contains_tag_expr
     mock_db.get_bind.return_value.dialect.name = "sqlite"
-    
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -360,7 +360,7 @@ async def test_get_entities_by_tag_null_tags(tag_service, mock_db):
     """Test entity lookup when entity has None tags."""
     # Mock database dialect for json_contains_tag_expr
     mock_db.get_bind.return_value.dialect.name = "sqlite"
-    
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -382,7 +382,7 @@ async def test_get_entities_by_tag_name_fallback_simplified(tag_service, mock_db
     """Test entity name resolution fallback logic."""
     # Mock database dialect for json_contains_tag_expr
     mock_db.get_bind.return_value.dialect.name = "sqlite"
-    
+
     # Test entity with original_name but no name
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
@@ -575,7 +575,7 @@ async def test_get_entities_by_tag_default_entity_types(tag_service, mock_db):
     """Test that get_entities_by_tag uses all entity types by default."""
     # Mock database dialect for json_contains_tag_expr
     mock_db.get_bind.return_value.dialect.name = "sqlite"
-    
+
     mock_result = MagicMock()
     mock_result.scalars.return_value = []
     mock_db.execute.return_value = mock_result
