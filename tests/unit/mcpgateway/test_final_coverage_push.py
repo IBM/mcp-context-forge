@@ -344,6 +344,122 @@ def test_cli_module_main_execution():
     assert cli_export_import.__name__ == 'mcpgateway.cli_export_import'
 
 
+def test_security_logger_threat_score_and_review():
+    """Exercise SecurityLogger threat scoring and audit review logic."""
+    # First-Party
+    from mcpgateway.services.security_logger import SecurityLogger
+
+    logger = SecurityLogger()
+    assert logger._calculate_auth_threat_score(True, 0, "basic") == 0.0
+    assert logger._calculate_auth_threat_score(False, 0, "basic") == 0.3
+    assert logger._calculate_auth_threat_score(False, 3, "basic") == 0.5
+    assert logger._calculate_auth_threat_score(False, 5, "basic") == 0.6
+    assert logger._calculate_auth_threat_score(False, 10, "basic") == 0.8
+
+    assert logger._requires_audit_review("delete", "resource", "confidential", True) is True
+    assert logger._requires_audit_review("update", "role", None, True) is True
+    assert logger._requires_audit_review("update", "tool", None, True) is False
+
+
+def test_security_logger_count_failures(monkeypatch):
+    """Count recent failures uses DB session and returns scalar results."""
+    # First-Party
+    from mcpgateway.services.security_logger import SecurityLogger
+
+    logger = SecurityLogger()
+
+    class DummyResult:
+        def scalar(self):
+            return 7
+
+    class DummySession:
+        def __init__(self):
+            self.committed = False
+            self.closed = False
+
+        def execute(self, _stmt):
+            return DummyResult()
+
+        def commit(self):
+            self.committed = True
+
+        def close(self):
+            self.closed = True
+
+    dummy = DummySession()
+    monkeypatch.setattr("mcpgateway.services.security_logger.SessionLocal", lambda: dummy)
+
+    result = logger._count_recent_failures(user_id="user1")
+    assert result == 7
+    assert dummy.committed is True
+    assert dummy.closed is True
+
+
+def test_security_logger_data_access_and_errors(monkeypatch):
+    """Log data access builds audit trail and security event for sensitive data."""
+    # First-Party
+    from mcpgateway.services.security_logger import SecurityLogger
+
+    logger = SecurityLogger()
+    mock_audit = MagicMock()
+    monkeypatch.setattr(logger, "_create_audit_trail", MagicMock(return_value=mock_audit))
+    monkeypatch.setattr(logger, "_create_security_event", MagicMock())
+
+    audit = logger.log_data_access(
+        action="update",
+        resource_type="tool",
+        resource_id="tool-1",
+        resource_name="Tool",
+        user_id="user1",
+        user_email="user@example.com",
+        team_id=None,
+        client_ip="127.0.0.1",
+        user_agent="agent",
+        success=False,
+        data_classification="confidential",
+        old_values={"a": 1},
+        new_values={"a": 2},
+    )
+
+    assert audit is mock_audit
+    logger._create_security_event.assert_called_once()
+
+
+def test_security_logger_create_event_error(monkeypatch):
+    """Ensure _create_security_event handles DB errors."""
+    # First-Party
+    from mcpgateway.services.security_logger import SecurityLogger, SecuritySeverity
+
+    logger = SecurityLogger()
+
+    class DummySession:
+        def add(self, _obj):
+            raise RuntimeError("boom")
+
+        def commit(self):
+            raise AssertionError("commit should not be called")
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def close(self):
+            self.closed = True
+
+    dummy = DummySession()
+
+    result = logger._create_security_event(
+        event_type="authentication_failure",
+        severity=SecuritySeverity.HIGH,
+        category="auth",
+        client_ip="127.0.0.1",
+        description="fail",
+        threat_score=0.5,
+        db=dummy,
+    )
+
+    assert result is None
+
+
 @pytest.mark.asyncio
 async def test_toolops_generate_testcases_success(monkeypatch):
     """Exercise toolops test case generation endpoint."""

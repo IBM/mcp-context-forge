@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # First-Party
 from mcpgateway import admin
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.server_service import ServerNotFoundError
 
 
 def _make_request(root_path: str = "/admin") -> MagicMock:
@@ -786,3 +787,121 @@ async def test_admin_search_teams_user_not_found(monkeypatch):
 
     result = await admin.admin_search_teams(db=mock_db, user={"email": "missing@example.com"})
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_admin_list_servers_returns_paginated(monkeypatch):
+    mock_db = MagicMock()
+
+    mock_server = MagicMock()
+    mock_server.model_dump.return_value = {"id": "server-1"}
+
+    pagination = MagicMock()
+    pagination.model_dump.return_value = {"page": 1, "per_page": 10}
+
+    links = MagicMock()
+    links.model_dump.return_value = {"self": "/admin/servers?page=1&per_page=10"}
+
+    async def _fake_list_servers(**_kwargs):
+        return {"data": [mock_server], "pagination": pagination, "links": links}
+
+    monkeypatch.setattr(admin.server_service, "list_servers", _fake_list_servers)
+
+    result = await admin.admin_list_servers(page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
+    assert result["data"] == [{"id": "server-1"}]
+    assert result["pagination"] == {"page": 1, "per_page": 10}
+    assert result["links"] == {"self": "/admin/servers?page=1&per_page=10"}
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_get_server_success(monkeypatch):
+    mock_db = MagicMock()
+    mock_server = MagicMock()
+    mock_server.model_dump.return_value = {"id": "server-1"}
+
+    async def _fake_get_server(_db, _server_id):
+        return mock_server
+
+    monkeypatch.setattr(admin.server_service, "get_server", _fake_get_server)
+
+    result = await admin.admin_get_server("server-1", db=mock_db, user={"email": "user@example.com"})
+    assert result == {"id": "server-1"}
+
+
+@pytest.mark.asyncio
+async def test_admin_get_server_not_found(monkeypatch):
+    mock_db = MagicMock()
+
+    async def _fake_get_server(_db, _server_id):
+        raise ServerNotFoundError("missing")
+
+    monkeypatch.setattr(admin.server_service, "get_server", _fake_get_server)
+
+    with pytest.raises(HTTPException) as exc:
+        await admin.admin_get_server("missing", db=mock_db, user={"email": "user@example.com"})
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_admin_servers_partial_html_render_variants(monkeypatch):
+    mock_db = MagicMock()
+    request = _make_request()
+
+    class _StubTeamService:
+        def __init__(self, _db):
+            self._db = _db
+
+        async def get_user_teams(self, _email):
+            return [SimpleNamespace(id="team-1")]
+
+    async def _fake_paginate_query(**_kwargs):
+        pagination = MagicMock()
+        pagination.model_dump.return_value = {"page": 1}
+        links = MagicMock()
+        links.model_dump.return_value = {"self": "/admin/servers/partial?page=1"}
+        return {"data": [MagicMock()], "pagination": pagination, "links": links}
+
+    monkeypatch.setattr(admin, "TeamManagementService", lambda db: _StubTeamService(db))
+    monkeypatch.setattr(admin, "paginate_query", _fake_paginate_query)
+    monkeypatch.setattr(admin.server_service, "convert_server_to_read", lambda _s, include_metrics=False: {"id": "server-1"})
+
+    response = await admin.admin_servers_partial_html(
+        request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render="controls",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com"},
+    )
+    assert isinstance(response, HTMLResponse)
+    assert request.app.state.templates.TemplateResponse.call_args[0][1] == "pagination_controls.html"
+
+    response = await admin.admin_servers_partial_html(
+        request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render="selector",
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com"},
+    )
+    assert isinstance(response, HTMLResponse)
+    assert request.app.state.templates.TemplateResponse.call_args[0][1] == "servers_selector_items.html"
+
+    response = await admin.admin_servers_partial_html(
+        request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com"},
+    )
+    assert isinstance(response, HTMLResponse)
+    assert request.app.state.templates.TemplateResponse.call_args[0][1] == "servers_partial.html"
