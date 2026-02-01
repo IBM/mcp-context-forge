@@ -123,6 +123,7 @@ TEST_BASE_URL=http://localhost:8000 make test-ui
 ```
 
 Playwright artifacts (screenshots/videos/traces) are written to `test-results/` and are gitignored.
+Recording quality knobs: `PLAYWRIGHT_VIDEO_SIZE=1920x1080` (default), `PLAYWRIGHT_VIEWPORT_SIZE=1920x1080` (default), `PLAYWRIGHT_SLOWMO=750` (default).
 
 ### 6. Async Tests (`tests/async/`)
 Asynchronous operation and WebSocket testing.

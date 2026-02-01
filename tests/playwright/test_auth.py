@@ -69,9 +69,8 @@ class TestAuthentication:
                 page.wait_for_timeout(500)
         return not re.search(r"error=invalid_credentials", page.url)
 
-    def test_should_login_with_valid_credentials(self, browser):
+    def test_should_login_with_valid_credentials(self, context):
         """Test successful access with valid email/password credentials."""
-        context = browser.new_context(base_url=BASE_URL, ignore_https_errors=True)
         page = context.new_page()
         # Go directly to admin and log in if redirected
         page.goto("/admin")
@@ -88,11 +87,8 @@ class TestAuthentication:
         if jwt_cookie:
             assert jwt_cookie["httpOnly"] is True
 
-        context.close()
-
-    def test_should_reject_invalid_credentials(self, browser):
+    def test_should_reject_invalid_credentials(self, context):
         """Test rejection with invalid email/password credentials."""
-        context = browser.new_context(base_url=BASE_URL, ignore_https_errors=True)
         page = context.new_page()
 
         self._login(page, "invalid@example.com", "wrong-password")
@@ -101,11 +97,8 @@ class TestAuthentication:
         expect(page).to_have_url(re.compile(r".*/admin/login\?error=invalid_credentials"))
         expect(page.locator("#error-message")).to_be_visible()
 
-        context.close()
-
-    def test_should_require_authentication(self, browser):
+    def test_should_require_authentication(self, context):
         """Test that admin requires authentication."""
-        context = browser.new_context(base_url=BASE_URL, ignore_https_errors=True)  # No credentials provided
         page = context.new_page()
 
         # Access admin without credentials should redirect to login page when auth is required
@@ -117,11 +110,8 @@ class TestAuthentication:
         else:
             expect(page.locator('[data-testid="servers-tab"]')).to_be_visible()
 
-        context.close()
-
-    def test_should_access_admin_with_valid_auth(self, browser):
+    def test_should_access_admin_with_valid_auth(self, context):
         """Test that valid credentials allow full admin access."""
-        context = browser.new_context(base_url=BASE_URL, ignore_https_errors=True)
         page = context.new_page()
 
         # Access admin page and log in if needed
@@ -142,5 +132,3 @@ class TestAuthentication:
         expect(page.locator('[data-testid="servers-tab"]')).to_be_visible()
         expect(page.locator('[data-testid="tools-tab"]')).to_be_visible()
         expect(page.locator('[data-testid="gateways-tab"]')).to_be_visible()
-
-        context.close()

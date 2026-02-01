@@ -5333,6 +5333,7 @@ PLAYWRIGHT_DIR := tests/playwright
 PLAYWRIGHT_REPORTS := $(PLAYWRIGHT_DIR)/reports
 PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
+PLAYWRIGHT_SLOWMO ?= 750
 TEST_BASE_URL ?= http://localhost:8080
 
 ## --- Playwright Setup -------------------------------------------------------
@@ -5446,8 +5447,9 @@ test-ui-screenshots: playwright-install
 	@mkdir -p $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=on \
-		--browser chromium || true"
-	@echo "✅ Playwright screenshots captured (see test-results/)"
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ Playwright screenshots captured"
+	@echo "📁 Artifacts saved to: test-results/"
 
 test-ui-record: playwright-install
 	@echo "🎭 Running Playwright UI tests with video recording + screenshots..."
@@ -5455,9 +5457,10 @@ test-ui-record: playwright-install
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_VIDEOS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --video=on --screenshot=on \
-		--browser chromium || true"
-	@echo "✅ Playwright videos + screenshots saved (see test-results/)"
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --video=on --screenshot=on --slowmo $(PLAYWRIGHT_SLOWMO) \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ Playwright videos + screenshots saved"
+	@echo "📁 Artifacts saved to: test-results/"
 
 ## --- UI Test Utilities ------------------------------------------------------
 test-ui-update-snapshots: playwright-install

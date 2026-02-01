@@ -201,6 +201,11 @@ Always-on artifacts:
 - `make test-ui-screenshots` captures screenshots for every test (stored in `test-results/`)
 - `make test-ui-record` captures videos + screenshots for every test (stored in `test-results/`)
 
+Recording quality controls:
+- `PLAYWRIGHT_VIDEO_SIZE=1920x1080` (default) sets the recording resolution
+- `PLAYWRIGHT_SLOWMO=750` (default) slows actions for clearer videos
+- `PLAYWRIGHT_VIEWPORT_SIZE=1920x1080` (default) sets the browser viewport
+
 ### 5. VS Code Debugging
 
 Add to `.vscode/launch.json`:

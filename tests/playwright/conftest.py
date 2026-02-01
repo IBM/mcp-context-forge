@@ -11,10 +11,10 @@ This assumes environment variables are loaded by the Makefile.
 # Standard
 import os
 import re
-from typing import Generator, Optional
+from typing import Dict, Generator, Optional
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, Page, Playwright, expect
+from playwright.sync_api import APIRequestContext, BrowserContext, Page, Playwright, expect
 import pytest
 
 # First-Party
@@ -25,6 +25,8 @@ from mcpgateway.utils.create_jwt_token import _create_jwt_token
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 API_TOKEN = os.getenv("MCP_AUTH", "")
 DISABLE_JWT_FALLBACK = os.getenv("PLAYWRIGHT_DISABLE_JWT_FALLBACK", "").lower() in ("1", "true", "yes")
+PLAYWRIGHT_VIDEO_SIZE = os.getenv("PLAYWRIGHT_VIDEO_SIZE", "1920x1080")
+PLAYWRIGHT_VIEWPORT_SIZE = os.getenv("PLAYWRIGHT_VIEWPORT_SIZE", PLAYWRIGHT_VIDEO_SIZE)
 
 # Email login credentials (admin user)
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
@@ -50,6 +52,20 @@ def _format_auth_header(token: str) -> Optional[str]:
     if token.lower().startswith(("bearer ", "basic ")):
         return token
     return f"Bearer {token}"
+
+
+def _parse_video_size(size: str) -> Optional[Dict[str, int]]:
+    """Parse WIDTHxHEIGHT size from env string."""
+    if not size:
+        return None
+    match = re.match(r"^\s*(\d+)x(\d+)\s*$", size)
+    if not match:
+        raise ValueError("PLAYWRIGHT_VIDEO_SIZE must be in the format WIDTHxHEIGHT (e.g., 1280x720).")
+    return {"width": int(match.group(1)), "height": int(match.group(2))}
+
+
+VIDEO_SIZE = _parse_video_size(PLAYWRIGHT_VIDEO_SIZE)
+VIEWPORT_SIZE = _parse_video_size(PLAYWRIGHT_VIEWPORT_SIZE)
 
 
 def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -> None:
@@ -106,13 +122,38 @@ def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, 
     request_context.dispose()
 
 
+@pytest.fixture(scope="session")
+def browser_context_args(
+    pytestconfig,
+    playwright: Playwright,
+    device: Optional[str],
+    base_url: Optional[str],
+    _pw_artifacts_folder,
+) -> Dict:
+    """Customize Playwright browser context for artifacts + video quality."""
+    context_args: Dict = {}
+    if device:
+        context_args.update(playwright.devices[device])
+    if base_url:
+        context_args["base_url"] = base_url
+
+    video_option = pytestconfig.getoption("--video")
+    capture_video = video_option in ["on", "retain-on-failure"]
+    if capture_video:
+        context_args["record_video_dir"] = _pw_artifacts_folder.name
+        if VIDEO_SIZE:
+            context_args["record_video_size"] = VIDEO_SIZE
+
+    if VIEWPORT_SIZE and not device:
+        context_args["viewport"] = VIEWPORT_SIZE
+
+    return context_args
+
+
 @pytest.fixture
-def page(browser) -> Generator[Page, None, None]:
-    """Create page for UI tests."""
-    context = browser.new_context(base_url=BASE_URL, ignore_https_errors=True)
-    page = context.new_page()
-    yield page
-    context.close()
+def context(new_context) -> BrowserContext:
+    """Create a browser context using pytest-playwright hooks for artifacts."""
+    return new_context(ignore_https_errors=True)
 
 
 # Fixture if you need the default page fixture name
@@ -202,6 +243,7 @@ def test_tool_data():
 @pytest.fixture(autouse=True)
 def setup_test_environment(page: Page):
     """Set viewport and default timeout for consistent UI tests."""
-    page.set_viewport_size({"width": 1280, "height": 720})
+    if VIEWPORT_SIZE:
+        page.set_viewport_size(VIEWPORT_SIZE)
     page.set_default_timeout(30000)
     # Optionally, add request logging or interception here
