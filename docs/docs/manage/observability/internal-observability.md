@@ -141,9 +141,11 @@ Provides comprehensive analytics for MCP tool invocations:
 #### Summary Cards
 
 - **Overall Health**: Success rate with color-coded status
+
   - Green: <5% errors (healthy)
   - Yellow: 5-20% errors (degraded)
   - Red: >20% errors (unhealthy)
+
 - **Most Used**: Top tool by invocation count
 - **Slowest**: Tool with highest p99 latency
 - **Most Error-Prone**: Tool with highest error rate

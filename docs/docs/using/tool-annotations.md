@@ -116,9 +116,20 @@ curl -X PUT /tools/{tool_id} \
 
 When registering MCP servers via `/gateways`, tools are automatically discovered. To add annotations:
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
+Set a base URL for the gateway API:
+
+```bash
+export BASE_URL="http://localhost:4444"
+# export BASE_URL="http://localhost:8080"  # docker-compose with nginx
+```
+
 ### Step 1: Register the Gateway
 ```bash
-curl -X POST /gateways \
+curl -X POST $BASE_URL/gateways \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -130,10 +141,10 @@ curl -X POST /gateways \
 ### Step 2: Add Annotations to Discovered Tools
 ```bash
 # First, get the tool ID from the tools list
-curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/tools
+curl -H "Authorization: Bearer $TOKEN" $BASE_URL/tools
 
 # Then update the specific tool with annotations
-curl -X PUT /tools/{discovered_tool_id} \
+curl -X PUT $BASE_URL/tools/{discovered_tool_id} \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{

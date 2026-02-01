@@ -5,6 +5,7 @@ This guide explains how to upgrade PostgreSQL from version 17 to 18 in the MCP C
 ## Prerequisites
 
 Before proceeding with the upgrade, ensure:
+
 - You have a running installation with PostgreSQL 17
 - You have `kubectl` and `helm` access to your cluster
 - You have sufficient disk space for backup operations
@@ -63,6 +64,7 @@ helm upgrade --install mcp-stack ./charts/mcp-stack \
 ```
 
 This will:
+
 - Run a pre-upgrade hook to backup PostgreSQL 17 data to MinIO
 - Upgrade the PostgreSQL deployment to version 18
 - Restore data from the backup during PostgreSQL 18 initialization
@@ -100,6 +102,7 @@ kubectl logs -n mcp -l app.kubernetes.io/component=postgres-backup
 
 ### PostgreSQL Pod Stuck in CrashLoopBackOff
 This usually indicates the data directory compatibility issue. Make sure:
+
 - MinIO is accessible and running
 - The backup file exists in MinIO
 - The PVC has compatible ownership/perms

@@ -18,6 +18,10 @@ Point it at any MCP-compliant endpoint &mdash; a live Gateway **SSE** stream or 
 > All commands use **npx** (bundled with Node ≥ 14).
 > Feel free to `npm install -g @modelcontextprotocol/inspector` for a global binary.
 
+!!! tip "Base URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 | Use-case | One-liner | What happens |
 |----------|-----------|--------------|
 | **1. Connect to Gateway (SSE)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --url http://localhost:4444/servers/UUID_OF_SERVER_1/sse \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
@@ -62,15 +66,15 @@ Want to test a **stdio-only** MCP server inside Inspector?
 ```bash
 # Example: expose mcp-server-git over SSE on :8000
 python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --expose-sse --port 9002
-#   SSE stream:  http://localhost:8000/sse
-#   POST back-channel: http://localhost:8000/message
+#   SSE stream:  http://localhost:9002/sse
+#   POST back-channel: http://localhost:9002/message
 ```
 
 Then simply start Inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector \
-  --url http://localhost:8000/sse
+  --url http://localhost:9002/sse
 ```
 
 Translate Bridge handles the bridging; Inspector thinks it is speaking native SSE.

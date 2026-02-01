@@ -13,12 +13,14 @@ Under high-concurrency load testing (1000+ concurrent users), authentication bec
 3. `_get_user_by_email_sync(email)` - Fetch user data
 
 Each call:
+
 - Acquired a thread from the thread pool (contention under load)
 - Opened a fresh DB connection from the pool
 - Executed a single query
 - Returned thread and connection to pool
 
 At 1000 RPS with 2 replicas:
+
 - ~6,000 thread pool acquisitions/second across replicas
 - ~6,000 fresh DB sessions/second
 - Significant CPU overhead from threading context switches
@@ -32,24 +34,29 @@ Implement a two-tier authentication caching system with Redis as the primary sto
 ### Changes Made
 
 1. **New module: `mcpgateway/cache/auth_cache.py`**
+
    - `CachedAuthContext` dataclass for cached auth data
    - `AuthCache` class with Redis primary + in-memory fallback
    - TTL-based expiration with configurable per-data-type TTLs
    - Cache invalidation on token revocation, password change, team membership change
 
 2. **Query batching in `mcpgateway/auth.py`**
+
    - New `_get_auth_context_batched_sync()` function combines 3 queries into 1 DB session
    - Modified `get_current_user()` to:
+
      - Check cache first (fast path)
      - Use batched query on cache miss (single `asyncio.to_thread()` call)
      - Store result in cache for subsequent requests
 
 3. **Cache invalidation hooks in services**
+
    - `token_catalog_service.py:revoke_token()` - Invalidates revocation cache
    - `email_auth_service.py:change_password()` - Invalidates user cache
    - `team_management_service.py:add_member_to_team/remove_member_from_team()` - Invalidates team cache
 
 4. **Configuration settings**
+
    - `AUTH_CACHE_ENABLED` (default: true)
    - `AUTH_CACHE_USER_TTL` (default: 60s)
    - `AUTH_CACHE_REVOCATION_TTL` (default: 30s, security-critical)
@@ -109,9 +116,11 @@ Default prefix: `mcpgw:` → `mcpgw:auth:ctx:admin@example.com:jti-123`
 
 - Added complexity in cache invalidation
 - Slight delay (up to TTL) for changes to propagate:
+
   - User profile changes: up to 60s
   - Team membership changes: up to 60s
   - Token revocations: up to 30s (security-critical, kept short)
+
 - Additional Redis dependency for distributed caching (fallback to in-memory available)
 
 ### Neutral

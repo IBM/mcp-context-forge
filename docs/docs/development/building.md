@@ -134,4 +134,4 @@ To test the Admin UI without CDN dependencies:
 MCPGATEWAY_UI_AIRGAPPED=true make dev
 ```
 
-This downloads HTMX, Alpine.js, Tailwind, CodeMirror, Chart.js, and Font Awesome for fully offline UI operation. See [Admin UI - Air-Gapped Mode](../overview/ui.md#-air-gapped-mode) for details.
+This downloads HTMX, Alpine.js, Tailwind, CodeMirror, Chart.js, and Font Awesome for fully offline UI operation. See [Admin UI - Air-Gapped Mode](../overview/ui.md#air-gapped-mode) for details.

@@ -50,10 +50,6 @@ flowchart TD
         langchain["LangChain Agent"]
     end
 
-    %% ---------- Styling for IBM Cloud ----
-    classDef cloud fill:#f5f5f5,stroke:#c6c6c6;
-    class vpc,iks,icr,argocd,helm,gateway,db,redis,kms,secrets,logs cloud;
-
     %% ------------ Edges ------------------
     repo   -- "git push"      --> build
     build  -- "docker push"   --> icr
@@ -66,8 +62,8 @@ flowchart TD
     secrets-- "TLS certs"     --> iks
     kms    -- "encryption"    --> iks
     logs   -- "audit logs"    --> iks
-    gateway-- "SSE/stdio"     --> vscode
-    gateway-- "wrapper"       --> claude
+    gateway-- "SSE/HTTP"      --> vscode
+    gateway-- "stdio wrapper" --> claude
     gateway-- "HTTP API"      --> langchain
 ```
 

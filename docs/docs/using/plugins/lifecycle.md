@@ -138,12 +138,14 @@ The gateway ships with ready‑to‑use plugin templates under `plugin_templates
 Location and contents:
 
 - `plugin_templates/native`
+
   - `plugin.py.jinja`: Plugin class skeleton extending `Plugin`
   - `plugin-manifest.yaml.jinja`: Manifest metadata (description, author, version, available_hooks)
   - `config.yaml.jinja`: Example entry to add in `plugins/config.yaml`
   - `__init__.py.jinja`, `README.md.jinja`
 
 - `plugin_templates/external`
+
   - `{{ plugin_name }}/plugin.py.jinja`: External plugin implementation skeleton
   - `resources/plugins/config.yaml.jinja`: Plugin loader config for server
   - `resources/runtime/config.yaml.jinja`: External server runtime config

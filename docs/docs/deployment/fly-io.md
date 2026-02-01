@@ -41,7 +41,9 @@ fly postgres create --name your-app-db --region yyz
 ```bash
 # Set authentication secrets
 fly secrets set JWT_SECRET_KEY=$(openssl rand -hex 32)
-fly secrets set BASIC_AUTH_USER=admin BASIC_AUTH_PASSWORD=your-secure-password
+fly secrets set PLATFORM_ADMIN_EMAIL=admin@example.com
+fly secrets set PLATFORM_ADMIN_PASSWORD=your-secure-password
+fly secrets set PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
 
 # Set database URL (CRITICAL: use postgresql+psycopg:// for psycopg3)
 fly secrets set DATABASE_URL="postgresql+psycopg://postgres:YOUR_PASSWORD@your-app-db.flycast:5432/postgres"
@@ -119,8 +121,17 @@ fly logs
 curl https://your-app-name.fly.dev/health
 
 # Protected endpoints (require auth)
-curl -u admin:your-password https://your-app-name.fly.dev/docs
-curl -u admin:your-password https://your-app-name.fly.dev/tools
+export JWT_SECRET_KEY="same-value-you-set-in-fly-secrets"
+export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com \
+  --exp 10080 \
+  --secret "$JWT_SECRET_KEY" 2>/dev/null | head -1)
+curl -H "Authorization: Bearer $TOKEN" https://your-app-name.fly.dev/docs
+curl -H "Authorization: Bearer $TOKEN" https://your-app-name.fly.dev/tools
+
+# Optional: enable Basic auth for docs/API
+# fly secrets set DOCS_ALLOW_BASIC_AUTH=true API_ALLOW_BASIC_AUTH=true
+# curl -u admin:your-password https://your-app-name.fly.dev/docs
 ```
 
 ### 5.3 Expected responses

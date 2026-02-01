@@ -343,6 +343,7 @@ memray table worker_profile.bin | head -50
 - Python version must match between memray and the target process (e.g., memray compiled for Python 3.13 won't work with Python 3.12 containers)
 - Requires ptrace permissions (`--cap-add=SYS_PTRACE` or privileged mode)
 - For production containers without pip, consider:
+
   1. Building a debug image with memray pre-installed
   2. Using `memray run` locally to reproduce the issue
   3. Using py-spy for CPU profiling (works cross-version and is more portable)
@@ -350,16 +351,19 @@ memray table worker_profile.bin | head -50
 ### Interpreting memray Output
 
 **Flamegraph:**
+
 - **Width** = amount of memory allocated by that call stack
 - **Color**: Red = Python code, Green = C extensions, Blue = Python internals
 - Click on frames to zoom in
 
 **Table view columns:**
+
 - `Total memory` = all memory allocated by this function and its callees
 - `Own memory` = memory allocated directly by this function
 - `Allocations` = number of allocation calls
 
 **Common patterns to look for:**
+
 - Large allocations in template rendering (Jinja2)
 - JSON serialization of large datasets
 - ORM model instantiation (SQLAlchemy)
@@ -542,11 +546,13 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 **Symptom:** `seq_tup_read` in billions
 
 **Causes:**
+
 - Missing index
 - Non-selective filter (e.g., 7-day filter matches all recent data)
 - Short cache TTL causing repeated queries
 
 **Solutions:**
+
 - Add covering index
 - Increase cache TTL
 - Add materialized view for aggregations
@@ -556,11 +562,13 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 **Symptom:** 50+ connections in `idle in transaction` state
 
 **Causes:**
+
 - N+1 query patterns
 - Long-running requests holding transactions
 - Missing connection pool limits
 
 **Solutions:**
+
 - Use batch queries instead of loops
 - Set `idle_in_transaction_session_timeout`
 - Optimize slow queries
@@ -581,6 +589,7 @@ GROUP BY left(query, 50);
 ```
 
 **Causes:**
+
 - PgBouncer in `transaction` mode holds backend connections until `COMMIT`/`ROLLBACK`
 - Health endpoints using `Depends(get_db)` rely on dependency cleanup, which may not execute on timeout/cancellation
 - `async def` endpoints calling blocking SQLAlchemy code on event loop thread
@@ -680,11 +689,13 @@ except Exception as e:
 **Symptom:** Gateway at 600%+ CPU
 
 **Causes:**
+
 - Template rendering overhead
 - JSON serialization of large responses
 - Pydantic validation overhead
 
 **Solutions:**
+
 - Enable response caching
 - Paginate large result sets
 - Use orjson for serialization (enabled by default)

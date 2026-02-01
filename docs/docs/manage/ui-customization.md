@@ -20,7 +20,7 @@ deployment).
 | DOMPurify | - | XSS sanitization |
 | Font Awesome | - | Icons |
 
-All vendor libraries are bundled locally in `mcpgateway/static/vendor/` for air-gapped deployments. Enable with `MCPGATEWAY_UI_AIRGAPPED=true`. See [Air-Gapped Mode](../overview/ui.md#-air-gapped-mode).
+All vendor libraries are bundled locally in `mcpgateway/static/vendor/` for air-gapped deployments. Enable with `MCPGATEWAY_UI_AIRGAPPED=true`. See [Air-Gapped Mode](../overview/ui.md#air-gapped-mode).
 
 ---
 
@@ -53,10 +53,12 @@ Every other visual/behaviour change is code-driven.
 
 2. Start the dev server: `make dev` (serves the UI at http://localhost:8000).
 3. Edit any of the following and refresh your browser:
+
    - `mcpgateway/templates/admin.html`
    - `mcpgateway/static/admin.css`
    - `mcpgateway/static/admin.js`
    - Additional assets under `mcpgateway/static/`
+
 4. Commit the customised files or prepare overrides for your deployment target
    (see [Deploying Overrides](#deploying-overrides)).
 
@@ -198,8 +200,10 @@ Roll the deployment after changes so the pod picks up the new files.
    altered interaction logic.
 
 3. Verify in a staging/production-like environment that:
+
    - Static assets resolve behind your proxy (`ROOT_PATH`/`APP_DOMAIN`).
    - Authentication flows still succeed (basic + JWT).
    - Any branding assets load quickly (serve them via CDN if heavy).
+
 4. Document your customisations internally so future upgrades know which sections
    were changed.

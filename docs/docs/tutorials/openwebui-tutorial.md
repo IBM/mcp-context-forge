@@ -50,16 +50,6 @@ flowchart TD
   MCG -->|"MCP Protocol"| MCP2
   MCG -->|"MCP Protocol"| MCPN
 
-  %% Styling
-  classDef deployment fill:#1F618D,stroke:#85C1E9,stroke-width:2px,color:#FFF;
-  classDef ai fill:#27AE60,stroke:#58D68D,stroke-width:2px,color:#FFF;
-  classDef mcp fill:#8E44AD,stroke:#BB8FCE,stroke-width:2px,color:#FFF;
-  classDef external fill:#E74C3C,stroke:#F5B7B1,stroke-width:2px,color:#FFF;
-
-  class OW,LL,DB deployment;
-  class OL ai;
-  class MCPO,MCG,MCP1,MCP2,MCPN mcp;
-  class OP external;
 ```
 
 ### Components Overview
@@ -332,6 +322,7 @@ docker logs -f openwebui
 2. Create an admin account on first login
 3. Navigate to **Settings** → **Connections**
 4. Verify the OpenAI connection is configured:
+
    - **API Base URL**: `http://litellm:4000/v1`
    - **API Key**: `sk-1234567890`
 
@@ -432,6 +423,7 @@ OpenWebUI supports custom functions for extending capabilities:
 1. Go to **Settings** → **Functions**
 2. Enable built-in functions or import custom ones
 3. Functions can:
+
    - Act as custom models (Pipe Functions)
    - Modify inputs/outputs (Filter Functions)
    - Add action buttons (Action Functions)

@@ -50,7 +50,7 @@ graph TD
     B --> G
     C --> G
 
-    D -.->|Uses| H[oauthlib]
+    D -.->|Uses| H[requests-oauthlib]
 ```
 
 ## Database Schema
@@ -331,6 +331,10 @@ sequenceDiagram
     OAuth Manager->>OAuth Provider: POST /token (code)
     OAuth Provider-->>OAuth Manager: Access Token
     OAuth Manager-->>Gateway: Access Token
+    Gateway->>Gateway: Store user token
+
+    Note over User,Gateway: Later tool invocation (after authorization)
+    User->>Gateway: Invoke Tool
     Gateway->>MCP Server: Tool Request + Bearer Token
     MCP Server-->>Gateway: Response
     Gateway-->>User: Result

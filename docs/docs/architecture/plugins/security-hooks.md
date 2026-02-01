@@ -46,6 +46,7 @@ See the [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md
 | [`agent_post_invoke()`](#agent-post-invoke-hook) | Process agent responses after execution | After agent completes processing | Response filtering, PII redaction, audit logging, content moderation, compliance checks | ✅ |
 
 Agent hooks enable security controls for Agent-to-Agent interactions, allowing you to:
+
 - **Pre-invoke**: Filter messages, restrict tool access, override model/system prompts, block malicious requests
 - **Post-invoke**: Filter responses, redact sensitive data, log interactions, apply content moderation
 
@@ -76,6 +77,7 @@ class HttpPreRequestPayload(PluginPayload):
 ```
 
 **Common Use Cases**:
+
 - Transform custom authentication headers (e.g., X-API-Key → Authorization: Bearer)
 - Add correlation IDs for request tracking
 - Inject metadata headers for downstream processing
@@ -103,12 +105,14 @@ class HttpAuthResolveUserPayload(PluginPayload):
 ```
 
 **Common Use Cases**:
+
 - Implement custom authentication (LDAP, mTLS, token-based)
 - Validate API keys or custom tokens
 - Integrate with external authentication services
 - Replace JWT authentication with alternative systems
 
 **Security Considerations**:
+
 - Use `continue_processing=True` with `modified_payload` to provide user data
 - Raise `PluginViolationError` to explicitly deny authentication
 - Store `auth_method` in `metadata` for downstream permission checks
@@ -146,6 +150,7 @@ class HttpAuthCheckPermissionResultPayload(PluginPayload):
 ```
 
 **Common Use Cases**:
+
 - Bypass RBAC for token-authenticated users
 - Implement time-based access control
 - IP-based permission restrictions
@@ -153,6 +158,7 @@ class HttpAuthCheckPermissionResultPayload(PluginPayload):
 - Grant temporary elevated permissions
 
 **Security Considerations**:
+
 - Only handle requests for specific `auth_method` values
 - Return `granted=True` to allow, `granted=False` to deny
 - Use `reason` field for audit logging
@@ -183,6 +189,7 @@ class HttpPostRequestPayload(PluginPayload):
 ```
 
 **Common Use Cases**:
+
 - Add audit headers (X-Auth-Method, X-Auth-User)
 - Propagate correlation IDs to response
 - Add security headers (CORS, CSP)

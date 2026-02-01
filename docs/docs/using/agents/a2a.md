@@ -15,6 +15,10 @@ A2A integration enables you to:
 
 ## Quick Start
 
+!!! tip "Base URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ### 1. Enable A2A Features
 
 ```bash
@@ -239,7 +243,7 @@ The demo agent supports these query formats:
 
 ```bash
 # Get a token
-export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com --exp 60 --secret my-test-key)
 
 # Invoke the agent
@@ -260,7 +264,7 @@ cd a2a-samples/samples/python/agents/helloworld
 uv run python __main__.py  # Starts on port 9999
 
 # Register with ContextForge (in another terminal)
-export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com --exp 60 --secret my-test-key)
 
 curl -X POST "http://localhost:8000/a2a" \

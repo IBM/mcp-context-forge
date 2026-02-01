@@ -11,11 +11,13 @@ The MCP Gateway implements a high-performance parallel session cleanup mechanism
 The `_cleanup_database_sessions()` method uses a two-phase approach:
 
 1. **Connection Check Phase** (Sequential)
+
    - Quickly checks each session's connection status
    - Immediately removes disconnected sessions
    - Reduces workload for the parallel phase
 
 2. **Database Refresh Phase** (Parallel with Bounded Concurrency)
+
    - Uses `asyncio.gather()` with a semaphore to refresh connected sessions
    - Limits concurrent DB operations to prevent resource exhaustion (default: 20)
    - Each refresh updates the `last_accessed` timestamp in the database
@@ -55,6 +57,7 @@ async def _cleanup_database_sessions(self, max_concurrent: int = 20) -> None:
 ### Real-World Example
 
 For 100 sessions with 50ms database latency and max_concurrent=20:
+
 - **Sequential**: ~5 seconds total
 - **Parallel**: ~250ms (5 batches × 50ms)
 
@@ -63,6 +66,7 @@ For 100 sessions with 50ms database latency and max_concurrent=20:
 ### Why Limit Concurrency?
 
 Without limits, parallel cleanup can:
+
 - Exhaust database connection pools under high session counts
 - Cause DB timeouts when many operations queue simultaneously
 - Create memory pressure from thousands of pending task objects

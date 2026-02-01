@@ -13,7 +13,9 @@ This tutorial walks you through setting up Okta Single Sign-On (SSO) authenticat
 ### 1.1 Access Okta Admin Console
 
 1. Navigate to your Okta admin console
+
    - URL format: `https://[org-name].okta.com` or `https://[org-name].oktapreview.com`
+
 2. Log in with your administrator credentials
 3. Go to **Applications** → **Applications** in the left sidebar
 
@@ -55,8 +57,10 @@ This tutorial walks you through setting up Okta Single Sign-On (SSO) authenticat
 
 1. Click **Save**
 2. After creation, you'll see the **Client Credentials**:
+
    - **Client ID**: Copy this value
    - **Client secret**: Copy this value (click to reveal)
+
 3. Note your **Okta domain** (e.g., `https://dev-12345.okta.com`)
 
 ## Step 2: Configure Okta Application Settings
@@ -66,6 +70,7 @@ This tutorial walks you through setting up Okta Single Sign-On (SSO) authenticat
 1. In your application, go to the **General** tab
 2. Scroll to **General Settings** → **Edit**
 3. Configure token lifetimes:
+
    - **Access token lifetime**: 1 hour (default)
    - **Refresh token lifetime**: 90 days (default)
    - **ID token lifetime**: 1 hour (default)
@@ -75,6 +80,7 @@ This tutorial walks you through setting up Okta Single Sign-On (SSO) authenticat
 1. Go to the **Sign On** tab
 2. Scroll to **OpenID Connect ID Token**
 3. Configure claims if you need custom user attributes:
+
    - `groups` - User's group memberships
    - `department` - User's department
    - `title` - User's job title
@@ -100,9 +106,11 @@ Example custom claim configuration:
 
 1. Click **Assign** → **Assign to Groups**
 2. Select groups that should have access:
+
    - `Everyone` - All users (not recommended for production)
    - `MCP Gateway Users` - Custom group for gateway access
    - `IT Admins` - Administrative access
+
 3. For each group, you can set a custom **Application username**
 4. Click **Assign** and **Done**
 
@@ -113,8 +121,10 @@ If you want specific groups for MCP Gateway:
 1. Go to **Directory** → **Groups**
 2. Click **Add Group**
 3. Create groups like:
+
    - **Name**: `MCP Gateway Users`
    - **Description**: `Users with access to MCP Gateway`
+
 4. Add appropriate users to these groups
 
 ## Step 4: Configure MCP Gateway Environment
@@ -228,6 +238,7 @@ curl -X GET http://localhost:8000/auth/sso/providers
 ### 6.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development: `http://localhost:8000/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
 
@@ -272,6 +283,7 @@ Configure risk-based authentication:
 
 1. Go to **Security** → **Authentication** → **Sign On**
 2. Create policies with conditions:
+
    - Device trust
    - Network location
    - User risk level
@@ -283,9 +295,11 @@ Sync user attributes from external directories:
 
 1. Go to **Directory** → **Directory Integrations**
 2. Configure integration with:
+
    - Active Directory
    - LDAP
    - HR systems (Workday, BambooHR, etc.)
+
 3. Map attributes for automatic user provisioning
 
 ### 7.4 API Access Management

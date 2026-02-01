@@ -163,6 +163,7 @@ curl -X GET http://localhost:4444/auth/sso/providers
 ### 4.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development (port 8000): `http://localhost:8000/admin/login`
    - Development (make serve, port 4444): `http://localhost:4444/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
