@@ -1,8 +1,10 @@
 
+> **Note:** This document is auto-generated from the project's Software Bill of Materials (SBOM). Fields showing "NOT DEFINED" or "NOT KNOWN" indicate metadata not provided by the upstream package. The "PDM outdated check" status reflects the CI pipeline state at generation time.
+
 # SBOM Summary
 
 Item | Details
-| -------- | -------- 
+| -------- | --------
 SBOM File | mcpgateway.sbom.xml
 SBOM Type | cyclonedx
 Version | 1.6
@@ -17,7 +19,7 @@ Vulnerabilities | 0
 # Package Summary
 
 Name | Version | PURL | CPE | Type | Supplier | License | Ecosystem | Download | Copyright
-| -------- | -------- | -------- | -------- | -------- | -------- | -------- | -------- | -------- | -------- 
+| -------- | -------- | -------- | -------- | -------- | -------- | -------- | -------- | -------- | --------
 Jinja2 | 3.1.6 | pkg:pypi/jinja2@3.1.6 |  | LIBRARY |  | License :: OSI Approved :: BSD License | pypi | NOT KNOWN | A very fast and expressive template engine.
 Mako | 1.3.10 | pkg:pypi/mako@1.3.10 |  | LIBRARY |  | MIT | pypi | NOT KNOWN | A super-fast templating language that borrows the best ideas from the existing templating languages.
 MarkupSafe | 3.0.3 | pkg:pypi/markupsafe@3.0.3 |  | LIBRARY |  | BSD-3-Clause | pypi | NOT KNOWN | Safely add untrusted strings to HTML/XML markup.
@@ -107,13 +109,13 @@ zstandard | 0.25.0 | pkg:pypi/zstandard@0.25.0 |  | LIBRARY |  | BSD-3-Clause | 
 # Component Type Summary
 
 Type | Count
-| -------- | -------- 
+| -------- | --------
 LIBRARY | 85
 
 # License Summary
 
 License | Count
-| -------- | -------- 
+| -------- | --------
 0BSD | 1
 Apache-2.0 | 3
 BSD-2-Clause | 1
@@ -133,7 +135,7 @@ Unlicense | 2
 # NTIA Summary
 
 Element | Status
-| -------- | -------- 
+| -------- | --------
 All file information provided? | True
 All package information provided? | False
 Creator identified? | False

@@ -131,7 +131,7 @@ plugins:
 **External plugin quickstart:**
 
 !!! details "Plugins Lifecycle Guide"
-    See the [plugin lifecycle guide](https://ibm.github.io/mcp-context-forge/using/plugins/lifecycle/) for building, testing, and serving extenal plugins.
+    See the [plugin lifecycle guide](https://ibm.github.io/mcp-context-forge/using/plugins/lifecycle/) for building, testing, and serving external plugins.
 
 ```yaml
 plugins:
