@@ -255,7 +255,6 @@ ica_integrations_host.sbom.json
 gateway_service_leader.lock
 
 # Feature documentation
-*FEATURES.md
 
 # Cookie files
 *cookies*txt
