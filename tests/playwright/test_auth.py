@@ -12,8 +12,8 @@ import os
 import re
 
 # Third-Party
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")

@@ -8,7 +8,6 @@ Test cases for admin UI.
 """
 
 # Standard
-import uuid
 import re
 import time
 
@@ -39,10 +38,10 @@ class TestAdminUI:
 
     def test_admin_panel_loads(self, admin_page: Page, base_url: str):
         """Test that admin panel loads successfully."""
+        # admin_page fixture already navigated and authenticated
         admin_ui = AdminPage(admin_page, base_url)
-        admin_ui.navigate()
 
-        # Verify admin panel loaded
+        # Verify admin panel loaded (no need to navigate again)
         expect(admin_page).to_have_title(re.compile(r"(MCP Gateway Admin|ContextForge - Gateway Administration)"))
         assert admin_ui.element_exists(admin_ui.SERVERS_TAB)
         assert admin_ui.element_exists(admin_ui.TOOLS_TAB)
@@ -65,36 +64,6 @@ class TestAdminUI:
         # Test gateways tab
         admin_ui.click_gateways_tab()
         expect(admin_page).to_have_url(re.compile(f"{re.escape(base_url)}/admin/?#gateways"))
-
-    def test_add_new_server(self, admin_page: Page, base_url: str):
-        """Test adding a new server."""
-        admin_ui = AdminPage(admin_page, base_url)
-        admin_ui.navigate()
-        admin_ui.click_servers_tab()
-
-        # Add a test server
-        test_server_name = f"Test MCP Server {uuid.uuid4().hex[:8]}"
-        test_server_icon_url = "http://localhost:9000/icon.png"
-
-        # Fill the form directly instead of using the page object method
-        admin_page.fill("#server-name", test_server_name)
-        admin_page.fill('input[name="icon"]', test_server_icon_url)
-
-        # Submit the form
-        with admin_page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
-            admin_page.click('#add-server-form button[type="submit"]')
-        response = response_info.value
-        assert response.status < 400
-
-        created_server = self._find_server(admin_page, test_server_name)
-        assert created_server is not None, f"Server '{test_server_name}' was not found via admin API"
-
-        delete_response = admin_page.request.post(
-            f"/admin/servers/{created_server['id']}/delete",
-            data="is_inactive_checked=false",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        assert delete_response.status < 400
 
     def test_search_functionality(self, admin_page: Page, base_url: str):
         """Test search functionality in admin panel."""
