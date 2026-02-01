@@ -10,10 +10,10 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "matplotlib>=3.10.8",
-    "mcp>=1.25.0",
-    "numpy>=2.4.1",
+    "mcp>=1.26.0",
+    "numpy>=2.4.2",
     "openpyxl>=3.1.5",
-    "orjson>=3.11.5",
+    "orjson>=3.11.6",
     "pandas>=3.0.0",
     "plotly>=6.5.2",
     "pyarrow>=23.0.0",
