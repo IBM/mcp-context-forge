@@ -740,7 +740,14 @@ def test_event_service_import_redis_check_failure(monkeypatch):
     """Ensure module handles redis discovery failure."""
     import sys
 
-    monkeypatch.setattr(importlib.util, "find_spec", side_effect=ModuleNotFoundError("boom"))
+    original_find_spec = importlib.util.find_spec
+
+    def _find_spec(name, *args, **kwargs):
+        if name in {"redis", "redis.asyncio"}:
+            raise ModuleNotFoundError("boom")
+        return original_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", _find_spec)
     sys.modules.pop("mcpgateway.services.event_service", None)
 
     module = importlib.import_module("mcpgateway.services.event_service")
