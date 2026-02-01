@@ -8,6 +8,7 @@ Test cases for admin UI.
 """
 
 # Standard
+import uuid
 import re
 import time
 
@@ -71,7 +72,7 @@ class TestAdminUI:
         admin_ui.click_servers_tab()
 
         # Add a test server
-        test_server_name = "Test MCP Server"
+        test_server_name = f"Test MCP Server {uuid.uuid4().hex[:8]}"
         test_server_icon_url = "http://localhost:9000/icon.png"
 
         # Fill the form directly instead of using the page object method

@@ -19,10 +19,12 @@ import pytest
 
 # First-Party
 from mcpgateway.config import Settings
+from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Get configuration from environment
-BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
+BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 API_TOKEN = os.getenv("MCP_AUTH", "")
+DISABLE_JWT_FALLBACK = os.getenv("PLAYWRIGHT_DISABLE_JWT_FALLBACK", "").lower() in ("1", "true", "yes")
 
 # Email login credentials (admin user)
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
@@ -64,6 +66,28 @@ def _wait_for_login_response(page: Page) -> Optional[int]:
     except Exception:
         return None
     return response.status
+
+
+def _set_admin_jwt_cookie(page: Page, email: str) -> None:
+    """Seed an admin JWT cookie to bypass UI login when credentials are unknown."""
+    try:
+        token = _create_jwt_token({"sub": email})
+    except Exception as exc:  # pragma: no cover - should only fail on misconfig
+        raise AssertionError(f"Failed to create admin JWT token: {exc}") from exc
+
+    cookie_url = f"{BASE_URL.rstrip('/')}/"
+    page.context.set_extra_http_headers({"Authorization": f"Bearer {token}"})
+    page.context.add_cookies(
+        [
+            {
+                "name": "jwt_token",
+                "value": token,
+                "url": cookie_url,
+                "httpOnly": True,
+                "sameSite": "Lax",
+            }
+        ]
+    )
 
 
 @pytest.fixture(scope="session")
@@ -145,6 +169,13 @@ def admin_page(page: Page):
                 raise AssertionError(f"Login failed with status {status}")
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page, previous_url)
+    # If login still failed, fallback to JWT cookie unless disabled
+        if re.search(r"/admin/login", page.url):
+            if DISABLE_JWT_FALLBACK:
+                raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
+            _set_admin_jwt_cookie(page, admin_email)
+            page.goto("/admin/")
+            _wait_for_admin_transition(page)
     # Verify we're on the admin page
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
     return page

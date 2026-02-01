@@ -25,9 +25,10 @@ tests/playwright/
 │   ├── base_page.py       # Base page class
 │   └── admin_page.py      # Admin panel page objects
 ├── screenshots/           # Visual regression baseline images
-├── reports/              # Test reports (auto-created)
-└── videos/               # Test recordings (auto-created)
+└── reports/              # Test reports (auto-created)
 ```
+
+Playwright artifacts (screenshots, videos, traces) are written to `test-results/` at the repo root and are gitignored.
 
 ## 🚀 Quick Start
 
@@ -46,14 +47,16 @@ make playwright-install-all  # Installs all browsers (Chromium, Firefox, WebKit)
 ### Running Tests
 
 ```bash
-# Start the MCP Gateway server first
-make serve
+# Start the testing stack first (docker-compose.yml + nginx on :8080)
+make testing-up
 
 # In another terminal, run the tests:
 make test-ui              # Run with visible browser
 make test-ui-headless     # Run in headless mode (CI/CD)
 make test-ui-debug        # Run with Playwright Inspector
 make test-ui-smoke        # Run only smoke tests (fast)
+make test-ui-screenshots  # Always-on screenshots (headless)
+make test-ui-record       # Videos + screenshots (headless)
 make test-ui-report       # Generate HTML report
 ```
 
@@ -126,8 +129,10 @@ def test_with_page_object(page: Page, base_url: str):
 ### Environment Variables
 
 ```bash
-# Base URL for testing (default: http://localhost:4444)
-export TEST_BASE_URL=http://localhost:8000
+# Base URL for testing (default: http://localhost:8080 via docker-compose.yml nginx)
+export TEST_BASE_URL=http://localhost:8080
+# Override for a different endpoint
+# TEST_BASE_URL=http://localhost:8000 make test-ui
 
 # Authentication token
 export MCP_AUTH=your-test-token
@@ -189,9 +194,12 @@ pytest tests/playwright --headed --slowmo 1000  # 1 second delay
 ### 4. Screenshots and Videos
 
 Failed tests automatically capture:
-- Screenshots in `tests/playwright/screenshots/`
-- Videos in `test-results/` (when enabled)
-- Traces for debugging (when enabled)
+- Screenshots, videos, traces in `test-results/` (pytest-playwright artifacts)
+- Visual regression baselines in `tests/playwright/screenshots/`
+
+Always-on artifacts:
+- `make test-ui-screenshots` captures screenshots for every test (stored in `test-results/`)
+- `make test-ui-record` captures videos + screenshots for every test (stored in `test-results/`)
 
 ### 5. VS Code Debugging
 
@@ -278,9 +286,9 @@ Tests run automatically on GitHub Actions for:
 ### Server Not Running
 
 ```bash
-# Error: Connection refused to localhost:4444
-# Solution: Start the server first
-make serve
+# Error: Connection refused to localhost:8080
+# Solution: Start the testing stack first
+make testing-up
 ```
 
 ### Browser Not Installed
