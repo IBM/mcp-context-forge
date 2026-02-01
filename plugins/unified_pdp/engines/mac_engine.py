@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from ..adapter import PolicyEngineAdapter
 from ..pdp_models import (

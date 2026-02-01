@@ -288,7 +288,6 @@ class PolicyDecisionPoint:
         """AND logic – all engines must allow."""
         denied = [d for d in decisions if d.decision == Decision.DENY]
         if denied:
-            first_deny = denied[0]
             all_reasons = "; ".join(d.reason for d in denied)
             all_policies = [p for d in denied for p in d.matching_policies]
             return (Decision.DENY, f"[all_must_allow] {all_reasons}", all_policies)
