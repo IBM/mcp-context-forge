@@ -42,15 +42,15 @@ class TestAPIIntegration:
         assert len(api_calls) > 0
 
     @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
-    def test_mcp_initialize_endpoint(self, page: Page, request: APIRequestContext, admin_page):
+    def test_mcp_initialize_endpoint(self, page: Page, api_request_context: APIRequestContext, admin_page):
         """Test MCP initialize endpoint directly via APIRequestContext."""
         cookies = page.context.cookies()
         jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
         assert jwt_cookie is not None
-        response = request.post(
+        response = api_request_context.post(
             "/api/mcp/initialize",
             headers={"Cookie": f"jwt_token={jwt_cookie['value']}"},
-            data={"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}}, "id": 1},
+            json={"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}}, "id": 1},
         )
         assert response.ok
         data = response.json()

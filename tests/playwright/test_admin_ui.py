@@ -14,6 +14,7 @@ import time
 
 # Third-Party
 from playwright.sync_api import expect, Page
+import pytest
 
 # Local
 from .pages.admin_page import AdminPage
@@ -88,6 +89,13 @@ class TestAdminUI:
         created_server = self._find_server(admin_page, test_server_name)
         assert created_server is not None, f"Server '{test_server_name}' was not found via admin API"
 
+        delete_response = admin_page.request.post(
+            f"/admin/servers/{created_server['id']}/delete",
+            data="is_inactive_checked=false",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert delete_response.status < 400
+
     def test_search_functionality(self, admin_page: Page, base_url: str):
         """Test search functionality in admin panel."""
         admin_ui = AdminPage(admin_page, base_url)
@@ -104,7 +112,10 @@ class TestAdminUI:
 
         # Should show no results or fewer results
         search_count = admin_ui.get_server_count()
-        assert search_count <= initial_count
+        if initial_count > 0:
+            assert search_count < initial_count
+        else:
+            pytest.skip("No servers available to validate search filtering.")
 
     def test_responsive_design(self, admin_page: Page, base_url: str):
         """Test admin panel responsive design."""

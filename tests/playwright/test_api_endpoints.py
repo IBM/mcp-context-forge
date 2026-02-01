@@ -47,7 +47,7 @@ class TestAPIEndpoints:
         """Test JSON-RPC endpoint."""
         payload = {"jsonrpc": "2.0", "id": 1, "method": "system.listMethods", "params": {}}
 
-        response = api_request_context.post("/rpc", data=payload)
+        response = api_request_context.post("/rpc", json=payload)
         assert response.ok
 
         result = response.json()
