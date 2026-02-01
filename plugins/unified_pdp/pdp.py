@@ -378,7 +378,7 @@ class PolicyDecisionPoint:
     ) -> List[Permission]:
         """Aggregate permissions from all engines that support enumeration."""
         all_perms: List[Permission] = []
-        for _, adapter in self._engines.items():
+        for eng_type, adapter in self._engines.items():
             try:
                 perms = await adapter.get_permissions(subject, context)
                 all_perms.extend(perms)

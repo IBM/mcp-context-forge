@@ -104,6 +104,14 @@ class UnifiedPDPPlugin(Plugin):
         self._pdp = self._build_pdp(self._config.config or {})
 
     # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    async def shutdown(self) -> None:
+        """Cleanup PDP resources including HTTP clients for external engines."""
+        await self._pdp.close()
+
+    # ------------------------------------------------------------------
     # PDP construction
     # ------------------------------------------------------------------
 

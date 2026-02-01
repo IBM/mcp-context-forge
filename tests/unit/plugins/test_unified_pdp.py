@@ -2,26 +2,24 @@
 
 Run::
 
-    pytest tests/unit/mcpgateway/plugins/policy_framework/ -v --tb=short
+    pytest tests/unit/plugins/test_unified_pdp.py -v --tb=short
 
 Dependencies (test-only)::
 
-    pytest pytest-asyncio respx httpx
+    pytest pytest-asyncio pytest-httpx httpx
 """
 
 from __future__ import annotations
 
-import time
 import pytest
-import pytest_asyncio
-import respx
 import httpx
 from unittest.mock import AsyncMock, patch
 
 # ---------------------------------------------------------------------------
 # Adjust imports – works whether you run from repo root or this directory
 # ---------------------------------------------------------------------------
-import sys, os
+import sys
+import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
@@ -126,10 +124,11 @@ class TestOPAEngine:
         return OPAEngineAdapter(settings={"opa_url": "http://opa-mock:8181", "max_retries": 1})
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_evaluate_allow(self, adapter, subject_admin, resource_tool, context_basic):
-        respx.post("http://opa-mock:8181/v1/data/mcpgateway").mock(
-            return_value=httpx.Response(200, json={"result": {"allow": True}})
+    async def test_evaluate_allow(self, adapter, subject_admin, resource_tool, context_basic, httpx_mock):
+        httpx_mock.add_response(
+            url="http://opa-mock:8181/v1/data/mcpgateway",
+            method="POST",
+            json={"result": {"allow": True}},
         )
         decision = await adapter.evaluate(subject_admin, "tools.invoke", resource_tool, context_basic)
         assert decision.decision == Decision.ALLOW
@@ -137,13 +136,11 @@ class TestOPAEngine:
         assert decision.duration_ms >= 0
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_evaluate_deny_with_reasons(self, adapter, subject_dev, resource_tool, context_basic):
-        respx.post("http://opa-mock:8181/v1/data/mcpgateway").mock(
-            return_value=httpx.Response(
-                200,
-                json={"result": {"allow": False, "deny": ["MFA required", "Insufficient role"]}},
-            )
+    async def test_evaluate_deny_with_reasons(self, adapter, subject_dev, resource_tool, context_basic, httpx_mock):
+        httpx_mock.add_response(
+            url="http://opa-mock:8181/v1/data/mcpgateway",
+            method="POST",
+            json={"result": {"allow": False, "deny": ["MFA required", "Insufficient role"]}},
         )
         decision = await adapter.evaluate(subject_dev, "tools.invoke", resource_tool, context_basic)
         assert decision.decision == Decision.DENY
@@ -151,37 +148,46 @@ class TestOPAEngine:
         assert len(decision.matching_policies) == 2
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_evaluate_undefined_result(self, adapter, subject_dev, resource_tool, context_basic):
+    async def test_evaluate_undefined_result(self, adapter, subject_dev, resource_tool, context_basic, httpx_mock):
         """Empty result = undefined policy = fail closed."""
-        respx.post("http://opa-mock:8181/v1/data/mcpgateway").mock(
-            return_value=httpx.Response(200, json={})
+        httpx_mock.add_response(
+            url="http://opa-mock:8181/v1/data/mcpgateway",
+            method="POST",
+            json={},
         )
         decision = await adapter.evaluate(subject_dev, "tools.invoke", resource_tool, context_basic)
         assert decision.decision == Decision.DENY
         assert "undefined" in decision.reason.lower()
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_evaluate_server_error_exhausts_retries(self, adapter, subject_dev, resource_tool, context_basic):
-        respx.post("http://opa-mock:8181/v1/data/mcpgateway").mock(
-            return_value=httpx.Response(500, text="Internal Server Error")
+    async def test_evaluate_server_error_exhausts_retries(self, adapter, subject_dev, resource_tool, context_basic, httpx_mock):
+        httpx_mock.add_response(
+            url="http://opa-mock:8181/v1/data/mcpgateway",
+            method="POST",
+            status_code=500,
+            text="Internal Server Error",
         )
         with pytest.raises(PolicyEvaluationError):
             await adapter.evaluate(subject_dev, "tools.invoke", resource_tool, context_basic)
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_health_check_healthy(self, adapter):
-        respx.get("http://opa-mock:8181/health").mock(return_value=httpx.Response(200, json={}))
+    async def test_health_check_healthy(self, adapter, httpx_mock):
+        httpx_mock.add_response(
+            url="http://opa-mock:8181/health",
+            method="GET",
+            json={},
+        )
         report = await adapter.health_check()
         assert report.status.value == "healthy"
         assert report.latency_ms is not None
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_health_check_unhealthy(self, adapter):
-        respx.get("http://opa-mock:8181/health").mock(return_value=httpx.Response(503))
+    async def test_health_check_unhealthy(self, adapter, httpx_mock):
+        httpx_mock.add_response(
+            url="http://opa-mock:8181/health",
+            method="GET",
+            status_code=503,
+        )
         report = await adapter.health_check()
         assert report.status.value == "unhealthy"
 
@@ -204,23 +210,22 @@ class TestCedarEngine:
         return CedarEngineAdapter(settings={"cedar_url": "http://cedar-mock:8700", "max_retries": 1})
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_evaluate_allow(self, adapter, subject_admin, resource_tool, context_basic):
-        respx.post("http://cedar-mock:8700/v1/authorize").mock(
-            return_value=httpx.Response(200, json={"decision": "Allow", "reasons": []})
+    async def test_evaluate_allow(self, adapter, subject_admin, resource_tool, context_basic, httpx_mock):
+        httpx_mock.add_response(
+            url="http://cedar-mock:8700/v1/authorize",
+            method="POST",
+            json={"decision": "Allow", "reasons": []},
         )
         decision = await adapter.evaluate(subject_admin, "tools.invoke", resource_tool, context_basic)
         assert decision.decision == Decision.ALLOW
         assert decision.engine == EngineType.CEDAR
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_evaluate_deny(self, adapter, subject_dev, resource_tool, context_basic):
-        respx.post("http://cedar-mock:8700/v1/authorize").mock(
-            return_value=httpx.Response(
-                200,
-                json={"decision": "Deny", "reasons": ["Policy cedar-001: role developer not permitted"]},
-            )
+    async def test_evaluate_deny(self, adapter, subject_dev, resource_tool, context_basic, httpx_mock):
+        httpx_mock.add_response(
+            url="http://cedar-mock:8700/v1/authorize",
+            method="POST",
+            json={"decision": "Deny", "reasons": ["Policy cedar-001: role developer not permitted"]},
         )
         decision = await adapter.evaluate(subject_dev, "tools.invoke", resource_tool, context_basic)
         assert decision.decision == Decision.DENY
@@ -235,9 +240,12 @@ class TestCedarEngine:
         assert {"type": "Role", "id": "admin"} in user_entity["parents"]
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_health_check(self, adapter):
-        respx.get("http://cedar-mock:8700/health").mock(return_value=httpx.Response(200, json={}))
+    async def test_health_check(self, adapter, httpx_mock):
+        httpx_mock.add_response(
+            url="http://cedar-mock:8700/health",
+            method="GET",
+            json={},
+        )
         report = await adapter.health_check()
         assert report.status.value == "healthy"
 

@@ -252,3 +252,14 @@ class TestUnifiedPDPPlugin:
         pdp = UnifiedPDPPlugin._build_pdp({})
         from plugins.unified_pdp.pdp import PolicyDecisionPoint
         assert isinstance(pdp, PolicyDecisionPoint)
+
+    # --- shutdown calls PDP close ---
+
+    @pytest.mark.asyncio
+    async def test_shutdown_calls_pdp_close(self):
+        plugin = self._plugin()
+        plugin._pdp.close = AsyncMock()
+
+        await plugin.shutdown()
+
+        plugin._pdp.close.assert_awaited_once()
