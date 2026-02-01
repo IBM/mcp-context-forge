@@ -113,7 +113,16 @@ def _set_admin_jwt_cookie(page: Page, email: str) -> None:
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Create API request context with optional bearer token."""
     headers = {"Accept": "application/json"}
-    auth_header = _format_auth_header(API_TOKEN)
+    
+    token = API_TOKEN
+    if not token and not DISABLE_JWT_FALLBACK:
+        # Generate a fallback token for testing if none provided
+        try:
+            token = _create_jwt_token({"sub": ADMIN_EMAIL})
+        except Exception:
+            pass # Use empty if generation fails
+
+    auth_header = _format_auth_header(token)
     if auth_header:
         headers["Authorization"] = auth_header
 
@@ -222,6 +231,15 @@ def admin_page(page: Page):
             _wait_for_admin_transition(page)
     # Verify we're on the admin page
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+    # Wait for the application shell to load to ensure we aren't looking at a 500 error page
+    try:
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=10000)
+    except Exception:
+        # If tab is missing, check if we have an error message on page to report
+        content = page.content()
+        if "Internal Server Error" in content:
+            raise AssertionError("Admin page failed to load: Internal Server Error (500)")
+        raise
     return page
 
 
