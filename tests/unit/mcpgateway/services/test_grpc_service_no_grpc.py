@@ -3,7 +3,9 @@
 
 # Standard
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+import sys
 import uuid
 
 # Third-Party
@@ -248,3 +250,221 @@ async def test_get_service_methods(service, db):
 
     methods = await service.get_service_methods(db, "svc-1")
     assert methods[0]["full_name"] == "pkg.Service.Ping"
+
+
+@pytest.mark.asyncio
+async def test_invoke_method_invalid_name(service, db):
+    db.execute.return_value = _mock_execute_scalar(
+        DbGrpcService(
+            id="svc-1",
+            name="svc",
+            slug="svc",
+            target="localhost:50051",
+            description="desc",
+            reflection_enabled=False,
+            tls_enabled=False,
+            grpc_metadata={},
+            enabled=True,
+            reachable=True,
+            service_count=0,
+            method_count=0,
+            discovered_services={},
+            last_reflection=None,
+            tags=[],
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            version=1,
+            visibility="public",
+        )
+    )
+
+    with pytest.raises(GrpcServiceError):
+        await service.invoke_method(db, "svc-1", "InvalidMethod", {})
+
+
+@pytest.mark.asyncio
+async def test_invoke_method_success(service, db):
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=False,
+        tls_enabled=False,
+        grpc_metadata={},
+        enabled=True,
+        reachable=True,
+        service_count=0,
+        method_count=0,
+        discovered_services={"pkg.Service": {"methods": []}},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+    db.execute.return_value = _mock_execute_scalar(db_service)
+
+    class FakeEndpoint:
+        def __init__(self, **_kwargs):
+            self._services = None
+
+        async def start(self):
+            return None
+
+        async def invoke(self, service_name, method, request_data):
+            return {"service": service_name, "method": method, "payload": request_data}
+
+        async def close(self):
+            return None
+
+    with patch("mcpgateway.translate_grpc.GrpcEndpoint", FakeEndpoint):
+        result = await service.invoke_method(db, "svc-1", "pkg.Service.Ping", {"a": 1})
+
+    assert result["service"] == "pkg.Service"
+    assert result["method"] == "Ping"
+
+
+@pytest.mark.asyncio
+async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
+    from mcpgateway.services import grpc_service as module
+
+    class FakeChannel:
+        def close(self):
+            return None
+
+    module.grpc = SimpleNamespace(
+        insecure_channel=lambda _target: FakeChannel(),
+        secure_channel=lambda _target, _creds: FakeChannel(),
+        ssl_channel_credentials=lambda **_kwargs: "creds",
+    )
+
+    class FakeRequest:
+        def __init__(self, list_services=None, file_containing_symbol=None):
+            self.list_services = list_services
+            self.file_containing_symbol = file_containing_symbol
+
+    class FakeResponse:
+        def __init__(self, list_services=None, file_descriptor_bytes=None):
+            self._list_services = list_services
+            self._file_descriptor_bytes = file_descriptor_bytes
+            if list_services is not None:
+                self.list_services_response = SimpleNamespace(service=[SimpleNamespace(name=n) for n in list_services])
+            if file_descriptor_bytes is not None:
+                self.file_descriptor_response = SimpleNamespace(file_descriptor_proto=file_descriptor_bytes)
+
+        def HasField(self, name):
+            if name == "list_services_response":
+                return self._list_services is not None
+            if name == "file_descriptor_response":
+                return self._file_descriptor_bytes is not None
+            return False
+
+    class FakeStub:
+        def __init__(self, _channel):
+            return None
+
+        def ServerReflectionInfo(self, request_iter):
+            req = next(iter(request_iter))
+            if req.list_services is not None:
+                return iter([FakeResponse(list_services=["MyService", "BadService", "grpc.reflection.v1alpha.ServerReflection"])])
+            if req.file_containing_symbol == "MyService":
+                return iter([FakeResponse(file_descriptor_bytes=[b"dummy"])])
+            if req.file_containing_symbol == "BadService":
+                raise RuntimeError("boom")
+            return iter([])
+
+    module.reflection_pb2 = SimpleNamespace(ServerReflectionRequest=FakeRequest)
+    module.reflection_pb2_grpc = SimpleNamespace(ServerReflectionStub=FakeStub)
+
+    class FakeMethod:
+        name = "Ping"
+        input_type = "PingReq"
+        output_type = "PingResp"
+        client_streaming = False
+        server_streaming = True
+
+    class FakeServiceDesc:
+        name = "MyService"
+        method = [FakeMethod()]
+
+    class FakeFileDescriptorProto:
+        def __init__(self):
+            self.service = []
+            self.package = "pkg"
+
+        def ParseFromString(self, _data):
+            self.service = [FakeServiceDesc()]
+
+    fake_descriptor = ModuleType("google.protobuf.descriptor_pb2")
+    fake_descriptor.FileDescriptorProto = FakeFileDescriptorProto
+    monkeypatch.setitem(sys.modules, "google.protobuf.descriptor_pb2", fake_descriptor)
+
+    db.commit = MagicMock()
+
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=True,
+        tls_enabled=False,
+        grpc_metadata={},
+        enabled=True,
+        reachable=False,
+        service_count=0,
+        method_count=0,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+
+    await service._perform_reflection(db, db_service)
+
+    assert "pkg.MyService" in db_service.discovered_services
+    assert "BadService" in db_service.discovered_services
+    assert db_service.service_count == 2
+    assert db_service.method_count == 1
+    assert db_service.reachable is True
+
+
+@pytest.mark.asyncio
+async def test_perform_reflection_tls_missing_cert(monkeypatch, service, db):
+    from mcpgateway.services import grpc_service as module
+
+    module.grpc = SimpleNamespace(ssl_channel_credentials=lambda **_kwargs: "creds", secure_channel=lambda _t, _c: MagicMock())
+
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=True,
+        tls_enabled=True,
+        tls_cert_path="/missing/cert.pem",
+        tls_key_path="/missing/key.pem",
+        grpc_metadata={},
+        enabled=True,
+        reachable=False,
+        service_count=0,
+        method_count=0,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+
+    with patch("mcpgateway.services.grpc_service.Path.read_bytes", side_effect=FileNotFoundError("missing")):
+        with pytest.raises(GrpcServiceError):
+            await service._perform_reflection(db, db_service)

@@ -12,6 +12,7 @@ Comprehensive test suite for EventService with maximum code coverage.
 """
 
 import asyncio
+import importlib
 from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, Mock, patch, call
 import orjson
@@ -733,3 +734,65 @@ class TestEventService:
         received_event, _ = await asyncio.gather(subscriber(), publisher())
 
         assert received_event == complex_event
+
+
+def test_event_service_import_redis_check_failure(monkeypatch):
+    """Ensure module handles redis discovery failure."""
+    import sys
+
+    monkeypatch.setattr(importlib.util, "find_spec", side_effect=ModuleNotFoundError("boom"))
+    sys.modules.pop("mcpgateway.services.event_service", None)
+
+    module = importlib.import_module("mcpgateway.services.event_service")
+
+    assert module.REDIS_AVAILABLE is False
+
+
+@pytest.mark.asyncio
+async def test_subscribe_events_redis_flow(monkeypatch):
+    """Exercise Redis subscribe_events flow including non-message paths."""
+    from mcpgateway.services.event_service import EventService
+
+    class FakePubSub:
+        def __init__(self):
+            self._messages = [
+                None,
+                {"type": "subscribe"},
+                {"type": "message", "data": orjson.dumps({"hello": "world"})},
+            ]
+            self.unsubscribed = False
+            self.closed = False
+
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            return self._messages.pop(0) if self._messages else None
+
+        async def unsubscribe(self, _channel):
+            self.unsubscribed = True
+
+        async def aclose(self):
+            self.closed = True
+
+    fake_pubsub = FakePubSub()
+    fake_client = MagicMock()
+    fake_client.pubsub.return_value = fake_pubsub
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:redis")
+        service._redis_client = object()
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.services.event_service.get_redis_client", AsyncMock(return_value=fake_client))
+        monkeypatch.setattr("mcpgateway.services.event_service.asyncio.sleep", AsyncMock())
+
+        agen = service.subscribe_events()
+        event = await agen.__anext__()
+        await agen.aclose()
+
+        assert event == {"hello": "world"}
+        assert fake_pubsub.unsubscribed is True
+        assert fake_pubsub.closed is True

@@ -8,6 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 # Standard
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
+from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
@@ -399,3 +400,131 @@ class TestStartShutdown:
         await rollup_service.shutdown()
 
         assert rollup_service._shutdown_event.is_set()
+
+
+class TestRollupInternals:
+    """Tests for internal rollup helpers."""
+
+    def test_delete_raw_metrics_returns_rowcount(self):
+        service = MetricsRollupService()
+        mock_db = MagicMock()
+        mock_db.execute.return_value.rowcount = 5
+
+        raw_model = MagicMock()
+        raw_model.timestamp = MagicMock()
+
+        deleted = service._delete_raw_metrics(
+            mock_db,
+            raw_model,
+            datetime.now(timezone.utc) - timedelta(hours=1),
+            datetime.now(timezone.utc),
+        )
+
+        assert deleted == 5
+
+    def test_rollup_table_processes_raw_metrics(self, monkeypatch):
+        service = MetricsRollupService(delete_raw_after_rollup=True, delete_raw_after_rollup_hours=0)
+
+        start_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+        end_hour = start_hour + timedelta(hours=1)
+
+        agg = HourlyAggregation(
+            entity_id="tool-1",
+            entity_name="Tool",
+            hour_start=start_hour,
+            total_count=3,
+            success_count=3,
+            failure_count=0,
+            min_response_time=0.1,
+            max_response_time=0.3,
+            avg_response_time=0.2,
+            p50_response_time=0.2,
+            p95_response_time=0.3,
+            p99_response_time=0.3,
+        )
+
+        class _CountResult:
+            def scalar(self):
+                return 1
+
+        class _FakeDB:
+            def __init__(self):
+                self.commit = MagicMock()
+
+            def execute(self, _stmt):
+                return _CountResult()
+
+        @contextmanager
+        def fake_session():
+            yield _FakeDB()
+
+        monkeypatch.setattr(metrics_rollup_service, "fresh_db_session", fake_session)
+        monkeypatch.setattr(service, "_aggregate_hour", lambda *args, **kwargs: [agg])
+        monkeypatch.setattr(service, "_upsert_rollup", lambda *args, **kwargs: (1, 0))
+        monkeypatch.setattr(service, "_delete_raw_metrics", lambda *args, **kwargs: 2)
+
+        result = service._rollup_table(
+            "tool_metrics",
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            "tool_id",
+            "name",
+            start_hour,
+            end_hour,
+            False,
+        )
+
+        assert result.hours_processed == 1
+        assert result.records_aggregated == 3
+        assert result.rollups_created == 1
+        assert result.raw_deleted == 2
+
+    def test_upsert_rollup_sqlite_path(self, monkeypatch):
+        service = MetricsRollupService()
+
+        class DummyHourly:
+            hour_start = MagicMock()
+            interaction_type = MagicMock()
+            tool_id = MagicMock()
+            tool_name = MagicMock()
+
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        class FakeInsert:
+            def __init__(self):
+                self.excluded = {}
+
+            def values(self, **kwargs):
+                self.excluded = {key: f"excluded-{key}" for key in kwargs}
+                return self
+
+            def on_conflict_do_update(self, index_elements, set_):
+                return self
+
+        monkeypatch.setattr(metrics_rollup_service, "sqlite_insert", lambda _model: FakeInsert())
+
+        mock_db = MagicMock()
+        mock_db.bind.dialect.name = "sqlite"
+
+        agg = HourlyAggregation(
+            entity_id="tool-1",
+            entity_name="Tool",
+            hour_start=datetime.now(timezone.utc),
+            total_count=1,
+            success_count=1,
+            failure_count=0,
+            min_response_time=0.1,
+            max_response_time=0.1,
+            avg_response_time=0.1,
+            p50_response_time=0.1,
+            p95_response_time=0.1,
+            p99_response_time=0.1,
+        )
+
+        created, updated = service._upsert_rollup(mock_db, DummyHourly, "tool_id", agg, is_a2a=False)
+
+        assert (created, updated) == (0, 1)
+        mock_db.execute.assert_called()

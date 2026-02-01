@@ -614,3 +614,99 @@ class TestAggregateCustomWindowsFallback:
 
         # Verify per-window aggregation was used as fallback
         assert mock_aggregator.aggregate_all_components.call_count > 0
+
+
+class TestAggregatePerformanceMetrics:
+    """Tests for aggregate_performance_metrics and related helpers."""
+
+    def test_aggregate_performance_metrics_success(self):
+        aggregator = LogAggregator()
+        aggregator._use_sql_percentiles = False
+
+        stats = {
+            "count": 5,
+            "avg_duration": 10.0,
+            "min_duration": 1.0,
+            "max_duration": 20.0,
+            "p50": 9.0,
+            "p95": 18.0,
+            "p99": 19.0,
+            "error_count": 1,
+        }
+
+        mock_db = MagicMock()
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with patch.object(aggregator, "_compute_stats_python", return_value=stats):
+                with patch.object(aggregator, "_upsert_metric", return_value=MagicMock()) as mock_upsert:
+                    result = aggregator.aggregate_performance_metrics("comp", "op")
+
+        assert result is not None
+        assert mock_upsert.called is True
+        mock_db.commit.assert_called()
+        mock_db.close.assert_called()
+
+    def test_aggregate_performance_metrics_exception_rolls_back(self):
+        aggregator = LogAggregator()
+        aggregator._use_sql_percentiles = False
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with patch.object(aggregator, "_compute_stats_python", side_effect=RuntimeError("boom")):
+                result = aggregator.aggregate_performance_metrics("comp", "op")
+
+        assert result is None
+        mock_db.rollback.assert_called()
+        mock_db.close.assert_called()
+
+    def test_aggregate_all_components_calls_per_component(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_db.execute.return_value.all.return_value = [("comp", "op")]
+
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with patch.object(aggregator, "aggregate_performance_metrics", return_value=MagicMock()):
+                metrics = aggregator.aggregate_all_components(db=None)
+
+        assert len(metrics) == 1
+        mock_db.commit.assert_called()
+
+    def test_get_recent_metrics_filters(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [MagicMock()]
+        mock_db.execute.return_value.scalars.return_value = mock_scalars
+
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            results = aggregator.get_recent_metrics(component="comp", operation="op", db=None)
+
+        assert len(results) == 1
+        mock_db.commit.assert_called()
+
+    def test_get_degradation_alerts_detects_slowdown(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+
+        recent = [MagicMock(avg_duration_ms=20.0, error_rate=0.1)]
+        baseline = [MagicMock(avg_duration_ms=10.0, error_rate=0.05)]
+
+        def _all_result(values):
+            result = MagicMock()
+            result.all.return_value = values
+            return result
+
+        def _scalars_result(values):
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = values
+            return result
+
+        mock_db.execute.side_effect = [
+            _all_result([("comp", "op")]),
+            _scalars_result(recent),
+            _scalars_result(baseline),
+        ]
+
+        alerts = aggregator.get_degradation_alerts(threshold_multiplier=1.5, db=mock_db)
+
+        assert len(alerts) == 1
+        assert alerts[0]["component"] == "comp"

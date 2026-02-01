@@ -9,7 +9,9 @@ from mcpgateway.services.observability_service import (
     generate_w3c_trace_id,
     generate_w3c_span_id,
     format_traceparent,
+    ensure_timezone_aware,
 )
+from sqlalchemy.exc import SQLAlchemyError
 
 
 @pytest.fixture
@@ -257,6 +259,114 @@ def test_trace_a2a_request_success_path(mock_db):
         with service.trace_a2a_request(mock_db, "agent-1", "AgentName", "ping", {"data": "v"}) as (span_id, result):
             result["ok"] = True
         mock_db.commit.assert_called()
+
+
+def test_parse_traceparent_valid():
+    header = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+    trace_id, parent_id, flags = parse_traceparent(header)
+    assert trace_id == "0af7651916cd43dd8448eb211c80319c"
+    assert parent_id == "b7ad6b7169203331"
+    assert flags == "01"
+
+
+def test_ensure_timezone_aware_sets_utc():
+    naive = datetime(2026, 1, 1, 12, 0, 0)
+    aware = ensure_timezone_aware(naive)
+    assert aware.tzinfo is not None
+    assert aware.tzinfo == timezone.utc
+
+
+def test_safe_commit_failure_rolls_back():
+    service = ObservabilityService()
+    mock_db = MagicMock()
+    mock_db.commit.side_effect = SQLAlchemyError("commit failed")
+    mock_db.rollback.side_effect = SQLAlchemyError("rollback failed")
+
+    assert service._safe_commit(mock_db, "test") is False
+
+
+@patch("mcpgateway.services.observability_service.current_trace_id")
+def test_trace_tool_invocation_no_trace(mock_ctid, mock_db):
+    service = ObservabilityService()
+    mock_ctid.get.return_value = None
+    with service.trace_tool_invocation(mock_db, "tool", {"password": "secret"}) as (span_id, result):
+        result["ok"] = True
+    assert span_id is None
+
+
+@patch("mcpgateway.services.observability_service.current_trace_id")
+def test_trace_a2a_request_no_trace(mock_ctid, mock_db):
+    service = ObservabilityService()
+    mock_ctid.get.return_value = None
+    with service.trace_a2a_request(mock_db, "agent", "Name", "query", {"token": "x"}) as (span_id, result):
+        result["ok"] = True
+    assert span_id is None
+
+
+def test_add_event_commit_failure_returns_zero(mock_db):
+    service = ObservabilityService()
+    with patch.object(service, "_safe_commit", return_value=False):
+        event_id = service.add_event(mock_db, "span", "evt")
+    assert event_id == 0
+
+
+def test_record_metric_commit_failure_returns_zero(mock_db):
+    service = ObservabilityService()
+    with patch.object(service, "_safe_commit", return_value=False):
+        metric_id = service.record_metric(mock_db, name="m", value=1.0, metric_type="counter", trace_id="tid")
+    assert metric_id == 0
+
+
+def test_query_traces_applies_filters(mock_db):
+    service = ObservabilityService()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+    query.offset.return_value = query
+    query.all.return_value = ["trace"]
+    mock_db.query.return_value = query
+
+    results = service.query_traces(
+        mock_db,
+        start_time=datetime.now(timezone.utc),
+        end_time=datetime.now(timezone.utc),
+        min_duration_ms=1.0,
+        max_duration_ms=10.0,
+        status="error",
+        status_in=["ok", "error"],
+        status_not_in=["ok"],
+        http_status_code=500,
+        http_status_code_in=[400, 500],
+        http_method="GET",
+        http_method_in=["GET", "POST"],
+        user_email="user@example.com",
+        user_email_in=["user@example.com", "other@example.com"],
+        attribute_filters={"http.route": "/"},
+        attribute_filters_or={"component": "api"},
+        attribute_search="foo%",
+        name_contains="api",
+        order_by="duration_desc",
+        limit=5,
+        offset=2,
+    )
+
+    assert results == ["trace"]
+    assert query.filter.called
+    assert query.order_by.called
+    query.limit.assert_called_with(5)
+    query.offset.assert_called_with(2)
+
+
+def test_query_traces_invalid_limit_and_order(mock_db):
+    service = ObservabilityService()
+    mock_db.query.return_value = MagicMock()
+
+    with pytest.raises(ValueError):
+        service.query_traces(mock_db, limit=0)
+
+    with pytest.raises(ValueError):
+        service.query_traces(mock_db, order_by="bad_order")
 
 
 def test_record_transport_activity_all_metrics(mock_db):

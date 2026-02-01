@@ -9,6 +9,7 @@ This module tests OAuth endpoints including authorization flow, callbacks, and s
 """
 
 # Standard
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 # Third-Party
@@ -592,3 +593,171 @@ class TestRFC8707ResourceNormalization:
         url = "https://api.example.com/v1?tenant=acme#section"
         # Fragment is always removed (RFC 8707 MUST NOT)
         assert _normalize_resource_url(url, preserve_query=True) == "https://api.example.com/v1?tenant=acme"
+
+
+class TestOAuthRouterAdditionalCoverage:
+    """Additional coverage for OAuth router branches."""
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_success(self, mock_db, mock_request, mock_current_user):
+        """Test DCR auto-registration path success."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.team_id = None
+        mock_gateway.auth_type = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://issuer.example.com/auth"}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                mock_mgr = Mock()
+                mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+                mock_oauth_mgr.return_value = mock_mgr
+
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    # First-Party
+                    from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert mock_gateway.auth_type == "oauth"
+        assert mock_gateway.oauth_config["client_id"] == "client-123"
+        mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_error(self, mock_db, mock_request, mock_current_user):
+        """Test DCR error handling path."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.team_id = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                from mcpgateway.services.dcr_service import DcrError
+
+                raise DcrError("boom")
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            # First-Party
+            from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+            with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                mock_settings.dcr_enabled = True
+                mock_settings.dcr_auto_register_on_missing_credentials = True
+
+                with pytest.raises(HTTPException) as exc_info:
+                    await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert exc_info.value.status_code == 500
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_team_access_denied(self, mock_db):
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.team_id = "team-1"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        class _User:
+            def is_team_member(self, _team_id):
+                return False
+
+        class _AuthService:
+            async def get_user_by_email(self, _email):
+                return _User()
+
+        with patch("mcpgateway.routers.oauth_router.EmailAuthService", return_value=_AuthService()):
+            # First-Party
+            from mcpgateway.routers.oauth_router import get_oauth_status
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_oauth_status("gateway123", {"email": "user@example.com"}, mock_db)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_list_registered_oauth_clients(self, mock_db):
+        class _Client:
+            id = "c1"
+            gateway_id = "g1"
+            issuer = "https://issuer"
+            client_id = "client"
+            redirect_uris = "https://cb1,https://cb2"
+            grant_types = ["authorization_code"]
+            scope = "openid"
+            token_endpoint_auth_method = "client_secret_basic"
+            created_at = datetime.now(timezone.utc)
+            expires_at = None
+            is_active = True
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [_Client()]
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import list_registered_oauth_clients
+
+        result = await list_registered_oauth_clients(current_user={"email": "admin"}, db=mock_db)
+
+        assert result["total"] == 1
+        assert result["clients"][0]["gateway_id"] == "g1"
+        assert result["clients"][0]["redirect_uris"] == ["https://cb1", "https://cb2"]
+
+    @pytest.mark.asyncio
+    async def test_get_registered_client_for_gateway_not_found(self, mock_db):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import get_registered_client_for_gateway
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_registered_client_for_gateway("gateway123", {"email": "admin"}, mock_db)
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_registered_client_success(self, mock_db):
+        client = Mock()
+        client.id = "c1"
+        client.issuer = "https://issuer"
+        client.gateway_id = "g1"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = client
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import delete_registered_client
+
+        result = await delete_registered_client("c1", {"email": "admin"}, mock_db)
+
+        assert result["success"] is True
+        mock_db.delete.assert_called_once_with(client)
+        mock_db.commit.assert_called_once()
