@@ -12,7 +12,7 @@ import json
 import time
 
 # Third-Party
-from playwright.sync_api import expect, Page
+from playwright.sync_api import Page
 
 
 def _find_prompt(page: Page, prompt_name: str, retries: int = 5):
@@ -33,23 +33,31 @@ def _find_prompt(page: Page, prompt_name: str, retries: int = 5):
 class TestPromptsCRUD:
     """CRUD tests for Prompts entity."""
 
+    @staticmethod
+    def _wait_for_codemirror(page: Page, timeout: int = 10000):
+        """Wait for CodeMirror promptArgsEditor to be initialized."""
+        page.wait_for_function("typeof window.promptArgsEditor !== 'undefined'", timeout=timeout)
+
     def test_create_new_prompt(self, admin_page: Page, test_prompt_data):
         """Test creating a new prompt."""
         # Go to Prompts tab
         admin_page.click("#tab-prompts")
         admin_page.wait_for_selector("#prompts-panel:not(.hidden)")
 
+        # Wait for CodeMirror editor to be initialized
+        self._wait_for_codemirror(admin_page)
+
         # Fill the form
         admin_page.fill('#add-prompt-form [name="name"]', test_prompt_data["name"])
         admin_page.fill('#add-prompt-form [name="description"]', test_prompt_data["description"])
-        
+
         # Fill arguments using CodeMirror instance
         args_json = test_prompt_data["arguments"]
         # Ensure it's a valid JSON string for JS evaluation
         if not isinstance(args_json, str):
             args_json = json.dumps(args_json)
-            
-        admin_page.evaluate(f'window.promptArgsEditor.setValue({json.dumps(args_json)})')
+
+        admin_page.evaluate(f"window.promptArgsEditor.setValue({json.dumps(args_json)})")
 
         # Submit
         with admin_page.expect_response(lambda response: "/admin/prompts" in response.url and response.request.method == "POST") as response_info:
@@ -61,25 +69,36 @@ class TestPromptsCRUD:
         created_prompt = _find_prompt(admin_page, test_prompt_data["name"])
         assert created_prompt is not None
 
+        # Cleanup: delete the created prompt for idempotency
+        if created_prompt:
+            admin_page.request.post(
+                f"/admin/prompts/{created_prompt['id']}/delete",
+                data="is_inactive_checked=false",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
     def test_delete_prompt(self, admin_page: Page, test_prompt_data):
         """Test deleting a prompt."""
         # Go to Prompts tab
         admin_page.click("#tab-prompts")
         admin_page.wait_for_selector("#prompts-panel:not(.hidden)")
 
+        # Wait for CodeMirror editor to be initialized
+        self._wait_for_codemirror(admin_page)
+
         # Create prompt first
         admin_page.fill('#add-prompt-form [name="name"]', test_prompt_data["name"])
         admin_page.fill('#add-prompt-form [name="description"]', test_prompt_data["description"])
-        
+
         # Fill arguments using CodeMirror
         args_json = test_prompt_data["arguments"]
         if not isinstance(args_json, str):
             args_json = json.dumps(args_json)
-        admin_page.evaluate(f'window.promptArgsEditor.setValue({json.dumps(args_json)})')
-        
-        with admin_page.expect_response(lambda response: "/admin/prompts" in response.url and response.request.method == "POST") as response_info:
+        admin_page.evaluate(f"window.promptArgsEditor.setValue({json.dumps(args_json)})")
+
+        with admin_page.expect_response(lambda response: "/admin/prompts" in response.url and response.request.method == "POST"):
             admin_page.click('#add-prompt-form button[type="submit"]')
-        
+
         created_prompt = _find_prompt(admin_page, test_prompt_data["name"])
         assert created_prompt is not None
 

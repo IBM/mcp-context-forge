@@ -11,7 +11,7 @@ CRUD tests for Resources entity in MCP Gateway Admin UI.
 import time
 
 # Third-Party
-from playwright.sync_api import expect, Page
+from playwright.sync_api import Page
 
 
 def _find_resource(page: Page, resource_name: str, retries: int = 5):
@@ -54,6 +54,14 @@ class TestResourcesCRUD:
         created_resource = _find_resource(admin_page, test_resource_data["name"])
         assert created_resource is not None
 
+        # Cleanup: delete the created resource for idempotency
+        if created_resource:
+            admin_page.request.post(
+                f"/admin/resources/{created_resource['id']}/delete",
+                data="is_inactive_checked=false",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
     def test_delete_resource(self, admin_page: Page, test_resource_data):
         """Test deleting a resource."""
         # Go to Resources tab
@@ -65,10 +73,10 @@ class TestResourcesCRUD:
         admin_page.fill('#add-resource-form [name="name"]', test_resource_data["name"])
         admin_page.fill('#add-resource-form [name="mimeType"]', test_resource_data["mimeType"])
         admin_page.fill('#add-resource-form [name="description"]', test_resource_data["description"])
-        
-        with admin_page.expect_response(lambda response: "/admin/resources" in response.url and response.request.method == "POST") as response_info:
+
+        with admin_page.expect_response(lambda response: "/admin/resources" in response.url and response.request.method == "POST"):
             admin_page.click('#add-resource-form button[type="submit"]')
-        
+
         created_resource = _find_resource(admin_page, test_resource_data["name"])
         assert created_resource is not None
 

@@ -30,8 +30,9 @@ class TestHTMXInteractions:
     @staticmethod
     def _prepare_tools_table(page: Page) -> None:
         """Ensure tools table is loaded."""
-        page.wait_for_selector("#tools-panel:not(.hidden)")
-        page.wait_for_selector("#tools-table-body")
+        page.wait_for_selector("#tools-panel:not(.hidden)", timeout=30000)
+        # Wait for table body to exist in DOM (may be empty, so don't require visible)
+        page.wait_for_selector("#tools-table-body", state="attached", timeout=30000)
 
     TAB_PANEL_CHECKS = [
         ("overview", "overview-panel", None),

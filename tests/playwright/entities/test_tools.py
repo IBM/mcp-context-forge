@@ -67,6 +67,14 @@ class TestToolsCRUD:
         created_tool = _find_tool(admin_page, test_tool_data["name"])
         assert created_tool is not None, f"Newly created tool not found via admin API (status {response.status})"
 
+        # Cleanup: delete the created tool for idempotency
+        if created_tool:
+            admin_page.request.post(
+                f"/admin/tools/{created_tool['id']}/delete",
+                data="is_inactive_checked=false",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
     def test_delete_tool(self, admin_page: Page, test_tool_data):
         """Test deleting a tool."""
         # Go to the Global Tools tab (if not already there)

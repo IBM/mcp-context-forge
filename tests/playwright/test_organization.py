@@ -35,7 +35,7 @@ class TestOrganization:
 
         # Fill form
         admin_page.fill("#team-name", team_name)
-        
+
         # Submit
         with admin_page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST") as response_info:
             admin_page.click('#create-team-form button[type="submit"]')
@@ -48,7 +48,7 @@ class TestOrganization:
         admin_page.goto(f"{admin_page.url.split('#')[0]}#teams")
         admin_page.reload()
         admin_page.wait_for_selector("#teams-panel:not(.hidden)")
-        
+
         # Wait for list to populate
         admin_page.wait_for_selector(f"text={team_name}", timeout=30000)
         expect(admin_page.locator(f"text={team_name}")).to_be_visible()
@@ -56,13 +56,13 @@ class TestOrganization:
         # Delete the team
         # Find the row with the team name
         team_row = admin_page.locator(f"tr:has-text('{team_name}')")
-        
+
         # Setup dialog listener for confirmation
         admin_page.once("dialog", lambda dialog: dialog.accept())
-        
+
         # Click delete button in that row
         team_row.locator('button:has-text("Delete")').click()
-        
+
         # Verify it's gone
         admin_page.wait_for_timeout(1000)
         expect(admin_page.locator(f"text={team_name}")).to_be_hidden()
@@ -80,16 +80,16 @@ class TestOrganization:
         # Fill form
         admin_page.fill("#api-token-name", token_name)
         # Select expiry (optional, default is fine)
-        
+
         # Submit
         admin_page.click('#create-token-form button[type="submit"]')
-        
+
         # Wait for success modal
         admin_page.wait_for_selector("text=Token Created Successfully", timeout=30000)
 
         # Close result modal
-        admin_page.click("button:has-text(\"I've Saved It\")")
-        
+        admin_page.click('button:has-text("I\'ve Saved It")')
+
         # Verify token in list
         admin_page.wait_for_selector(f"text={token_name}", timeout=30000)
         expect(admin_page.locator(f"text={token_name}")).to_be_visible()
@@ -99,16 +99,16 @@ class TestOrganization:
         # Tokens might be in a grid or table. Admin.js renders them.
         # Assuming we can find a revoke button near the text.
         token_element = admin_page.locator(f"div:has-text('{token_name}')").first
-        
+
         admin_page.once("dialog", lambda dialog: dialog.accept())
-        # The revoke button might be a sibling or child. 
+        # The revoke button might be a sibling or child.
         # Using a broad search for Revoke button visible on page might be risky if multiple.
         # Let's try to scope it.
         # If list is refreshed, the new token should be there.
-        
+
         # Specific selector depends on HTML structure of token list which is dynamic JS.
         # Let's assume there is a Revoke button.
         admin_page.locator(f"div:has-text('{token_name}')").locator("xpath=..").locator("button:has-text('Revoke')").click()
-        
+
         # Verify status changes or row removed/updated
         admin_page.wait_for_timeout(500)

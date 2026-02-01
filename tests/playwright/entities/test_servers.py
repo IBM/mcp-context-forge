@@ -11,7 +11,7 @@ CRUD tests for Servers entity in MCP Gateway Admin UI.
 import time
 
 # Third-Party
-from playwright.sync_api import expect, Page
+from playwright.sync_api import Page
 
 
 def _find_server(page: Page, server_name: str, retries: int = 5):
@@ -52,6 +52,14 @@ class TestServersCRUD:
         created_server = _find_server(admin_page, test_server_data["name"])
         assert created_server is not None
 
+        # Cleanup: delete the created server for idempotency
+        if created_server:
+            admin_page.request.post(
+                f"/admin/servers/{created_server['id']}/delete",
+                data="is_inactive_checked=false",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
     def test_delete_server(self, admin_page: Page, test_server_data):
         """Test deleting a server."""
         # Go to Catalog/Servers tab
@@ -61,10 +69,10 @@ class TestServersCRUD:
         # Create server first
         admin_page.fill("#server-name", test_server_data["name"])
         admin_page.fill('input[name="icon"]', test_server_data["icon"])
-        
-        with admin_page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST") as response_info:
+
+        with admin_page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             admin_page.click('#add-server-form button[type="submit"]')
-        
+
         created_server = _find_server(admin_page, test_server_data["name"])
         assert created_server is not None
 

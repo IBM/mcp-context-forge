@@ -8,7 +8,6 @@ Test cases for admin UI.
 """
 
 # Standard
-import uuid
 import re
 import time
 
@@ -39,10 +38,10 @@ class TestAdminUI:
 
     def test_admin_panel_loads(self, admin_page: Page, base_url: str):
         """Test that admin panel loads successfully."""
+        # admin_page fixture already navigated and authenticated
         admin_ui = AdminPage(admin_page, base_url)
-        admin_ui.navigate()
 
-        # Verify admin panel loaded
+        # Verify admin panel loaded (no need to navigate again)
         expect(admin_page).to_have_title(re.compile(r"(MCP Gateway Admin|ContextForge - Gateway Administration)"))
         assert admin_ui.element_exists(admin_ui.SERVERS_TAB)
         assert admin_ui.element_exists(admin_ui.TOOLS_TAB)

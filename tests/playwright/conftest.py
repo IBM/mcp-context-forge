@@ -14,7 +14,8 @@ import re
 from typing import Dict, Generator, Optional
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError, expect
+from playwright.sync_api import APIRequestContext, BrowserContext, expect, Page, Playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 # First-Party
@@ -113,14 +114,14 @@ def _set_admin_jwt_cookie(page: Page, email: str) -> None:
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Create API request context with optional bearer token."""
     headers = {"Accept": "application/json"}
-    
+
     token = API_TOKEN
     if not token and not DISABLE_JWT_FALLBACK:
         # Generate a fallback token for testing if none provided
         try:
             token = _create_jwt_token({"sub": ADMIN_EMAIL})
         except Exception:
-            pass # Use empty if generation fails
+            pass  # Use empty if generation fails
 
     auth_header = _format_auth_header(token)
     if auth_header:
@@ -222,7 +223,7 @@ def admin_page(page: Page):
                 raise AssertionError(f"Login failed with status {status}")
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page, previous_url)
-    # If login still failed, fallback to JWT cookie unless disabled
+        # If login still failed, fallback to JWT cookie unless disabled
         if re.search(r"/admin/login", page.url):
             if DISABLE_JWT_FALLBACK:
                 raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
