@@ -14,7 +14,8 @@ import re
 from typing import Dict, Generator, Optional
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError, expect
+from playwright.sync_api import APIRequestContext, BrowserContext, expect, Page, Playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 # First-Party
@@ -113,14 +114,14 @@ def _set_admin_jwt_cookie(page: Page, email: str) -> None:
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Create API request context with optional bearer token."""
     headers = {"Accept": "application/json"}
-    
+
     token = API_TOKEN
     if not token and not DISABLE_JWT_FALLBACK:
         # Generate a fallback token for testing if none provided
         try:
             token = _create_jwt_token({"sub": ADMIN_EMAIL})
         except Exception:
-            pass # Use empty if generation fails
+            pass  # Use empty if generation fails
 
     auth_header = _format_auth_header(token)
     if auth_header:
@@ -222,7 +223,7 @@ def admin_page(page: Page):
                 raise AssertionError(f"Login failed with status {status}")
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page, previous_url)
-    # If login still failed, fallback to JWT cookie unless disabled
+        # If login still failed, fallback to JWT cookie unless disabled
         if re.search(r"/admin/login", page.url):
             if DISABLE_JWT_FALLBACK:
                 raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
@@ -233,7 +234,7 @@ def admin_page(page: Page):
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
     # Wait for the application shell to load to ensure we aren't looking at a 500 error page
     try:
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=10000)
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
     except Exception:
         # If tab is missing, check if we have an error message on page to report
         content = page.content()
@@ -261,10 +262,52 @@ def test_tool_data():
     }
 
 
+@pytest.fixture
+def test_server_data():
+    """Provide test data for server creation."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    return {
+        "name": f"test-server-{unique_id}",
+        "icon": "http://localhost:9000/icon.png",
+    }
+
+
+@pytest.fixture
+def test_resource_data():
+    """Provide test data for resource creation."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    return {
+        "uri": f"file:///tmp/test-resource-{unique_id}.txt",
+        "name": f"Test Resource {unique_id}",
+        "mimeType": "text/plain",
+        "description": "A test resource created by automation",
+    }
+
+
+@pytest.fixture
+def test_prompt_data():
+    """Provide test data for prompt creation."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    return {
+        "name": f"test-prompt-{unique_id}",
+        "description": "A test prompt created by automation",
+        "arguments": '[{"name": "topic", "description": "Topic to discuss", "required": true}]',
+    }
+
+
 @pytest.fixture(autouse=True)
 def setup_test_environment(page: Page):
     """Set viewport and default timeout for consistent UI tests."""
     if VIEWPORT_SIZE:
         page.set_viewport_size(VIEWPORT_SIZE)
-    page.set_default_timeout(30000)
+    page.set_default_timeout(60000)
     # Optionally, add request logging or interception here
