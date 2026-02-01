@@ -1130,7 +1130,8 @@ performance-clean:                         ## Stop and remove all performance da
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
-# help: load-test             - Run HTTP load test (4000 users, 5m, headless)
+# help: load-test             - Run HTTP load test (4000 users, 5m, headless, summary only)
+# help: load-test-cli         - Run HTTP load test with live stats (same as UI but headless)
 # help: load-test-ui          - Start Locust web UI (4000 users, 200 spawn/s)
 # help: load-test-light       - Light load test (10 users, 30s)
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
@@ -1236,6 +1237,36 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 			--run-time=$(LOADTEST_RUN_TIME) \
 			--processes=$(LOADTEST_PROCESSES) \
 			--class-picker"
+
+load-test-cli:                             ## Run HTTP load test with live stats (same as UI but headless)
+	@echo "🔥 Running HTTP load test with live stats (CLI mode)..."
+	@echo "   Host: $(LOADTEST_HOST)"
+	@echo "   Users: $(LOADTEST_USERS)"
+	@echo "   Spawn rate: $(LOADTEST_SPAWN_RATE)/s"
+	@echo "   Duration: $(LOADTEST_RUN_TIME)"
+	@echo "   Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
+	@echo ""
+	@echo "   💡 Tip: Start server first with 'make dev' in another terminal"
+	@echo "   💡 Tip: For best results, run: sudo scripts/tune-loadtest.sh"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=$(LOADTEST_HOST) \
+			--users=$(LOADTEST_USERS) \
+			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
+			--run-time=$(LOADTEST_RUN_TIME) \
+			--processes=$(LOADTEST_PROCESSES) \
+			--headless \
+			--html=$(LOADTEST_HTML_REPORT) \
+			--csv=$(LOADTEST_CSV_PREFIX)"
+	@echo ""
+	@echo "✅ Load test complete!"
+	@echo "📄 HTML Report: $(LOADTEST_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
 
 load-test-light:                           ## Light load test (10 users, 30s)
 	@echo "🔥 Running LIGHT load test..."
