@@ -10,7 +10,7 @@ Comprehensive tests for Team Management Service functionality.
 # Standard
 import base64
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import orjson
@@ -817,6 +817,352 @@ class TestTeamManagementService:
 
             await service.list_teams(include_personal=True)
             mock_paginate.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_list_teams_with_search_query_page(self, service, mock_db):
+        """Test list_teams applies search_query and page-based ordering."""
+        mock_page = {"data": [], "pagination": {}, "links": {}}
+
+        with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
+            mock_paginate.return_value = mock_page
+
+            result = await service.list_teams(search_query="alpha", page=1, per_page=10)
+
+            assert result == mock_page
+            mock_paginate.assert_called_once()
+            mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_teams_with_offset(self, service, mock_db):
+        """Test list_teams applies offset when no page/cursor provided."""
+        with patch("mcpgateway.services.team_management_service.unified_paginate") as mock_paginate:
+            mock_paginate.return_value = ([], None)
+
+            await service.list_teams(offset=5)
+
+            mock_paginate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_all_team_ids_with_filters(self, service, mock_db):
+        """Test get_all_team_ids applies filters and returns IDs."""
+        mock_result = MagicMock()
+        mock_result.all.return_value = [("team-1",), ("team-2",)]
+        mock_db.execute.return_value = mock_result
+
+        result = await service.get_all_team_ids(include_inactive=True, visibility_filter="public", include_personal=True, search_query="alpha")
+
+        assert result == ["team-1", "team-2"]
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_teams_count_with_filters(self, service, mock_db):
+        """Test get_teams_count applies filters and returns scalar count."""
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 4
+        mock_db.execute.return_value = mock_result
+
+        result = await service.get_teams_count(include_inactive=True, visibility_filter="private", include_personal=True, search_query="beta")
+
+        assert result == 4
+        mock_db.commit.assert_called_once()
+
+    # =========================================================================
+    # Discovery and Join Request Tests
+    # =========================================================================
+
+    @pytest.mark.asyncio
+    async def test_discover_public_teams_success(self, service, mock_db):
+        """Test discovering public teams returns results."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.offset.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [MagicMock(spec=EmailTeam)]
+        mock_db.query.return_value = mock_query
+
+        result = await service.discover_public_teams("user@example.com", skip=5, limit=2)
+
+        assert len(result) == 1
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_discover_public_teams_error(self, service, mock_db):
+        """Test discover_public_teams handles query errors."""
+        mock_db.query.side_effect = Exception("Database error")
+
+        result = await service.discover_public_teams("user@example.com")
+
+        assert result == []
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_join_request_team_not_found(self, service, mock_db):
+        """Test create_join_request when team is not found."""
+        with patch.object(service, "get_team_by_id", AsyncMock(return_value=None)):
+            with pytest.raises(ValueError, match="Team not found"):
+                await service.create_join_request("team-1", "user@example.com")
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_join_request_team_not_public(self, service, mock_db):
+        """Test create_join_request when team is not public."""
+        team = MagicMock(spec=EmailTeam)
+        team.visibility = "private"
+
+        with patch.object(service, "get_team_by_id", AsyncMock(return_value=team)):
+            with pytest.raises(ValueError, match="public teams"):
+                await service.create_join_request("team-1", "user@example.com")
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_join_request_existing_member(self, service, mock_db):
+        """Test create_join_request when user already a member."""
+        team = MagicMock(spec=EmailTeam)
+        team.visibility = "public"
+
+        member_query = MagicMock()
+        member_query.filter.return_value.first.return_value = MagicMock(spec=EmailTeamMember)
+        mock_db.query.return_value = member_query
+
+        with patch.object(service, "get_team_by_id", AsyncMock(return_value=team)):
+            with pytest.raises(ValueError, match="already a member"):
+                await service.create_join_request("team-1", "user@example.com")
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_join_request_existing_pending_request(self, service, mock_db):
+        """Test create_join_request when pending request already exists."""
+        team = MagicMock(spec=EmailTeam)
+        team.visibility = "public"
+
+        member_query = MagicMock()
+        member_query.filter.return_value.first.return_value = None
+
+        existing_request = MagicMock(spec=EmailTeamJoinRequest)
+        existing_request.status = "pending"
+        existing_request.is_expired.return_value = False
+        request_query = MagicMock()
+        request_query.filter.return_value.first.return_value = existing_request
+
+        mock_db.query.side_effect = [member_query, request_query]
+
+        with patch.object(service, "get_team_by_id", AsyncMock(return_value=team)):
+            with pytest.raises(ValueError, match="pending join request"):
+                await service.create_join_request("team-1", "user@example.com")
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_join_request_updates_existing_request(self, service, mock_db):
+        """Test create_join_request updates non-pending existing request."""
+        team = MagicMock(spec=EmailTeam)
+        team.visibility = "public"
+
+        member_query = MagicMock()
+        member_query.filter.return_value.first.return_value = None
+
+        existing_request = MagicMock(spec=EmailTeamJoinRequest)
+        existing_request.status = "rejected"
+        existing_request.is_expired.return_value = True
+        request_query = MagicMock()
+        request_query.filter.return_value.first.return_value = existing_request
+
+        mock_db.query.side_effect = [member_query, request_query]
+
+        fixed_now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        with (
+            patch.object(service, "get_team_by_id", AsyncMock(return_value=team)),
+            patch("mcpgateway.services.team_management_service.utc_now", return_value=fixed_now),
+        ):
+            result = await service.create_join_request("team-1", "user@example.com", message="hello")
+
+        assert result is existing_request
+        assert existing_request.status == "pending"
+        assert existing_request.message == "hello"
+        assert existing_request.reviewed_at is None
+        assert existing_request.reviewed_by is None
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once_with(existing_request)
+
+    @pytest.mark.asyncio
+    async def test_create_join_request_new_request(self, service, mock_db):
+        """Test create_join_request creates a new request when none exists."""
+        team = MagicMock(spec=EmailTeam)
+        team.visibility = "public"
+
+        member_query = MagicMock()
+        member_query.filter.return_value.first.return_value = None
+        request_query = MagicMock()
+        request_query.filter.return_value.first.return_value = None
+        mock_db.query.side_effect = [member_query, request_query]
+
+        new_request = MagicMock(spec=EmailTeamJoinRequest)
+
+        with (
+            patch.object(service, "get_team_by_id", AsyncMock(return_value=team)),
+            patch("mcpgateway.services.team_management_service.EmailTeamJoinRequest", return_value=new_request),
+        ):
+            result = await service.create_join_request("team-1", "user@example.com", message=None)
+
+        assert result is new_request
+        mock_db.add.assert_called_once_with(new_request)
+        mock_db.refresh.assert_called_once_with(new_request)
+
+    @pytest.mark.asyncio
+    async def test_list_join_requests_success(self, service, mock_db):
+        """Test list_join_requests returns pending requests."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value.order_by.return_value.all.return_value = [MagicMock(spec=EmailTeamJoinRequest)]
+        mock_db.query.return_value = mock_query
+
+        result = await service.list_join_requests("team-1")
+
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_join_requests_error(self, service, mock_db):
+        """Test list_join_requests handles errors."""
+        mock_db.query.side_effect = Exception("Database error")
+
+        result = await service.list_join_requests("team-1")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_approve_join_request_not_found(self, service, mock_db):
+        """Test approve_join_request when request is missing."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        with pytest.raises(ValueError, match="not found"):
+            await service.approve_join_request("req-1", "admin@example.com")
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_approve_join_request_expired(self, service, mock_db):
+        """Test approve_join_request when request is expired."""
+        join_request = MagicMock(spec=EmailTeamJoinRequest)
+        join_request.is_expired.return_value = True
+        mock_db.query.return_value.filter.return_value.first.return_value = join_request
+
+        with pytest.raises(ValueError, match="expired"):
+            await service.approve_join_request("req-1", "admin@example.com")
+
+        assert join_request.status == "expired"
+        mock_db.commit.assert_called_once()
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_approve_join_request_success(self, service, mock_db):
+        """Test approve_join_request adds member and updates request."""
+        join_request = MagicMock(spec=EmailTeamJoinRequest)
+        join_request.team_id = "team-1"
+        join_request.user_email = "user@example.com"
+        join_request.is_expired.return_value = False
+        mock_db.query.return_value.filter.return_value.first.return_value = join_request
+
+        member = MagicMock(spec=EmailTeamMember)
+        member.id = "member-1"
+        member.role = "member"
+
+        with (
+            patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
+            patch.object(service, "_log_team_member_action") as mock_log_action,
+            patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()) as mock_invalidate,
+            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team", new=AsyncMock()),
+            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_role", new=AsyncMock()),
+            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_teams", new=AsyncMock()),
+            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team_membership", new=AsyncMock()),
+            patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", new=AsyncMock()),
+        ):
+            result = await service.approve_join_request("req-1", "admin@example.com")
+
+        assert result is member
+        mock_db.flush.assert_called_once()
+        mock_db.refresh.assert_called_once_with(member)
+        mock_log_action.assert_called_once()
+        mock_invalidate.assert_awaited_once_with("team-1")
+
+    @pytest.mark.asyncio
+    async def test_reject_join_request_success(self, service, mock_db):
+        """Test rejecting a join request updates status."""
+        join_request = MagicMock(spec=EmailTeamJoinRequest)
+        join_request.user_email = "user@example.com"
+        join_request.team_id = "team-1"
+        mock_db.query.return_value.filter.return_value.first.return_value = join_request
+
+        result = await service.reject_join_request("req-1", "admin@example.com")
+
+        assert result is True
+        assert join_request.status == "rejected"
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reject_join_request_not_found(self, service, mock_db):
+        """Test rejecting missing join request raises error."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        with pytest.raises(ValueError, match="not found"):
+            await service.reject_join_request("req-1", "admin@example.com")
+
+        mock_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_user_join_requests_with_team_filter(self, service, mock_db):
+        """Test get_user_join_requests applies team filter."""
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [MagicMock(spec=EmailTeamJoinRequest)]
+        mock_db.query.return_value = mock_query
+
+        result = await service.get_user_join_requests("user@example.com", team_id="team-1")
+
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_user_join_requests_error(self, service, mock_db):
+        """Test get_user_join_requests handles errors."""
+        mock_db.query.side_effect = Exception("Database error")
+
+        result = await service.get_user_join_requests("user@example.com")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_cancel_join_request_not_found(self, service, mock_db):
+        """Test cancel_join_request returns False when missing."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        result = await service.cancel_join_request("req-1", "user@example.com")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cancel_join_request_success(self, service, mock_db):
+        """Test cancel_join_request updates request status."""
+        join_request = MagicMock(spec=EmailTeamJoinRequest)
+        join_request.user_email = "user@example.com"
+        join_request.team_id = "team-1"
+        mock_db.query.return_value.filter.return_value.first.return_value = join_request
+
+        result = await service.cancel_join_request("req-1", "user@example.com")
+
+        assert result is True
+        assert join_request.status == "cancelled"
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cancel_join_request_error(self, service, mock_db):
+        """Test cancel_join_request handles database errors."""
+        mock_db.query.side_effect = Exception("Database error")
+
+        result = await service.cancel_join_request("req-1", "user@example.com")
+
+        assert result is False
+        mock_db.rollback.assert_called_once()
 
 
     # =========================================================================
