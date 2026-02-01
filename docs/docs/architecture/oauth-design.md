@@ -62,7 +62,7 @@ Used for state storage when a database backend is configured. It tracks:
 
 - **Identifiers**: Gateway ID and State (unique pair).
 - **PKCE**: Code verifier.
-- **Lifecycle**: Expiration time, used status, and creation timestamp. TTL is enforced in logic (e00 seconds).
+- **Lifecycle**: Expiration time, used status, and creation timestamp. TTL is enforced in logic (300 seconds).
 
 ### Registered OAuth Clients
 
