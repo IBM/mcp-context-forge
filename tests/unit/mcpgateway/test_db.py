@@ -8,7 +8,7 @@ Authors: Mihai Criveti
 # Standard
 from datetime import datetime, timedelta, timezone
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
@@ -131,6 +131,35 @@ def test_tool_metrics_summary_detached():
     summary = tool.metrics_summary
     assert summary["total_executions"] == 0
     assert summary["failure_rate"] == 0.0
+
+
+def test_build_engine_mysql_branch(monkeypatch):
+    monkeypatch.setattr(db, "backend", "mysql")
+    monkeypatch.setattr(db.settings, "database_url", "mysql://user:pass@localhost/db")
+    monkeypatch.setattr(db.settings, "db_pool_size", 5)
+    monkeypatch.setattr(db.settings, "db_max_overflow", 10)
+    monkeypatch.setattr(db.settings, "db_pool_timeout", 30)
+    monkeypatch.setattr(db.settings, "db_pool_recycle", 300)
+    monkeypatch.setattr(db, "connect_args", {"arg": "val"})
+
+    with patch("mcpgateway.db.create_engine") as mock_create:
+        db.build_engine()
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["pool_pre_ping"] is True
+        assert kwargs["pool_size"] == 5
+        assert kwargs["max_overflow"] == 10
+
+
+def test_build_engine_null_pool_branch(monkeypatch):
+    monkeypatch.setattr(db, "backend", "postgresql")
+    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")
+    monkeypatch.setattr(db.settings, "db_pool_class", "null")
+    monkeypatch.setattr(db, "connect_args", {})
+
+    with patch("mcpgateway.db.create_engine") as mock_create:
+        db.build_engine()
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["poolclass"] == db.NullPool
 
 
 def test_tool_get_metric_counts_sql_path(monkeypatch):

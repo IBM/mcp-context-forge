@@ -5782,7 +5782,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:
-                    result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
+                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
                     if hasattr(result, "model_dump"):
                         result = result.model_dump(by_alias=True, exclude_none=True)
                 except Exception:

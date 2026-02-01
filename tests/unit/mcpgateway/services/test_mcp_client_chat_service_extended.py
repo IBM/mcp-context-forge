@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """Extended tests to achieve >95% coverage for mcp_client_chat_service module."""
-import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 import mcpgateway.services.mcp_client_chat_service as svc
 
 
@@ -198,7 +201,375 @@ async def test_chat_service_disconnect_cleanup(monkeypatch):
     service._client = AsyncMock()
     service._client.disconnect = AsyncMock(return_value=None)
     await service._client.disconnect()
-    service._client.disconnect.assert_awaited()
+
+
+class DummyQuery:
+    def __init__(self, result):
+        self._result = result
+
+    def filter(self, *_args, **_kwargs):
+        return self
+
+    def first(self):
+        return self._result
+
+
+class DummySession:
+    def __init__(self, model, provider, model_cls, provider_cls):
+        self._model = model
+        self._provider = provider
+        self._model_cls = model_cls
+        self._provider_cls = provider_cls
+
+    def query(self, cls):
+        if cls is self._model_cls:
+            return DummyQuery(self._model)
+        if cls is self._provider_cls:
+            return DummyQuery(self._provider)
+        return DummyQuery(None)
+
+
+class DummySessionCM:
+    def __init__(self, session):
+        self._session = session
+
+    def __enter__(self):
+        return self._session
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        return False
+
+
+def _patch_gateway_session(monkeypatch, model, provider):
+    import mcpgateway.db as db_mod
+
+    session = DummySession(model, provider, db_mod.LLMModel, db_mod.LLMProvider)
+    monkeypatch.setattr(db_mod, "SessionLocal", lambda: DummySessionCM(session))
+
+
+def _patch_gateway_llms(monkeypatch):
+    class DummyLLM:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(svc, "ChatOpenAI", DummyLLM)
+    monkeypatch.setattr(svc, "OpenAI", DummyLLM)
+    monkeypatch.setattr(svc, "AzureChatOpenAI", DummyLLM)
+    monkeypatch.setattr(svc, "AzureOpenAI", DummyLLM)
+    monkeypatch.setattr(svc, "ChatAnthropic", DummyLLM)
+    monkeypatch.setattr(svc, "AnthropicLLM", DummyLLM)
+    monkeypatch.setattr(svc, "ChatBedrock", DummyLLM)
+    monkeypatch.setattr(svc, "BedrockLLM", DummyLLM)
+    monkeypatch.setattr(svc, "ChatOllama", DummyLLM)
+    monkeypatch.setattr(svc, "OllamaLLM", DummyLLM)
+    monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
+    monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
+    monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
+    monkeypatch.setattr(svc, "_BEDROCK_AVAILABLE", True)
+    monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
+
+
+def _make_model_and_provider(provider_type, config=None, api_base=None, enabled=True, model_enabled=True):
+    model = SimpleNamespace(id="model-1", model_id="gpt-4", enabled=model_enabled, provider_id="prov-1", max_output_tokens=100)
+    provider = SimpleNamespace(
+        id="prov-1",
+        name="provider",
+        enabled=enabled,
+        provider_type=provider_type,
+        api_key="enc",
+        api_base=api_base,
+        default_temperature=0.4,
+        config=config or {},
+    )
+    return model, provider
+
+
+def test_gateway_provider_openai(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai", config={"default_headers": {"x": "y"}}, api_base="https://api")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+def test_gateway_provider_openai_compatible(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai_compatible", api_base="https://compat")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: "decoded")
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert llm is not None
+
+
+def test_gateway_provider_azure_openai(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("azure_openai", config={"azure_deployment": "dep"}, api_base="https://azure")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert llm is not None
+
+
+def test_gateway_provider_anthropic(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("anthropic")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+def test_gateway_provider_bedrock(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("bedrock", config={"region_name": "us-east-1"})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+def test_gateway_provider_ollama(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("ollama", api_base=None, config={"num_ctx": 32})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+def test_gateway_provider_watsonx(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("watsonx", config={"project_id": "proj"})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert llm is not None
+
+
+def test_gateway_provider_disabled_raises(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai", enabled=False)
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ValueError):
+        gateway.get_llm()
+
+
+def test_gateway_provider_missing_model_raises(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai")
+    _patch_gateway_session(monkeypatch, None, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="missing"))
+    with pytest.raises(ValueError):
+        gateway.get_llm()
+
+
+@pytest.mark.parametrize(
+    ("provider", "config_dict", "expected_cls"),
+    [
+        ("azure_openai", {"api_key": "k", "azure_endpoint": "https://a", "azure_deployment": "dep"}, svc.AzureOpenAIConfig),
+        ("openai", {"api_key": "k", "model": "gpt-4"}, svc.OpenAIConfig),
+        ("anthropic", {"api_key": "k"}, svc.AnthropicConfig),
+        ("aws_bedrock", {"model_id": "m", "region_name": "us-east-1"}, svc.AWSBedrockConfig),
+        ("ollama", {"model": "llama2"}, svc.OllamaConfig),
+        ("watsonx", {"api_key": "k", "url": "https://w", "project_id": "p"}, svc.WatsonxConfig),
+        ("gateway", {"model": "gpt-4"}, svc.GatewayConfig),
+    ],
+)
+def test_llmconfig_dict_conversion(provider, config_dict, expected_cls):
+    cfg = svc.LLMConfig(provider=provider, config=config_dict)
+    assert isinstance(cfg.config, expected_cls)
+
+
+def test_gateway_provider_azure_missing_base_url(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("azure_openai", api_base=None)
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ValueError):
+        gateway.get_llm()
+
+
+def test_gateway_provider_watsonx_missing_project(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("watsonx", config={})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ValueError):
+        gateway.get_llm()
+
+
+def test_gateway_provider_openai_compatible_missing_base(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai_compatible", api_base=None)
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ValueError):
+        gateway.get_llm()
+
+
+def test_gateway_provider_model_disabled(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai", model_enabled=False)
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ValueError):
+        gateway.get_llm()
+
+
+def test_gateway_provider_missing_provider_record(monkeypatch):
+    _patch_gateway_llms(monkeypatch)
+    model, _provider = _make_model_and_provider("openai")
+    _patch_gateway_session(monkeypatch, model, None)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ValueError):
+        gateway.get_llm()
+
+
+@pytest.mark.asyncio
+async def test_chat_history_manager_redis_errors(monkeypatch):
+    redis = AsyncMock()
+    redis.get.return_value = b"not-json"
+    redis.set.side_effect = RuntimeError("set error")
+    redis.delete.side_effect = RuntimeError("delete error")
+
+    manager = svc.ChatHistoryManager(redis_client=redis)
+
+    def _raise_decode(_data):
+        raise svc.orjson.JSONDecodeError("bad", b"bad", 0)
+
+    monkeypatch.setattr(svc.orjson, "loads", _raise_decode)
+    history = await manager.get_history("user")
+    assert history == []
+
+    await manager.save_history("user", [{"role": "user", "content": "hi"}])
+    await manager.clear_history("user")
+
+
+@pytest.mark.asyncio
+async def test_mcpclient_cached_tools(monkeypatch):
+    cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
+    client = svc.MCPClient(cfg)
+    client._connected = True
+    client._client = AsyncMock()
+    client._tools = ["cached"]
+    tools = await client.get_tools()
+    assert tools == ["cached"]
+
+
+@pytest.mark.asyncio
+async def test_mcpclient_disconnect_when_not_connected():
+    cfg = svc.MCPServerConfig(url="https://srv", transport="sse")
+    client = svc.MCPClient(cfg)
+    await client.disconnect()
+    assert client.is_connected is False
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_fallback_non_streaming(monkeypatch):
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+        enable_streaming=False,
+    )
+    service = svc.MCPChatService(cfg)
+    service._initialized = True
+    service._agent = MagicMock()
+    service.chat = AsyncMock(return_value="full-response")
+
+    chunks = []
+    async for chunk in service.chat_stream("hello"):
+        chunks.append(chunk)
+
+    assert chunks == ["full-response"]
+
+
+@pytest.mark.asyncio
+async def test_chat_events_tool_flow(monkeypatch):
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+    )
+    service = svc.MCPChatService(cfg, user_id="user")
+    service._initialized = True
+
+    async def _astream_events(_payload, version="v2"):  # noqa: ARG001 - required signature
+        yield {"event": "on_tool_end", "run_id": "run-1", "data": {"output": "ok"}}
+        yield {"event": "on_tool_start", "run_id": "run-1", "name": "tool", "data": {"input": {"x": 1}}}
+        yield {"event": "on_tool_error", "run_id": "run-2", "data": {"error": "boom"}}
+        yield {"event": "on_chat_model_stream", "data": {"chunk": SimpleNamespace(content="hi")}}
+
+    service._agent = SimpleNamespace(astream_events=_astream_events)
+    service.history_manager = SimpleNamespace(
+        get_langchain_messages=AsyncMock(return_value=[]),
+        append_message=AsyncMock(),
+    )
+    monkeypatch.setattr(svc, "HumanMessage", lambda content: SimpleNamespace(content=content))
+    monkeypatch.setattr(svc.settings, "mcpgateway_tool_cancellation_enabled", True)
+    monkeypatch.setattr(svc, "cancellation_service", SimpleNamespace(register_run=AsyncMock(), unregister_run=AsyncMock()))
+
+    events = []
+    async for event in service.chat_events("hello"):
+        events.append(event["type"])
+
+    assert "tool_start" in events
+    assert "tool_end" in events
+    assert "tool_error" in events
+    assert "token" in events
+    assert "final" in events
+
+
+@pytest.mark.asyncio
+async def test_chat_events_orphan_tool_end(monkeypatch):
+    cfg = svc.MCPClientConfig(
+        mcp_server=svc.MCPServerConfig(url="https://srv", transport="sse"),
+        llm=svc.LLMConfig(provider="openai", config=svc.OpenAIConfig(api_key="k", model="gpt-4")),
+    )
+    service = svc.MCPChatService(cfg)
+    service._initialized = True
+
+    async def _astream_events(_payload, version="v2"):  # noqa: ARG001 - required signature
+        yield {"event": "on_tool_end", "run_id": "run-1", "data": {"output": "ok"}}
+
+    service._agent = SimpleNamespace(astream_events=_astream_events)
+    service.history_manager = SimpleNamespace(get_langchain_messages=AsyncMock(return_value=[]), append_message=AsyncMock())
+    monkeypatch.setattr(svc, "HumanMessage", lambda content: SimpleNamespace(content=content))
+    monkeypatch.setattr(svc.settings, "mcpgateway_tool_cancellation_enabled", False)
+
+    events = []
+    async for event in service.chat_events("hello"):
+        events.append(event)
+
+    assert any(ev["type"] == "tool_error" for ev in events)
 
 
 @pytest.mark.asyncio

@@ -11,8 +11,9 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceUpdate
-from mcpgateway.services.grpc_service import GrpcService, GrpcServiceNameConflictError, GrpcServiceNotFoundError
+from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNameConflictError, GrpcServiceNotFoundError
 
 
 @pytest.fixture
@@ -84,3 +85,166 @@ async def test_update_service_not_found(service, db):
 
     with pytest.raises(GrpcServiceNotFoundError):
         await service.update_service(db, "missing", GrpcServiceUpdate(description="x"))
+
+
+@pytest.mark.asyncio
+async def test_update_service_success(service, db):
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=False,
+        tls_enabled=False,
+        grpc_metadata={},
+        enabled=True,
+        reachable=False,
+        service_count=0,
+        method_count=0,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+    db.execute.side_effect = [_mock_execute_scalar(db_service), _mock_execute_scalar(None)]
+    db.commit = MagicMock()
+    db.refresh = MagicMock()
+
+    result = await service.update_service(db, "svc-1", GrpcServiceUpdate(description="updated"))
+    assert result.description == "updated"
+    assert db.commit.called
+
+
+@pytest.mark.asyncio
+async def test_set_service_state_and_delete(service, db):
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=False,
+        tls_enabled=False,
+        grpc_metadata={},
+        enabled=True,
+        reachable=False,
+        service_count=0,
+        method_count=0,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+    db.execute.return_value = _mock_execute_scalar(db_service)
+    db.commit = MagicMock()
+    db.refresh = MagicMock()
+
+    result = await service.set_service_state(db, "svc-1", activate=False)
+    assert result.enabled is False
+
+    await service.delete_service(db, "svc-1")
+    db.delete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_reflect_service_success(service, db):
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=False,
+        tls_enabled=False,
+        grpc_metadata={},
+        enabled=True,
+        reachable=False,
+        service_count=1,
+        method_count=2,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+    db.execute.return_value = _mock_execute_scalar(db_service)
+
+    service._perform_reflection = AsyncMock()
+    result = await service.reflect_service(db, "svc-1")
+    assert result.id == "svc-1"
+
+
+@pytest.mark.asyncio
+async def test_reflect_service_error(service, db):
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=False,
+        tls_enabled=False,
+        grpc_metadata={},
+        enabled=True,
+        reachable=True,
+        service_count=0,
+        method_count=0,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+    db.execute.return_value = _mock_execute_scalar(db_service)
+    db.commit = MagicMock()
+    service._perform_reflection = AsyncMock(side_effect=Exception("boom"))
+
+    with pytest.raises(GrpcServiceError):
+        await service.reflect_service(db, "svc-1")
+    assert db_service.reachable is False
+
+
+@pytest.mark.asyncio
+async def test_get_service_methods(service, db):
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=False,
+        tls_enabled=False,
+        grpc_metadata={},
+        enabled=True,
+        reachable=True,
+        service_count=0,
+        method_count=0,
+        discovered_services={
+            "pkg.Service": {
+                "methods": [
+                    {"name": "Ping", "input_type": "PingReq", "output_type": "PingResp", "client_streaming": False, "server_streaming": False}
+                ]
+            }
+        },
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+    db.execute.return_value = _mock_execute_scalar(db_service)
+
+    methods = await service.get_service_methods(db, "svc-1")
+    assert methods[0]["full_name"] == "pkg.Service.Ping"

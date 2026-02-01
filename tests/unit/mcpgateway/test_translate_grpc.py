@@ -8,6 +8,7 @@ Tests for gRPC to MCP translation module.
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import asyncio
 
@@ -22,9 +23,6 @@ try:
 except ImportError:
     GRPC_AVAILABLE = False
 
-# Skip all tests in this module if gRPC is not available
-pytestmark = pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not installed")
-
 # First-Party
 from mcpgateway.translate_grpc import (
     GrpcEndpoint,
@@ -33,6 +31,7 @@ from mcpgateway.translate_grpc import (
 )
 
 
+@pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not installed")
 class TestGrpcEndpoint:
     """Test suite for GrpcEndpoint."""
 
@@ -99,20 +98,15 @@ class TestGrpcEndpoint:
         assert endpoint._channel == mock_channel
 
     @patch("mcpgateway.translate_grpc.grpc")
-    @patch("builtins.open", create=True)
-    async def test_start_secure_channel_with_certs(self, mock_open, mock_grpc, endpoint_with_tls):
+    async def test_start_secure_channel_with_certs(self, mock_grpc, endpoint_with_tls):
         """Test starting endpoint with TLS certificates."""
         mock_channel = MagicMock()
         mock_grpc.secure_channel.return_value = mock_channel
         mock_grpc.ssl_channel_credentials.return_value = MagicMock()
 
-        # Mock file reads for cert and key
-        mock_file = MagicMock()
-        mock_file.read.return_value = b"cert_data"
-        mock_open.return_value.__enter__.return_value = mock_file
-
-        with patch.object(endpoint_with_tls, "_discover_services", new_callable=AsyncMock):
-            await endpoint_with_tls.start()
+        with patch("mcpgateway.translate_grpc.asyncio.to_thread", new_callable=AsyncMock, return_value=b"cert_data"):
+            with patch.object(endpoint_with_tls, "_discover_services", new_callable=AsyncMock):
+                await endpoint_with_tls.start()
 
         assert endpoint_with_tls._channel == mock_channel
         mock_grpc.secure_channel.assert_called_once()
@@ -305,6 +299,7 @@ class TestGrpcEndpoint:
         assert len(methods) == 0
 
 
+@pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not installed")
 class TestGrpcToMcpTranslator:
     """Test suite for GrpcToMcpTranslator."""
 
@@ -366,6 +361,7 @@ class TestGrpcToMcpTranslator:
         assert "required" in result
 
 
+@pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not installed")
 class TestExposeGrpcViaSse:
     """Test suite for expose_grpc_via_sse utility function."""
 
@@ -450,3 +446,137 @@ class TestExposeGrpcViaSse:
         # Verify metadata was passed
         call_args = mock_endpoint_class.call_args
         assert call_args[1]["metadata"] == metadata
+
+
+@pytest.mark.asyncio
+async def test_invoke_and_invoke_streaming_without_grpc(monkeypatch):
+    import mcpgateway.translate_grpc as tg
+    from types import SimpleNamespace
+
+    class DummyRequest:
+        def SerializeToString(self):
+            return b"req"
+
+    class DummyResponse:
+        @staticmethod
+        def FromString(_data):
+            return DummyResponse()
+
+    endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
+    endpoint._services = {
+        "TestService": {
+            "methods": [
+                {"name": "Unary", "input_type": ".Input", "output_type": ".Output", "client_streaming": False, "server_streaming": False},
+                {"name": "Stream", "input_type": ".Input", "output_type": ".Output", "client_streaming": False, "server_streaming": True},
+            ]
+        }
+    }
+    endpoint._pool = MagicMock()
+    endpoint._pool.FindMessageTypeByName.side_effect = [object(), object(), object(), object()]
+    endpoint._factory = MagicMock()
+    endpoint._factory.GetPrototype.side_effect = [DummyRequest, DummyResponse, DummyRequest, DummyResponse]
+
+    class DummyChannel:
+        def unary_unary(self, _path, request_serializer=None, response_deserializer=None):
+            def call(_req):
+                return DummyResponse()
+
+            return call
+
+        def unary_stream(self, _path, request_serializer=None, response_deserializer=None):
+            def call(_req):
+                return [DummyResponse(), DummyResponse()]
+
+            return call
+
+    endpoint._channel = DummyChannel()
+
+    monkeypatch.setattr(
+        tg,
+        "json_format",
+        SimpleNamespace(
+            ParseDict=lambda _data, _cls: DummyRequest(),
+            MessageToDict=lambda _msg, **_kwargs: {"ok": True},
+        ),
+    )
+
+    result = await endpoint.invoke("TestService", "Unary", {"a": 1})
+    assert result == {"ok": True}
+
+    chunks = []
+    async for item in endpoint.invoke_streaming("TestService", "Stream", {"a": 1}):
+        chunks.append(item)
+    assert chunks == [{"ok": True}, {"ok": True}]
+
+
+@pytest.mark.asyncio
+async def test_endpoint_start_without_reflection(monkeypatch):
+    monkeypatch.setattr("mcpgateway.translate_grpc.descriptor_pool", SimpleNamespace(Default=lambda: MagicMock()))
+    monkeypatch.setattr("mcpgateway.translate_grpc.message_factory", SimpleNamespace(MessageFactory=lambda: MagicMock()))
+    endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False, tls_enabled=False)
+    mock_grpc = MagicMock()
+    mock_grpc.insecure_channel.return_value = "chan"
+    monkeypatch.setattr("mcpgateway.translate_grpc.grpc", mock_grpc)
+    monkeypatch.setattr(endpoint, "_discover_services", AsyncMock())
+
+    await endpoint.start()
+    assert endpoint._channel == "chan"
+    endpoint._discover_services.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_discover_service_details_success(monkeypatch):
+    endpoint = GrpcEndpoint.__new__(GrpcEndpoint)
+    endpoint._services = {}
+    endpoint._descriptors = {}
+    endpoint._pool = MagicMock()
+
+    class DummyMethod:
+        def __init__(self, name, input_type, output_type):
+            self.name = name
+            self.input_type = input_type
+            self.output_type = output_type
+            self.client_streaming = False
+            self.server_streaming = False
+
+    class DummyService:
+        def __init__(self, name):
+            self.name = name
+            self.method = [DummyMethod("Ping", ".Input", ".Output")]
+
+    class DummyFileDesc:
+        def __init__(self):
+            self.package = "pkg"
+            self.service = [DummyService("TestService")]
+
+        def ParseFromString(self, _data):
+            return None
+
+    class DummyResponse:
+        def __init__(self):
+            self.file_descriptor_response = SimpleNamespace(file_descriptor_proto=[b"blob"])
+
+        def HasField(self, name):
+            return name == "file_descriptor_response"
+
+    class DummyStub:
+        def ServerReflectionInfo(self, _request_iter):
+            return [DummyResponse()]
+
+    monkeypatch.setattr("mcpgateway.translate_grpc.FileDescriptorProto", DummyFileDesc)
+    monkeypatch.setattr("mcpgateway.translate_grpc.reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+
+    await GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    assert "pkg.TestService" in endpoint._services
+    assert endpoint._services["pkg.TestService"]["methods"][0]["name"] == "Ping"
+
+
+def test_translator_methods_fallback_schema():
+    endpoint = SimpleNamespace(
+        _services={"svc": {"methods": [{"name": "Ping", "input_type": ".Missing", "output_type": ".Output"}]}},
+        _pool=MagicMock(),
+    )
+    endpoint._pool.FindMessageTypeByName.side_effect = KeyError("missing")
+    translator = GrpcToMcpTranslator(endpoint=endpoint)
+    tools = translator.grpc_methods_to_mcp_tools("svc")
+    assert tools[0]["inputSchema"]["properties"] == {}

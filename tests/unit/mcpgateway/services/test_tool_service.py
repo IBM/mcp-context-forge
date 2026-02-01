@@ -13,9 +13,12 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
+import orjson
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+import jsonschema
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -4300,3 +4303,232 @@ class TestToolTimeoutsAndRetries:
 
         assert result.continue_processing is False
         assert result.violation is not None
+
+
+class TestToolServiceHelpers:
+    def test_get_validator_class_and_check_fallback_draft7(self, monkeypatch):
+        """Ensure schema fallback uses Draft7 when auto-detect fails."""
+        from mcpgateway.services import tool_service
+
+        tool_service._get_validator_class_and_check.cache_clear()
+
+        class DummyValidator:
+            @staticmethod
+            def check_schema(schema):
+                raise jsonschema.exceptions.SchemaError("invalid")
+
+        class Draft7Ok:
+            @staticmethod
+            def check_schema(schema):
+                return None
+
+        class DraftFail:
+            @staticmethod
+            def check_schema(schema):
+                raise jsonschema.exceptions.SchemaError("invalid")
+
+        monkeypatch.setattr(tool_service.validators, "validator_for", lambda schema: DummyValidator)
+        monkeypatch.setattr(tool_service, "Draft7Validator", Draft7Ok)
+        monkeypatch.setattr(tool_service, "Draft6Validator", DraftFail)
+        monkeypatch.setattr(tool_service, "Draft4Validator", DraftFail)
+
+        schema = {"type": "object"}
+        schema_json = orjson.dumps(schema).decode()
+
+        validator_cls, checked_schema = tool_service._get_validator_class_and_check(schema_json)
+
+        assert validator_cls is Draft7Ok
+        assert checked_schema == schema
+
+    def test_validate_with_cached_schema_raises_on_invalid_instance(self):
+        """Ensure validation raises when instance does not match schema."""
+        from mcpgateway.services import tool_service
+
+        tool_service._get_validator_class_and_check.cache_clear()
+
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        with pytest.raises(jsonschema.exceptions.ValidationError):
+            tool_service._validate_with_cached_schema({}, schema)
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_public_and_admin(self):
+        """Verify public access and admin bypass paths."""
+        service = ToolService()
+
+        public_payload = {"visibility": "public"}
+        assert await service._check_tool_access(MagicMock(), public_payload, None, []) is True
+
+        private_payload = {"visibility": "private"}
+        assert await service._check_tool_access(MagicMock(), private_payload, None, None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_denies_without_user_or_public_only_token(self):
+        """Verify deny paths for missing user and public-only tokens."""
+        service = ToolService()
+
+        private_payload = {"visibility": "private"}
+        assert await service._check_tool_access(MagicMock(), private_payload, None, ["team-1"]) is False
+
+        team_payload = {"visibility": "team", "team_id": "team-1"}
+        assert await service._check_tool_access(MagicMock(), team_payload, "user@example.com", []) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_owner_and_team_token(self):
+        """Verify owner access and team token membership access."""
+        service = ToolService()
+
+        owner_payload = {"visibility": "private", "owner_email": "owner@example.com"}
+        assert await service._check_tool_access(MagicMock(), owner_payload, "owner@example.com", ["team-2"]) is True
+
+        team_payload = {"visibility": "team", "team_id": "team-1"}
+        assert await service._check_tool_access(MagicMock(), team_payload, "user@example.com", ["team-1"]) is True
+
+        assert await service._check_tool_access(MagicMock(), team_payload, "user@example.com", ["team-2"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_team_lookup_from_db(self):
+        """Verify team membership lookup when token lacks teams."""
+        service = ToolService()
+        tool_payload = {"visibility": "team", "team_id": "team-9"}
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_instance = mock_team_service.return_value
+            mock_instance.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-9")])
+
+            assert await service._check_tool_access(MagicMock(), tool_payload, "user@example.com", None) is True
+
+    def test_build_tool_cache_payload_and_pydantic_helpers(self):
+        """Verify cache payload assembly and Pydantic helper behavior."""
+        service = ToolService()
+
+        tool = SimpleNamespace(
+            id="tool-1",
+            name="tool-name",
+            original_name="tool-name",
+            url="https://example.com/tool",
+            description="desc",
+            integration_type="http",
+            request_type="http",
+            headers=None,
+            input_schema=None,
+            output_schema={"type": "object"},
+            annotations=None,
+            auth_type="bearer",
+            auth_value="secret",
+            oauth_config=None,
+            jsonpath_filter="",
+            custom_name="custom",
+            custom_name_slug="custom",
+            display_name="Custom Tool",
+            gateway_id=None,
+            enabled=True,
+            reachable=True,
+            tags=None,
+            team_id="team-1",
+            owner_email="owner@example.com",
+            visibility="team",
+        )
+        gateway = SimpleNamespace(
+            id="gw-1",
+            name="gw",
+            url="https://example.com/gw",
+            description="gw-desc",
+            slug="gw",
+            transport="http",
+            capabilities=None,
+            passthrough_headers=None,
+            auth_type="basic",
+            auth_value="secret",
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            enabled=True,
+            reachable=True,
+            team_id="team-1",
+            owner_email="owner@example.com",
+            visibility="team",
+            tags=None,
+        )
+
+        payload = service._build_tool_cache_payload(tool, gateway)
+
+        assert payload["status"] == "active"
+        assert payload["tool"]["headers"] == {}
+        assert payload["tool"]["input_schema"]["type"] == "object"
+        assert payload["gateway"]["passthrough_headers"] == []
+
+        sentinel = object()
+        with patch("mcpgateway.services.tool_service.PydanticTool.model_validate", return_value=sentinel):
+            assert service._pydantic_tool_from_payload(payload["tool"]) is sentinel
+
+        with patch("mcpgateway.services.tool_service.PydanticGateway.model_validate", side_effect=ValueError("bad")):
+            assert service._pydantic_gateway_from_payload(payload["gateway"]) is None
+
+    def test_convert_tool_to_read_auth_variants(self):
+        """Verify auth decoding and masking behaviors in conversion."""
+        service = ToolService()
+
+        def make_tool(auth_type, auth_value):
+            return SimpleNamespace(
+                id="tool-1",
+                name="tool",
+                original_name="orig",
+                description="desc",
+                url="https://example.com",
+                integration_type="http",
+                request_type="http",
+                headers={},
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                annotations={},
+                auth_type=auth_type,
+                auth_value=auth_value,
+                jsonpath_filter=None,
+                custom_name="custom",
+                custom_name_slug="custom",
+                display_name=None,
+                gateway_id=None,
+                enabled=True,
+                reachable=True,
+                tags=[],
+                team_id=None,
+                owner_email="owner@example.com",
+                visibility="private",
+                metrics_summary={"total_executions": 2},
+                gateway_slug="",
+                team=None,
+            )
+
+        with patch("mcpgateway.services.tool_service.ToolRead.model_validate", side_effect=lambda data: data):
+            encoded = base64.b64encode(b"user:pass").decode()
+            basic_tool = make_tool("basic", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": f"Basic {encoded}"}):
+                result = service.convert_tool_to_read(basic_tool, include_metrics=True, include_auth=True)
+                assert result["auth"]["auth_type"] == "basic"
+                assert result["auth"]["username"] == "user"
+                assert result["auth"]["password"] == settings.masked_auth_value
+
+            bearer_tool = make_tool("bearer", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer token"}):
+                result = service.convert_tool_to_read(bearer_tool, include_metrics=False, include_auth=True)
+                assert result["auth"]["auth_type"] == "bearer"
+                assert result["auth"]["token"] == settings.masked_auth_value
+
+            headers_tool = make_tool("authheaders", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Api-Key": "token"}):
+                result = service.convert_tool_to_read(headers_tool, include_metrics=False, include_auth=True)
+                assert result["auth"]["auth_type"] == "authheaders"
+                assert result["auth"]["auth_header_key"] == "X-Api-Key"
+                assert result["auth"]["auth_header_value"] == settings.masked_auth_value
+
+            no_decode_tool = make_tool("bearer", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth") as mock_decode:
+                result = service.convert_tool_to_read(no_decode_tool, include_metrics=False, include_auth=False)
+                assert result["auth"]["auth_type"] == "bearer"
+                mock_decode.assert_not_called()
+
+            unknown_tool = make_tool("custom", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic value"}):
+                result = service.convert_tool_to_read(unknown_tool, include_metrics=False, include_auth=True)
+                assert result["auth"] is None

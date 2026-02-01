@@ -8,14 +8,17 @@ Tests for the registry cache module.
 """
 
 # Standard
+import asyncio
+import builtins
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import orjson
 import pytest
 
 # First-Party
-from mcpgateway.cache.registry_cache import CacheEntry, RegistryCache, RegistryCacheConfig
+from mcpgateway.cache.registry_cache import CacheEntry, CacheInvalidationSubscriber, RegistryCache, RegistryCacheConfig, _get_cleanup_timeout
 
 
 class TestCacheEntry:
@@ -140,6 +143,51 @@ class TestRegistryCache:
 
         assert result == tools_data
         assert cache._hit_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_redis_hit_and_miss(self):
+        cache = RegistryCache()
+        redis = MagicMock()
+        redis.get = AsyncMock(return_value=orjson.dumps([{"id": "1"}]))
+        cache._get_redis_client = AsyncMock(return_value=redis)
+
+        result = await cache.get("tools")
+        assert result == [{"id": "1"}]
+        assert cache._redis_hit_count == 1
+
+        redis.get = AsyncMock(return_value=None)
+        result = await cache.get("tools")
+        assert result is None
+        assert cache._redis_miss_count == 1
+
+    @pytest.mark.asyncio
+    async def test_set_redis_failure_still_caches(self):
+        cache = RegistryCache()
+        redis = MagicMock()
+        redis.setex = AsyncMock(side_effect=RuntimeError("boom"))
+        cache._get_redis_client = AsyncMock(return_value=redis)
+
+        data = [{"id": "1", "name": "tool1"}]
+        await cache.set("tools", data)
+        assert await cache.get("tools") == data
+
+    @pytest.mark.asyncio
+    async def test_invalidate_redis_scan_iter(self):
+        cache = RegistryCache()
+        redis = MagicMock()
+
+        async def _scan_iter(*_args, **_kwargs):
+            for key in [b"mcpgw:registry:tools:one", b"mcpgw:registry:tools:two"]:
+                yield key
+
+        redis.scan_iter = _scan_iter
+        redis.delete = AsyncMock()
+        redis.publish = AsyncMock()
+        cache._get_redis_client = AsyncMock(return_value=redis)
+
+        await cache.invalidate("tools")
+        assert redis.delete.called
+        assert redis.publish.called
 
     @pytest.mark.asyncio
     async def test_invalidate_tools(self):
@@ -308,3 +356,84 @@ class TestRegistryCache:
 
         assert cache._hit_count == 0
         assert cache._miss_count == 0
+
+    def test_get_cleanup_timeout_import_error(self, monkeypatch):
+        real_import = builtins.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "mcpgateway.config":
+                raise ImportError("boom")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+        assert _get_cleanup_timeout() == 5.0
+
+    def test_import_error_defaults(self, monkeypatch):
+        real_import = builtins.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name == "mcpgateway.config":
+                raise ImportError("boom")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+        config = RegistryCacheConfig(
+            enabled=False,
+            tools_ttl=1,
+            prompts_ttl=2,
+            resources_ttl=3,
+            agents_ttl=4,
+            servers_ttl=5,
+            gateways_ttl=6,
+            catalog_ttl=7,
+        )
+        cache = RegistryCache(config=config)
+        assert cache._enabled is False
+        assert cache._tools_ttl == 1
+        assert cache._cache_prefix == "mcpgw:"
+
+    @pytest.mark.asyncio
+    async def test_get_redis_client_available(self, monkeypatch):
+        cache = RegistryCache()
+        fake_redis = MagicMock()
+        monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+        client = await cache._get_redis_client()
+        assert client is fake_redis
+        assert cache._redis_available is True
+
+    @pytest.mark.asyncio
+    async def test_get_redis_client_exception(self, monkeypatch):
+        cache = RegistryCache()
+
+        async def _raise():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", _raise)
+        client = await cache._get_redis_client()
+        assert client is None
+        assert cache._redis_checked is True
+
+    @pytest.mark.asyncio
+    async def test_set_disabled_noop(self):
+        cache = RegistryCache()
+        cache._enabled = False
+        await cache.set("tools", [{"id": "1"}])
+        assert cache._cache == {}
+
+    @pytest.mark.asyncio
+    async def test_invalidate_redis_error(self):
+        cache = RegistryCache()
+        redis = MagicMock()
+
+        async def _scan_iter(*_args, **_kwargs):
+            raise RuntimeError("boom")
+            if False:
+                yield None
+
+        redis.scan_iter = _scan_iter
+        cache._get_redis_client = AsyncMock(return_value=redis)
+
+        await cache.invalidate("tools")
