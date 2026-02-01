@@ -36,6 +36,8 @@ jmeter -p plugins-manager.sh install jpgc-websocket
 
 ## Quick Start
 
+Note: The Makefile targets render shared REST/MCP fragments into `.jmeter/rendered/` before running JMeter. Run tests via `make` to ensure the rendered plans are used.
+
 ```bash
 # Set up environment
 export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \

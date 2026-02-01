@@ -28,6 +28,11 @@
             <stringProp name="Argument.value">${__P(PEAK_THREADS,2000)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
+          <elementProp name="REST_MIX_MODE" elementType="Argument">
+            <stringProp name="Argument.name">REST_MIX_MODE</stringProp>
+            <stringProp name="Argument.value">${__P(REST_MIX_MODE,random)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
         </collectionProp>
       </elementProp>
       <stringProp name="TestPlan.user_define_classpath"></stringProp>
@@ -107,6 +112,13 @@
         </HTTPSamplerProxy>
         <hashTree/>
 
+        <!-- Shared REST Mix -->
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include REST Mix" enabled="true">
+          <stringProp name="IncludeController.includefile">${__P(JMETER_FRAGMENT_DIR,tests/jmeter/fragments)}/rest_mix.jmx</stringProp>
+        </IncludeController>
+        <hashTree/>
+
+
         <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="1,000 RPS" enabled="true">
           <intProp name="calcMode">2</intProp>
           <doubleProp>
@@ -158,6 +170,13 @@
           <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
         </HTTPSamplerProxy>
         <hashTree/>
+
+        <!-- Shared REST Mix -->
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include REST Mix" enabled="true">
+          <stringProp name="IncludeController.includefile">${__P(JMETER_FRAGMENT_DIR,tests/jmeter/fragments)}/rest_mix.jmx</stringProp>
+        </IncludeController>
+        <hashTree/>
+
 
         <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="10,000 RPS" enabled="true">
           <intProp name="calcMode">2</intProp>
@@ -211,6 +230,13 @@
         </HTTPSamplerProxy>
         <hashTree/>
 
+        <!-- Shared REST Mix -->
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include REST Mix" enabled="true">
+          <stringProp name="IncludeController.includefile">${__P(JMETER_FRAGMENT_DIR,tests/jmeter/fragments)}/rest_mix.jmx</stringProp>
+        </IncludeController>
+        <hashTree/>
+
+
         <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="10,000 RPS" enabled="true">
           <intProp name="calcMode">2</intProp>
           <doubleProp>
@@ -263,6 +289,13 @@
         </HTTPSamplerProxy>
         <hashTree/>
 
+        <!-- Shared REST Mix -->
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include REST Mix" enabled="true">
+          <stringProp name="IncludeController.includefile">${__P(JMETER_FRAGMENT_DIR,tests/jmeter/fragments)}/rest_mix.jmx</stringProp>
+        </IncludeController>
+        <hashTree/>
+
+
         <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="1,000 RPS" enabled="true">
           <intProp name="calcMode">2</intProp>
           <doubleProp>
@@ -314,6 +347,13 @@
           <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
         </HTTPSamplerProxy>
         <hashTree/>
+
+        <!-- Shared REST Mix -->
+        <IncludeController guiclass="IncludeControllerGui" testclass="IncludeController" testname="Include REST Mix" enabled="true">
+          <stringProp name="IncludeController.includefile">${__P(JMETER_FRAGMENT_DIR,tests/jmeter/fragments)}/rest_mix.jmx</stringProp>
+        </IncludeController>
+        <hashTree/>
+
 
         <ConstantThroughputTimer guiclass="TestBeanGUI" testclass="ConstantThroughputTimer" testname="1,000 RPS" enabled="true">
           <intProp name="calcMode">2</intProp>
