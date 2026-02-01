@@ -22,6 +22,23 @@ from mcpgateway.common.models import ImageContent, LogLevel, ResourceContent, Ro
 from mcpgateway.schemas import BaseModelWithConfigDict
 
 
+async def _call_toolops(handler, monkeypatch, **kwargs):
+    # First-Party
+    import mcpgateway.middleware.rbac as rbac_module
+    import mcpgateway.plugins.framework as plugins_framework
+
+    class DummyPermissionService:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_permission(self, **_):
+            return True
+
+    monkeypatch.setattr(rbac_module, "PermissionService", DummyPermissionService)
+    monkeypatch.setattr(plugins_framework, "get_plugin_manager", lambda: None)
+    return await handler(**kwargs)
+
+
 def test_role_enum_comprehensive():
     """Test Role enum comprehensively."""
     # Test values
@@ -339,7 +356,9 @@ async def test_toolops_generate_testcases_success(monkeypatch):
         AsyncMock(return_value=[{"case": 1}]),
     )
 
-    result = await toolops_router.generate_testcases_for_tool.__wrapped__(
+    result = await _call_toolops(
+        toolops_router.generate_testcases_for_tool,
+        monkeypatch,
         tool_id="tool1",
         number_of_test_cases=1,
         number_of_nl_variations=1,
@@ -364,7 +383,9 @@ async def test_toolops_generate_testcases_invalid_json(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await toolops_router.generate_testcases_for_tool.__wrapped__(
+        await _call_toolops(
+            toolops_router.generate_testcases_for_tool,
+            monkeypatch,
             tool_id="tool1",
             number_of_test_cases=1,
             number_of_nl_variations=1,
@@ -389,7 +410,9 @@ async def test_toolops_execute_nl_testcases_success(monkeypatch):
     )
 
     payload = toolops_router.ToolNLTestInput(tool_id="tool1", tool_nl_test_cases=["hello"])
-    result = await toolops_router.execute_tool_nl_testcases.__wrapped__(
+    result = await _call_toolops(
+        toolops_router.execute_tool_nl_testcases,
+        monkeypatch,
         tool_nl_test_input=payload,
         db=MagicMock(),
         _user={"email": "user@example.com"},
@@ -414,7 +437,9 @@ async def test_toolops_enrich_tool_success(monkeypatch):
         AsyncMock(return_value=("enriched", tool_schema)),
     )
 
-    result = await toolops_router.enrich_a_tool.__wrapped__(
+    result = await _call_toolops(
+        toolops_router.enrich_a_tool,
+        monkeypatch,
         tool_id="tool1",
         db=MagicMock(),
         _user={"email": "user@example.com"},
@@ -437,7 +462,9 @@ async def test_toolops_enrich_tool_error(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await toolops_router.enrich_a_tool.__wrapped__(
+        await _call_toolops(
+            toolops_router.enrich_a_tool,
+            monkeypatch,
             tool_id="tool1",
             db=MagicMock(),
             _user={"email": "user@example.com"},
