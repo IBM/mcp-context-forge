@@ -34,3 +34,27 @@ def test_protobuf_to_json_schema_nested():
     field = DummyField("child", type_id=11, message_type=nested)
     schema = translator.protobuf_to_json_schema(DummyDescriptor([field]))
     assert "child" in schema["properties"]
+
+
+def test_protobuf_to_json_schema_required_field():
+    translator = translate_grpc.GrpcToMcpTranslator(endpoint=SimpleNamespace(_services={}, _pool=None))
+    field = DummyField("required_name", type_id=9, label=2)
+    schema = translator.protobuf_to_json_schema(DummyDescriptor([field]))
+    assert "required_name" in schema["required"]
+
+
+def test_protobuf_field_to_json_schema_nested_error():
+    translator = translate_grpc.GrpcToMcpTranslator(endpoint=SimpleNamespace(_services={}, _pool=None))
+
+    class BrokenField:
+        def __init__(self):
+            self.type = 11
+            self.label = 1
+            self.name = "broken"
+
+        @property
+        def message_type(self):
+            raise RuntimeError("boom")
+
+    schema = translator._protobuf_field_to_json_schema(BrokenField())
+    assert schema == {"type": "object"}

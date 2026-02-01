@@ -120,6 +120,165 @@ def test_db():
     return session
 
 
+def _make_query(results):
+    class DummyQuery:
+        def __init__(self, items):
+            self._items = items
+
+        def filter(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def all(self):
+            return self._items
+
+    return DummyQuery(results)
+
+
+def test_normalize_url_localhost():
+    """Normalize URL should map 127.0.0.1 to localhost."""
+    assert GatewayService.normalize_url("http://127.0.0.1:8080/path") == "http://localhost:8080/path"
+    assert GatewayService.normalize_url("https://example.com/api") == "https://example.com/api"
+
+
+def test_check_gateway_uniqueness_oauth_match(monkeypatch):
+    """Duplicate detection should match OAuth configs."""
+    service = GatewayService()
+    existing = MagicMock()
+    existing.oauth_config = {"grant_type": "authorization_code", "client_id": "cid", "authorization_url": "auth", "token_url": "token", "scope": "s"}
+    existing.auth_value = None
+    db = MagicMock()
+    db.query.return_value = _make_query([existing])
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value=None,
+        oauth_config=existing.oauth_config,
+        team_id=None,
+        owner_email="user@example.com",
+        visibility="public",
+    )
+
+    assert result is existing
+
+
+def test_check_gateway_uniqueness_auth_match(monkeypatch):
+    """Duplicate detection should match decoded auth values."""
+    service = GatewayService()
+    existing = MagicMock()
+    existing.oauth_config = None
+    existing.auth_value = "encoded"
+    db = MagicMock()
+    db.query.return_value = _make_query([existing])
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda value: {"Authorization": "Basic abc"})
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value={"Authorization": "Basic abc"},
+        oauth_config=None,
+        team_id=None,
+        owner_email="user@example.com",
+        visibility="public",
+    )
+
+    assert result is existing
+
+
+def test_check_gateway_uniqueness_decode_failure(monkeypatch):
+    """Decode errors should be handled and continue scanning."""
+    service = GatewayService()
+    existing = MagicMock()
+    existing.oauth_config = None
+    existing.auth_value = "encoded"
+    db = MagicMock()
+    db.query.return_value = _make_query([existing])
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda value: (_ for _ in ()).throw(ValueError("bad")))
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value={"Authorization": "Basic abc"},
+        oauth_config=None,
+        team_id=None,
+        owner_email="user@example.com",
+        visibility="public",
+    )
+
+    assert result is None
+
+
+def test_check_gateway_uniqueness_no_auth_duplicate():
+    """Duplicate detection should catch URL-only gateways."""
+    service = GatewayService()
+    existing = MagicMock()
+    existing.oauth_config = None
+    existing.auth_value = None
+    db = MagicMock()
+    db.query.return_value = _make_query([existing])
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value=None,
+        oauth_config=None,
+        team_id=None,
+        owner_email="user@example.com",
+        visibility="public",
+    )
+
+    assert result is existing
+
+
+def test_prepare_gateway_for_read_encodes_auth(monkeypatch):
+    """Prepare gateway should encode auth dict and normalize tags."""
+    service = GatewayService()
+    gateway = MagicMock()
+    gateway.auth_value = {"Authorization": "Basic abc"}
+    gateway.tags = ["tag1", "tag2"]
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda value: "encoded")
+    monkeypatch.setattr("mcpgateway.services.gateway_service.validate_tags_field", lambda tags: [{"name": t} for t in tags])
+
+    result = service._prepare_gateway_for_read(gateway)
+
+    assert result.auth_value == "encoded"
+    assert result.tags == [{"name": "tag1"}, {"name": "tag2"}]
+
+
+def test_create_db_tool_sets_fields(monkeypatch):
+    """_create_db_tool should populate fields consistently."""
+    service = GatewayService()
+    gateway = MagicMock()
+    gateway.url = "http://example.com"
+    gateway.auth_type = "basic"
+    gateway.auth_value = {"Authorization": "Basic abc"}
+    gateway.team_id = "team-1"
+    gateway.owner_email = "user@example.com"
+    gateway.visibility = "team"
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda value: "encoded")
+
+    tool = ToolCreate(
+        name="ExampleTool",
+        description="desc",
+        request_type="POST",
+        headers={},
+        input_schema={"type": "object"},
+        annotations={},
+        jsonpath_filter="",
+    )
+
+    db_tool = service._create_db_tool(tool, gateway)
+
+    assert db_tool.original_name == "ExampleTool"
+    assert db_tool.auth_type == "basic"
+    assert db_tool.auth_value == "encoded"
+    assert db_tool.team_id == "team-1"
+
+
 class TestGatewayServiceOAuthComprehensive:
     """Comprehensive tests for OAuth functionality in GatewayService."""
 

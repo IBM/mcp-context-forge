@@ -10,7 +10,9 @@ This module tests email authentication endpoints including login with password c
 
 # Standard
 import base64
+from datetime import datetime, timezone
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -19,6 +21,8 @@ import pytest
 
 # First-Party
 from mcpgateway.db import EmailUser
+from mcpgateway.schemas import ChangePasswordRequest, EmailRegistrationRequest, SuccessResponse
+from mcpgateway.services.email_auth_service import AuthenticationError, EmailValidationError, UserExistsError
 
 
 class TestEmailAuthLoginPasswordChangeRequired:
@@ -307,3 +311,290 @@ class TestCreateAccessTokenTeamsFormat:
 
                 # Admin tokens should NOT have teams key (for unrestricted access)
                 assert "teams" not in captured_payload, "admin tokens should omit teams key"
+
+
+@pytest.mark.asyncio
+async def test_register_disabled():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    request = MagicMock()
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+    request.headers = {"User-Agent": "TestAgent/1.0"}
+
+    registration = EmailRegistrationRequest(email="new@example.com", password="password", full_name="New User")
+
+    with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+        mock_settings.public_registration_enabled = False
+
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.register(registration, request, MagicMock())
+
+        assert excinfo.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_register_success():
+    # First-Party
+    from mcpgateway.routers import email_auth
+    from mcpgateway.schemas import AuthenticationResponse
+
+    request = MagicMock()
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+    request.headers = {"User-Agent": "TestAgent/1.0"}
+
+    registration = EmailRegistrationRequest(email="new@example.com", password="password", full_name="New User")
+
+    user = MagicMock(spec=EmailUser)
+    user.email = "new@example.com"
+    user.full_name = "New User"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(tz=timezone.utc)
+    user.last_login = None
+    user.password_change_required = False
+    user.is_email_verified = MagicMock(return_value=True)
+
+    with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+        mock_settings.public_registration_enabled = True
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+            MockAuthService.return_value.create_user = AsyncMock(return_value=user)
+            with patch("mcpgateway.routers.email_auth.create_access_token", AsyncMock(return_value=("token", 60))):
+                response = await email_auth.register(registration, request, MagicMock())
+
+    assert isinstance(response, AuthenticationResponse)
+    assert response.access_token == "token"
+
+
+@pytest.mark.asyncio
+async def test_register_validation_error():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    request = MagicMock()
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+    request.headers = {"User-Agent": "TestAgent/1.0"}
+
+    registration = EmailRegistrationRequest(email="bad@example.com", password="password", full_name="Bad User")
+
+    with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+        mock_settings.public_registration_enabled = True
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+            MockAuthService.return_value.create_user = AsyncMock(side_effect=EmailValidationError("bad"))
+
+            with pytest.raises(email_auth.HTTPException) as excinfo:
+                await email_auth.register(registration, request, MagicMock())
+
+    assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.asyncio
+async def test_register_user_exists_error():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    request = MagicMock()
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+    request.headers = {"User-Agent": "TestAgent/1.0"}
+
+    registration = EmailRegistrationRequest(email="exists@example.com", password="password", full_name="User")
+
+    with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+        mock_settings.public_registration_enabled = True
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+            MockAuthService.return_value.create_user = AsyncMock(side_effect=UserExistsError("exists"))
+
+            with pytest.raises(email_auth.HTTPException) as excinfo:
+                await email_auth.register(registration, request, MagicMock())
+
+    assert excinfo.value.status_code == status.HTTP_409_CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_change_password_success():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    request = MagicMock()
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+    request.headers = {"User-Agent": "TestAgent/1.0"}
+
+    password_request = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")
+    current_user = MagicMock()
+    current_user.email = "user@example.com"
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        MockAuthService.return_value.change_password = AsyncMock(return_value=True)
+        response = await email_auth.change_password(password_request, request, current_user=current_user, db=MagicMock())
+
+    assert isinstance(response, SuccessResponse)
+    assert response.success is True
+
+
+@pytest.mark.asyncio
+async def test_change_password_auth_error():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    request = MagicMock()
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+    request.headers = {"User-Agent": "TestAgent/1.0"}
+
+    password_request = ChangePasswordRequest(old_password="oldpassword", new_password="newpassword")
+    current_user = MagicMock()
+    current_user.email = "user@example.com"
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        MockAuthService.return_value.change_password = AsyncMock(side_effect=AuthenticationError("bad"))
+
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.change_password(password_request, request, current_user=current_user, db=MagicMock())
+
+    assert excinfo.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_admin_list_users_with_and_without_pagination():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    mock_db = MagicMock()
+    user = MagicMock(spec=EmailUser)
+    user.email = "user@example.com"
+    user.full_name = "User"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(timezone.utc)
+    user.last_login = None
+    user.password_change_required = False
+    user.is_email_verified = MagicMock(return_value=True)
+
+    result = SimpleNamespace(data=[user], next_cursor="next")
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        MockAuthService.return_value.list_users = AsyncMock(return_value=result)
+        response = await email_auth.list_users(include_pagination=True, current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+        assert response.users[0].email == "user@example.com"
+
+        response_list = await email_auth.list_users(include_pagination=False, current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+        assert isinstance(response_list, list)
+        assert response_list[0].email == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_admin_list_users_error():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        MockAuthService.return_value.list_users = AsyncMock(side_effect=Exception("boom"))
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.list_users(include_pagination=True, current_user_ctx={"db": MagicMock(), "email": "admin@example.com"})
+
+    assert excinfo.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+@pytest.mark.asyncio
+async def test_admin_list_all_auth_events():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    event = SimpleNamespace(id=1, timestamp=datetime.now(timezone.utc), user_email="user@example.com", event_type="login", success=True, ip_address="1.2.3.4", failure_reason=None)
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        MockAuthService.return_value.get_auth_events = AsyncMock(return_value=[event])
+        result = await email_auth.list_all_auth_events(current_user_ctx={"db": MagicMock(), "email": "admin@example.com"})
+
+    assert result[0].event_type == "login"
+
+
+@pytest.mark.asyncio
+async def test_admin_create_user_default_password_enforcement():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    user_request = EmailRegistrationRequest(email="new@example.com", password="defaultpass", full_name="New User", is_admin=False)
+    mock_db = MagicMock()
+    user = MagicMock(spec=EmailUser)
+    user.email = "new@example.com"
+    user.full_name = "New User"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(timezone.utc)
+    user.last_login = None
+    user.password_change_required = False
+    user.is_email_verified = MagicMock(return_value=False)
+
+    with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
+        mock_settings.password_change_enforcement_enabled = True
+        mock_settings.require_password_change_for_default_password = True
+        mock_settings.default_user_password.get_secret_value.return_value = "defaultpass"
+
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+            MockAuthService.return_value.create_user = AsyncMock(return_value=user)
+            response = await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+
+    assert response.password_change_required is True
+    mock_db.commit.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_get_update_delete_user():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    user = MagicMock(spec=EmailUser)
+    user.email = "user@example.com"
+    user.full_name = "User"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(timezone.utc)
+    user.last_login = None
+    user.password_change_required = True
+    user.is_email_verified = MagicMock(return_value=True)
+
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        auth_service = MockAuthService.return_value
+        auth_service.get_user_by_email = AsyncMock(return_value=user)
+        auth_service.validate_password = MagicMock()
+        auth_service.is_last_active_admin = AsyncMock(return_value=False)
+        auth_service.delete_user = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.services.argon2_service.Argon2PasswordService") as MockPasswordService:
+            MockPasswordService.return_value.hash_password_async = AsyncMock(return_value="hashed")
+            update_request = EmailRegistrationRequest(email="user@example.com", password="newpassword123", full_name="Updated", is_admin=True)
+
+            response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+            assert response.email == "user@example.com"
+
+            response = await email_auth.update_user("user@example.com", update_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+            assert response.full_name == "Updated"
+            assert user.password_hash == "hashed"
+
+            delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+            assert delete_response.success is True
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_user_self_block():
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        MockAuthService.return_value.is_last_active_admin = AsyncMock(return_value=False)
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.delete_user("admin@example.com", current_user_ctx={"db": MagicMock(), "email": "admin@example.com"})
+
+    assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST

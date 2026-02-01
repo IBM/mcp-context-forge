@@ -8,8 +8,11 @@ Unit tests for builder CLI commands.
 """
 
 # Standard
+import builtins
 import os
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -19,6 +22,7 @@ from typer.testing import CliRunner
 
 # First-Party
 from mcpgateway.tools.builder.cli import app, main
+from mcpgateway.tools.builder.factory import CICDTypes, DeployFactory
 
 
 @pytest.fixture
@@ -77,6 +81,66 @@ class TestCLICallback:
         assert result.exit_code == 0
         # Verify dagger mode was requested
         mock_factory.assert_called_once_with("dagger", False)
+
+
+def test_deploy_factory_dagger_available(monkeypatch):
+    class DummyDagger:
+        def __init__(self, verbose):
+            self.verbose = verbose
+
+    class DummyPython:
+        def __init__(self, verbose):
+            self.verbose = verbose
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mcpgateway.tools.builder.dagger_deploy",
+        SimpleNamespace(DAGGER_AVAILABLE=True, MCPStackDagger=DummyDagger),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "mcpgateway.tools.builder.python_deploy",
+        SimpleNamespace(MCPStackPython=DummyPython),
+    )
+
+    deployer, mode = DeployFactory.create_deployer("dagger", verbose=True)
+    assert isinstance(deployer, DummyDagger)
+    assert mode == CICDTypes.DAGGER
+
+
+def test_deploy_factory_dagger_falls_back(monkeypatch):
+    class DummyPython:
+        def __init__(self, verbose):
+            self.verbose = verbose
+
+    monkeypatch.setitem(
+        sys.modules,
+        "mcpgateway.tools.builder.dagger_deploy",
+        SimpleNamespace(DAGGER_AVAILABLE=False, MCPStackDagger=MagicMock()),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "mcpgateway.tools.builder.python_deploy",
+        SimpleNamespace(MCPStackPython=DummyPython),
+    )
+
+    deployer, mode = DeployFactory.create_deployer("dagger", verbose=False)
+    assert isinstance(deployer, DummyPython)
+    assert mode == CICDTypes.PYTHON
+
+
+def test_deploy_factory_python_import_error(monkeypatch):
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "mcpgateway.tools.builder.python_deploy":
+            raise ImportError("no python deploy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    with pytest.raises(RuntimeError):
+        DeployFactory.create_deployer("python", verbose=False)
 
     @patch("mcpgateway.tools.builder.cli.DeployFactory.create_deployer")
     def test_cli_callback_default_python(self, mock_factory, runner, tmp_path):

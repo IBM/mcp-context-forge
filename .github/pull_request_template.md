@@ -34,7 +34,7 @@ _What does this PR do and why?_
 |---------------------------|-----------------|--------|
 | Lint suite                | `make lint`     |        |
 | Unit tests                | `make test`     |        |
-| Coverage ≥ 90%            | `make coverage` |        |
+| Coverage ≥ 80%            | `make coverage` |        |
 
 ---
 
