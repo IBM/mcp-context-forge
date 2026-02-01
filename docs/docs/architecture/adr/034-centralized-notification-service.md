@@ -87,6 +87,7 @@ This centralized architecture is critical for supporting future notification typ
 ```mermaid
 flowchart TD
     MCP[MCP Server] -->|notifications/...| Session[ClientSession/Pool]
+    Session -->|list tools/resources/prompts| MCP
     Session -->|callback| Handler[Message Handler]
     Handler -->|enqueue| Queue[Async Queue]
 
@@ -96,6 +97,7 @@ flowchart TD
     end
 
     Action -->|Yes| GatewayService[Gateway Service]
+    GatewayService -->|Refresh lists| Session
     GatewayService -->|Refresh| DB[(Database)]
 ```
 

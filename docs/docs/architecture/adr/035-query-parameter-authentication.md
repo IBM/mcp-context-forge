@@ -49,7 +49,7 @@ sequenceDiagram
     participant Upstream MCP Server
 
     Note over Admin,Upstream MCP Server: Gateway Registration
-    Admin->>Gateway: POST /gateways (auth_type=query_param, key, value)
+    Admin->>Gateway: POST /gateways (auth_type=query_param, auth_query_param_key, auth_query_param_value)
     Gateway->>Gateway: Validate feature flag enabled
     Gateway->>Gateway: Validate host in allowlist
     Gateway->>Gateway: Encrypt API key value

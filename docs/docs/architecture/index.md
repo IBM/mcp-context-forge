@@ -348,15 +348,15 @@ graph TD
     subgraph Gateway
         app["FastAPI App"]
         auth["Auth Middleware<br/>(JWT + Basic)"]
-        router["Transport Router<br/>(HTTP / WS / SSE / STDIO)"]
+        router["Transport Router<br/>(HTTP / WS / SSE / stdio / streamable-HTTP)"]
         services["Service Layer<br/>(Tool / Resource / Prompt / Server)"]
         db["Async DB<br/>(SQLAlchemy + Alembic)"]
         cache["Cache Backend<br/>(memory / redis / db)"]
-        metrics["Metrics Exporter<br/>(/metrics Prometheus)"]
+        metrics["Metrics API<br/>(/metrics, admin-only)"]
     end
 
     subgraph Federation
-        discovery["Discovery Service<br/>(DNS-SD + Static Peers)"]
+        discovery["Federation Sync<br/>(configured peers)"]
         peers["Remote Gateways"]
     end
 

@@ -48,7 +48,7 @@ repo-root/
 
 1. Write in **standard Markdown**; we also support admonitions, call-outs, and Mermaid diagrams.
 2. Use relative links between pages: `[Configuration](../manage/configuration.md)`.
-3. For local images place them under `docs/docs/images/` and reference with `![](../images/example.png)`.
+3. For local images place them under `docs/docs/images/` and reference with `![](../images/mcpgateway.svg)` (example asset in repo).
 4. Never edit `mkdocs.yml` - all nav structure is defined in `.pages` files (one per directory).
 
 ---
@@ -138,6 +138,38 @@ make git-scrub   # blow away *all* untracked files - use with care!
 ```bash
 cd docs
 make build    # outputs HTML into docs/site/
+```
+
+---
+
+## 🧭 Generated architecture diagrams
+
+When the architecture changes, regenerate the design diagrams and update the tracked SVGs:
+
+```bash
+# From repo root
+make images    # generate diagrams only
+# or
+make docs      # runs images + SBOM + docs helpers
+```
+
+Tracked outputs:
+
+- `docs/docs/design/images/classes.svg` (class diagram)
+- `docs/docs/design/images/packages.svg` (package diagram)
+- `docs/docs/design/images/code2flow.svg` (call flow diagram)
+
+Commit updated SVGs when they change so the architecture pages stay current.
+
+---
+
+## 🔗 Internal link checks
+
+MkDocs will warn on broken internal links and missing anchors. Before opening a PR:
+
+```bash
+cd docs
+make serve    # watch console warnings while browsing pages
 ```
 
 The `build` target produces a fully-static site (used by CI for docs previews and by GitHub Pages).

@@ -102,7 +102,7 @@ flowchart TB
     end
 
     subgraph "External Services"
-        AI["AI Safety Services<br>(LlamaGuard, OpenAI)"]
+        AI["AI Safety Services<br>(LLM Guard, OpenAI Moderation)"]
         Security["Security Services<br>(Vault, OPA, Cedar)"]
     end
 
@@ -863,7 +863,7 @@ sequenceDiagram
     participant Core as Core Logic
 
     Client->>Gateway: MCP Request
-    Gateway->>PM: Execute Hook (e.g., tool_pre_invoke)
+    Gateway->>PM: Execute Hook (pre hook, e.g., tool_pre_invoke)
 
     PM->>P1: Execute (higher priority)
     P1-->>PM: Result (continue=true, modified_payload)
@@ -1034,14 +1034,15 @@ The plugin framework provides comprehensive lifecycle management for both native
 
 #### Development Workflow
 
-The plugin development process follows a streamlined four-phase approach that gets developers from concept to running plugin quickly:
+The plugin development process follows a streamlined workflow that covers both native and external plugins:
 
 ```mermaid
 graph LR
     A["Template"]
     B(["Bootstrap"])
-    C(["Build"])
-    D(["Serve"])
+    N["Native Plugin<br>(in-process)"]
+    C(["Build (external)"])
+    D(["Serve (external)"])
 
     subgraph dev["Development Phase"]
         A -.-> B
@@ -1051,10 +1052,12 @@ graph LR
         C --> D
     end
 
+    B --> N
     B --> C
 
     subgraph CF["Context Forge Gateway"]
         E["Gateway"]
+        N --> E
         D o--"MCP<br>&nbsp;&nbsp;<small>tools/hooks</small>&nbsp;&nbsp;"--o E
     end
 
@@ -1064,9 +1067,10 @@ graph LR
 **Phase Breakdown:**
 
 1. **Bootstrap Phase**: Initialize project structure from templates with metadata and configuration
-2. **Build Phase**: Compile, package, and validate plugin code with dependencies
-3. **Serve Phase**: Launch development server for testing and integration validation
-4. **Integration Phase**: Connect to Context Forge gateway via MCP protocol for end-to-end testing
+2. **Native Track**: Configure the plugin in `plugins/config.yaml` and load it in-process
+3. **Build Phase (external)**: Compile, package, and validate plugin code with dependencies
+4. **Serve Phase (external)**: Launch the MCP server for testing and integration validation
+5. **Integration Phase (external)**: Connect to Context Forge gateway via MCP protocol for end-to-end testing
 
 #### Plugin Types and Templates
 
@@ -1184,7 +1188,7 @@ sequenceDiagram
 
     Note over Gateway,Service: Plugin Initialization
     Gateway->>Client: Initialize External Plugin
-    Client->>Server: MCP Connection (HTTP/WS/STDIO)
+    Client->>Server: MCP Connection (Streamable HTTP / STDIO)
     Server-->>Client: Connection Established
     Client->>Server: get_plugin_config(plugin_name)
     Server-->>Client: Plugin Configuration
@@ -1197,7 +1201,7 @@ sequenceDiagram
     alt Self-Processing
         Server->>Server: Process Internally
     else External Service Call
-        Server->>Service: API Call (OpenAI, LlamaGuard, etc.)
+        Server->>Service: API Call (OpenAI Moderation, LLM Guard, etc.)
         Service-->>Server: Service Response
     end
 
@@ -1606,8 +1610,8 @@ The plugin framework is designed as a **reusable, standalone ecosystem** that ca
 flowchart TD
     subgraph "Core Framework (Portable)"
         Framework["Plugin Framework\\n(Python Package)"]
-        Interface["Plugin Interface\\n(Language Agnostic)"]
-        Protocol["MCP Protocol\\n(Cross-Platform)"]
+        Interface["Plugin Interface\\n(Python)"]
+        Protocol["MCP Protocol\\n(External Plugins)"]
     end
 
     subgraph "Host Applications"

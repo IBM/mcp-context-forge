@@ -47,8 +47,8 @@ The solution introduces a `one_time_auth` boolean flag in the gateway registrati
 2. **One-Time Connection**: Gateway uses the provided credentials exactly once to establish a connection with the MCP server
 3. **Tool Discovery**: During this single authenticated connection, the gateway performs complete tool discovery, retrieving all available tools, their schemas, and metadata
 4. **Credential Discard**: After tool discovery completes successfully, the authentication credentials are immediately discarded and not persisted to the database
-5. **Passthrough Configuration**: Users must configure `passthrough_headers` (specifically `X-Upstream-Authorization` for authorization headers) to enable runtime authentication
-6. **Runtime Authentication**: Subsequent requests to the MCP server tools must include authentication credentials via passthrough headers provided by the client
+5. **Runtime Auth Header**: Clients must send `X-Upstream-Authorization`, which the gateway always maps to `Authorization` for upstream requests
+6. **Optional Passthrough Headers**: Configure `passthrough_headers` only for additional headers beyond `X-Upstream-Authorization`
 
 ```mermaid
 graph LR
@@ -56,7 +56,7 @@ graph LR
     B --> C{"Enable One-Time Authentication?"}
     C -->|Yes| D["Do Not Store Credentials in DB"]
     C -->|No| E["Store Credentials in DB"]
-    D --> F["Configure Passthrough Headers<br/>(X-Upstream-Authorization)"]
+    D --> F["Send X-Upstream-Authorization<br/>Header"]
     F --> G["Create Virtual Server"]
     G --> H["Link to MCP Server"]
     H --> I["Add Authentication Headers"]
@@ -64,8 +64,6 @@ graph LR
     J --> K["Successful Authentication"]
     E --> L["Create Virtual Server with Stored Credentials"]
 
-    classDef step fill:#1e1e1e,stroke:#ffffff,stroke-width:2px,color:#f5f5f5;
-    class A,B,C,D,E,F,G,H,I,J,K,L step;
 ```
 
 ### Technical Changes

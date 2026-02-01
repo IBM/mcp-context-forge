@@ -57,7 +57,7 @@ sequenceDiagram
 
     User->>+HyprMCP: Init MCP connection<br>(With Access Token in Authorization Header)
     HyprMCP->>+ContextForge: Init MCP connection
-    note right of ContextForge: ContextForge verifies<br>Access Token
+    note right of ContextForge: ContextForge trusts proxy auth<br/>(MCP client auth disabled or proxy header)
     ContextForge-->>-HyprMCP: Init Response
     HyprMCP-->>-User: Init Response
     Note right of User: MCP connection initialized

@@ -42,7 +42,7 @@ We will **embed proxy and gateway capabilities directly into the ContextForge ap
 - **Authentication** - JWT, Basic Auth, OAuth 2.0/OIDC
 - **Rate limiting** - Per-tool and gateway-level rate limits
 - **Health checks** - /health (liveness), /ready (readiness)
-- **Federation** - mDNS auto-discovery, peer gateway federation
+- **Federation** - Configured peers, peer gateway federation
 
 **Service mesh optional:**
 
@@ -81,28 +81,28 @@ Application-level intelligence (MCP protocol routing, tool invocation, resource 
 
 ### Use ContextForge Standalone When:
 
-✅ **Lightweight deployments** - Development, testing, single-node production
-✅ **Serverless platforms** - AWS Lambda, Google Cloud Run, IBM Cloud Code Engine
-✅ **Edge deployments** - Minimal resources, no Kubernetes
-✅ **Embedded use cases** - Imported as Python module in other applications
-✅ **No existing infrastructure** - Starting fresh without service mesh
+- ✅ **Lightweight deployments** - Development, testing, single-node production
+- ✅ **Serverless platforms** - AWS Lambda, Google Cloud Run, IBM Cloud Code Engine
+- ✅ **Edge deployments** - Minimal resources, no Kubernetes
+- ✅ **Embedded use cases** - Imported as Python module in other applications
+- ✅ **No existing infrastructure** - Starting fresh without service mesh
 
 ### Use Envoy/Istio Service Mesh When:
 
-✅ **Enterprise Kubernetes** - Existing service mesh infrastructure
-✅ **Polyglot microservices** - Need unified traffic management across languages
-✅ **Advanced traffic routing** - Canary deployments, A/B testing, complex routing rules
-✅ **Compliance requirements** - mTLS mandated across all services
-✅ **Centralized policy enforcement** - External proxy for all traffic
+- ✅ **Enterprise Kubernetes** - Existing service mesh infrastructure
+- ✅ **Polyglot microservices** - Need unified traffic management across languages
+- ✅ **Advanced traffic routing** - Canary deployments, A/B testing, complex routing rules
+- ✅ **Compliance requirements** - mTLS mandated across all services
+- ✅ **Centralized policy enforcement** - External proxy for all traffic
 
 ### Use Both Together When:
 
-✅ **Enterprise Kubernetes with MCP requirements**
+- ✅ **Enterprise Kubernetes with MCP requirements**
   - ContextForge modules handle MCP protocol concerns
   - Envoy/Istio handle infrastructure concerns (mTLS, observability, traffic routing)
   - Example: ContextForge gateway behind Istio ingress with mTLS between services
 
-✅ **Hybrid deployment model**
+- ✅ **Hybrid deployment model**
   - Core gateway in Kubernetes with Istio
   - Standalone utilities (translate, wrapper) on edge devices
   - Each module integrates with Envoy independently as needed

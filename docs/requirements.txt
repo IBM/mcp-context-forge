@@ -29,6 +29,7 @@ Jinja2>=3.1.6
 jsbeautifier>=1.15.4
 jsmin>=3.0.1
 libsass>=0.23.0
+livereload>=2.7.0
 Markdown>=3.10.1
 markdown-blockdiag>=0.8.0
 markdown-include>=0.8.1

@@ -50,16 +50,6 @@ flowchart TD
   MCG -->|"MCP Protocol"| MCP2
   MCG -->|"MCP Protocol"| MCPN
 
-  %% Styling
-  classDef deployment fill:#1F618D,stroke:#85C1E9,stroke-width:2px,color:#FFF;
-  classDef ai fill:#27AE60,stroke:#58D68D,stroke-width:2px,color:#FFF;
-  classDef mcp fill:#8E44AD,stroke:#BB8FCE,stroke-width:2px,color:#FFF;
-  classDef external fill:#E74C3C,stroke:#F5B7B1,stroke-width:2px,color:#FFF;
-
-  class OW,LL,DB deployment;
-  class OL ai;
-  class MCPO,MCG,MCP1,MCP2,MCPN mcp;
-  class OP external;
 ```
 
 ### Components Overview

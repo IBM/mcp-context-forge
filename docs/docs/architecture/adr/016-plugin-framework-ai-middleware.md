@@ -196,13 +196,13 @@ sequenceDiagram
     participant App as Gateway Application
     participant PM as PluginManager
     participant Plugin as Plugin Instance
-    participant Service as External Service
+    participant Service as External MCP Server
 
     App->>PM: initialize()
     PM->>Plugin: __init__(config)
     PM->>Plugin: initialize()
 
-    App->>PM: prompt_pre_fetch(payload, context)
+    App->>PM: invoke_hook(prompt_pre_fetch, payload, context)
     PM->>Plugin: prompt_pre_fetch(payload, context)
 
     alt Self-Contained Plugin

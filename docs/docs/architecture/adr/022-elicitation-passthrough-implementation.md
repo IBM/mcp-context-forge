@@ -17,7 +17,7 @@ The Model Context Protocol (MCP) specification version 2025-06-18 introduced **e
 sequenceDiagram
     participant Server as MCP Server
     participant Gateway as MCP Gateway
-    participant Client as Client (Claude Desktop)
+    participant Client as MCP Client (elicitation-capable)
     participant User
 
     Server->>Gateway: elicitation/create request
