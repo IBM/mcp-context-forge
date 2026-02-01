@@ -20,8 +20,8 @@ class TestAPIIntegration:
         pytest tests/playwright/test_api_integration.py
     """
 
-    @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
-    def test_should_handle_mcp_protocol_requests(self, page: Page, admin_page):
+    @pytest.mark.skip(reason="UI selector for tool params mismatch")
+    def test_should_handle_mcp_protocol_requests(self, admin_page: Page):
         """Test MCP protocol API integration via UI."""
         api_calls = []
 
@@ -29,29 +29,34 @@ class TestAPIIntegration:
             api_calls.append(route.request.url)
             route.continue_()
 
-        page.route("/api/mcp/**", handle_request)
-        page.click("#tab-tools")
-        page.wait_for_selector("#tools-panel")
-        first_tool = page.locator("#tools-table tbody tr").first
-        first_tool.locator('button:has-text("Execute")').click()
-        expect(page.locator("#tool-execution-modal")).to_be_visible()
-        page.fill('[name="tool-params"]', '{"test": "value"}')
-        page.click('button:has-text("Run Tool")')
-        page.wait_for_selector(".tool-result", timeout=10000)
-        expect(page.locator(".tool-result")).to_be_visible()
+        admin_page.route("/api/mcp/**", handle_request)
+        admin_page.click('[data-testid="tools-tab"]')
+        admin_page.wait_for_selector("#tools-panel")
+        # Wait for tools to load
+        admin_page.wait_for_selector("#tools-table tbody tr", timeout=10000)
+        first_tool = admin_page.locator("#tools-table tbody tr").first
+        first_tool.locator('button:has-text("Test")').click()
+        expect(admin_page.locator("#tool-test-modal")).to_be_visible()
+        admin_page.fill('#tool-test-params', '{"test": "value"}')
+        admin_page.click('button:has-text("Run Tool")')
+        admin_page.wait_for_selector(".tool-result", timeout=10000)
+        expect(admin_page.locator(".tool-result")).to_be_visible()
         assert len(api_calls) > 0
 
-    @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
     def test_mcp_initialize_endpoint(self, page: Page, api_request_context: APIRequestContext, admin_page):
         """Test MCP initialize endpoint directly via APIRequestContext."""
         cookies = page.context.cookies()
         jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
         assert jwt_cookie is not None
         response = api_request_context.post(
-            "/api/mcp/initialize",
-            headers={"Cookie": f"jwt_token={jwt_cookie['value']}"},
-            json={"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}}, "id": 1},
+            "/protocol/initialize",
+            headers={"Authorization": f"Bearer {jwt_cookie['value']}"},
+            data={
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0.0"}
+            },
         )
         assert response.ok
         data = response.json()
-        assert "result" in data
+        assert "protocolVersion" in data
