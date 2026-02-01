@@ -64,6 +64,154 @@ async def test_create_access_token_admin(monkeypatch: pytest.MonkeyPatch):
     assert "teams" not in captured
 
 
+@pytest.mark.asyncio
+async def test_create_access_token_handles_team_errors(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+
+    class BadTeam:
+        @property
+        def id(self):  # pragma: no cover - accessed in try block
+            raise RuntimeError("boom")
+
+        def __str__(self):
+            return "bad-team"
+
+    class UserWithBadTeams(DummyUser):
+        def get_teams(self):
+            return [BadTeam()]
+
+    async def fake_create_jwt_token(payload):
+        captured.update(payload)
+        return "token"
+
+    monkeypatch.setattr(email_auth, "create_jwt_token", fake_create_jwt_token)
+
+    user = UserWithBadTeams("user@example.com", is_admin=False)
+    token, _ = await email_auth.create_access_token(user)
+    assert token == "token"
+    assert "teams" in captured
+
+
+@pytest.mark.asyncio
+async def test_create_access_token_handles_team_str_error(monkeypatch: pytest.MonkeyPatch):
+    captured = {}
+
+    class BadTeam:
+        @property
+        def id(self):  # pragma: no cover - accessed in try block
+            raise RuntimeError("boom")
+
+        def __str__(self):
+            raise RuntimeError("str boom")
+
+    class UserWithBadTeams(DummyUser):
+        def get_teams(self):
+            return [BadTeam()]
+
+    async def fake_create_jwt_token(payload):
+        captured.update(payload)
+        return "token"
+
+    monkeypatch.setattr(email_auth, "create_jwt_token", fake_create_jwt_token)
+
+    user = UserWithBadTeams("user@example.com", is_admin=False)
+    token, _ = await email_auth.create_access_token(user)
+    assert token == "token"
+    assert captured.get("teams") == []
+
+
+def test_get_db_commit_and_close(monkeypatch: pytest.MonkeyPatch):
+    class DummyDB:
+        def __init__(self):
+            self.committed = False
+            self.closed = False
+
+        def commit(self):
+            self.committed = True
+
+        def rollback(self):
+            raise RuntimeError("rollback should not be called")
+
+        def invalidate(self):
+            raise RuntimeError("invalidate should not be called")
+
+        def close(self):
+            self.closed = True
+
+    db = DummyDB()
+    monkeypatch.setattr(email_auth, "SessionLocal", lambda: db)
+
+    gen = email_auth.get_db()
+    assert next(gen) is db
+    with pytest.raises(StopIteration):
+        next(gen)
+
+    assert db.committed is True
+    assert db.closed is True
+
+
+def test_get_db_rollback_on_exception(monkeypatch: pytest.MonkeyPatch):
+    class DummyDB:
+        def __init__(self):
+            self.rolled_back = False
+            self.closed = False
+
+        def commit(self):
+            raise RuntimeError("commit should not be called")
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def invalidate(self):
+            raise RuntimeError("invalidate should not be called")
+
+        def close(self):
+            self.closed = True
+
+    db = DummyDB()
+    monkeypatch.setattr(email_auth, "SessionLocal", lambda: db)
+
+    gen = email_auth.get_db()
+    next(gen)
+
+    with pytest.raises(RuntimeError):
+        gen.throw(RuntimeError("boom"))
+
+    assert db.rolled_back is True
+    assert db.closed is True
+
+
+def test_get_db_rollback_invalidate_on_failure(monkeypatch: pytest.MonkeyPatch):
+    class DummyDB:
+        def __init__(self):
+            self.invalidated = False
+            self.closed = False
+
+        def commit(self):
+            raise RuntimeError("commit should not be called")
+
+        def rollback(self):
+            raise RuntimeError("rollback failed")
+
+        def invalidate(self):
+            self.invalidated = True
+
+        def close(self):
+            self.closed = True
+
+    db = DummyDB()
+    monkeypatch.setattr(email_auth, "SessionLocal", lambda: db)
+
+    gen = email_auth.get_db()
+    next(gen)
+
+    with pytest.raises(RuntimeError):
+        gen.throw(RuntimeError("boom"))
+
+    assert db.invalidated is True
+    assert db.closed is True
+
+
 def test_get_client_ip_and_user_agent():
     request = SimpleNamespace(headers={"X-Forwarded-For": "1.2.3.4"}, client=SimpleNamespace(host="9.9.9.9"))
     assert email_auth.get_client_ip(request) == "1.2.3.4"

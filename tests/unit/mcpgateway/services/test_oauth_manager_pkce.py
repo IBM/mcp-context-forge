@@ -7,8 +7,11 @@ in the OAuth Manager following TDD Red Phase.
 Tests will FAIL until implementation is complete.
 """
 
-import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
 from mcpgateway.services.oauth_manager import OAuthManager, OAuthError
 
 
@@ -167,7 +170,7 @@ class TestValidateAndRetrieveState:
     """Test state validation that returns code_verifier."""
 
     @pytest.mark.asyncio
-    async def test_validate_and_retrieve_state_returns_code_verifier(self):
+    async def test_validate_and_retrieve_state_returns_code_verifier(self, monkeypatch):
         """Test that state validation returns code_verifier."""
         manager = OAuthManager()
 
@@ -184,6 +187,7 @@ class TestValidateAndRetrieveState:
         async with _state_lock:
             _oauth_states[state_key] = {"state": state, "gateway_id": gateway_id, "code_verifier": "test-verifier-123", "expires_at": expires_at.isoformat(), "used": False}
 
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
         result = await manager._validate_and_retrieve_state(gateway_id, state)
 
         assert result is not None
@@ -213,7 +217,7 @@ class TestValidateAndRetrieveState:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_validate_and_retrieve_state_single_use(self):
+    async def test_validate_and_retrieve_state_single_use(self, monkeypatch):
         """Test that state can only be used once."""
         manager = OAuthManager()
 
@@ -230,6 +234,7 @@ class TestValidateAndRetrieveState:
             _oauth_states[state_key] = {"state": state, "gateway_id": gateway_id, "code_verifier": "test-verifier", "expires_at": expires_at.isoformat(), "used": False}
 
         # First retrieval should succeed
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
         result1 = await manager._validate_and_retrieve_state(gateway_id, state)
         assert result1 is not None
 
@@ -492,6 +497,467 @@ class TestRFC8707MultipleResources:
             # Count resource entries
             resource_entries = [entry for entry in form_data if entry[0] == "resource"]
             assert len(resource_entries) == 2, "Should have two resource parameters"
+
+
+def _make_response(*, status_code=200, headers=None, text="", json_data=None, json_exc=None):
+    response = MagicMock()
+    response.status_code = status_code
+    response.headers = headers or {}
+    response.text = text
+    if json_exc is not None:
+        response.json = MagicMock(side_effect=json_exc)
+    elif json_data is not None:
+        response.json = MagicMock(return_value=json_data)
+    else:
+        response.json = MagicMock(return_value={})
+    response.raise_for_status = MagicMock()
+    return response
+
+
+class TestOAuthManagerRedisClient:
+    @pytest.mark.asyncio
+    async def test_get_redis_client_cached(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        monkeypatch.setattr(om, "_REDIS_INITIALIZED", False)
+        monkeypatch.setattr(om, "_redis_client", None)
+        monkeypatch.setattr(
+            om,
+            "get_settings",
+            lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"),
+        )
+
+        fake_redis = MagicMock()
+        get_shared = AsyncMock(return_value=fake_redis)
+        monkeypatch.setattr(om, "_get_shared_redis_client", get_shared)
+
+        client = await om._get_redis_client()
+        assert client is fake_redis
+
+        # Second call should use cached client
+        client2 = await om._get_redis_client()
+        assert client2 is fake_redis
+        assert get_shared.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_redis_client_error_falls_back(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        monkeypatch.setattr(om, "_REDIS_INITIALIZED", False)
+        monkeypatch.setattr(om, "_redis_client", "stale")
+        monkeypatch.setattr(
+            om,
+            "get_settings",
+            lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"),
+        )
+        monkeypatch.setattr(om, "_get_shared_redis_client", AsyncMock(side_effect=RuntimeError("boom")))
+
+        client = await om._get_redis_client()
+        assert client is None
+        assert om._REDIS_INITIALIZED is True
+
+
+class TestOAuthManagerAccessToken:
+    @pytest.mark.asyncio
+    async def test_get_client_uses_shared_http_client(self, monkeypatch):
+        manager = OAuthManager()
+        fake_client = MagicMock()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_http_client", AsyncMock(return_value=fake_client))
+
+        assert await manager._get_client() is fake_client
+
+    @pytest.mark.asyncio
+    async def test_get_access_token_dispatches_flows(self, monkeypatch):
+        manager = OAuthManager()
+        monkeypatch.setattr(manager, "_client_credentials_flow", AsyncMock(return_value="tok"))
+        token = await manager.get_access_token({"grant_type": "client_credentials"})
+        assert token == "tok"
+
+        monkeypatch.setattr(manager, "_password_flow", AsyncMock(return_value="pwdtok"))
+        token = await manager.get_access_token({"grant_type": "password"})
+        assert token == "pwdtok"
+
+    @pytest.mark.asyncio
+    async def test_get_access_token_authorization_code_fallback_error(self, monkeypatch):
+        manager = OAuthManager()
+        monkeypatch.setattr(manager, "_client_credentials_flow", AsyncMock(side_effect=RuntimeError("nope")))
+
+        with pytest.raises(OAuthError, match="Authorization code flow cannot be used"):
+            await manager.get_access_token({"grant_type": "authorization_code"})
+
+    @pytest.mark.asyncio
+    async def test_get_access_token_unsupported_grant(self):
+        manager = OAuthManager()
+        with pytest.raises(ValueError, match="Unsupported grant type"):
+            await manager.get_access_token({"grant_type": "unsupported"})
+
+
+class TestOAuthManagerClientCredentialsFlow:
+    @pytest.mark.asyncio
+    async def test_client_credentials_form_encoded_success_and_decrypt(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        long_secret = "x" * 60
+        credentials = {"client_id": "cid", "client_secret": long_secret, "token_url": "https://auth.example.com/token", "scopes": ["read"]}
+
+        decryptor = MagicMock()
+        decryptor.decrypt_secret_async = AsyncMock(return_value="decrypted")
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_encryption_service", lambda _s: decryptor)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(auth_encryption_secret="secret"))
+
+        response = _make_response(
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            text="access_token=abc&token_type=Bearer",
+        )
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager._client_credentials_flow(credentials)
+        assert token == "abc"
+        call_data = client.post.call_args[1]["data"]
+        assert call_data["client_secret"] == "decrypted"
+
+    @pytest.mark.asyncio
+    async def test_client_credentials_json_parse_error_raises(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "client_secret": "secret", "token_url": "https://auth.example.com/token"}
+
+        response = _make_response(
+            headers={"content-type": "application/json"},
+            text="nope",
+            json_exc=ValueError("bad json"),
+        )
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="No access_token"):
+            await manager._client_credentials_flow(credentials)
+
+    @pytest.mark.asyncio
+    async def test_client_credentials_http_error_raises(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "client_secret": "secret", "token_url": "https://auth.example.com/token"}
+
+        response = _make_response(headers={"content-type": "application/json"}, json_data={"access_token": "x"})
+        response.raise_for_status.side_effect = httpx.HTTPError("bad")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="Failed to obtain access token"):
+            await manager._client_credentials_flow(credentials)
+
+
+class TestOAuthManagerPasswordFlow:
+    @pytest.mark.asyncio
+    async def test_password_flow_requires_username_password(self):
+        manager = OAuthManager()
+        credentials = {"token_url": "https://auth.example.com/token"}
+        with pytest.raises(OAuthError, match="Username and password are required"):
+            await manager._password_flow(credentials)
+
+    @pytest.mark.asyncio
+    async def test_password_flow_form_encoded_success(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        long_secret = "y" * 60
+        credentials = {
+            "client_id": "cid",
+            "client_secret": long_secret,
+            "token_url": "https://auth.example.com/token",
+            "username": "user",
+            "password": "pass",
+        }
+
+        decryptor = MagicMock()
+        decryptor.decrypt_secret_async = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_encryption_service", lambda _s: decryptor)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(auth_encryption_secret="secret"))
+
+        response = _make_response(
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            text="access_token=pwdtok&token_type=Bearer",
+        )
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager._password_flow(credentials)
+        assert token == "pwdtok"
+
+    @pytest.mark.asyncio
+    async def test_password_flow_json_parse_error_raises(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {
+            "token_url": "https://auth.example.com/token",
+            "username": "user",
+            "password": "pass",
+        }
+
+        response = _make_response(
+            headers={"content-type": "application/json"},
+            text="nope",
+            json_exc=ValueError("bad json"),
+        )
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="No access_token"):
+            await manager._password_flow(credentials)
+
+    @pytest.mark.asyncio
+    async def test_password_flow_decrypt_success_and_error(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {
+            "client_id": "cid",
+            "client_secret": "x" * 60,
+            "token_url": "https://auth.example.com/token",
+            "username": "user",
+            "password": "pass",
+        }
+
+        decryptor = MagicMock()
+        decryptor.decrypt_secret_async = AsyncMock(return_value="decrypted")
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_encryption_service", lambda _s: decryptor)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(auth_encryption_secret="secret"))
+
+        response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=ok")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+        assert await manager._password_flow(credentials) == "ok"
+
+        decryptor.decrypt_secret_async = AsyncMock(side_effect=RuntimeError("boom"))
+        with pytest.raises(OAuthError, match="No access_token"):
+            bad_response = _make_response(headers={"content-type": "application/json"}, text="nope", json_data={})
+            client.post = AsyncMock(return_value=bad_response)
+            await manager._password_flow(credentials)
+
+    @pytest.mark.asyncio
+    async def test_password_flow_http_error_raises(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {"token_url": "https://auth.example.com/token", "username": "user", "password": "pass"}
+
+        response = _make_response(headers={"content-type": "application/json"}, json_data={"access_token": "x"})
+        response.raise_for_status.side_effect = httpx.HTTPError("bad")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="Failed to obtain access token"):
+            await manager._password_flow(credentials)
+
+
+class TestOAuthManagerStateStorage:
+    @pytest.mark.asyncio
+    async def test_store_authorization_state_redis(self, monkeypatch):
+        manager = OAuthManager()
+        redis = AsyncMock()
+        redis.setex = AsyncMock(return_value=True)
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        await manager._store_authorization_state("gw1", "state1", code_verifier="verifier")
+        assert redis.setex.called
+
+    @pytest.mark.asyncio
+    async def test_store_authorization_state_redis_failure_falls_back(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        redis.setex = AsyncMock(side_effect=RuntimeError("boom"))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        om._oauth_states.clear()
+        await manager._store_authorization_state("gw2", "state2", code_verifier="verifier")
+        assert any(key.startswith("oauth:state:gw2") for key in om._oauth_states)
+
+    @pytest.mark.asyncio
+    async def test_store_authorization_state_memory_cleanup(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
+
+        # Insert expired state to trigger cleanup
+        om._oauth_states.clear()
+        expired_key = "oauth:state:gw:expired"
+        om._oauth_states[expired_key] = {
+            "state": "expired",
+            "gateway_id": "gw",
+            "code_verifier": None,
+            "expires_at": "2000-01-01T00:00:00+00:00",
+            "used": False,
+        }
+
+        await manager._store_authorization_state("gw", "new", code_verifier="v")
+        assert expired_key not in om._oauth_states
+
+    @pytest.mark.asyncio
+    async def test_validate_authorization_state_redis(self, monkeypatch):
+        manager = OAuthManager()
+        redis = AsyncMock()
+        redis.getdel = AsyncMock(
+            return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":false}'
+        )
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        assert await manager._validate_authorization_state("gw", "s") is True
+
+    @pytest.mark.asyncio
+    async def test_validate_authorization_state_redis_missing_and_used(self, monkeypatch):
+        manager = OAuthManager()
+        redis = AsyncMock()
+        redis.getdel = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+        assert await manager._validate_authorization_state("gw", "missing") is False
+
+        redis.getdel = AsyncMock(
+            return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":true}'
+        )
+        assert await manager._validate_authorization_state("gw", "s") is False
+
+    @pytest.mark.asyncio
+    async def test_validate_authorization_state_in_memory_expired(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
+        om._oauth_states.clear()
+        om._oauth_states["oauth:state:gw:expired"] = {
+            "state": "expired",
+            "gateway_id": "gw",
+            "code_verifier": None,
+            "expires_at": "2000-01-01T00:00:00",
+            "used": False,
+        }
+        assert await manager._validate_authorization_state("gw", "expired") is False
+
+    @pytest.mark.asyncio
+    async def test_validate_and_retrieve_state_redis(self, monkeypatch):
+        manager = OAuthManager()
+        redis = AsyncMock()
+        redis.getdel = AsyncMock(
+            return_value=b'{"state":"s","gateway_id":"gw","code_verifier":"v","expires_at":"2099-01-01T00:00:00","used":false}'
+        )
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        data = await manager._validate_and_retrieve_state("gw", "s")
+        assert data["code_verifier"] == "v"
+
+    @pytest.mark.asyncio
+    async def test_validate_and_retrieve_state_redis_missing(self, monkeypatch):
+        manager = OAuthManager()
+        redis = AsyncMock()
+        redis.getdel = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+        assert await manager._validate_and_retrieve_state("gw", "missing") is None
+
+
+class TestOAuthManagerAuthorizationCodeExchange:
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_token_form_encoded(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {
+            "client_id": "cid",
+            "client_secret": "secret",
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+        }
+        response = _make_response(
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            text="access_token=code123&token_type=Bearer",
+        )
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager.exchange_code_for_token(credentials, code="c", state="s")
+        assert token == "code123"
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_token_json_parse_error(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {
+            "client_id": "cid",
+            "client_secret": "secret",
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+        }
+        response = _make_response(headers={"content-type": "application/json"}, text="nope", json_exc=ValueError("bad"))
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="No access_token"):
+            await manager.exchange_code_for_token(credentials, code="c", state="s")
+
+
+class TestOAuthManagerRefreshToken:
+    @pytest.mark.asyncio
+    async def test_refresh_token_success(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token"}
+        response = _make_response(status_code=200, json_data={"access_token": "new"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager.refresh_token("refresh", credentials)
+        assert result["access_token"] == "new"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_invalid_request(self):
+        manager = OAuthManager()
+        with pytest.raises(OAuthError, match="No refresh token available"):
+            await manager.refresh_token("", {"client_id": "cid", "token_url": "https://auth.example.com/token"})
+
+        with pytest.raises(OAuthError, match="No token URL configured"):
+            await manager.refresh_token("refresh", {"client_id": "cid"})
+
+        with pytest.raises(OAuthError, match="No client_id configured"):
+            await manager.refresh_token("refresh", {"token_url": "https://auth.example.com/token"})
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_invalid_status(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token"}
+        response = _make_response(status_code=400, text="bad")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="Refresh token invalid or expired"):
+            await manager.refresh_token("refresh", credentials)
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_resource_list_and_http_error(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "resource": ["https://api1", "https://api2"]}
+
+        response = _make_response(status_code=500, text="oops")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="Failed to refresh token"):
+            await manager.refresh_token("refresh", credentials)
+
+        call_data = client.post.call_args[1]["data"]
+        assert isinstance(call_data, list)
+
+        client.post = AsyncMock(side_effect=httpx.HTTPError("boom"))
+        with pytest.raises(OAuthError, match="Failed to refresh token"):
+            await manager.refresh_token("refresh", credentials)
 
 
 if __name__ == "__main__":

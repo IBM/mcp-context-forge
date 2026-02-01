@@ -40,7 +40,7 @@ import asyncio
 import importlib
 import sys
 import types
-from typing import Sequence
+from typing import Any, Sequence
 from unittest.mock import AsyncMock, Mock
 
 # Third-Party
@@ -265,6 +265,58 @@ async def test_stdio_endpoint_stop_cancels_pump(monkeypatch, translate):
     assert fake.terminated
 
 
+@pytest.mark.asyncio
+async def test_stdio_endpoint_stop_process_already_terminated(translate):
+    """Ensure stop returns cleanly when process already terminated."""
+    ps = translate._PubSub()
+    ep = translate.StdIOEndpoint("echo hi", ps)
+
+    class DummyProc:
+        pid = 123
+        returncode = 0
+
+    ep._proc = DummyProc()
+    ep._stdin = Mock()
+
+    await ep.stop()
+
+    assert ep._proc is None
+    assert ep._stdin is None
+
+
+@pytest.mark.asyncio
+async def test_stdio_endpoint_stop_process_lookup_error(translate):
+    """Ensure stop handles ProcessLookupError on returncode access."""
+    ps = translate._PubSub()
+    ep = translate.StdIOEndpoint("echo hi", ps)
+
+    class DummyProc:
+        pid = 123
+
+        @property
+        def returncode(self):
+            raise ProcessLookupError
+
+    ep._proc = DummyProc()
+    ep._stdin = Mock()
+
+    await ep.stop()
+
+    assert ep._proc is None
+    assert ep._stdin is None
+
+
+@pytest.mark.asyncio
+async def test_stdio_endpoint_pump_stdout_missing_stdout(translate):
+    """Ensure _pump_stdout raises when stdout is missing."""
+    ps = translate._PubSub()
+    ep = translate.StdIOEndpoint("echo hi", ps)
+    ep._proc = types.SimpleNamespace(stdout=None)
+
+    with pytest.raises(RuntimeError, match="missing stdout"):
+        await ep._pump_stdout()
+
+
 # ---------------------------------------------------------------------------#
 # Tests: FastAPI facade (/sse /message /healthz)                             #
 # ---------------------------------------------------------------------------#
@@ -372,6 +424,76 @@ def test_fastapi_sse_endpoint_with_messages(translate, monkeypatch):
     # Test that the pubsub system works
     q = ps.subscribe()
     assert q in ps._subscribers
+
+
+@pytest.mark.asyncio
+async def test_fastapi_sse_header_mappings_restart(monkeypatch, translate):
+    """Test SSE handler restarts stdio when header mappings yield env vars."""
+    ps = translate._PubSub()
+    stdio = AsyncMock()
+    stdio.stop = AsyncMock()
+    stdio.start = AsyncMock()
+
+    monkeypatch.setattr(translate, "extract_env_vars_from_headers", lambda *_args, **_kwargs: {"ENV_VAR": "1"})
+
+    app = translate._build_fastapi(ps, stdio, header_mappings={"X-Env": "ENV_VAR"}, keep_alive=0.01)
+
+    class DummyResponse:
+        def __init__(self, gen, headers=None):
+            self.gen = gen
+            self.headers = headers
+
+    monkeypatch.setattr(translate, "EventSourceResponse", DummyResponse)
+    handler = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/sse")
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers = {"X-Env": "1"}
+
+        async def is_disconnected(self):
+            return True
+
+    resp = await handler(DummyRequest())
+    # Consume generator to trigger unsubscribe
+    first = await resp.gen.__anext__()
+    second = await resp.gen.__anext__()
+    assert first["event"] == "endpoint"
+    assert second["event"] in {"keepalive", "message"}
+    with pytest.raises(StopAsyncIteration):
+        await resp.gen.__anext__()
+
+    assert stdio.stop.await_count == 1
+    assert stdio.start.await_count == 1
+    assert len(ps._subscribers) == 0
+
+
+@pytest.mark.asyncio
+async def test_fastapi_message_header_mappings_restart(monkeypatch, translate):
+    """Test /message restarts stdio when header mappings yield env vars."""
+    ps = translate._PubSub()
+    stdio = AsyncMock()
+    stdio.stop = AsyncMock()
+    stdio.start = AsyncMock()
+    stdio.send = AsyncMock()
+    stdio.is_running = Mock(return_value=False)
+
+    monkeypatch.setattr(translate, "extract_env_vars_from_headers", lambda *_args, **_kwargs: {"ENV_VAR": "1"})
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    app = translate._build_fastapi(ps, stdio, header_mappings={"X-Env": "ENV_VAR"})
+    handler = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/message")
+
+    class DummyRequest:
+        headers = {"X-Env": "1"}
+
+        async def body(self):
+            return b'{"jsonrpc":"2.0","method":"ping","id":1}'
+
+    resp = await handler(DummyRequest(), session_id="abc")
+    assert resp.status_code == 202
+    assert stdio.stop.await_count == 1
+    assert stdio.start.await_count >= 2
+    stdio.send.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -2028,6 +2150,258 @@ async def test_simple_streamable_http_pump_basic(monkeypatch, translate):
 
 
 @pytest.mark.asyncio
+async def test_simple_streamable_http_pump_status_error(monkeypatch, translate):
+    """Test _simple_streamable_http_pump handles non-200 responses."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class MockResponse:
+        status_code = 500
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://test/mcp")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def aiter_lines(self):
+            if False:  # pragma: no cover - required to make this an async generator
+                yield ""
+
+    class MockClient:
+        def stream(self, method, url, headers=None):
+            return MockResponse()
+
+    with pytest.raises(real_httpx.HTTPStatusError):
+        await translate._simple_streamable_http_pump(MockClient(), "http://test/mcp", 1, 0.1)
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_with_stdio_command(monkeypatch, translate):
+    """Test _run_streamable_http_to_stdio with stdio command and retry path."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class FakeStdin:
+        def __init__(self):
+            self.writes = []
+
+        def write(self, data: bytes) -> None:
+            self.writes.append(data)
+
+        async def drain(self) -> None:
+            return None
+
+    class FakeStdout:
+        def __init__(self):
+            self._lines = [
+                b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+                b"",
+            ]
+
+        async def readline(self) -> bytes:
+            return self._lines.pop(0)
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+            self.returncode = None
+            self.terminated = False
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        async def wait(self) -> None:
+            return None
+
+    process = FakeProcess()
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class FakeResponse:
+        def __init__(self, status_code=200, text='{"result":"ok"}'):
+            self.status_code = status_code
+            self.text = text
+            self.request = real_httpx.Request("POST", "http://example.com/mcp")
+
+    class FakeStreamResponse:
+        status_code = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def aiter_lines(self):
+            yield 'data: {"msg":"hi"}'
+
+    class FakeClient:
+        def __init__(self):
+            self.post_calls = []
+            self.stream_calls = 0
+
+        async def post(self, url, content=None, headers=None):
+            self.post_calls.append((url, content, headers))
+            return FakeResponse()
+
+        def stream(self, method, url, headers=None):
+            self.stream_calls += 1
+            if self.stream_calls == 1:
+                return FakeStreamResponse()
+            raise real_httpx.ConnectError("boom", request=real_httpx.Request(method, url))
+
+    fake_client = FakeClient()
+
+    class FakeClientContext:
+        async def __aenter__(self):
+            return fake_client
+
+        async def __aexit__(self, *args):
+            pass
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **kwargs: FakeClientContext())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._run_streamable_http_to_stdio("http://example.com", None, 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+
+    assert process.terminated is True
+    assert any(write == b'{"result":"ok"}\n' for write in process.stdin.writes)
+    assert any(write == b'{"msg":"hi"}\n' for write in process.stdin.writes)
+    assert fake_client.post_calls[0][0].endswith("/mcp")
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_form_encoded(monkeypatch, translate):
+    """Test _run_streamable_http_to_stdio form-encoded branch and non-200 responses."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+    monkeypatch.setattr(translate, "CONTENT_TYPE", "application/x-www-form-urlencoded")
+
+    class FakeStdin:
+        def __init__(self):
+            self.writes = []
+
+        def write(self, data: bytes) -> None:
+            self.writes.append(data)
+
+        async def drain(self) -> None:
+            return None
+
+    class FakeStdout:
+        def __init__(self):
+            self._lines = [
+                b'{"foo":"bar"}\n',
+                b"{not json}\n",
+                b"",
+            ]
+
+        async def readline(self) -> bytes:
+            return self._lines.pop(0)
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+            self.returncode = None
+
+        def terminate(self) -> None:
+            self.returncode = 0
+
+        async def wait(self) -> None:
+            return None
+
+    process = FakeProcess()
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class FakeResponse:
+        def __init__(self, status_code, text):
+            self.status_code = status_code
+            self.text = text
+            self.request = real_httpx.Request("POST", "http://example.com/mcp")
+
+    class FakeClient:
+        def __init__(self):
+            self.post_calls = []
+            self._responses = [
+                FakeResponse(200, "ok"),
+                FakeResponse(500, "bad"),
+            ]
+
+        async def post(self, url, content=None, headers=None):
+            self.post_calls.append((url, content, headers))
+            return self._responses.pop(0)
+
+    fake_client = FakeClient()
+
+    class FakeClientContext:
+        async def __aenter__(self):
+            return fake_client
+
+        async def __aexit__(self, *args):
+            pass
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **kwargs: FakeClientContext())
+
+    async def fake_gather(coro1, coro2):
+        await coro1
+        coro2.close()
+        return [None, None]
+
+    monkeypatch.setattr(translate.asyncio, "gather", fake_gather)
+
+    await translate._run_streamable_http_to_stdio("http://example.com/mcp", "token", 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+
+    assert fake_client.post_calls[0][1] == "foo=bar"
+    assert fake_client.post_calls[1][1] == "{not json}"
+    assert fake_client.post_calls[0][2]["Authorization"] == "Bearer token"
+    assert process.stdin.writes == [b"ok\n"]
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_missing_pipes(monkeypatch, translate):
+    """Test _run_streamable_http_to_stdio raises when stdin/stdout are missing."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class FakeProcess:
+        stdin = None
+        stdout = None
+        returncode = None
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        return FakeProcess()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError, match="Failed to create subprocess"):
+        await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test")
+
+
+@pytest.mark.asyncio
 async def test_multi_protocol_server_basic(monkeypatch, translate):
     """Test _run_multi_protocol_server basic setup."""
     calls = []
@@ -2107,11 +2481,17 @@ async def test_multi_protocol_server_basic(monkeypatch, translate):
 async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate):
     """Test _run_multi_protocol_server with streamable HTTP enabled."""
     calls = []
+    routes: dict[str, Any] = {}
+    app_holder: dict[str, Any] = {}
+    pubsub_holder: dict[str, Any] = {}
+    stdio_holder: dict[str, Any] = {}
 
     # Mock all the classes we need
     class MockStdIO:
         def __init__(self, cmd, pubsub, **kwargs):
             calls.append("stdio_init")
+            self._pubsub = pubsub
+            self.send = AsyncMock()
 
         async def start(self):
             calls.append("stdio_start")
@@ -2124,6 +2504,7 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
             calls.append("fastapi_init")
             self.routes = []
             self.user_middleware = []
+            app_holder["app"] = self
 
         def add_middleware(self, *args, **kwargs):
             calls.append("add_middleware")
@@ -2131,6 +2512,7 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
         def get(self, path):
             def decorator(func):
                 calls.append(f"get_{path}")
+                routes[path] = func
                 return func
 
             return decorator
@@ -2138,6 +2520,7 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
         def post(self, path, **kwargs):
             def decorator(func):
                 calls.append(f"post_{path}")
+                routes[path] = func
                 return func
 
             return decorator
@@ -2145,6 +2528,21 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
         async def __call__(self, *args, **kwargs):
             """Make FastAPI callable for ASGI wrapper."""
             calls.append("fastapi_called")
+
+    class DummyPubSub:
+        next_message: str | None = None
+
+        def __init__(self):
+            pubsub_holder["pubsub"] = self
+
+        def subscribe(self):
+            queue = asyncio.Queue()
+            if self.next_message is not None:
+                queue.put_nowait(self.next_message)
+            return queue
+
+        def unsubscribe(self, _queue):
+            return None
 
     class MockMCPServer:
         def __init__(self, name):
@@ -2179,6 +2577,7 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
     monkeypatch.setattr(translate, "FastAPI", MockFastAPI)
     monkeypatch.setattr(translate, "MCPServer", MockMCPServer)
     monkeypatch.setattr(translate, "StreamableHTTPSessionManager", MockSessionManager)
+    monkeypatch.setattr(translate, "_PubSub", DummyPubSub)
     monkeypatch.setattr(translate.uvicorn, "Server", MockServer)
     monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -2195,3 +2594,173 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
     assert "session_manager_init" in calls
     assert "context_enter" in calls
     assert "context_exit" in calls
+
+    # Exercise /mcp handler with correlated response
+    DummyPubSub.next_message = '{"id": 1, "result": "pong"}'
+    mcp_handler = routes["/mcp"]
+
+    class DummyRequest:
+        async def body(self):
+            return b'{"id": 1, "method": "ping"}'
+
+    response = await mcp_handler(DummyRequest())
+    assert response.status_code == 200
+
+    # Invalid JSON payload returns 400
+    class BadRequest:
+        async def body(self):
+            return b"{bad json"
+
+    bad_response = await mcp_handler(BadRequest())
+    assert bad_response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_sse_routes(monkeypatch, translate):
+    """Exercise SSE routes and message handling in multi-protocol server."""
+    routes: dict[str, Any] = {}
+    pubsub_holder: dict[str, Any] = {}
+    stdio_holder: dict[str, Any] = {}
+
+    class DummyPubSub:
+        def __init__(self):
+            pubsub_holder["pubsub"] = self
+            self.subscribers = []
+
+        def subscribe(self):
+            queue = asyncio.Queue()
+            self.subscribers.append(queue)
+            return queue
+
+        def unsubscribe(self, queue):
+            self.subscribers.remove(queue)
+
+    class MockStdIO:
+        def __init__(self, cmd, pubsub, **kwargs):
+            self._running = False
+            self.send = AsyncMock()
+            self.last_env = None
+            stdio_holder["stdio"] = self
+
+        async def start(self, env=None):
+            self._running = True
+            self.last_env = env
+
+        async def stop(self):
+            self._running = False
+
+        def is_running(self):
+            return self._running
+
+    class MockFastAPI:
+        def __init__(self):
+            self.routes = []
+            self.user_middleware = []
+
+        def add_middleware(self, *args, **kwargs):
+            return None
+
+        def get(self, path):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        def post(self, path, **kwargs):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+    class DummyResponse:
+        def __init__(self, gen, headers=None):
+            self.gen = gen
+            self.headers = headers
+
+    class MockServer:
+        def __init__(self, config):
+            pass
+
+        async def serve(self):
+            return None
+
+        async def shutdown(self):
+            return None
+
+    monkeypatch.setattr(translate, "_PubSub", DummyPubSub)
+    monkeypatch.setattr(translate, "StdIOEndpoint", MockStdIO)
+    monkeypatch.setattr(translate, "FastAPI", MockFastAPI)
+    monkeypatch.setattr(translate, "EventSourceResponse", DummyResponse)
+    monkeypatch.setattr(translate, "extract_env_vars_from_headers", lambda *_a, **_k: {"ENV": "1"})
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", True)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(translate.uvicorn, "Server", MockServer)
+    monkeypatch.setattr(
+        translate.asyncio,
+        "get_running_loop",
+        lambda: types.SimpleNamespace(add_signal_handler=lambda *_, **__: None),
+    )
+
+    async def fake_wait_for(_queue_get, _timeout):
+        _queue_get.close()
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(translate.asyncio, "wait_for", fake_wait_for)
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    await translate._run_multi_protocol_server(
+        "test_cmd",
+        8000,
+        "info",
+        ["https://example.com"],
+        "127.0.0.1",
+        expose_sse=True,
+        expose_streamable_http=False,
+        header_mappings={"X-Env": "ENV"},
+    )
+
+    sse_handler = routes["/sse"]
+    message_handler = routes["/message"]
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers = {"X-Env": "1"}
+
+        def __init__(self):
+            self.calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            return self.calls > 1
+
+    resp = await sse_handler(DummyRequest())
+    first = await resp.gen.__anext__()
+    second = await resp.gen.__anext__()
+    third = await resp.gen.__anext__()
+    assert first["event"] == "endpoint"
+    assert second["event"] == "keepalive"
+    assert third["event"] == "keepalive"
+    with pytest.raises(StopAsyncIteration):
+        await resp.gen.__anext__()
+    assert pubsub_holder["pubsub"].subscribers == []
+
+    class BadRequest:
+        headers = {"X-Env": "1"}
+
+        async def body(self):
+            return b"{bad json}"
+
+    bad_resp = await message_handler(BadRequest(), session_id="abc")
+    assert bad_resp.status_code == 400
+
+    class GoodRequest:
+        headers = {"X-Env": "1"}
+
+        async def body(self):
+            return b'{"jsonrpc":"2.0","method":"ping"}'
+
+    stdio_holder["stdio"]._running = False
+    ok_resp = await message_handler(GoodRequest(), session_id="abc")
+    assert ok_resp.status_code == 202

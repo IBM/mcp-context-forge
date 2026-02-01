@@ -174,6 +174,130 @@ class TestCacheInvalidationSubscriber:
             assert cache_subscriber._started is False
 
     @pytest.mark.asyncio
+    async def test_start_when_already_started(self, cache_subscriber):
+        cache_subscriber._started = True
+        await cache_subscriber.start()
+        assert cache_subscriber._started is True
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_with_pubsub(self, cache_subscriber, monkeypatch):
+        class FakePubSub:
+            def __init__(self):
+                self.subscribed = False
+                self.unsubscribed = False
+                self.closed = False
+
+            async def subscribe(self, _channel):
+                self.subscribed = True
+
+            async def unsubscribe(self, _channel):
+                self.unsubscribed = True
+
+            async def aclose(self):
+                self.closed = True
+
+        class FakeRedis:
+            def pubsub(self):
+                return FakePubSub()
+
+        class DummyTask:
+            def __init__(self):
+                self.cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+            def __await__(self):
+                async def _noop():
+                    return None
+
+                return _noop().__await__()
+
+        def _create_task(coro):
+            coro.close()
+            return DummyTask()
+
+        monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=FakeRedis()))
+        monkeypatch.setattr(asyncio, "create_task", _create_task)
+
+        await cache_subscriber.start()
+        assert cache_subscriber._started is True
+
+        await cache_subscriber.stop()
+        assert cache_subscriber._started is False
+
+    @pytest.mark.asyncio
+    async def test_start_cleanup_on_exception(self, cache_subscriber, monkeypatch):
+        class FakePubSub:
+            async def subscribe(self, _channel):
+                raise RuntimeError("subscribe failed")
+
+            async def aclose(self):
+                raise AttributeError("no aclose")
+
+            async def close(self):
+                raise asyncio.TimeoutError()
+
+        class FakeRedis:
+            def pubsub(self):
+                return FakePubSub()
+
+        monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=FakeRedis()))
+        await cache_subscriber.start()
+        assert cache_subscriber._started is False
+        assert cache_subscriber._pubsub is None
+
+    @pytest.mark.asyncio
+    async def test_listen_loop_processes_message(self, cache_subscriber, monkeypatch):
+        stop_event = asyncio.Event()
+
+        class FakePubSub:
+            def __init__(self):
+                self.called = False
+
+            async def get_message(self, **_kwargs):
+                if not self.called:
+                    self.called = True
+                    stop_event.set()
+                    return {"type": "message", "data": b"registry:tools"}
+                return None
+
+        cache_subscriber._pubsub = FakePubSub()
+        cache_subscriber._stop_event = stop_event
+        cache_subscriber._started = True
+
+        monkeypatch.setattr(cache_subscriber, "_process_invalidation", AsyncMock())
+
+        await cache_subscriber._listen_loop()
+        assert cache_subscriber._process_invalidation.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_listen_loop_timeout(self, cache_subscriber):
+        stop_event = asyncio.Event()
+
+        class TimeoutPubSub:
+            def __init__(self):
+                self.called = False
+
+            async def get_message(self, **_kwargs):
+                if not self.called:
+                    self.called = True
+                    stop_event.set()
+                    raise asyncio.TimeoutError()
+                return None
+
+        cache_subscriber._pubsub = TimeoutPubSub()
+        cache_subscriber._stop_event = stop_event
+        cache_subscriber._started = True
+
+        await cache_subscriber._listen_loop()
+
+    @pytest.mark.asyncio
+    async def test_process_invalidation_error_path(self, cache_subscriber):
+        with patch("mcpgateway.cache.registry_cache.get_registry_cache", side_effect=RuntimeError("boom")):
+            await cache_subscriber._process_invalidation("registry:tools")
+
+    @pytest.mark.asyncio
     async def test_stop_without_start(self, cache_subscriber):
         """Test that stop is safe to call without start."""
         await cache_subscriber.stop()

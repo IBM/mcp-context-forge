@@ -19,7 +19,10 @@ from sqlalchemy.orm import sessionmaker
 from mcpgateway.db import Base
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate, ToolCreate, ToolUpdate
+from mcpgateway.schemas import GatewayRead, ServerCreate, ServerRead, ServerUpdate, TokenScopeRequest, ToolCreate, ToolUpdate
+from mcpgateway.utils.services_auth import encode_auth
+from mcpgateway.config import settings
+import base64
 from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.tool_service import ToolService
 
@@ -278,6 +281,75 @@ class TestSchemaValidation:
         # Test valid UUID
         server_create = ServerCreate(id="550e8400-e29b-41d4-a716-446655440000", name="Test Server")
         assert server_create.id == "550e8400e29b41d4a716446655440000"
+
+    def test_tool_create_request_type_and_auth_assembly(self):
+        info_rest = type("obj", (object,), {"data": {"integration_type": "REST"}})
+        assert ToolCreate.validate_request_type("POST", info_rest) == "POST"
+        with pytest.raises(ValueError):
+            ToolCreate.validate_request_type("SSE", info_rest)
+
+        tool_basic = ToolCreate(
+            name="tool-basic",
+            url="https://example.com",
+            integration_type="REST",
+            request_type="POST",
+            auth_type="basic",
+            auth_username="user",
+            auth_password="pass",
+        )
+        assert tool_basic.auth.auth_type == "basic"
+
+        tool_bearer = ToolCreate(
+            name="tool-bearer",
+            url="https://example.com",
+            integration_type="REST",
+            request_type="POST",
+            auth_type="bearer",
+            auth_token="token123",
+        )
+        assert tool_bearer.auth.auth_type == "bearer"
+
+        tool_headers = ToolCreate(
+            name="tool-headers",
+            url="https://example.com",
+            integration_type="REST",
+            request_type="POST",
+            auth_type="authheaders",
+        )
+        assert tool_headers.auth.auth_type == "authheaders"
+        assert tool_headers.auth.auth_value is None
+
+    def test_gateway_read_populates_auth_fields(self):
+        encoded = base64.urlsafe_b64encode("admin:secret".encode("utf-8")).decode("utf-8")
+        basic = GatewayRead.model_construct(auth_type="basic", auth_value=encode_auth({"Authorization": f"Basic {encoded}"}))
+        basic = GatewayRead._populate_auth(basic)
+        assert basic.auth_username == "admin"
+        assert basic.auth_password == "secret"
+
+        bearer = GatewayRead.model_construct(auth_type="bearer", auth_value=encode_auth({"Authorization": "Bearer tok"}))
+        bearer = GatewayRead._populate_auth(bearer)
+        assert bearer.auth_token == "tok"
+
+        headers = GatewayRead.model_construct(auth_type="authheaders", auth_value=encode_auth({"X-API-Key": "abc"}))
+        headers = GatewayRead._populate_auth(headers)
+        assert headers.auth_header_key == "X-API-Key"
+        assert headers.auth_header_value == "abc"
+
+    def test_gateway_read_masks_query_param_auth(self):
+        data = {"auth_query_params": {"token": "secret"}}
+        masked = GatewayRead._mask_query_param_auth(data)
+        assert masked["auth_query_param_key"] == "token"
+        assert masked["auth_query_param_value_masked"] == settings.masked_auth_value
+
+    def test_token_scope_validations(self):
+        assert TokenScopeRequest.validate_ip_restrictions(["192.168.1.0/24"]) == ["192.168.1.0/24"]
+        with pytest.raises(ValueError):
+            TokenScopeRequest.validate_ip_restrictions(["not-an-ip"])
+
+        assert TokenScopeRequest.validate_permissions(["tools.read", "resources.write"]) == ["tools.read", "resources.write"]
+        assert TokenScopeRequest.validate_permissions(["*"]) == ["*"]
+        with pytest.raises(ValueError):
+            TokenScopeRequest.validate_permissions(["invalid-permission"])
 
         # Test invalid UUID should raise validation error
         with pytest.raises(Exception):  # Pydantic ValidationError

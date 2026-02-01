@@ -9,7 +9,8 @@ Tests for import service implementation.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -17,7 +18,7 @@ import pytest
 # First-Party
 from mcpgateway.schemas import ToolCreate
 from mcpgateway.services.gateway_service import GatewayNameConflictError
-from mcpgateway.services.import_service import ConflictStrategy, ImportError, ImportService, ImportStatus, ImportValidationError
+from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportError, ImportService, ImportStatus, ImportValidationError
 from mcpgateway.services.prompt_service import PromptNameConflictError
 from mcpgateway.services.resource_service import ResourceURIConflictError
 from mcpgateway.services.server_service import ServerNameConflictError
@@ -1862,3 +1863,283 @@ async def test_register_resources_bulk_conflict_skip():
     # Two or more resources expected (original + new)
     assert any(r.uri == "file:///duplicate.txt" for r in rows)
     assert any(r.uri == "file:///new.txt" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_dry_run_adds_warning(import_service, mock_db):
+    status = ImportStatus("import-1")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, True, status)
+    assert any("Would import tool" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_conflict_skip(import_service, mock_db):
+    status = ImportStatus("import-2")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
+
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.SKIP, False, status)
+    assert status.skipped_entities == 1
+    assert any("Skipped existing tool" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_conflict_update_found(import_service, mock_db):
+    status = ImportStatus("import-3")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
+    import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1", id="t1")], None)
+
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+    import_service.tool_service.update_tool.assert_called_with(mock_db, "t1", ANY)
+    assert status.updated_entities == 1
+
+
+@pytest.mark.asyncio
+async def test_process_tool_conflict_update_not_found(import_service, mock_db):
+    status = ImportStatus("import-3b")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+
+    assert status.skipped_entities == 1
+    assert any("Could not find existing tool to update" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_conflict_update_error(import_service, mock_db):
+    status = ImportStatus("import-3c")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
+    import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1", id="t1")], None)
+    import_service.tool_service.update_tool.side_effect = Exception("update failed")
+
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+
+    assert status.skipped_entities == 1
+    assert any("Could not update tool" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_conflict_rename(import_service, mock_db):
+    status = ImportStatus("import-4")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    import_service.tool_service.register_tool.side_effect = [ToolNameConflictError("tool1"), None]
+
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.RENAME, False, status)
+    assert import_service.tool_service.register_tool.call_count == 2
+    assert status.created_entities == 1
+    assert any("Renamed tool" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_conflict_fail(import_service, mock_db):
+    status = ImportStatus("import-5")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
+
+    with pytest.raises(ImportError) as exc:
+        await import_service._process_tool(mock_db, tool_data, ConflictStrategy.FAIL, False, status)
+    assert "Tool name conflict" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_conflict_update(import_service, mock_db):
+    status = ImportStatus("import-6")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+    import_service.prompt_service.register_prompt.side_effect = PromptNameConflictError("prompt1")
+    import_service.prompt_service.list_prompts.return_value = ([SimpleNamespace(name="prompt1", id="p1")], None)
+
+    await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.UPDATE, False, status)
+    import_service.prompt_service.update_prompt.assert_called_with(mock_db, "prompt1", ANY)
+    assert status.updated_entities == 1
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_dry_run_adds_warning(import_service, mock_db):
+    status = ImportStatus("import-6a")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+
+    await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.UPDATE, True, status)
+
+    assert any("Would import prompt" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_conflict_skip(import_service, mock_db):
+    status = ImportStatus("import-6b")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+    import_service.prompt_service.register_prompt.side_effect = PromptNameConflictError("prompt1")
+
+    await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.SKIP, False, status)
+
+    assert status.skipped_entities == 1
+    assert any("Skipped existing prompt" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_conflict_rename(import_service, mock_db):
+    status = ImportStatus("import-6c")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+    import_service.prompt_service.register_prompt.side_effect = [PromptNameConflictError("prompt1"), None]
+
+    await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.RENAME, False, status)
+
+    assert status.created_entities == 1
+    assert any("Renamed prompt" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_conflict_fail(import_service, mock_db):
+    status = ImportStatus("import-6d")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+    import_service.prompt_service.register_prompt.side_effect = PromptNameConflictError("prompt1")
+
+    with pytest.raises(ImportError) as exc:
+        await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.FAIL, False, status)
+
+    assert "Prompt name conflict" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_process_resource_conflict_update(import_service, mock_db):
+    status = ImportStatus("import-7")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+    import_service.resource_service.register_resource.side_effect = ResourceURIConflictError("res1")
+    import_service.resource_service.list_resources.return_value = ([SimpleNamespace(uri="file:///res1", id="r1")], None)
+
+    await import_service._process_resource(mock_db, resource_data, ConflictStrategy.UPDATE, False, status)
+    import_service.resource_service.update_resource.assert_called_with(mock_db, "file:///res1", ANY)
+    assert status.updated_entities == 1
+
+
+@pytest.mark.asyncio
+async def test_process_resource_dry_run_adds_warning(import_service, mock_db):
+    status = ImportStatus("import-7a")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+
+    await import_service._process_resource(mock_db, resource_data, ConflictStrategy.UPDATE, True, status)
+
+    assert any("Would import resource" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_resource_conflict_skip(import_service, mock_db):
+    status = ImportStatus("import-7b")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+    import_service.resource_service.register_resource.side_effect = ResourceURIConflictError("res1")
+
+    await import_service._process_resource(mock_db, resource_data, ConflictStrategy.SKIP, False, status)
+
+    assert status.skipped_entities == 1
+    assert any("Skipped existing resource" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_resource_conflict_rename(import_service, mock_db):
+    status = ImportStatus("import-7c")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+    import_service.resource_service.register_resource.side_effect = [ResourceURIConflictError("res1"), None]
+
+    await import_service._process_resource(mock_db, resource_data, ConflictStrategy.RENAME, False, status)
+
+    assert status.created_entities == 1
+    assert any("Renamed resource" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_resource_conflict_fail(import_service, mock_db):
+    status = ImportStatus("import-7d")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+    import_service.resource_service.register_resource.side_effect = ResourceURIConflictError("res1")
+
+    with pytest.raises(ImportError) as exc:
+        await import_service._process_resource(mock_db, resource_data, ConflictStrategy.FAIL, False, status)
+
+    assert "Resource URI conflict" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_preview_import_builds_bundles_and_conflicts(import_service, mock_db):
+    import_data = {
+        "version": "2025-03-26",
+        "exported_at": "2025-01-01T00:00:00Z",
+        "entities": {
+            "gateways": [{"name": "gw1", "url": "http://gw.example.com"}],
+            "tools": [
+                {
+                    "name": "tool1",
+                    "url": "http://tool.example.com",
+                    "integration_type": "REST",
+                    "request_type": "GET",
+                    "gateway_name": "gw1",
+                }
+            ],
+            "resources": [{"name": "res1", "uri": "file:///res1", "gateway_name": "gw1"}],
+            "prompts": [{"name": "prompt1", "template": "Hello", "gateway_name": "gw1"}],
+            "servers": [{"name": "srv1", "associated_tools": ["tool1"], "associated_resources": ["res1"], "associated_prompts": ["prompt1"]}],
+        },
+    }
+
+    import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1")], None)
+    import_service.gateway_service.list_gateways.return_value = [SimpleNamespace(name="gw1")]
+    import_service.server_service.list_servers.return_value = [SimpleNamespace(name="srv1")]
+    import_service.prompt_service.list_prompts.return_value = ([SimpleNamespace(name="prompt1")], None)
+    import_service.resource_service.list_resources.return_value = ([SimpleNamespace(uri="file:///res1")], None)
+
+    preview = await import_service.preview_import(mock_db, import_data)
+    assert preview["bundles"]["gw1"]["total_items"] == 3
+    assert preview["dependencies"]["srv1"]["total_dependencies"] == 3
+    assert "tools" in preview["conflicts"]
+    assert "gateways" in preview["conflicts"]
+
+
+@pytest.mark.asyncio
+async def test_detect_import_conflicts_handles_error(import_service, mock_db):
+    import_service.tool_service.list_tools.side_effect = Exception("boom")
+    conflicts = await import_service._detect_import_conflicts(mock_db, {"tools": [{"name": "tool1"}]})
+    assert conflicts == {}
+
+
+@pytest.mark.asyncio
+async def test_analyze_import_item_unknown_type(import_service, mock_db):
+    result = await import_service._analyze_import_item(mock_db, "roots", {"name": "root1"})
+    assert result["conflicts_with"] is False

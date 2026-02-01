@@ -2146,3 +2146,161 @@ class TestResourceGatewayNamespacing:
 
         # Verification
         assert "Resource already exists" in str(exc_info.value)
+
+
+class TestResourceBulkRegistration:
+    """Targeted coverage for bulk resource registration conflict strategies."""
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_empty_returns_zeroes(self, resource_service, mock_db):
+        result = await resource_service.register_resources_bulk(db=mock_db, resources=[])
+
+        assert result == {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_update_conflict_updates_existing(self, resource_service, mock_db):
+        existing = MagicMock(spec=DbResource)
+        existing.uri = "file:///dup.txt"
+        existing.gateway_id = None
+        existing.name = "Old"
+        existing.description = "Old desc"
+        existing.mime_type = "text/plain"
+        existing.size = 1
+        existing.uri_template = None
+        existing.tags = ["old"]
+        existing.version = 1
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        mock_db.add_all = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+
+        resources = [
+            ResourceCreate(
+                name="Updated",
+                uri="file:///dup.txt",
+                description="New desc",
+                mime_type="text/plain",
+                content="new",
+                tags=["updated"],
+            )
+        ]
+
+        result = await resource_service.register_resources_bulk(
+            db=mock_db,
+            resources=resources,
+            created_by="tester",
+            conflict_strategy="update",
+        )
+
+        assert result["updated"] == 1
+        assert result["created"] == 0
+        assert existing.name == "Updated"
+        assert existing.description == "New desc"
+        assert existing.tags[0]["id"] == "updated"
+        assert existing.tags[0]["label"] == "updated"
+        assert existing.version == 2
+        mock_db.add_all.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_rename_conflict_creates_new(self, resource_service, mock_db):
+        existing = MagicMock(spec=DbResource)
+        existing.uri = "file:///dup.txt"
+        existing.gateway_id = None
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        mock_db.add_all = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+
+        resources = [
+            ResourceCreate(
+                name="Renamed",
+                uri="file:///dup.txt",
+                description="Rename conflict",
+                mime_type="text/plain",
+                content="body",
+            )
+        ]
+
+        result = await resource_service.register_resources_bulk(
+            db=mock_db,
+            resources=resources,
+            created_by="tester",
+            conflict_strategy="rename",
+            visibility="team",
+            team_id="team-1",
+        )
+
+        assert result["created"] == 1
+        added = mock_db.add_all.call_args.args[0][0]
+        assert added.uri.startswith("file:///dup.txt_imported_")
+        assert added.team_id == "team-1"
+        assert added.visibility == "team"
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_fail_conflict_records_error(self, resource_service, mock_db):
+        existing = MagicMock(spec=DbResource)
+        existing.uri = "file:///dup.txt"
+        existing.gateway_id = None
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [existing]
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+
+        resources = [
+            ResourceCreate(
+                name="Duplicate",
+                uri="file:///dup.txt",
+                description="Conflict",
+                mime_type="text/plain",
+                content="body",
+            )
+        ]
+
+        result = await resource_service.register_resources_bulk(
+            db=mock_db,
+            resources=resources,
+            created_by="tester",
+            conflict_strategy="fail",
+            visibility="private",
+            owner_email="owner@example.com",
+        )
+
+        assert result["failed"] == 1
+        assert any("Resource URI conflict" in err for err in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_register_resources_bulk_handles_bad_resource(self, resource_service, mock_db):
+        class BadResource:
+            uri = "file:///bad.txt"
+            name = "Bad"
+            description = "Bad resource"
+            mime_type = "text/plain"
+            uri_template = None
+            gateway_id = None
+            team_id = None
+            owner_email = None
+            visibility = "public"
+
+            @property
+            def tags(self):
+                raise ValueError("boom")
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+        resource_service._notify_resource_added = AsyncMock()
+
+        result = await resource_service.register_resources_bulk(
+            db=mock_db,
+            resources=[BadResource()],
+            created_by="tester",
+            conflict_strategy="skip",
+        )
+
+        assert result["failed"] == 1
+        assert any("Failed to process resource" in err for err in result["errors"])
