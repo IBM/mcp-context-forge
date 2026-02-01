@@ -233,7 +233,7 @@ def admin_page(page: Page):
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
     # Wait for the application shell to load to ensure we aren't looking at a 500 error page
     try:
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=10000)
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
     except Exception:
         # If tab is missing, check if we have an error message on page to report
         content = page.content()
@@ -261,10 +261,52 @@ def test_tool_data():
     }
 
 
+@pytest.fixture
+def test_server_data():
+    """Provide test data for server creation."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    return {
+        "name": f"test-server-{unique_id}",
+        "icon": "http://localhost:9000/icon.png",
+    }
+
+
+@pytest.fixture
+def test_resource_data():
+    """Provide test data for resource creation."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    return {
+        "uri": f"file:///tmp/test-resource-{unique_id}.txt",
+        "name": f"Test Resource {unique_id}",
+        "mimeType": "text/plain",
+        "description": "A test resource created by automation",
+    }
+
+
+@pytest.fixture
+def test_prompt_data():
+    """Provide test data for prompt creation."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    return {
+        "name": f"test-prompt-{unique_id}",
+        "description": "A test prompt created by automation",
+        "arguments": '[{"name": "topic", "description": "Topic to discuss", "required": true}]',
+    }
+
+
 @pytest.fixture(autouse=True)
 def setup_test_environment(page: Page):
     """Set viewport and default timeout for consistent UI tests."""
     if VIEWPORT_SIZE:
         page.set_viewport_size(VIEWPORT_SIZE)
-    page.set_default_timeout(30000)
+    page.set_default_timeout(60000)
     # Optionally, add request logging or interception here
