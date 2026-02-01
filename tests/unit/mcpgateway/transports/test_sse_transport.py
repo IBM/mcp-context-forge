@@ -52,6 +52,16 @@ async def test_send_message_requires_connection():
 
 
 @pytest.mark.asyncio
+async def test_send_message_queue_error():
+    transport = SSETransport()
+    await transport.connect()
+    transport._message_queue = SimpleNamespace(put=AsyncMock(side_effect=RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError):
+        await transport.send_message({"method": "ping"})
+
+
+@pytest.mark.asyncio
 async def test_receive_message_initializes_and_closes():
     transport = SSETransport()
     await transport.connect()
@@ -59,6 +69,20 @@ async def test_receive_message_initializes_and_closes():
     message = await anext(generator)
     assert message == {"jsonrpc": "2.0", "method": "initialize", "id": 1}
     transport._client_gone.set()
+    await generator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_receive_message_cancelled():
+    transport = SSETransport()
+    await transport.connect()
+    generator = transport.receive_message()
+    _ = await anext(generator)
+    task = asyncio.create_task(anext(generator))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     await generator.aclose()
 
 
@@ -71,6 +95,24 @@ async def test_get_message_with_timeout_paths():
 
     empty = await asyncio.wait_for(transport._get_message_with_timeout(0.01), timeout=0.5)
     assert empty is None
+
+
+@pytest.mark.asyncio
+async def test_get_message_with_timeout_none():
+    transport = SSETransport()
+    await transport._message_queue.put({"id": 2})
+    result = await asyncio.wait_for(transport._get_message_with_timeout(None), timeout=0.5)
+    assert result == {"id": 2}
+
+
+@pytest.mark.asyncio
+async def test_get_message_with_timeout_cancelled():
+    transport = SSETransport()
+    task = asyncio.create_task(transport._get_message_with_timeout(1.0))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 @pytest.mark.asyncio
@@ -140,6 +182,131 @@ async def test_create_sse_response_keepalive_flow(monkeypatch):
     on_disconnect.assert_awaited()
 
 
+@pytest.mark.asyncio
+async def test_create_sse_response_disconnect_detected(monkeypatch):
+    transport = SSETransport("http://base")
+    monkeypatch.setattr(sse_transport, "EventSourceResponse", _DummyResponse)
+    monkeypatch.setattr(settings, "sse_keepalive_enabled", False)
+    monkeypatch.setattr(settings, "sse_retry_timeout", 100)
+    monkeypatch.setattr(settings, "sse_send_timeout", 0)
+
+    request = MagicMock(spec=Request)
+    request.is_disconnected = AsyncMock(return_value=True)
+    on_disconnect = AsyncMock()
+
+    response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect)
+    generator = response.body_iterator
+
+    first = await anext(generator)
+    assert first.startswith(b"event: endpoint")
+
+    with pytest.raises(StopAsyncIteration):
+        await anext(generator)
+
+    on_disconnect.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_sse_response_disconnect_callback_error(monkeypatch):
+    transport = SSETransport("http://base")
+    monkeypatch.setattr(sse_transport, "EventSourceResponse", _DummyResponse)
+    monkeypatch.setattr(settings, "sse_keepalive_enabled", False)
+    monkeypatch.setattr(settings, "sse_retry_timeout", 100)
+    monkeypatch.setattr(settings, "sse_send_timeout", 0)
+
+    request = MagicMock(spec=Request)
+    request.is_disconnected = AsyncMock(return_value=True)
+
+    async def _disconnect_error():
+        raise RuntimeError("boom")
+
+    response = await transport.create_sse_response(request, on_disconnect_callback=_disconnect_error)
+    generator = response.body_iterator
+
+    first = await anext(generator)
+    assert first.startswith(b"event: endpoint")
+
+    with pytest.raises(StopAsyncIteration):
+        await anext(generator)
+
+
+@pytest.mark.asyncio
+async def test_create_sse_response_rapid_yield_consecutive(monkeypatch):
+    transport = SSETransport("http://base")
+    monkeypatch.setattr(sse_transport, "EventSourceResponse", _DummyResponse)
+    monkeypatch.setattr(settings, "sse_keepalive_enabled", False)
+    monkeypatch.setattr(settings, "sse_retry_timeout", 100)
+    monkeypatch.setattr(settings, "sse_send_timeout", 0)
+    monkeypatch.setattr(settings, "sse_rapid_yield_max", 0)
+
+    counter = {"v": 0.0}
+
+    def _fake_monotonic():
+        counter["v"] += 0.01
+        return counter["v"]
+
+    monkeypatch.setattr(sse_transport.time, "monotonic", _fake_monotonic)
+
+    request = MagicMock(spec=Request)
+    request.is_disconnected = AsyncMock(return_value=False)
+    on_disconnect = AsyncMock()
+
+    for idx in range(10):
+        await transport._message_queue.put({"jsonrpc": "2.0", "id": idx})
+
+    response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect)
+    generator = response.body_iterator
+
+    frames = []
+    for _ in range(20):
+        try:
+            frames.append(await anext(generator))
+        except StopAsyncIteration:
+            break
+
+    assert transport._client_gone.is_set()
+    assert len(frames) >= 2
+
+
+@pytest.mark.asyncio
+async def test_create_sse_response_rapid_yield_deque(monkeypatch):
+    transport = SSETransport("http://base")
+    monkeypatch.setattr(sse_transport, "EventSourceResponse", _DummyResponse)
+    monkeypatch.setattr(settings, "sse_keepalive_enabled", False)
+    monkeypatch.setattr(settings, "sse_retry_timeout", 100)
+    monkeypatch.setattr(settings, "sse_send_timeout", 0)
+    monkeypatch.setattr(settings, "sse_rapid_yield_max", 1)
+    monkeypatch.setattr(settings, "sse_rapid_yield_window_ms", 1000)
+
+    counter = {"v": 0.0}
+
+    def _fake_monotonic():
+        counter["v"] += 0.001
+        return counter["v"]
+
+    monkeypatch.setattr(sse_transport.time, "monotonic", _fake_monotonic)
+
+    request = MagicMock(spec=Request)
+    request.is_disconnected = AsyncMock(return_value=False)
+    on_disconnect = AsyncMock()
+
+    for idx in range(2):
+        await transport._message_queue.put({"jsonrpc": "2.0", "id": idx})
+
+    response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect)
+    generator = response.body_iterator
+
+    frames = []
+    for _ in range(10):
+        try:
+            frames.append(await anext(generator))
+        except StopAsyncIteration:
+            break
+
+    assert transport._client_gone.is_set()
+    assert len(frames) >= 2
+
+
 def test_anyio_cancel_delivery_patch_toggle(monkeypatch):
     monkeypatch.setattr(settings, "anyio_cancel_delivery_patch_enabled", False)
     sse_transport._patch_applied = False
@@ -156,6 +323,22 @@ def test_anyio_cancel_delivery_patch_toggle(monkeypatch):
 
     assert sse_transport.remove_anyio_cancel_delivery_patch() is True
     assert sse_transport.CancelScope._deliver_cancellation is original
+
+
+def test_anyio_cancel_delivery_patch_failure(monkeypatch):
+    monkeypatch.setattr(settings, "anyio_cancel_delivery_patch_enabled", True)
+    sse_transport._patch_applied = False
+
+    def _fail(_max):  # noqa: D401 - test stub
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sse_transport, "_create_patched_deliver_cancellation", _fail)
+    assert sse_transport.apply_anyio_cancel_delivery_patch() is False
+
+
+def test_remove_anyio_cancel_delivery_patch_not_applied():
+    sse_transport._patch_applied = False
+    assert sse_transport.remove_anyio_cancel_delivery_patch() is False
 
 
 def test_get_sse_cleanup_timeout_fallback(monkeypatch):
@@ -211,3 +394,29 @@ async def test_create_sse_response_errors_trigger_disconnect(monkeypatch):
         await anext(generator)
 
     on_disconnect.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_event_source_response_call_runs_tasks():
+    response = sse_transport.EventSourceResponse(lambda: None)
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    response._stream_response = _noop
+    response._ping = _noop
+    response._listen_for_exit_signal = _noop
+    response._listen_for_disconnect = _noop
+    response.data_sender_callable = _noop
+    response.background = AsyncMock()
+
+    scope = {"type": "http"}
+
+    async def _receive():
+        return {"type": "http.disconnect"}
+
+    async def _send(_message):
+        return None
+
+    await response(scope, _receive, _send)
+    response.background.assert_awaited()

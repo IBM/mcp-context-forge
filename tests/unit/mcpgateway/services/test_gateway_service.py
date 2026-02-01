@@ -657,6 +657,45 @@ class TestGatewayService:
         assert result[0].name == "test_gateway"
 
     @pytest.mark.asyncio
+    async def test_list_gateways_cache_hit(self, gateway_service, test_db, monkeypatch):
+        """Cache hit should return cached gateways without DB query."""
+        cache = SimpleNamespace(
+            hash_filters=MagicMock(return_value="hash"),
+            get=AsyncMock(return_value={"gateways": [{"name": "cached"}], "next_cursor": "next"}),
+            set=AsyncMock(),
+        )
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda data: SimpleNamespace(name=data["name"]))
+
+        test_db.execute = Mock()
+        result, next_cursor = await gateway_service.list_gateways(test_db)
+
+        assert next_cursor == "next"
+        assert len(result) == 1
+        assert result[0].name == "cached"
+        test_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_gateways_team_filter_no_access(self, gateway_service, test_db, monkeypatch):
+        """Team filter should return empty when user lacks access."""
+        class DummyTeamService:
+            def __init__(self, _db):
+                self.db = _db
+
+            async def get_user_teams(self, _email):
+                return [SimpleNamespace(id="team-1")]
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.TeamManagementService", DummyTeamService)
+
+        test_db.execute = Mock()
+        result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", team_id="team-2")
+
+        assert result == []
+        assert next_cursor is None
+        test_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
         """Gateway is fetched and returned by ID."""
         mock_gateway.masked = Mock(return_value=mock_gateway)

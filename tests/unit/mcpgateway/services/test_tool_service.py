@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
 import orjson
+import time
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
@@ -32,6 +33,7 @@ from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     extract_using_jq,
+    _get_validator_class_and_check,
     TextContent,
     ToolError,
     ToolInvocationError,
@@ -118,6 +120,171 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     mock_query_result = Mock()
     mock_query_result.first.return_value = mock_global_config
     test_db.query = Mock(return_value=mock_query_result)
+
+
+class TestToolServiceHelpers:
+    """Tests for helper utilities in tool_service."""
+
+    def test_get_validator_class_and_check_fallback_success(self, monkeypatch):
+        """Fallback validators should be used when primary schema check fails."""
+        schema_json = orjson.dumps({"type": "object"}).decode()
+
+        class BaseValidator:
+            @staticmethod
+            def check_schema(_schema):
+                raise jsonschema.exceptions.SchemaError("boom")
+
+        class FallbackFail:
+            @staticmethod
+            def check_schema(_schema):
+                raise jsonschema.exceptions.SchemaError("boom")
+
+        class FallbackPass:
+            @staticmethod
+            def check_schema(_schema):
+                return None
+
+        _get_validator_class_and_check.cache_clear()
+        monkeypatch.setattr("mcpgateway.services.tool_service.validators.validator_for", lambda _schema: BaseValidator)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft7Validator", FallbackFail)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft6Validator", FallbackPass)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft4Validator", FallbackPass)
+
+        validator_cls, _schema = _get_validator_class_and_check(schema_json)
+        assert validator_cls is FallbackPass
+
+    def test_get_validator_class_and_check_all_fallbacks_fail(self, monkeypatch):
+        """When all fallbacks fail, the primary validator is used."""
+        schema_json = orjson.dumps({"type": "object"}).decode()
+        calls = {"count": 0}
+
+        class BaseValidator:
+            @staticmethod
+            def check_schema(_schema):
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise jsonschema.exceptions.SchemaError("boom")
+
+        class FallbackFail:
+            @staticmethod
+            def check_schema(_schema):
+                raise jsonschema.exceptions.SchemaError("boom")
+
+        _get_validator_class_and_check.cache_clear()
+        monkeypatch.setattr("mcpgateway.services.tool_service.validators.validator_for", lambda _schema: BaseValidator)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft7Validator", FallbackFail)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft6Validator", FallbackFail)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft4Validator", FallbackFail)
+
+        validator_cls, _schema = _get_validator_class_and_check(schema_json)
+        assert validator_cls is BaseValidator
+        assert calls["count"] == 2
+
+    def test_extract_using_jq_handles_none_result(self, monkeypatch):
+        """[None] result should map to error message."""
+        class DummyProgram:
+            def input(self, _data):
+                return self
+
+            def all(self):
+                return [None]
+
+        monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: DummyProgram())
+
+        result = extract_using_jq({"a": 1}, ".a")
+        assert result == "Error applying jsonpath filter"
+
+    def test_extract_using_jq_returns_exception_message(self, monkeypatch):
+        """Exceptions during jq execution should return message string."""
+        monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        result = extract_using_jq({"a": 1}, ".a")
+        assert result == "Error applying jsonpath filter: boom"
+
+    def test_tool_service_plugin_env_override(self, monkeypatch):
+        """PLUGINS_ENABLED env flag should override settings."""
+        monkeypatch.setenv("PLUGINS_ENABLED", "yes")
+        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+            service = ToolService()
+        assert service._plugin_manager is not None
+        mock_pm.assert_called_once()
+
+        monkeypatch.setenv("PLUGINS_ENABLED", "no")
+        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+            service = ToolService()
+        assert service._plugin_manager is None
+        mock_pm.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_top_tools_returns_cached(self, monkeypatch):
+        """get_top_tools should return cached results when available."""
+        # First-Party
+        from mcpgateway.cache import metrics_cache as cache_module
+
+        service = ToolService()
+        cached = [SimpleNamespace(id="tool-1")]
+
+        monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
+        cache_module.metrics_cache.get = MagicMock(return_value=cached)
+
+        mock_combined = MagicMock()
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_top_performers_combined", mock_combined)
+
+        result = await service.get_top_tools(MagicMock())
+
+        assert result == cached
+        mock_combined.assert_not_called()
+
+    def test_pydantic_tool_from_payload_invalid(self, monkeypatch):
+        """Invalid cache payload should return None."""
+        service = ToolService()
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.PydanticTool.model_validate", MagicMock(side_effect=ValueError("boom")))
+
+        assert service._pydantic_tool_from_payload({"bad": "payload"}) is None
+
+    def test_record_tool_metric_by_id_records(self):
+        """_record_tool_metric_by_id should add and commit metric."""
+        service = ToolService()
+        db = MagicMock()
+
+        service._record_tool_metric_by_id(db, "tool-1", time.monotonic(), True, None)
+
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+
+    def test_record_tool_metric_sync_uses_fresh_session(self, monkeypatch):
+        """_record_tool_metric_sync should call record helper with fresh session."""
+        service = ToolService()
+        dummy_db = MagicMock()
+
+        class DummySession:
+            def __enter__(self):
+                return dummy_db
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
+
+        with patch.object(service, "_record_tool_metric_by_id") as mock_record:
+            service._record_tool_metric_sync("tool-1", 1.23, True, None)
+
+        mock_record.assert_called_once_with(
+            dummy_db,
+            tool_id="tool-1",
+            start_time=1.23,
+            success=True,
+            error_message=None,
+        )
+
+    def test_extract_and_validate_structured_content_skips_invalid_json(self):
+        """Invalid JSON content should be skipped and treated as valid."""
+        service = ToolService()
+        tool = SimpleNamespace(output_schema={"type": "object"})
+        tool_result = ToolResult(content=[{"type": "text", "text": "not-json"}])
+
+        assert service._extract_and_validate_structured_content(tool, tool_result) is True
 
 
 @pytest.fixture
@@ -816,6 +983,57 @@ class TestToolService:
 
         assert len(result) == 200
         assert next_cursor is None  # No pagination when limit=0
+
+    @pytest.mark.asyncio
+    async def test_list_tools_cache_hit(self, tool_service, test_db, monkeypatch):
+        """Cache hit should return cached tools without DB query."""
+        cache = SimpleNamespace(
+            hash_filters=MagicMock(return_value="hash"),
+            get=AsyncMock(return_value={"tools": [{"name": "cached"}], "next_cursor": "next"}),
+            set=AsyncMock(),
+        )
+
+        monkeypatch.setattr("mcpgateway.services.tool_service._get_registry_cache", lambda: cache)
+        monkeypatch.setattr("mcpgateway.services.tool_service.ToolRead.model_validate", lambda data: SimpleNamespace(name=data["name"]))
+
+        test_db.execute = Mock()
+        result, next_cursor = await tool_service.list_tools(test_db)
+
+        assert next_cursor == "next"
+        assert len(result) == 1
+        assert result[0].name == "cached"
+        test_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_tools_gateway_id_null_filter(self, tool_service, test_db):
+        """gateway_id='null' should be accepted and return results."""
+        test_db.commit = Mock()
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
+
+        with patch("mcpgateway.services.tool_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await tool_service.list_tools(test_db, gateway_id="null")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_tools_cache_skips_attribute_error(self, tool_service, test_db, monkeypatch):
+        """Cache set should be skipped when results lack model_dump."""
+        cache = SimpleNamespace(
+            hash_filters=MagicMock(return_value="hash"),
+            get=AsyncMock(return_value=None),
+            set=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.tool_service._get_registry_cache", lambda: cache)
+
+        test_db.commit = Mock()
+        tool_service.convert_tool_to_read = Mock(return_value=SimpleNamespace())
+
+        with patch("mcpgateway.services.tool_service.unified_paginate", new=AsyncMock(return_value=([MagicMock()], None))):
+            result, _ = await tool_service.list_tools(test_db)
+
+        assert len(result) == 1
+        cache.set.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_inactive_tools(self, tool_service, mock_tool, test_db):
@@ -3494,6 +3712,39 @@ class TestToolListingGracefulErrorHandling:
         # Verify the error was logged
         assert "Failed to convert tool 2" in caplog.text
         assert "bad-tool" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_list_tools_for_user_invalid_cursor(self, tool_service, test_db):
+        """Invalid cursor should be ignored and still return results."""
+        tool = MagicMock(id="1", original_name="tool-1", team_id=None)
+        tool.name = "tool-1"
+
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[tool])))))
+        test_db.commit = Mock()
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
+
+        mock_team = MagicMock(id="team-1", is_personal=True)
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+            with patch("mcpgateway.services.tool_service.decode_cursor", side_effect=ValueError("bad")):
+                result, next_cursor = await tool_service.list_tools_for_user(test_db, user_email="user@example.com", cursor="bad")
+
+        assert len(result) == 1
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_tools_for_user_team_no_access(self, tool_service, test_db):
+        """Team filter should return empty when user lacks access."""
+        test_db.execute = Mock()
+        mock_team = MagicMock(id="team-1", is_personal=True)
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+            result, next_cursor = await tool_service.list_tools_for_user(test_db, user_email="user@example.com", team_id="team-2")
+
+        assert result == []
+        assert next_cursor is None
+        test_db.execute.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

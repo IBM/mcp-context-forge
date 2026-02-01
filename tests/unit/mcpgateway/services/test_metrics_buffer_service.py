@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 import asyncio
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -171,6 +171,98 @@ class TestDbMetricsRecordingEnabled:
 
         # Flush task should not be created
         assert service._flush_task is None
+
+    @pytest.mark.asyncio
+    async def test_start_skipped_when_buffer_disabled(self):
+        """When buffering is disabled, start() should not create flush task."""
+        service = MetricsBufferService(enabled=False)
+        service.recording_enabled = True
+
+        await service.start()
+
+        assert service._flush_task is None
+
+
+class TestImmediateWritesWhenDisabled:
+    """Tests for immediate write fallbacks when buffering is disabled."""
+
+    def test_resource_metric_immediate_write_called(self):
+        """record_resource_metric should call immediate write when disabled."""
+        service = MetricsBufferService(enabled=False)
+
+        with patch.object(service, "_write_resource_metric_immediately") as mock_write:
+            service.record_resource_metric("res-1", time.monotonic(), True, None)
+
+        mock_write.assert_called_once()
+
+    def test_prompt_metric_immediate_write_called(self):
+        """record_prompt_metric should call immediate write when disabled."""
+        service = MetricsBufferService(enabled=False)
+
+        with patch.object(service, "_write_prompt_metric_immediately") as mock_write:
+            service.record_prompt_metric("prompt-1", time.monotonic(), True, None)
+
+        mock_write.assert_called_once()
+
+    def test_server_metric_immediate_write_called(self):
+        """record_server_metric should call immediate write when disabled."""
+        service = MetricsBufferService(enabled=False)
+
+        with patch.object(service, "_write_server_metric_immediately") as mock_write:
+            service.record_server_metric("server-1", time.monotonic(), True, None)
+
+        mock_write.assert_called_once()
+
+    def test_a2a_metric_immediate_write_called(self):
+        """record_a2a_agent_metric should call immediate write when disabled."""
+        service = MetricsBufferService(enabled=False)
+
+        with patch.object(service, "_write_a2a_agent_metric_immediately") as mock_write:
+            service.record_a2a_agent_metric("agent-1", time.monotonic(), True, interaction_type="invoke")
+
+        mock_write.assert_called_once()
+
+    def test_a2a_metric_with_duration_immediate_write(self, monkeypatch):
+        """Immediate write with duration should persist metric via DB session."""
+        # First-Party
+        from mcpgateway.db import A2AAgentMetric
+
+        service = MetricsBufferService(enabled=False)
+
+        class DummySession:
+            def __init__(self):
+                self.added = None
+                self.committed = False
+
+            def add(self, obj):
+                self.added = obj
+
+            def commit(self):
+                self.committed = True
+
+        class DummyContext:
+            def __init__(self, session):
+                self._session = session
+
+            def __enter__(self):
+                return self._session
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        dummy_session = DummySession()
+
+        monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: DummyContext(dummy_session))
+
+        service.record_a2a_agent_metric_with_duration(
+            a2a_agent_id="agent-1",
+            response_time=1.25,
+            success=True,
+            interaction_type="invoke",
+        )
+
+        assert isinstance(dummy_session.added, A2AAgentMetric)
+        assert dummy_session.committed is True
 
 
 class TestMetricsBufferServiceRecording:
@@ -347,3 +439,125 @@ def test_get_metrics_buffer_service_singleton(monkeypatch):
     first = mbs.get_metrics_buffer_service()
     second = mbs.get_metrics_buffer_service()
     assert first is second
+
+
+class TestMetricsSetup:
+    """Tests for Prometheus metrics setup."""
+
+    @pytest.mark.parametrize(
+        "db_url, expected_engine",
+        [
+            ("mysql+pymysql://user@host/db", "mariadb"),
+            ("postgresql://user@host/db", "postgresql"),
+            ("mongodb://user@host/db", "mongodb"),
+            ("oracle://user@host/db", "unknown"),
+        ],
+    )
+    def test_setup_metrics_db_engine_detection(self, monkeypatch, db_url, expected_engine):
+        """Database engine detection should map URLs to expected labels."""
+        # Third-Party
+        from fastapi import FastAPI
+
+        # First-Party
+        from mcpgateway.services import metrics as metrics_module
+
+        created_gauges = []
+
+        class DummyGauge:
+            def __init__(self, name, _doc, labelnames=None, registry=None):  # noqa: ARG002
+                self.name = name
+                self.labelnames = labelnames or []
+                self.labels_kwargs = None
+                created_gauges.append(self)
+
+            def labels(self, **kwargs):
+                self.labels_kwargs = kwargs
+                return self
+
+            def set(self, _value):
+                return None
+
+        class DummyInstrumentator:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+            def instrument(self, _app):
+                return self
+
+            def expose(self, _app, **_kwargs):
+                return None
+
+        app = FastAPI()
+        monkeypatch.setenv("ENABLE_METRICS", "true")
+        monkeypatch.setenv("METRICS_CUSTOM_LABELS", "")
+        monkeypatch.setattr(metrics_module.settings, "database_url", db_url)
+        monkeypatch.setattr(metrics_module.settings, "METRICS_EXCLUDED_HANDLERS", "")
+        monkeypatch.setattr(metrics_module, "Gauge", DummyGauge)
+        monkeypatch.setattr(metrics_module, "Instrumentator", DummyInstrumentator)
+
+        metrics_module.setup_metrics(app)
+
+        db_gauge = next(g for g in created_gauges if g.name == "database_info")
+        assert db_gauge.labels_kwargs["engine"] == expected_engine
+
+    @pytest.mark.asyncio
+    async def test_setup_metrics_disabled_registers_endpoint(self, monkeypatch):
+        """Disabled metrics should add a 503 metrics endpoint."""
+        # Third-Party
+        from fastapi import FastAPI
+
+        # First-Party
+        from mcpgateway.services import metrics as metrics_module
+
+        app = FastAPI()
+        monkeypatch.setenv("ENABLE_METRICS", "false")
+
+        metrics_module.setup_metrics(app)
+
+        route = next(r for r in app.routes if getattr(r, "path", "") == "/metrics/prometheus")
+        response = await route.endpoint()
+
+        assert response.status_code == 503
+        assert b"Metrics collection is disabled" in response.body
+
+    def test_update_http_pool_metrics_handles_exceptions(self, monkeypatch):
+        """update_http_pool_metrics should swallow errors from SharedHttpClient."""
+        # Third-Party
+        from fastapi import FastAPI
+
+        # First-Party
+        from mcpgateway.services import metrics as metrics_module
+        from mcpgateway.services import http_client_service
+
+        class DummyGauge:
+            def __init__(self, _name, _doc, labelnames=None, registry=None):  # noqa: ARG002
+                self.labels_kwargs = None
+
+            def labels(self, **_kwargs):
+                return self
+
+            def set(self, _value):
+                return None
+
+        class DummyInstrumentator:
+            def __init__(self, **_kwargs):
+                pass
+
+            def instrument(self, _app):
+                return self
+
+            def expose(self, _app, **_kwargs):
+                return None
+
+        app = FastAPI()
+        monkeypatch.setenv("ENABLE_METRICS", "true")
+        monkeypatch.setattr(metrics_module.settings, "database_url", "sqlite:///./test.db")
+        monkeypatch.setattr(metrics_module.settings, "METRICS_EXCLUDED_HANDLERS", "")
+        monkeypatch.setattr(metrics_module, "Gauge", DummyGauge)
+        monkeypatch.setattr(metrics_module, "Instrumentator", DummyInstrumentator)
+
+        metrics_module.setup_metrics(app)
+
+        http_client_service.SharedHttpClient._instance = SimpleNamespace(_initialized=True, get_pool_stats=MagicMock(side_effect=RuntimeError("boom")))
+
+        app.state.update_http_pool_metrics()
