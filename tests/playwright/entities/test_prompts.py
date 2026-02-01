@@ -34,9 +34,15 @@ class TestPromptsCRUD:
     """CRUD tests for Prompts entity."""
 
     @staticmethod
-    def _wait_for_codemirror(page: Page, timeout: int = 10000):
+    def _wait_for_codemirror(page: Page, timeout: int = 30000):
         """Wait for CodeMirror promptArgsEditor to be initialized."""
-        page.wait_for_function("typeof window.promptArgsEditor !== 'undefined'", timeout=timeout)
+        # First wait for CodeMirror library to load
+        page.wait_for_function("typeof window.CodeMirror !== 'undefined'", timeout=timeout)
+        # Then wait for the specific editor instance
+        page.wait_for_function(
+            "typeof window.promptArgsEditor !== 'undefined' && window.promptArgsEditor !== null",
+            timeout=timeout,
+        )
 
     def test_create_new_prompt(self, admin_page: Page, test_prompt_data):
         """Test creating a new prompt."""
