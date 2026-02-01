@@ -75,6 +75,30 @@ def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | N
     return result
 
 
+def _make_gateway(**overrides):
+    base = {
+        "name": "test-gateway",
+        "url": "http://example.com",
+        "description": "Test gateway",
+        "transport": "sse",
+        "tags": [],
+        "passthrough_headers": None,
+        "auth_type": None,
+        "auth_value": None,
+        "auth_headers": None,
+        "auth_query_param_key": None,
+        "auth_query_param_value": None,
+        "oauth_config": None,
+        "one_time_auth": False,
+        "ca_certificate": None,
+        "ca_certificate_sig": None,
+        "signing_algorithm": None,
+        "visibility": "public",
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
@@ -2334,6 +2358,272 @@ class TestGatewayHealth:
 
                     gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_initialize_redis_ping_failure(self, monkeypatch):
+        import mcpgateway.services.gateway_service as gs
+
+        monkeypatch.setattr(gs, "REDIS_AVAILABLE", True)
+        monkeypatch.setattr(gs.settings, "cache_type", "redis")
+        monkeypatch.setattr(gs.settings, "redis_url", "redis://localhost:6379")
+        monkeypatch.setattr(gs.settings, "platform_admin_email", "admin@example.com")
+
+        service = gs.GatewayService()
+        service._event_service = AsyncMock()
+
+        mock_redis = AsyncMock()
+        mock_redis.ping.side_effect = Exception("boom")
+        monkeypatch.setattr(gs, "get_redis_client", AsyncMock(return_value=mock_redis))
+
+        with pytest.raises(ConnectionError):
+            await service.initialize()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_releases_redis_leader_failure(self):
+        service = GatewayService()
+
+        class DummyTask:
+            def __init__(self):
+                self.cancel_called = False
+
+            def cancel(self):
+                self.cancel_called = True
+
+            def __await__(self):
+                async def _raise():
+                    raise asyncio.CancelledError
+
+                return _raise().__await__()
+
+        service._leader_heartbeat_task = DummyTask()
+        service._redis_client = AsyncMock()
+        service._redis_client.eval.side_effect = Exception("boom")
+        service._leader_key = "leader-key"
+        service._instance_id = "instance-id"
+        service._http_client = SimpleNamespace(aclose=AsyncMock())
+        service._event_service = SimpleNamespace(shutdown=AsyncMock())
+
+        await service.shutdown()
+
+        assert service._leader_heartbeat_task.cancel_called is True
+        service._redis_client.eval.assert_awaited()
+
+
+def test_check_gateway_uniqueness_team_dict_auth():
+    service = GatewayService()
+    existing = MagicMock()
+    existing.auth_value = {"Authorization": "Bearer token"}
+    existing.oauth_config = None
+
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [existing]
+
+    db = MagicMock()
+    db.query.return_value = query
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value={"Authorization": "Bearer token"},
+        oauth_config=None,
+        team_id="team-1",
+        owner_email="owner@example.com",
+        visibility="team",
+    )
+    assert result is existing
+
+
+def test_check_gateway_uniqueness_private_skips_unknown_auth():
+    service = GatewayService()
+    existing = MagicMock()
+    existing.auth_value = ["bad"]
+    existing.oauth_config = None
+
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [existing]
+
+    db = MagicMock()
+    db.query.return_value = query
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value={"Authorization": "Bearer token"},
+        oauth_config=None,
+        team_id=None,
+        owner_email="owner@example.com",
+        visibility="private",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_register_gateway_team_conflict(gateway_service, monkeypatch):
+    existing = MagicMock()
+    existing.slug = "test-gateway"
+    existing.enabled = True
+    existing.id = 321
+    existing.visibility = "team"
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(return_value=existing))
+
+    gateway_create = GatewayCreate(
+        name="Test Gateway",
+        url="http://example.com",
+        description="Team gateway",
+        visibility="team",
+    )
+
+    with pytest.raises(GatewayNameConflictError):
+        await gateway_service.register_gateway(MagicMock(), gateway_create, team_id="team-1", visibility="team")
+
+
+@pytest.mark.asyncio
+async def test_register_gateway_auth_value_decode_failure(gateway_service, monkeypatch):
+    gateway = _make_gateway(auth_value="bad-auth", auth_headers=[{"key": "X-API-Key", "value": "secret"}])
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+        staticmethod(lambda x: MagicMock(masked=lambda: x)),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.decode_auth",
+        lambda _val: (_ for _ in ()).throw(Exception("boom")),
+    )
+    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda _val: "encoded")
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+        lambda x: MagicMock(masked=lambda: x),
+    )
+
+    gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+    gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [], []))
+    gateway_service._notify_gateway_added = AsyncMock()
+
+    db = MagicMock()
+    db.add = Mock()
+    db.flush = Mock()
+    db.refresh = Mock()
+
+    await gateway_service.register_gateway(db, gateway)
+    db.add.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_register_gateway_auth_headers_one_time_auth(gateway_service, monkeypatch):
+    gateway = _make_gateway(auth_headers=[{"key": "X-API-Key", "value": "secret"}], one_time_auth=True)
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda _val: "encoded")
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+        lambda x: MagicMock(masked=lambda: x),
+    )
+
+    gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+    gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [], []))
+    gateway_service._notify_gateway_added = AsyncMock()
+
+    db = MagicMock()
+    db.add = Mock()
+    db.flush = Mock()
+    db.refresh = Mock()
+
+    await gateway_service.register_gateway(db, gateway)
+
+    added_gateway = db.add.call_args[0][0]
+    assert added_gateway.auth_type == "one_time_auth"
+    assert added_gateway.auth_value is None
+
+
+@pytest.mark.asyncio
+async def test_register_gateway_query_param_timeout(gateway_service, monkeypatch):
+    gateway = _make_gateway(auth_type="query_param", auth_query_param_key="api_key", auth_query_param_value=123)
+
+    async def _fake_wait_for(coro, timeout):  # noqa: ARG001
+        coro.close()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda _val: "encrypted")
+    monkeypatch.setattr("mcpgateway.services.gateway_service.apply_query_param_auth", lambda url, _params: f"{url}?api_key=123")
+    monkeypatch.setattr("mcpgateway.services.gateway_service.asyncio.wait_for", _fake_wait_for)
+
+    gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+    gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [], []))
+
+    with pytest.raises(GatewayConnectionError):
+        await gateway_service.register_gateway(MagicMock(), gateway, initialize_timeout=0.01)
+
+
+@pytest.mark.asyncio
+async def test_register_gateway_reassigns_orphaned_resource(gateway_service, monkeypatch):
+    from mcpgateway.schemas import PromptCreate, ResourceCreate
+
+    gateway = _make_gateway()
+    resource = ResourceCreate(
+        uri="https://example.com/resource.txt",
+        name="Resource",
+        description="Test resource",
+        content="hello",
+    )
+    prompt = PromptCreate(name="Prompt", description="Test prompt", template="Hello")
+
+    existing = MagicMock()
+    existing.gateway_id = None
+    existing.team_id = "team-1"
+    existing.owner_email = "owner@example.com"
+    existing.uri = resource.uri
+    existing_prompt = MagicMock()
+    existing_prompt.gateway_id = None
+    existing_prompt.team_id = "team-1"
+    existing_prompt.owner_email = "owner@example.com"
+    existing_prompt.name = prompt.name
+
+    result_ids = MagicMock()
+    result_ids.all.return_value = [(1,), (2,)]
+
+    result_resources = MagicMock()
+    scalars_proxy = MagicMock()
+    scalars_proxy.all.return_value = [existing]
+    result_resources.scalars.return_value = scalars_proxy
+    result_prompt_ids = MagicMock()
+    result_prompt_ids.all.return_value = [(1,), (2,)]
+    result_prompts = MagicMock()
+    scalars_prompt = MagicMock()
+    scalars_prompt.all.return_value = [existing_prompt]
+    result_prompts.scalars.return_value = scalars_prompt
+
+    db = MagicMock()
+    db.execute = Mock(side_effect=[result_ids, result_resources, result_prompt_ids, result_prompts])
+    db.add = Mock()
+    db.flush = Mock()
+    db.refresh = Mock()
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+        lambda x: MagicMock(masked=lambda: x),
+    )
+
+    gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+    gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [resource], [prompt]))
+    gateway_service._notify_gateway_added = AsyncMock()
+
+    await gateway_service.register_gateway(
+        db,
+        gateway,
+        team_id="team-1",
+        owner_email="owner@example.com",
+        created_by="creator@example.com",
+    )
+
+    added_gateway = db.add.call_args[0][0]
+    assert existing in added_gateway.resources
+    assert existing_prompt in added_gateway.prompts
+
 
 def test_validate_tools_mixed_errors(monkeypatch):
     service = GatewayService()
@@ -2396,8 +2686,13 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
     with pytest.raises(AttributeError):
         getattr(gs, "missing_attr")
 
-    registry_sentinel = object()
-    tool_sentinel = object()
+    registry_sentinel = SimpleNamespace(
+        invalidate_tools=AsyncMock(),
+        invalidate_resources=AsyncMock(),
+        invalidate_prompts=AsyncMock(),
+        invalidate_gateways=AsyncMock(),
+    )
+    tool_sentinel = SimpleNamespace(invalidate_gateway=AsyncMock())
     gs._REGISTRY_CACHE = None
     gs._TOOL_LOOKUP_CACHE = None
 
@@ -2406,3 +2701,583 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
 
     assert gs._get_registry_cache() is registry_sentinel
     assert gs._get_tool_lookup_cache() is tool_sentinel
+
+
+@pytest.mark.asyncio
+async def test_connect_to_sse_server_without_validation_fallbacks(monkeypatch):
+    from mcpgateway.schemas import PromptCreate, ResourceCreate
+
+    service = GatewayService()
+    service._validate_tools = MagicMock(return_value=([], []))
+
+    class DummyUrl:
+        def __init__(self, value):
+            self.unicode_string = value
+
+        def __str__(self):
+            return self.unicode_string
+
+    class DummyResponse:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class DummyTool:
+        def model_dump(self, **_kwargs):
+            return {"name": "tool-1", "description": "tool"}
+
+    class DummyResource:
+        def model_dump(self, **_kwargs):
+            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+
+    class DummyTemplate:
+        def model_dump(self, **_kwargs):
+            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+
+    class DummyPrompt:
+        def model_dump(self, **_kwargs):
+            return {"name": "bad-prompt"}
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def initialize(self):
+            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
+            return DummyResponse(capabilities=capabilities)
+
+        async def list_tools(self):
+            return DummyResponse(tools=[DummyTool()])
+
+        async def list_resources(self):
+            return DummyResponse(resources=[DummyResource()])
+
+        async def list_resource_templates(self):
+            return DummyResponse(resourceTemplates=[DummyTemplate()])
+
+        async def list_prompts(self):
+            return DummyResponse(prompts=[DummyPrompt()])
+
+    class DummySSE:
+        async def __aenter__(self):
+            return ("recv", "send")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    real_resource_validate = ResourceCreate.model_validate
+    real_prompt_validate = PromptCreate.model_validate
+
+    def _resource_validate(data):
+        if data.get("name") == "bad-resource":
+            raise ValueError("boom")
+        return real_resource_validate(data)
+
+    def _prompt_validate(data):
+        if data.get("name") == "bad-prompt":
+            raise ValueError("boom")
+        return real_prompt_validate(data)
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.PromptCreate.model_validate", _prompt_validate)
+
+    capabilities, tools, resources, prompts = await service._connect_to_sse_server_without_validation("http://server")
+
+    assert capabilities["resources"] is True
+    assert tools == []
+    assert resources
+    assert prompts
+
+
+@pytest.mark.asyncio
+async def test_connect_to_sse_server_without_validation_error(monkeypatch):
+    service = GatewayService()
+
+    class DummySSE:
+        async def __aenter__(self):
+            raise RuntimeError("boom")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
+
+    with pytest.raises(GatewayConnectionError):
+        await service._connect_to_sse_server_without_validation("http://server")
+
+
+@pytest.mark.asyncio
+async def test_connect_to_streamablehttp_server_resources_and_prompts(monkeypatch):
+    from mcpgateway.schemas import PromptCreate, ResourceCreate
+
+    service = GatewayService()
+    tool_obj = SimpleNamespace(request_type="GET")
+    service._validate_tools = MagicMock(return_value=([tool_obj], []))
+
+    class DummyUrl:
+        def __init__(self, value):
+            self.unicode_string = value
+
+        def __str__(self):
+            return self.unicode_string
+
+    class DummyResponse:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class DummyTool:
+        def model_dump(self, **_kwargs):
+            return {"name": "tool-1", "description": "tool"}
+
+    class DummyResource:
+        def model_dump(self, **_kwargs):
+            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+
+    class DummyTemplate:
+        def model_dump(self, **_kwargs):
+            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+
+    class DummyPrompt:
+        def model_dump(self, **_kwargs):
+            return {"name": "prompt", "template": "Hi"}
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def initialize(self):
+            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
+            return DummyResponse(capabilities=capabilities)
+
+        async def list_tools(self):
+            return DummyResponse(tools=[DummyTool()])
+
+        async def list_resources(self):
+            return DummyResponse(resources=[DummyResource()])
+
+        async def list_resource_templates(self):
+            return DummyResponse(resourceTemplates=[DummyTemplate()])
+
+        async def list_prompts(self):
+            return DummyResponse(prompts=[DummyPrompt()])
+
+    class DummyStreamable:
+        def __init__(self, **kwargs):
+            factory = kwargs.get("httpx_client_factory")
+            if factory:
+                factory()
+
+        async def __aenter__(self):
+            return ("read", "write", lambda: "session")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    real_resource_validate = ResourceCreate.model_validate
+
+    def _resource_validate(data):
+        if data.get("name") == "bad-resource":
+            raise ValueError("boom")
+        return real_resource_validate(data)
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.httpx.AsyncClient", lambda **_kw: SimpleNamespace())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_default_verify", lambda: None)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_http_timeout", lambda: None)
+    monkeypatch.setattr(service, "create_ssl_context", MagicMock(return_value="ctx"))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", lambda **kw: DummyStreamable(**kw))
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
+
+    capabilities, tools, resources, prompts = await service.connect_to_streamablehttp_server("http://server", ca_certificate=b"cert")
+
+    assert capabilities["resources"] is True
+    assert tool_obj.request_type == "STREAMABLEHTTP"
+    assert resources
+    assert prompts
+
+
+@pytest.mark.asyncio
+async def test_connect_to_streamablehttp_server_error_path(monkeypatch):
+    service = GatewayService()
+
+    class DummySession:
+        async def __aenter__(self):
+            raise RuntimeError("boom")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class DummyStreamable:
+        async def __aenter__(self):
+            return ("read", "write", lambda: "session")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return True
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.streamablehttp_client", lambda **_kw: DummyStreamable())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+
+    with pytest.raises(GatewayConnectionError):
+        await service.connect_to_streamablehttp_server("http://server")
+
+
+@pytest.mark.asyncio
+async def test_connect_to_sse_server_resources_and_prompts(monkeypatch):
+    from mcpgateway.schemas import PromptCreate, ResourceCreate
+
+    service = GatewayService()
+    service._validate_tools = MagicMock(return_value=([], []))
+
+    class DummyUrl:
+        def __init__(self, value):
+            self.unicode_string = value
+
+        def __str__(self):
+            return self.unicode_string
+
+    class DummyResponse:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class DummyTool:
+        def model_dump(self, **_kwargs):
+            return {"name": "tool-1", "description": "tool"}
+
+    class DummyResource:
+        def model_dump(self, **_kwargs):
+            return {"uri": DummyUrl("https://example.com/resource.txt"), "name": "bad-resource"}
+
+    class DummyTemplate:
+        def model_dump(self, **_kwargs):
+            return {"uriTemplate": DummyUrl("https://example.com/{id}"), "name": "tmpl"}
+
+    class DummyPrompt:
+        def model_dump(self, **_kwargs):
+            return {"name": "bad-prompt"}
+
+    class DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def initialize(self):
+            capabilities = SimpleNamespace(model_dump=lambda **_kw: {"resources": True, "prompts": True})
+            return DummyResponse(capabilities=capabilities)
+
+        async def list_tools(self):
+            return DummyResponse(tools=[DummyTool()])
+
+        async def list_resources(self):
+            return DummyResponse(resources=[DummyResource()])
+
+        async def list_resource_templates(self):
+            return DummyResponse(resourceTemplates=[DummyTemplate()])
+
+        async def list_prompts(self):
+            return DummyResponse(prompts=[DummyPrompt()])
+
+    class DummySSE:
+        async def __aenter__(self):
+            return ("recv", "send")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    real_resource_validate = ResourceCreate.model_validate
+    real_prompt_validate = PromptCreate.model_validate
+
+    def _resource_validate(data):
+        if data.get("name") == "bad-resource":
+            raise ValueError("boom")
+        return real_resource_validate(data)
+
+    def _prompt_validate(data):
+        if data.get("name") == "bad-prompt":
+            raise ValueError("boom")
+        return real_prompt_validate(data)
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ResourceCreate.model_validate", _resource_validate)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.PromptCreate.model_validate", _prompt_validate)
+
+    capabilities, tools, resources, prompts = await service.connect_to_sse_server("http://server")
+
+    assert capabilities["resources"] is True
+    assert tools == []
+    assert resources
+    assert prompts
+
+
+@pytest.mark.asyncio
+async def test_connect_to_sse_server_error_path(monkeypatch):
+    service = GatewayService()
+
+    class DummySession:
+        async def __aenter__(self):
+            raise RuntimeError("boom")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class DummySSE:
+        async def __aenter__(self):
+            return ("recv", "send")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return True
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.sse_client", lambda **_kw: DummySSE())
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ClientSession", lambda *_args: DummySession())
+
+    with pytest.raises(GatewayConnectionError):
+        await service.connect_to_sse_server("http://server")
+
+
+@pytest.mark.asyncio
+async def test_register_gateway_creates_new_resources_and_prompts(gateway_service, monkeypatch):
+    from mcpgateway.schemas import PromptCreate, ResourceCreate
+
+    gateway = _make_gateway(auth_value={"Authorization": "Bearer token"})
+    resource = ResourceCreate(uri="https://example.com/resource.txt", name="Resource", description="Test resource", content="hello")
+    prompt = PromptCreate(name="Prompt", description="Test prompt", template="Hello")
+
+    result_ids = MagicMock()
+    result_ids.all.return_value = []
+    result_resources = _make_execute_result(scalars_list=[])
+    result_prompt_ids = MagicMock()
+    result_prompt_ids.all.return_value = []
+    result_prompts = _make_execute_result(scalars_list=[])
+
+    db = MagicMock()
+    db.execute = Mock(side_effect=[result_ids, result_resources, result_prompt_ids, result_prompts])
+    db.add = Mock()
+    db.flush = Mock()
+    db.refresh = Mock()
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+        lambda x: MagicMock(masked=lambda: x),
+    )
+
+    gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+    gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {}}, [], [resource], [prompt]))
+    gateway_service._notify_gateway_added = AsyncMock()
+
+    await gateway_service.register_gateway(
+        db,
+        gateway,
+        team_id="team-1",
+        owner_email="owner@example.com",
+        created_by="creator@example.com",
+    )
+
+    added_gateway = db.add.call_args[0][0]
+    assert len(added_gateway.resources) == 1
+    assert len(added_gateway.prompts) == 1
+
+
+@pytest.mark.asyncio
+async def test_shutdown_releases_redis_leader_success():
+    service = GatewayService()
+    service._redis_client = AsyncMock()
+    service._redis_client.eval.return_value = 1
+    service._leader_key = "leader-key"
+    service._instance_id = "instance-id"
+    service._http_client = SimpleNamespace(aclose=AsyncMock())
+    service._event_service = SimpleNamespace(shutdown=AsyncMock())
+
+    await service.shutdown()
+
+    service._redis_client.eval.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_gateway_missing(gateway_service):
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
+
+    with pytest.raises(GatewayConnectionError):
+        await gateway_service.fetch_tools_after_oauth(db, "missing", "user@example.com")
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_missing_oauth_config(gateway_service):
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.oauth_config = None
+    gateway.transport = "sse"
+
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = gateway
+    db.execute.return_value = result
+
+    with pytest.raises(GatewayConnectionError):
+        await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_missing_user_email(gateway_service, monkeypatch):
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.oauth_config = {"grant_type": "authorization_code"}
+    gateway.transport = "sse"
+
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = gateway
+    db.execute.return_value = result
+
+    class DummyTokenStorage:
+        def __init__(self, _db):
+            self.db = _db
+
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
+
+    with pytest.raises(GatewayConnectionError):
+        await gateway_service.fetch_tools_after_oauth(db, "gw-1", "")
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_unsupported_transport(gateway_service, monkeypatch):
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.oauth_config = {"grant_type": "authorization_code"}
+    gateway.transport = "grpc"
+
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = gateway
+    db.execute.return_value = result
+
+    class DummyTokenStorage:
+        def __init__(self, _db):
+            self.db = _db
+
+        async def get_user_token(self, _gateway_id, _email):
+            return "token"
+
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
+
+    with pytest.raises(GatewayConnectionError):
+        await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_streamablehttp(gateway_service, monkeypatch):
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.oauth_config = {"grant_type": "authorization_code"}
+    gateway.transport = "streamablehttp"
+    gateway.tools = []
+    gateway.resources = []
+    gateway.prompts = []
+
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = gateway
+    db.execute.return_value = result
+    db.add_all = Mock()
+    db.flush = Mock()
+    db.commit = Mock()
+    db.expire = Mock()
+
+    class DummyTokenStorage:
+        def __init__(self, _db):
+            self.db = _db
+
+        async def get_user_token(self, _gateway_id, _email):
+            return "token"
+
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
+    gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=({"tools": {}}, [], [], []))
+    gateway_service._update_or_create_tools = MagicMock(return_value=[])
+    gateway_service._update_or_create_resources = MagicMock(return_value=[])
+    gateway_service._update_or_create_prompts = MagicMock(return_value=[])
+
+    registry_cache = SimpleNamespace(
+        invalidate_tools=AsyncMock(),
+        invalidate_resources=AsyncMock(),
+        invalidate_prompts=AsyncMock(),
+    )
+    tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
+    monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+    result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+
+    assert "capabilities" in result_data
+
+
+@pytest.mark.asyncio
+async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, monkeypatch):
+    gateway = MagicMock(spec=DbGateway)
+    gateway.id = "gw-1"
+    gateway.name = "gw"
+    gateway.oauth_config = {"grant_type": "authorization_code"}
+    gateway.transport = "sse"
+    gateway.tools = [SimpleNamespace(id=1, original_name="old-tool"), SimpleNamespace(id=2, original_name="keep-tool")]
+    gateway.resources = [SimpleNamespace(id=3, uri="old://res"), SimpleNamespace(id=4, uri="keep://res")]
+    gateway.prompts = [SimpleNamespace(id=5, original_name="old-prompt"), SimpleNamespace(id=6, original_name="keep-prompt")]
+    gateway.capabilities = {}
+    gateway.last_seen = None
+
+    db = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = gateway
+    db.execute.return_value = result
+    db.add_all = Mock()
+    db.flush = Mock()
+    db.commit = Mock()
+    db.expire = Mock()
+
+    class DummyTokenStorage:
+        def __init__(self, _db):
+            self.db = _db
+
+        async def get_user_token(self, _gateway_id, _email):
+            return "Z0FBQUFBQmTOKEN"
+
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
+    gateway_service._connect_to_sse_server_without_validation = AsyncMock(
+        return_value=({"resources": True, "prompts": True}, [SimpleNamespace(name="keep-tool")], [SimpleNamespace(uri="keep://res")], [SimpleNamespace(name="keep-prompt")])
+    )
+    gateway_service._update_or_create_tools = MagicMock(return_value=[MagicMock()])
+    gateway_service._update_or_create_resources = MagicMock(return_value=[MagicMock()])
+    gateway_service._update_or_create_prompts = MagicMock(return_value=[MagicMock()])
+
+    registry_cache = SimpleNamespace(
+        invalidate_tools=AsyncMock(),
+        invalidate_resources=AsyncMock(),
+        invalidate_prompts=AsyncMock(),
+    )
+    tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
+    monkeypatch.setattr("mcpgateway.services.gateway_service.register_gateway_capabilities_for_notifications", MagicMock())
+    monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock()))
+
+    result_data = await gateway_service.fetch_tools_after_oauth(db, "gw-1", "user@example.com")
+
+    assert result_data["capabilities"]["resources"] is True
+    assert len(gateway.tools) == 1
+    assert len(gateway.resources) == 1
+    assert len(gateway.prompts) == 1
