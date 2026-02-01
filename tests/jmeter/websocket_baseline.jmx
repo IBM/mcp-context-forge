@@ -72,6 +72,39 @@
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
       </ThreadGroup>
       <hashTree>
+        <!-- Gateway Preflight -->
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Gateway Ready" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${__javaScript(new java.net.URL("${GATEWAY_URL}".replace("ws://","http://").replace("wss://","https://")).getHost())}</stringProp>
+          <stringProp name="HTTPSampler.port">${__javaScript(var url = "${GATEWAY_URL}".replace("ws://","http://").replace("wss://","https://"); new java.net.URL(url).getPort() == -1 ? 80 : new java.net.URL(url).getPort())}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${__javaScript("${GATEWAY_URL}".startsWith("wss") ? "https" : "http")}</stringProp>
+          <stringProp name="HTTPSampler.path">/ready</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+        </HTTPSamplerProxy>
+        <hashTree/>
+
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="Gateway Version" enabled="true">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+          <stringProp name="HTTPSampler.domain">${__javaScript(new java.net.URL("${GATEWAY_URL}".replace("ws://","http://").replace("wss://","https://")).getHost())}</stringProp>
+          <stringProp name="HTTPSampler.port">${__javaScript(var url = "${GATEWAY_URL}".replace("ws://","http://").replace("wss://","https://"); new java.net.URL(url).getPort() == -1 ? 80 : new java.net.URL(url).getPort())}</stringProp>
+          <stringProp name="HTTPSampler.protocol">${__javaScript("${GATEWAY_URL}".startsWith("wss") ? "https" : "http")}</stringProp>
+          <stringProp name="HTTPSampler.path">/version</stringProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <boolProp name="HTTPSampler.auto_redirects">false</boolProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.DO_MULTIPART_POST">false</boolProp>
+        </HTTPSamplerProxy>
+        <hashTree/>
+
         <!-- HTTP Request to simulate WebSocket upgrade via HTTP fallback -->
         <!-- Note: Full WebSocket support requires jpgc-websocket plugin -->
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="WebSocket Handshake (HTTP Upgrade)" enabled="true">
