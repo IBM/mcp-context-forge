@@ -22,12 +22,14 @@ This setup complexity can discourage contributions and slow down the onboarding 
 We will add VS Code Dev Container support to the project by implementing:
 
 1. **`.devcontainer/devcontainer.json`** - Configuration specifying:
+
    - Container build instructions
    - VS Code extensions (Python, Docker)
    - Post-creation commands
    - Environment variables for development mode
 
 2. **`.devcontainer/Dockerfile`** - Container definition with:
+
    - Python 3.11 slim base image
    - Docker CLI for container management
    - System dependencies (curl, git, build-essential)
@@ -35,11 +37,13 @@ We will add VS Code Dev Container support to the project by implementing:
    - Development environment setup
 
 3. **`.devcontainer/postCreateCommand.sh`** - Setup script that:
+
    - Copies `.env.example` to `.env` if needed
    - Runs `make install-dev` to install development dependencies
    - Runs `make test` to verify the environment
 
 4. **Documentation updates** - README.md section explaining:
+
    - How to use the devcontainer in VS Code
    - How to use with GitHub Codespaces
    - Benefits and included tools
@@ -70,18 +74,22 @@ We will add VS Code Dev Container support to the project by implementing:
 ## Alternatives Considered
 
 1. **Manual setup instructions only** (current state)
+
    - Pros: No additional complexity
    - Cons: High setup friction, inconsistent environments
 
 2. **Gitpod integration**
+
    - Pros: Cloud-based development
    - Cons: Less VS Code-native, additional external dependency
 
 3. **Docker Compose for development**
+
    - Pros: Tool-agnostic
    - Cons: More complex setup, less integrated with VS Code
 
 4. **Vagrant-based development environment**
+
    - Pros: Full VM isolation
    - Cons: Resource-heavy, slower, less modern workflow
 

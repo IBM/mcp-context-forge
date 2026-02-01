@@ -13,6 +13,10 @@ With mcp-cli → MCP Context Forge Gateway you can:
 
 The mcp-cli supports **stdio** connections out-of-the-box through the bundled **`mcpgateway.wrapper`** bridge, with optional direct SSE access for production environments.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 🛠 Prerequisites
@@ -22,6 +26,7 @@ The mcp-cli supports **stdio** connections out-of-the-box through the bundled **
 * **MCP Context Forge Gateway** running locally or remotely (default: http://localhost:4444)
 * **JWT or Basic Auth credentials** for Gateway access
 * **LLM Provider API keys** (optional, for chat mode):
+
   * OpenAI: `OPENAI_API_KEY` environment variable
   * Anthropic: `ANTHROPIC_API_KEY` environment variable
   * Ollama: Local Ollama installation with function-calling capable models

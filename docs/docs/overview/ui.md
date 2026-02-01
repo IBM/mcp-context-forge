@@ -10,6 +10,10 @@ After launching the gateway (`make serve` or `make podman-run`), open your brows
 
 [http://localhost:4444/admin](http://localhost:4444/admin) - or the corresponding URL / port / protocol (ex: https when launching with `make podman-run-ssl`)
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444/admin`
+    - Docker Compose (nginx proxy): `http://localhost:8080/admin`
+
 Login using your `PLATFORM_ADMIN_EMAIL` and `PLATFORM_ADMIN_PASSWORD` credentials set in your `.env`.
 
 ---
@@ -32,7 +36,7 @@ The Admin UI is built with **HTMX**, **Alpine.js**, and **Tailwind CSS**, offeri
 | **Security** | DOMPurify | XSS sanitization |
 | **Icons** | Font Awesome | Icon library |
 
-All vendor libraries are bundled locally for **air-gapped deployments** with CDN fallbacks. See [Air-Gapped Mode](#-air-gapped-mode) below.
+All vendor libraries are bundled locally for **air-gapped deployments** with CDN fallbacks. See [Air-Gapped Mode](#air-gapped-mode) below.
 
 It provides tabbed access to:
 
@@ -105,7 +109,7 @@ docker build -f Containerfile.lite -t mcpgateway:airgapped .
 docker run -e MCPGATEWAY_UI_AIRGAPPED=true -p 4444:4444 mcpgateway:airgapped
 ```
 
-See [Container Deployment](../deployment/container.md#-airgapped-deployments) for details.
+See [Container Deployment](../deployment/container.md#airgapped-deployments) for details.
 
 ### Local Development
 

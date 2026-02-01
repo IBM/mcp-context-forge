@@ -12,6 +12,7 @@ Context Forge Gateway allows users to register MCP servers with authentication c
 However, a significant use case emerged: organizations and users who want to leverage the gateway's tool proxying capabilities but cannot or will not store authentication credentials in the gateway database due to security policies, compliance requirements, or organizational constraints. These users still needed a mechanism to register MCP servers with authentication, discover available tools, and access them through the gateway using runtime-provided credentials via passthrough headers.
 
 The existing authentication flow required credentials to be persisted, making it incompatible with scenarios where:
+
 - Security policies prohibit credential storage in third-party systems
 - Organizations prefer to use runtime authentication with short-lived tokens
 - Users want to leverage passthrough header mechanisms for authentication
@@ -185,6 +186,7 @@ The feature was tested and validated in the following scenarios:
 - Tool invocation from MCP Inspector via virtual server
 
 All test scenarios successfully validated that:
+
 - Credentials were not stored in the database
 - Tool discovery completed successfully during one-time authentication
 - Tool calls functioned correctly when authentication was provided via passthrough headers

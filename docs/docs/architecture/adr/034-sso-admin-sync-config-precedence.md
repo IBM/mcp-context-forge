@@ -9,7 +9,6 @@
 The EntraID role mapping feature (#2129) introduced automatic role assignment based on SSO group memberships. This raised two critical design questions:
 
 1. **Admin Status Synchronization**: Should SSO logins update the `is_admin` flag based on group membership, potentially revoking admin access for users who were manually granted admin via the Admin UI/API?
-
 2. **Configuration Precedence**: When SSO providers are bootstrapped from environment variables but also modifiable via Admin API, which source should take precedence on application restart?
 
 Both decisions have significant security and operational implications.
@@ -47,6 +46,7 @@ if should_be_admin and not user.is_admin:
 ### 2. Configuration Precedence: Smart Merge
 
 **Decision**: Use "smart merge" for `provider_metadata` during bootstrap:
+
 - Environment config provides **defaults** for keys not in database
 - Database values are **preserved** (Admin API changes survive restarts)
 - New environment keys introduced in upgrades **apply** automatically

@@ -230,7 +230,7 @@ Available hook values for the `hooks` field:
 | `"http_auth_check_permission"` | Custom permission checking logic | Before RBAC checks |
 | `"http_post_request"` | Process responses and add audit headers | After request completion |
 
-See the [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md) for detailed implementation examples.
+See the [HTTP Authentication Hooks Guide](../using/plugins/http-auth-hooks.md) for detailed implementation examples.
 
 #### Plugin Modes
 
@@ -548,7 +548,7 @@ class MyPlugin(Plugin):
         pass
 ```
 
-See [Plugin Development Guide](../../using/plugins/) for detailed examples and best practices
+See [Plugin Development Guide](../using/plugins/index.md) for detailed examples and best practices
 
 ### Plugin Manager
 
@@ -912,9 +912,12 @@ sequenceDiagram
 **Phase 5**: Request Resolution
 
 - Continue Path: If all plugins allow processing, request continues to core gateway logic
+
   - Core logic executes the actual MCP operation (tool invocation, prompt rendering, resource fetching)
   - Success response is returned to client
+
 - Block Path: If any plugin blocks the request with a violation
+
   - Request processing stops immediately
   - Violation details are returned to client as an error response
 
@@ -948,6 +951,7 @@ Original Payload → Plugin 1 → Modified Payload → Plugin 2 → Final Payloa
 
 - Plugin execution errors don't crash other plugins or the gateway
 - Failed plugins are logged and handled based on their execution mode:
+
   - **Enforce Mode**: Plugin errors block the request
   - **Permissive Mode**: Plugin errors are logged but request continues
   - **Enforce Ignore Error Mode**: Plugin violations block, but technical errors are ignored
@@ -970,6 +974,7 @@ This execution model ensures **predictable behavior**, **comprehensive security 
 
 - Plugins execute in **ascending priority order** (lower number = higher priority)
 - **Priority Ranges** (recommended):
+
   - `1-50`: Critical security plugins (authentication, PII filtering)
   - `51-100`: Content filtering and validation
   - `101-200`: Transformations and enhancements
@@ -1710,7 +1715,7 @@ class HttpHookType(str, Enum):
     HTTP_POST_REQUEST = "http_post_request"            # Response processing and audit logging
 ```
 
-See the [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md) for implementation details and the [Simple Token Auth Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth) for a complete example.
+See the [HTTP Authentication Hooks Guide](../using/plugins/http-auth-hooks.md) for implementation details and the [Simple Token Auth Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth) for a complete example.
 
 ### Planned Hook Points
 

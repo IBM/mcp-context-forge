@@ -110,7 +110,14 @@ _SSTI_DANGEROUS_SUBSTRINGS: tuple[str, ...] = (
     "\\x",  # Hex escape sequences (e.g., \x5f for underscore)
     "\\u",  # Unicode escape sequences (e.g., \u005f for underscore)
     "\\n{",  # Named unicode escapes (e.g., \N{LOW LINE})
-    "\\0", "\\1", "\\2", "\\3", "\\4", "\\5", "\\6", "\\7",  # Octal escapes
+    "\\0",
+    "\\1",
+    "\\2",
+    "\\3",
+    "\\4",
+    "\\5",
+    "\\6",
+    "\\7",  # Octal escapes
 )
 # Operators that enable code execution or dynamic construction
 _SSTI_DANGEROUS_OPERATORS: tuple[str, ...] = (

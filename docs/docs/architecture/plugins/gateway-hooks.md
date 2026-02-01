@@ -472,8 +472,9 @@ async def server_post_register(self, payload: ServerPostOperationPayload,
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 
 - Same fields as register hooks, **plus**:
-- `server_id` - ID of server being updated
-- `original_server_info` - Server state before the update
+
+  - `server_id` - ID of server being updated
+  - `original_server_info` - Server state before the update
 
 **Return Type (`ServerPreOperationResult`)**:
 
@@ -569,9 +570,10 @@ async def server_pre_update(self, payload: ServerPreOperationPayload,
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 
 - Same fields as register hooks, **plus**:
-- `server_id` - ID of server that was updated
-- `original_server_info` - Server state before the update
-- `updated_at` - Database timestamp of the update
+
+  - `server_id` - ID of server that was updated
+  - `original_server_info` - Server state before the update
+  - `updated_at` - Database timestamp of the update
 
 **Return Type (`ServerPostOperationResult`)**:
 
@@ -655,8 +657,9 @@ async def server_post_update(self, payload: ServerPostOperationPayload,
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 
 - Same fields as other operations, **plus**:
-- `server_id` - ID of server being deleted
-- `original_server_info` - Complete server state before deletion (same as `payload.server_info`)
+
+  - `server_id` - ID of server being deleted
+  - `original_server_info` - Complete server state before deletion (same as `payload.server_info`)
 
 **Return Type (`ServerPreOperationResult`)**:
 
@@ -790,9 +793,10 @@ async def server_pre_delete(self, payload: ServerPreOperationPayload,
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 
 - Same fields as other operations, **plus**:
-- `server_id` - ID of server that was deleted
-- `original_server_info` - Complete server state before deletion
-- Database timestamps reflect the deletion operation
+
+  - `server_id` - ID of server that was deleted
+  - `original_server_info` - Complete server state before deletion
+  - Database timestamps reflect the deletion operation
 
 **Return Type (`ServerPostOperationResult`)**:
 
@@ -897,8 +901,9 @@ async def server_post_delete(self, payload: ServerPostOperationPayload,
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 
 - Same fields as other operations, **plus**:
-- `server_id` - ID of server whose status is changing
-- `original_server_info` - Server state before status change (with current `is_active` value)
+
+  - `server_id` - ID of server whose status is changing
+  - `original_server_info` - Server state before status change (with current `is_active` value)
 
 **Special Context Fields for Status Change:**
 
@@ -1051,9 +1056,10 @@ async def server_pre_status_change(self, payload: ServerPreOperationPayload,
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 
 - Same fields as other operations, **plus**:
-- `server_id` - ID of server whose status changed
-- `original_server_info` - Server state before status change
-- Database timestamps reflect the status change operation
+
+  - `server_id` - ID of server whose status changed
+  - `original_server_info` - Server state before status change
+  - Database timestamps reflect the status change operation
 
 **Return Type (`ServerPostOperationResult`)**:
 
@@ -1345,8 +1351,9 @@ async def gateway_post_register(self, payload: GatewayPostOperationPayload,
 **Context Information (`GatewayAuditInfo`)** - Available in `context.gateway_audit_info`:
 
 - Same fields as register hooks, **plus**:
-- `gateway_id` - ID of gateway being updated
-- `original_gateway_info` - Gateway state before the update
+
+  - `gateway_id` - ID of gateway being updated
+  - `original_gateway_info` - Gateway state before the update
 
 **Example Use Cases**:
 

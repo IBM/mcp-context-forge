@@ -183,7 +183,7 @@ To create your own plugin, see:
 
 - [Plugin Framework Guide](./index.md)
 - [Plugin Lifecycle Guide](./lifecycle.md)
-- [Plugin Architecture Specification](../../architecture/plugins/)
+- [Plugin Architecture Specification](../../architecture/plugins.md)
 
 ## Support & Contributing
 

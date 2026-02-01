@@ -40,7 +40,7 @@ pip install -r requirements.txt
 make build                # Build static site
 
 # Serve locally
-make serve                # Serve at http://localhost:8000 (MkDocs default)
+make serve                # Serve at http://localhost:8003 (configured in docs/base.yml)
 
 # Clean
 make clean                # Remove build artifacts
@@ -50,7 +50,8 @@ From repository root:
 
 ```bash
 make docs                 # Build documentation
-make docs-serve           # Serve documentation locally
+# For local serving, run from docs/:
+#   cd docs && make serve
 ```
 
 ## Writing Documentation

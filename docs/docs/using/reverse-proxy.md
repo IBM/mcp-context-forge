@@ -252,11 +252,13 @@ Reverse-proxied servers automatically appear in the gateway's server catalog and
    ```
 
 2. **Monitor connection health**
+
    - Check gateway logs for connection events
    - Monitor reconnection attempts
    - Set up alerts for persistent failures
 
 3. **Resource limits**
+
    - Set appropriate memory/CPU limits in containers
    - Configure max message sizes
    - Implement rate limiting on the gateway

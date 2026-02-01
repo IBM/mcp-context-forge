@@ -113,10 +113,12 @@ sequenceDiagram
 ### Negative Consequences
 
 - **Inherent Security Risk**: API keys in URLs may appear in:
+
   - Proxy server logs (if not configured to redact query strings)
   - Browser history (if URLs are exposed to browsers)
   - Server access logs (upstream server's logs)
   - Network monitoring tools
+
 - **CWE-598 Violation**: This authentication method violates security best practices (Use of GET Request Method With Sensitive Query Strings)
 - **Operational Burden**: Administrators must ensure proxy servers and monitoring tools are configured to redact sensitive query parameters
 

@@ -758,7 +758,7 @@ def get_workflow_endpoint(workflow_id, version="latest"):
 
 ### MCP Gateway Documentation
 - [MCP Gateway Integration](../../index.md) - Server integration overview
-- [Virtual Server Composition](../../../manage/virtual-servers.md) - Combining multiple servers
+- [Virtual Server Composition](../../../manage/api-usage.md#virtual-server-management) - Combining multiple servers
 - [Authentication Configuration](../../../manage/sso.md) - Gateway authentication setup
 
 ### Community and Support

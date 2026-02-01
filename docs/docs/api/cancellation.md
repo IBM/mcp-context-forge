@@ -15,6 +15,7 @@ MCPGATEWAY_TOOL_CANCELLATION_ENABLED=false
 ```
 
 When disabled:
+
 - `POST /cancellation/cancel` returns 404
 - `GET /cancellation/status/{id}` returns 404
 - Tool executions are not registered for cancellation
@@ -39,6 +40,7 @@ Response 200 (application/json):
 }
 
 Notes:
+
 - The gateway will attempt to cancel a local run if registered and will broadcast a JSON-RPC notification to connected sessions:
 ```
 {"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"<id>","reason":"<reason>"}}
@@ -52,6 +54,7 @@ Permissions: `admin.system_config` by default (RBAC). Adjust as appropriate for 
 Query the status of a registered tool execution run.
 
 Path parameters:
+
 - `request_id` (string, required): The unique identifier of the run to query
 
 Response 200 (application/json):
@@ -71,6 +74,7 @@ Response 404 (application/json):
 }
 
 Notes:
+
 - Returns the current status of a registered run including cancellation state
 - `registered_at` is a Unix timestamp (seconds since epoch)
 - `cancelled_at` is present only if the run has been cancelled

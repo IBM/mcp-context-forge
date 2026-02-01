@@ -240,11 +240,13 @@ The system captures IP addresses and user agents for audit purposes:
    ```
 
 2. **Verify Migration**
+
    - Check admin UI - all entities show metadata sections
    - API responses include new metadata fields
    - Legacy entities display gracefully
 
 3. **No Downtime Required**
+
    - All metadata columns are nullable
    - Existing functionality unmodified
    - Gradual adoption of metadata features

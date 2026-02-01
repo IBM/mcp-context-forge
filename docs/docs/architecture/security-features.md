@@ -1,6 +1,6 @@
 # MCP Gateway Security Features
 
-**Current Version: 0.9.0 (Beta)** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
+**Current Version: 1.0.0-BETA-2** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
 
 ## Security Posture Overview
 
@@ -28,11 +28,8 @@
 The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [RFC 7519 Section 4.1.7](https://www.rfc-editor.org/rfc/rfc7519#section-4.1.7). MCP Gateway uses JTI for:
 
 1. **Token Revocation**: Each token can be individually revoked by its JTI without invalidating all tokens for a user. The `TokenRevocation` table stores revoked JTIs.
-
 2. **Auth Cache Keying**: The authentication cache uses `{email}:{jti}` as the cache key pattern (`mcpgateway/cache/auth_cache.py`). This enables per-token caching and prevents cache collisions when users have multiple active tokens.
-
 3. **Replay Attack Prevention**: JTIs enable detection of token reuse, allowing the gateway to track and limit how many times a specific token is used.
-
 4. **Audit Trails**: Every `TokenUsageLog` entry records the JTI, enabling detailed per-token usage analytics and anomaly detection.
 
 **Token Generation Examples**:
@@ -57,6 +54,7 @@ payload = {
 ```
 
 **Cache Behavior**:
+
 - Tokens **with** JTI: Cache key is `mcpgw:auth:ctx:{email}:{jti-uuid}`
 - Tokens **without** JTI: Cache key is `mcpgw:auth:ctx:{email}:no-jti`
 

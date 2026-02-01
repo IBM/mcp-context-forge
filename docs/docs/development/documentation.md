@@ -18,7 +18,7 @@ Follow this guide when you need to add or update markdown pages under `docs/` an
 ```bash
 cd docs
 make venv     # First-time only, installs dependencies into a venv under `~/.venv/mcpgateway-docs`
-make serve    # http://localhost:8000 (auto-reload on save)
+make serve    # http://localhost:8003 (auto-reload on save)
 ```
 
 *The `serve` target automatically creates a project-local virtual environment (under `~/.venv/mcpgateway-docs`) the first time you run it and installs all doc dependencies before starting **MkDocs** in live-reload mode.*

@@ -19,6 +19,11 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 ---
 
+!!! tip "Base URLs by runtime"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+    - Dev server (`make dev`): `http://localhost:8000`
+
 ## Overview & Goals
 
 **ContextForge** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A server or REST API-exposing a unified endpoint for all your AI clients. See the [project roadmap](architecture/roadmap.md) for more details.
@@ -57,6 +62,7 @@ For a list of upcoming features, check out the [ContextForge Roadmap](architectu
 ??? info "REST-to-MCP Tool Adapter"
 
     * Adapts REST APIs into tools with:
+
         * Automatic JSON Schema extraction
         * Support for headers, tokens, and custom auth
         * Retry, timeout, and rate-limit policies
@@ -98,7 +104,7 @@ ContextForge is published on [PyPI](https://pypi.org/project/mcp-contextforge-ga
 
 ```bash
 # Quick start with environment variables
-BASIC_AUTH_PASSWORD=pass \
+JWT_SECRET_KEY=my-test-key \
 MCPGATEWAY_UI_ENABLED=true \
 MCPGATEWAY_ADMIN_API_ENABLED=true \
 PLATFORM_ADMIN_EMAIL=admin@example.com \
@@ -139,8 +145,8 @@ export PLATFORM_ADMIN_EMAIL=admin@example.com
 export PLATFORM_ADMIN_PASSWORD=changeme
 export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
 
-BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
-  mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
+JWT_SECRET_KEY=my-test-key \
+  mcpgateway --host 0.0.0.0 --port 4444 &
 
 # 3️⃣  Generate a bearer token & smoke-test the API
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
@@ -568,10 +574,10 @@ For comprehensive deployment guides, see **[Deployment Documentation](deployment
 
 ## API Reference
 
-Interactive API documentation is available when the server is running:
+Interactive API documentation is available when the server is running (adjust the base URL for Compose or dev):
 
-- **[Swagger UI](http://localhost:4444/docs)** — Try API calls directly in your browser
-- **[ReDoc](http://localhost:4444/redoc)** — Browse the complete endpoint reference
+- **Swagger UI** (`http://localhost:4444/docs` or `http://localhost:8080/docs` with Compose) — JWT-protected by default; enable `DOCS_ALLOW_BASIC_AUTH=true` or log in to the Admin UI to get a session cookie.
+- **ReDoc** (`http://localhost:4444/redoc` or `http://localhost:8080/redoc` with Compose) — Same auth requirements as Swagger UI.
 
 **Quick Authentication:**
 

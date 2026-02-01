@@ -12,6 +12,10 @@ With Copilot → MCP you can:
 Copilot supports **SSE** streams out-of-the-box; for environments that forbid long-lived
 HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`** bridge.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 🛠 Prerequisites

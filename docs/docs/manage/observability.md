@@ -109,6 +109,7 @@ deploying Prometheus in Kubernetes.
 - Use Grafana to import dashboards for Kubernetes, PostgreSQL and Redis (IDs
     suggested elsewhere in the repo). For MCP Gateway app metrics, create panels
     for:
+
     - Request rate: `rate(http_requests_total[1m])`
     - Error rate: `rate(http_requests_total{status=~"5.."}[5m])`
     - P99 latency: `histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))`
@@ -116,12 +117,14 @@ deploying Prometheus in Kubernetes.
 ### Common pitfalls — short guidance
 
 - High-cardinality labels
+
     - Never add per-request identifiers (user IDs, full URIs, request IDs) as
         Prometheus labels. They explode the number of time series and can crash
         Prometheus memory.
     - Use `METRICS_CUSTOM_LABELS` only for low-cardinality labels (env, region).
 
 - Compression (gzip) vs CPU
+
     - The metrics exposer in `mcpgateway.services.metrics` enables gzip by
         default for the `/metrics/prometheus` endpoint. Compressing the payload
         reduces network usage but increases CPU on scrape time. On CPU-constrained
@@ -129,6 +132,7 @@ deploying Prometheus in Kubernetes.
         at the instrumentor layer.
 
 - Duplicate collectors during reloads/tests
+
     - Instrumentation registers collectors on the global Prometheus registry.
         When reloading the app in the same process (tests, interactive sessions)
         you may see "collector already registered"; restart the process or clear

@@ -41,6 +41,7 @@ We will allow administrators to define custom roles in a JSON configuration file
 ### File Resolution
 
 When a relative path is provided:
+
 1. Check current working directory
 2. Check project root (`mcpgateway/bootstrap_db.py` → `parent.parent`)
 

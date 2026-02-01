@@ -5,6 +5,10 @@ process for every chat "backend".
 By pointing it at **`mcpgateway.wrapper`** you give Claude instant access to every tool,
 prompt and resource registered in your Gateway.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 📂 Where to edit the config

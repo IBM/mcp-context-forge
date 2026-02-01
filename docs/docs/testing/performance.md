@@ -147,6 +147,7 @@ sysctl net.core.somaxconn \
 #### File Descriptor Limits
 
 Check your current limits with `ulimit -n`. For load testing, ensure:
+
 - Soft limit: 65535+
 - Hard limit: 65535+
 
@@ -370,7 +371,7 @@ For testing with 4000+ concurrent users:
 - **Monitor errors**: High error rates indicate server saturation
 - **Check p95/p99**: Tail latency matters more than average
 - **Use `constant_throughput`**: For predictable RPS instead of random waits
-- **Nginx caching**: Admin pages use 5s TTL caching by default (see [Nginx Tuning](../manage/tuning.md#7---nginx-reverse-proxy-tuning))
+- **Nginx caching**: Admin pages use 5s TTL caching by default (see [Nginx Tuning](../manage/tuning.md#7-nginx-reverse-proxy-tuning))
 
 ---
 
@@ -424,11 +425,13 @@ BENCHMARK_SERVER_COUNT=100 BENCHMARK_START_PORT=9000 make benchmark-up
 The benchmark stack consists of:
 
 1. **benchmark_server** - A single Go binary that spawns multiple HTTP servers
+
    - Each server exposes MCP endpoints on a unique port (9000-9099)
    - Default: 50 tools, 20 resources, 10 prompts per server
    - Supports graceful shutdown via SIGINT/SIGTERM
 
 2. **register_benchmark** - Auto-registration service
+
    - Registers all benchmark servers as gateways at compose startup
    - No manual registration required
 
@@ -559,10 +562,12 @@ app = FastAPI(
 ```
 
 **Options enabled:**
+
 - `OPT_NON_STR_KEYS`: Allow non-string dict keys (integers, UUIDs)
 - `OPT_SERIALIZE_NUMPY`: Support numpy arrays if numpy is installed
 
 **Datetime serialization:**
+
 - Uses RFC 3339 format (ISO 8601 with timezone)
 - Naive datetimes treated as UTC
 - Example: `2025-01-19T12:00:00+00:00`
@@ -608,6 +613,7 @@ Based on benchmark results, orjson provides:
 | Response latency (p95)  | 20-40% faster         |
 
 **Production benefits:**
+
 - Higher requests/second capacity
 - Lower CPU utilization per request
 - Faster page loads for Admin UI

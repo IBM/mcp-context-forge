@@ -20,7 +20,6 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  --network=host \
   ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
 
 docker logs mcpgateway
@@ -66,7 +65,7 @@ make podman
 docker build -t mcpgateway:latest -f Containerfile .
 ```
 
-> The base image uses `python:3.11-slim` with Gunicorn and Uvicorn workers.
+> The container images are based on Red Hat UBI 10 with Python 3.12 and run Gunicorn with Uvicorn workers.
 
 ---
 

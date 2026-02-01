@@ -24,9 +24,11 @@ This provides a full E5 sandbox with **Microsoft Entra ID P2** licenses (25 user
 5. Click **Set up E5 subscription** on your dashboard
 6. Choose **Instant sandbox** (recommended)
 7. Create your admin account:
+
    - Username: e.g., `admin`
    - Domain: e.g., `yourname.onmicrosoft.com`
    - Password: Create a strong password
+
 8. Complete phone verification
 9. Wait for provisioning (~1 minute)
 
@@ -74,7 +76,6 @@ Contact your IT administrator to request access to create App Registrations.
 - Platform: **Web**
 - URI: `https://gateway.yourcompany.com/auth/sso/callback/entra`
 - For development, you can add: `http://localhost:8000/auth/sso/callback/entra`
-
 4. Click **Register**
 
 ### 1.3 Note Application Credentials
@@ -94,8 +95,10 @@ After registration, you'll see the **Overview** page:
 3. Click **+ New client secret**
 4. Add a description: `MCP Gateway Client Secret`
 5. Choose an expiration period:
+
    - **Recommended for production**: 180 days (6 months) or 365 days (1 year)
    - **Important**: Set a reminder to rotate secrets before expiration
+
 6. Click **Add**
 
 ### 2.2 Copy Secret Value
@@ -116,10 +119,12 @@ After registration, you'll see the **Overview** page:
 3. Select **Microsoft Graph**
 4. Choose **Delegated permissions**
 5. Add these permissions:
+
    - ✅ **OpenId permissions** → `openid`
    - ✅ **OpenId permissions** → `profile`
    - ✅ **OpenId permissions** → `email`
    - ✅ **User** → `User.Read` (basic profile information)
+
 6. Click **Add permissions**
 
 ### 3.2 Grant Admin Consent (if required)
@@ -138,22 +143,30 @@ If your organization requires admin consent for permissions:
 2. Click **+ Add optional claim**
 3. Select **ID** token type
 4. Add these optional claims:
+
    - ✅ `email` - Email address
    - ✅ `family_name` - Last name
    - ✅ `given_name` - First name
    - ✅ `preferred_username` - Username
+
 5. Click **Add**
 
 ### 4.2 Configure Authentication Settings
 
 1. Go to **Authentication** in the left sidebar
 2. Under **Platform configurations** → **Web**, verify:
+
    - ✅ Redirect URIs are correct
+
 3. Under **Implicit grant and hybrid flows**:
+
    - Leave checkboxes **unchecked** (Context Forge uses authorization code flow, not implicit)
+
 4. Under **Advanced settings**:
+
    - **Allow public client flows**: No (keep default)
    - **Live SDK support**: No (keep default)
+
 5. Click **Save** if you made changes
 
 ### 4.3 Configure Front-channel Logout (Optional)
@@ -161,8 +174,10 @@ If your organization requires admin consent for permissions:
 Front-channel logout enables automatic session clearing when users log out from Microsoft Entra ID.
 
 1. Under **Authentication** → **Front-channel logout URL**:
+
    - Production: `https://gateway.yourcompany.com/admin/logout`
    - Development: `http://localhost:8000/admin/logout`
+
 2. When users log out from Microsoft, Entra ID sends a GET request to this URL
 3. Context Forge clears the session cookie and returns HTTP 200
 
@@ -324,6 +339,7 @@ journalctl -u mcpgateway | grep -i "SSO provider"
 ### 7.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development: `http://localhost:8000/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
 
@@ -376,10 +392,12 @@ Configure Conditional Access in Azure:
 1. Go to **Microsoft Entra ID** → **Security** → **Conditional Access**
 2. Click **+ New policy**
 3. Configure conditions:
+
    - **Users**: Select specific users or groups
    - **Cloud apps**: Select your MCP Gateway app
    - **Conditions**: Device platform, location, sign-in risk
    - **Grant**: Require MFA, require compliant device, etc.
+
 4. Enable policy and test
 
 ### 8.2 Multi-Factor Authentication (MFA)
@@ -388,8 +406,10 @@ Configure MFA enforcement:
 
 1. Go to **Microsoft Entra ID** → **Security** → **MFA**
 2. Configure MFA settings:
+
    - **Service settings**: Enable MFA methods (Authenticator app, SMS, etc.)
    - **Users**: Enable MFA per-user or via Conditional Access
+
 3. Test MFA during login to MCP Gateway
 
 ### 8.3 User Assignment and Access Control
@@ -415,16 +435,22 @@ To include group memberships in tokens:
 1. In your app registration, go to **Token configuration**
 2. Click **+ Add groups claim**
 3. Select group types to include:
+
    - **Security groups** (recommended)
    - Microsoft 365 groups (if needed)
    - Distribution groups (if needed)
+
 4. Choose **Group ID** format (recommended for stability)
+
    - **Group ID**: Returns Object IDs (stable, won't change)
    - **sAMAccountName**: Returns group names (readable but can change)
+
 5. **Select token types** (CRITICAL):
+
    - **ID** - **REQUIRED** for role mapping to work
    - Access (optional, for API authorization)
    - SAML (if using SAML federation)
+
 6. Click **Add**
 
 **Note**: Groups will appear in the `groups` claim in the ID token. You can configure role mappings in Step 8.5 below.
@@ -458,6 +484,7 @@ Find your security group Object IDs in Azure:
 4. Repeat for all groups you want to map
 
 Example groups:
+
 - Admins: `a1b2c3d4-1234-5678-90ab-cdef12345678`
 - Developers: `e5f6g7h8-1234-5678-90ab-cdef12345678`
 - Team Admins: `i9j0k1l2-1234-5678-90ab-cdef12345678`
@@ -541,6 +568,7 @@ SSO_ENTRA_ROLE_MAPPINGS={"Developer":"developer","TeamAdmin":"team_admin","Viewe
 ```
 
 **Benefits of App Roles:**
+
 - ✅ Semantic names (readable)
 - ✅ Stable (won't change)
 - ✅ No Object ID lookups needed
@@ -589,17 +617,20 @@ tail -f logs/gateway.log | grep "Assigned SSO role"
 Roles are automatically synchronized:
 
 **On User Creation:**
+
 - Groups extracted from token
 - Roles mapped and assigned
 - User created with appropriate permissions
 
 **On User Login (if `SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true`):**
+
 - Current groups extracted
 - Old SSO-granted roles revoked if no longer in groups
 - New roles assigned based on current groups
 - Manually assigned roles preserved
 
 **Manual Role Management:**
+
 - Admins can manually assign additional roles via Admin UI
 - Manually assigned roles are preserved during sync
 - Only SSO-granted roles (granted_by='sso_system') are synchronized
@@ -609,6 +640,7 @@ Roles are automatically synchronized:
 **Issue: Users not getting roles**
 
 Check:
+
 1. Groups claim is included in token (Step 8.4)
 2. `SSO_ENTRA_GROUPS_CLAIM` matches claim name in token
 3. Group IDs in `SSO_ENTRA_ROLE_MAPPINGS` match exactly
@@ -627,6 +659,7 @@ tail -f logs/gateway.log | grep "groups"
 **Issue: Admin users not getting admin access**
 
 Check:
+
 1. User's group is in `SSO_ENTRA_ADMIN_GROUPS`
 2. Group ID/name matches exactly (case-insensitive)
 3. User's `is_admin` flag is set
@@ -643,6 +676,7 @@ curl -H "Authorization: Bearer ADMIN_TOKEN" \
 **Issue: Roles not syncing on login**
 
 Check:
+
 1. `SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true`
 2. User has groups in token
 3. No errors in logs
@@ -703,6 +737,7 @@ curl -X PUT "http://localhost:8000/auth/sso/admin/providers/entra" \
 ```
 
 This is useful when:
+
 - Provider doesn't emit group claims
 - You want to manage roles manually for specific providers
 - Migrating from manual to automatic role management
@@ -710,6 +745,7 @@ This is useful when:
 ### 8.5.10 Best Practices
 
 **Security:**
+
 - ✅ Leave `SSO_ENTRA_DEFAULT_ROLE` unset unless you want automatic access for all users
 - ✅ Use App Roles for stable, semantic mappings
 - ✅ Limit admin groups to minimum necessary users
@@ -717,12 +753,14 @@ This is useful when:
 - ✅ Audit role assignments regularly
 
 **Management:**
+
 - ✅ Document group-to-role mappings
 - ✅ Use descriptive App Role names
 - ✅ Test with non-admin users first
 - ✅ Monitor logs for role assignment issues
 
 **Scalability:**
+
 - ✅ Use groups instead of individual user assignments
 - ✅ Leverage Azure group nesting if needed
 - ✅ Consider token size limits (~200 groups)
@@ -747,10 +785,12 @@ Define custom application roles:
 1. In your app registration, go to **App roles**
 2. Click **+ Create app role**
 3. Define roles:
+
    - **Display name**: `MCP Gateway Admin`
    - **Allowed member types**: Users/Groups
    - **Value**: `gateway.admin`
    - **Description**: Administrator role for MCP Gateway
+
 4. Assign roles to users in **Enterprise applications** → **Users and groups**
 
 ### 9.3 Certificate-Based Authentication (Future)

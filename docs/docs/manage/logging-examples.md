@@ -357,26 +357,32 @@ scrape_configs:
 ## Best Practices
 
 1. **Production Logging**
+
    - Use `INFO` level for production
    - Enable JSON format for log aggregation
    - Configure log rotation based on expected volume:
+
      - High traffic: `LOG_MAX_SIZE_MB=50`, `LOG_BACKUP_COUNT=7`
      - Medium traffic: `LOG_MAX_SIZE_MB=10`, `LOG_BACKUP_COUNT=5`
      - Low traffic: Consider disabling rotation
+
    - Monitor disk space usage
 
 2. **Development Logging**
+
    - Use `DEBUG` level for detailed troubleshooting
    - Use text format for human readability
    - Enable rotation with small files: `LOG_MAX_SIZE_MB=1`, `LOG_BACKUP_COUNT=3`
    - Keep log files local for quick access
 
 3. **Security Considerations**
+
    - Ensure log files don't contain sensitive data
    - Protect log directories with proper permissions
    - Rotate logs regularly to prevent disk filling
 
 4. **Performance Considerations**
+
    - Avoid excessive DEBUG logging in production
    - Monitor log I/O performance
    - Use appropriate log levels for different components

@@ -3,6 +3,10 @@
 MCP Gateway is a **gateway + registry + proxy** purpose-built for the **Model Context Protocol (MCP)**. It unifies REST, MCP, and stdio worlds while
 adding auth, caching, federation, and an HTMX-powered Admin UI.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 
 ---
 
@@ -33,7 +37,8 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 ??? tip "Auth mechanisms"
 
     * **JWT bearer** (default, signed with `JWT_SECRET_KEY`)
-    * **HTTP Basic** for the Admin UI
+    * **Email/password** for the Admin UI (`PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`)
+    * **HTTP Basic** (optional) for API/docs when `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`
     * **Custom headers** (e.g., API keys) per tool or gateway
 
 ??? info "Rate limiting"

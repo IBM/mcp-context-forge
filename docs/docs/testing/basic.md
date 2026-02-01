@@ -29,6 +29,9 @@ Gateway will listen on:
 * Swagger   → [https://localhost:4444/docs](https://localhost:4444/docs)
 * ReDoc     → [https://localhost:4444/redoc](https://localhost:4444/redoc)
 
+!!! tip "Docs authentication"
+    `/docs` and `/redoc` are JWT-protected by default. Log in to the Admin UI to get a session cookie, or set `DOCS_ALLOW_BASIC_AUTH=true` for Basic auth.
+
 ---
 
 ## 🔑 Authentication
@@ -42,7 +45,7 @@ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u
 curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/health
 ```
 
-Expected: `{"status":"ok"}`
+Expected: `{"status":"healthy"}`
 
 #### Remote gateway token (peer)
 

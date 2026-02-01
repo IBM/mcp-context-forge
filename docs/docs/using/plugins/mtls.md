@@ -5,6 +5,7 @@ This guide covers how to set up mutual TLS (mTLS) authentication between the MCP
 ## Port Configuration
 
 **Standard port convention:**
+
 - **Port 8000**: Main plugin service (HTTP or HTTPS/mTLS)
 - **Port 9000**: Health check endpoint (automatically starts on port+1000 when mTLS is enabled)
 
@@ -52,6 +53,7 @@ certs/mcp/
 Generate complete mTLS infrastructure. This is the **recommended** command for setting up mTLS.
 
 **What it does**:
+
 1. Calls `certs-mcp-ca` to create the CA (if not exists)
 2. Calls `certs-mcp-gateway` to create gateway client certificate (if not exists)
 3. Reads `plugins/external/config.yaml` and generates certificates for all plugins with `kind: external`
@@ -94,6 +96,7 @@ plugins:
 Generate the Certificate Authority (CA) for plugin mTLS. This is typically called automatically by other targets.
 
 **What it does**:
+
 - Creates `certs/mcp/ca/ca.key` (4096-bit RSA private key)
 - Creates `certs/mcp/ca/ca.crt` (CA certificate)
 - Sets file permissions: `600` for `.key`, `644` for `.crt`
@@ -116,6 +119,7 @@ make certs-mcp-ca MCP_CERT_DAYS=1825
 Generate the gateway client certificate used by the MCP Gateway to authenticate to plugin servers.
 
 **What it does**:
+
 - Depends on `certs-mcp-ca` (creates CA if needed)
 - Creates `certs/mcp/gateway/client.key` (4096-bit RSA private key)
 - Creates `certs/mcp/gateway/client.crt` (client certificate signed by CA)
@@ -137,12 +141,15 @@ make certs-mcp-gateway MCP_CERT_DAYS=365
 Generate a server certificate for a specific plugin.
 
 **What it does**:
+
 - Depends on `certs-mcp-ca` (creates CA if needed)
 - Creates `certs/mcp/plugins/<PLUGIN_NAME>/server.key`
 - Creates `certs/mcp/plugins/<PLUGIN_NAME>/server.crt` with Subject Alternative Names (SANs):
+
   - `DNS:<PLUGIN_NAME>`
   - `DNS:mcp-plugin-<PLUGIN_NAME>`
   - `DNS:localhost`
+
 - Copies `ca.crt` to plugin directory
 
 **Usage**:
@@ -163,6 +170,7 @@ make certs-mcp-plugin PLUGIN_NAME=MyPlugin MCP_CERT_DAYS=365
 Check expiry dates of all MCP certificates.
 
 **What it does**:
+
 - Displays expiry dates for CA, gateway client, and all plugin certificates
 - Shows remaining validity period
 
@@ -189,6 +197,7 @@ make certs-mcp-check
 ### Certificate Properties
 
 All certificates generated include:
+
 - **Algorithm**: RSA with SHA-256
 - **CA Key Size**: 4096 bits
 - **Client/Server Key Size**: 4096 bits
@@ -198,14 +207,14 @@ All certificates generated include:
 ### Important Notes
 
 1. **All `ca.crt` files are identical** - They are copies of the root CA certificate distributed to each location for convenience
-
 2. **Safety features** - Commands won't overwrite existing certificates. To regenerate, delete the target directory first
-
 3. **File permissions** - Automatically set to secure values:
+
    - Private keys (`.key`): `600` (owner read/write only)
    - Certificates (`.crt`): `644` (world-readable)
 
 4. **Configuration variables**:
+
    - `MCP_CERT_DAYS`: Certificate validity in days (default: 825)
    - `MCP_PLUGIN_CONFIG`: Path to plugin config file (default: `plugins/external/config.yaml`)
 
@@ -315,6 +324,7 @@ Run your gateway code (YAML without `tls` section in `mcp` config).
     `PLUGINS_SERVER_UDS` and TLS are mutually exclusive. UDS runs without TLS by design.
 
 **`ssl_cert_reqs` values:**
+
 - `0` = `CERT_NONE` - No client certificate required
 - `1` = `CERT_OPTIONAL` - Client certificate requested but not required
 - `2` = `CERT_REQUIRED` - Client certificate required (mTLS)
@@ -392,6 +402,7 @@ PLUGINS_CLIENT_MTLS_CERTFILE="certs/mcp/gateway/client.crt" \
 ## Configuration Priority
 
 Environment variables take precedence over YAML configuration:
+
 - If `PLUGINS_SERVER_SSL_ENABLED=true`, env vars override `server_settings.tls`
 - If client env vars are set, they override `mcp.tls` in YAML
 
@@ -402,6 +413,7 @@ Environment variables take precedence over YAML configuration:
 
 ### How It Works
 The client checks if the URL hostname matches entries in the server certificate's:
+
 - **Common Name (CN)**: `CN=mcp-plugin-ReplaceBadWordsPlugin`
 - **Subject Alternative Names (SANs)**: DNS names or IP addresses
 
@@ -458,6 +470,7 @@ If you need `check_hostname: true` with IP addresses, regenerate certificates wi
 
 ### Server-Side Hostname Verification
 There is **no** `check_hostname` setting on the server side. The server only:
+
 1. Verifies the client certificate is signed by the trusted CA
 2. Checks if `ssl_cert_reqs=2` (CERT_REQUIRED) to enforce client certificates
 
@@ -499,6 +512,7 @@ export PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME="true"
 Error: `certificate verify failed: IP address mismatch` or `Hostname mismatch`
 
 **Solutions:**
+
 1. **Use hostname from SANs**: Connect to `https://localhost:8000` instead of `https://127.0.0.1:8000`
 2. **Disable hostname check**: Set `check_hostname: false` or `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME="false"`
 3. **Add IP to SANs**: Regenerate certificates with IP SANs included
@@ -524,17 +538,22 @@ For production deployments, follow these security best practices to ensure robus
 When deploying plugin mTLS in production:
 
 1. **Generate Certificates**:
+
    - **Local/Docker**: Use `make certs-mcp-all` to create complete certificate infrastructure
    - **Kubernetes**: Deploy [cert-manager](https://cert-manager.io/) and configure Certificate resources for automated issuance and renewal
+
 2. **Verify Expiration**:
+
    - **Local/Docker**: Run `make certs-mcp-check` regularly to monitor certificate validity
    - **Kubernetes**: cert-manager automatically monitors and renews certificates before expiration
+
 3. **Secure Private Keys**: Ensure all `.key` files have `600` permissions and are owned by service accounts (or stored in Kubernetes Secrets with appropriate RBAC)
 4. **Enable Hostname Verification**: Set `check_hostname: true` or `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME="true"` unless using IP addresses
 5. **Configure Health Checks**: Bind health servers to `127.0.0.1` to prevent external access
 6. **Enforce mTLS**: Set `PLUGINS_SERVER_SSL_CERT_REQS="2"` to require client certificates
 7. **Monitor Logs**: Enable `LOG_LEVEL=DEBUG` temporarily during initial deployment to verify handshakes
 8. **Plan Rotation**:
+
    - **Local/Docker**: Schedule certificate rotation every 90-180 days using `MCP_CERT_DAYS` parameter
    - **Kubernetes**: Configure cert-manager Certificate resources with appropriate `renewBefore` duration (typically 30 days before expiration)
 

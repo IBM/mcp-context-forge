@@ -24,6 +24,7 @@ The Model Context Protocol (MCP) supports various server-to-client notifications
 ---
 
 Prior to this decision, the gateway lacked a unified mechanism to handle these notifications. Specifically:
+
 1.  **Fragmented Handling:** Notification logic would otherwise be scattered across individual service methods or session implementations.
 2.  **Session Pooling:** With the introduction of `MCPSessionPool`, sessions are long-lived and shared. A dedicated mechanism is needed to route notifications from these pooled connections back to the appropriate application context (e.g., triggering a refresh).
 3.  **Refresh Storms:** Aggressive servers sending frequent `list_changed` notifications could trigger excessive database writes and upstream calls if not debounced.
@@ -34,6 +35,7 @@ Prior to this decision, the gateway lacked a unified mechanism to handle these n
 We have implemented a **Centralized Notification Service** (`NotificationService`) to act as the single hub for managing all MCP server notifications.
 
 This service is designed to:
+
 1.  **Centralize Routing:** Act as the destination for `message_handler` callbacks from `mcp-python-sdk`'s `ClientSession`.
 2.  **Debounce Events:** Implement a configurable buffering strategy (default 5s) to coalesce rapid `list_changed` events into single refresh actions, protecting the gateway and database.
 3.  **Manage Capabilities:** Track per-gateway capabilities (e.g., `tools.listChanged: true`) to know which gateways support event-driven updates.
@@ -44,31 +46,40 @@ This service is designed to:
 This centralized architecture is critical for supporting future notification types beyond `list_changed`:
 
 - **Progress (`notifications/progress`):**
+
     - The centralized service can route progress tokens from backend tools to the client's request context.
     - It allows for aggregating progress from multiple parallel tool executions if needed.
+
 - **Logging (`notifications/message`):**
+
     - Server logs can be intercepted centrally and piped into the gateway's observability stack (e.g., structured JSON logging, Prometheus counters).
     - Prevents log spam from reaching individual clients unless explicitly subscribed.
+
 - **Cancellation (`notifications/cancelled`):**
+
     - Provides a central point to handle cancellation signals, allowing the gateway to terminate associated backend processes or cleanup resources even if the original request handler has detached.
 
 ## Changes Made
 
 1.  **New Service: `mcpgateway/services/notification_service.py`**
+
     - Implements the `NotificationService` class with `asyncio.Queue` for processing.
     - Provides `create_message_handler(gateway_id)` factory for easy integration with SDK sessions.
     - Handles `tools/list_changed`, `resources/list_changed`, and `prompts/list_changed` with smart debouncing.
 
 2.  **Session Pool Integration (`MCPSessionPool`)**
+
     - Automatically initializes the notification service on startup.
     - Injects the `message_handler` into every new `ClientSession` created by the pool.
     - ensures `gateway_id` context is passed during session creation.
 
 3.  **Gateway Service Updates (`GatewayService`)**
+
     - Registers gateway capabilities with the notification service upon initialization.
     - Propagates `gateway_id` in health checks to ensure connectivity context is maintained.
 
 4.  **Code Fixes**
+
     - Updated `tool_service.py`, `resource_service.py`, and `gateway_service.py` to explicitly pass `gateway_id` to `pool.session()` calls, ensuring notifications can be traced back to their source.
 
 ## Architecture Diagram
@@ -111,8 +122,11 @@ flowchart TD
 ## Alternatives Considered
 
 - **Per-Session Handling:** Implementing logic directly in the session callback.
+
   - *Rejected:* Hard to debounce globally for a gateway if multiple sessions exist (though currently pooled by URL). Hard to unit test complex logic embedded in callbacks. Violates Single Responsibility Principle.
+
 - **Polling Only:**
+
   - *Rejected:* Inefficient. High latency for discovering new tools, or high load if polling frequency is increased.
 
 

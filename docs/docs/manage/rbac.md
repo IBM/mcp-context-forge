@@ -35,24 +35,28 @@ MCP Gateway implements a multi-layered access control system:
 
 ### Subjects
 Users authenticated via:
+
 - JWT tokens (session or API)
 - SSO providers (OAuth 2.0/OIDC)
 - Basic authentication (development only)
 
 ### Teams
 Logical groups that:
+
 - Organize users for access boundaries
 - Own resources (tools, prompts, resources)
 - Map from external identity providers (SSO groups)
 
 ### Roles
 Current role types:
+
 - **Admin**: Full management access, can bypass team restrictions
 - **Maintainer**: Manage servers, tools, prompts, configurations
 - **Viewer**: Read-only access and metrics
 
 ### Resources
 Protected entities:
+
 - Servers (MCP gateways and virtual servers)
 - Tools, Prompts, Resources (MCP primitives)
 - System configuration and audit logs
@@ -84,14 +88,17 @@ The `teams` claim in JWT tokens determines resource visibility:
 ### Security Design Principles
 
 1. **Principle of Least Privilege**
+
    - Non-admin tokens without explicit team scope default to public-only access
    - This prevents accidental exposure of team resources
 
 2. **Scoped Automation Tokens**
+
    - Admin tokens with `teams: []` are intentionally restricted to public resources
    - Use case: CI/CD pipelines, monitoring systems, public API clients
 
 3. **Backward Compatible Admin Access**
+
    - Admin session tokens (from UI login) omit the teams claim entirely
    - This grants unrestricted access for administrative operations
 
@@ -250,8 +257,10 @@ python3 -m mcpgateway.utils.create_jwt_token \
 1. Navigate to **Admin UI → Tokens**
 2. Click **Create Token**
 3. Select team scope:
+
    - **No team selected**: Public resources only (secure default)
    - **Specific team(s)**: Team + public resources
+
 4. Configure additional restrictions (IP, permissions, expiry)
 
 !!! warning "Token Scope Warning"
@@ -272,13 +281,13 @@ python3 -m mcpgateway.utils.create_jwt_token \
 ### Team Organization
 
 1. **Create purpose-specific teams**:
+
    - `platform-admins` - Full administrative access
    - `developers` - Development and testing resources
    - `ci-automation` - CI/CD pipeline access
    - `monitoring` - Read-only observability access
 
 2. **Map SSO groups to teams** for automatic membership management
-
 3. **Use personal teams** for individual resource ownership
 
 ### Scoping Strategy

@@ -22,6 +22,7 @@ Before creating credentials, enable the necessary APIs:
 
 1. Go to **APIs & Services** → **Library**
 2. Search for and enable:
+
    - **Google Identity Service** (for user authentication)
    - **Google People API** (for user profile information)
    - **Google Identity and Access Management (IAM) API** (optional, for advanced features)
@@ -48,6 +49,7 @@ Before creating credentials, enable the necessary APIs:
 
 4. Click **Save and Continue**
 5. Add scopes (optional for basic auth):
+
    - `userinfo.email`
    - `userinfo.profile`
    - `openid`
@@ -70,7 +72,6 @@ Before creating credentials, enable the necessary APIs:
 
 - Production: `https://gateway.yourcompany.com/auth/sso/callback/google`
 - Development: `http://localhost:8000/auth/sso/callback/google`
-
 5. Click **Create**
 6. **Important**: Copy the Client ID and Client Secret immediately
 
@@ -191,6 +192,7 @@ curl -X GET http://localhost:4444/auth/sso/providers
 ### 4.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development (port 8000): `http://localhost:8000/admin/login`
    - Development (make serve, port 4444): `http://localhost:4444/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`

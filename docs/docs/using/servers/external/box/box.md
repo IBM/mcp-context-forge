@@ -36,9 +36,10 @@ Box MCP uses OAuth 2.1 for secure authentication, providing enhanced security wi
 5. Name your application
 6. Configure OAuth 2.0 settings:
    ```
-   Redirect URI: http://localhost:8080/callback
+   Redirect URI: http://localhost:4444/callback
    Application Scopes: Select required permissions
-   CORS Domains: http://localhost:8080 (for development)
+   CORS Domains: http://localhost:4444 (for development)
+   # If running docker-compose with nginx, use http://localhost:8080 instead.
    ```
 7. Save your `Client ID` and `Client Secret`
 
@@ -200,7 +201,8 @@ external_servers:
 # .env file
 BOX_CLIENT_ID=your_box_client_id
 BOX_CLIENT_SECRET=your_box_client_secret
-BOX_REDIRECT_URI=http://localhost:8080/callback
+BOX_REDIRECT_URI=http://localhost:4444/callback
+# If running docker-compose with nginx, use http://localhost:8080/callback
 BOX_WEBHOOK_SECRET=your_webhook_secret
 ```
 
@@ -227,7 +229,7 @@ class BoxMCPGatewayClient:
 
     async def authenticate_interactive(self):
         """Interactive OAuth 2.1 authentication flow"""
-        redirect_uri = "http://localhost:8080/callback"
+        redirect_uri = f"{self.gateway_url}/callback"
 
         # Step 1: Generate authorization URL
         auth_url, state = self.oauth_client.get_authorization_url(redirect_uri)

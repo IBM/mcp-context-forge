@@ -99,15 +99,19 @@ certificates:
 **How it works:**
 
 When you run `cforge gateway deploy <config-file>`, the tool:
+
 1. Reads your custom configuration YAML
 2. Builds container images (if building from source)
 3. Generates mTLS certificates (if needed)
 4. **Generates actual deployment files**:
+
    - For `type: compose` → `deploy/docker-compose.yaml`
    - For `type: kubernetes` → `deploy/manifests/*.yaml` (Deployment, Service, ConfigMap, etc.)
+
 5. Deploys the generated manifests to your target environment
 
 **Additional example configurations** are available in `examples/deployment-configs/`:
+
 - `deploy-compose.yaml` - Docker Compose without mTLS
 - `deploy-compose.mtls.yaml` - Docker Compose with mTLS
 - `deploy-k8s.yaml` - Kubernetes with pre-built images
@@ -134,6 +138,7 @@ cforge gateway validate deploy.yaml
 ```
 
 **Output:**
+
 - ✅ Configuration syntax validation
 - ✅ Plugin name uniqueness check
 - ✅ Required field verification
@@ -174,6 +179,7 @@ cforge gateway build deploy.yaml --plugin OPAPluginFilter --plugin LLMGuardPlugi
 ```
 
 **What it does:**
+
 1. Clones Git repositories (if `repo` specified)
 2. Checks out specified branch/tag/commit (`ref`)
 3. Builds Docker images from `containerfile` in `context` directory
@@ -217,6 +223,7 @@ certs/mcp/
 ```
 
 **Certificate Properties:**
+
 - Validity: Configurable (default: 825 days)
 - CN for gateway: `mcp-gateway`
 - CN for plugins: `mcp-plugin-{PluginName}`
@@ -257,11 +264,13 @@ cforge gateway deploy deploy.yaml --output-dir ./my-deployment
 ```
 
 **Deployment Process:**
+
 1. **Validate** configuration
 2. **Build** containers (unless `--skip-build`)
 3. **Generate certificates** (unless `--skip-certs` or already exist)
 4. **Generate manifests** (Kubernetes or Docker Compose)
 5. **Apply** to target environment:
+
    - **Kubernetes**: `kubectl apply -f`
    - **Docker Compose**: `docker-compose up -d`
 
@@ -313,6 +322,7 @@ cforge gateway verify deploy.yaml --timeout 600
 ```
 
 **Checks:**
+
 - Container/pod readiness
 - Health endpoint responses
 - Service connectivity
@@ -344,6 +354,7 @@ cforge gateway destroy deploy.yaml --force
 ```
 
 **What it removes:**
+
 - **Kubernetes**: Deletes all resources in namespace
 - **Docker Compose**: Stops and removes containers, networks, volumes
 
@@ -378,6 +389,7 @@ cforge gateway generate deploy.yaml --output ./manifests
 ```
 
 **Use cases:**
+
 - GitOps workflows (commit generated manifests)
 - Manual review before deployment
 - Integration with external deployment tools
@@ -481,6 +493,7 @@ deployment:
 ```
 
 When `create_routes: true`, the tool generates an OpenShift Route for the gateway:
+
 - **Host**: `mcpgateway-admin-{namespace}.{domain}`
 - **Path**: `/`
 - **TLS**: Edge termination (default)
@@ -727,12 +740,14 @@ certificates:
 [cert-manager](https://cert-manager.io) is a Kubernetes-native certificate management controller that automates certificate issuance and renewal.
 
 **Benefits:**
+
 - ✅ **Automatic Renewal**: Certificates renewed before expiry (default: at 2/3 of lifetime)
 - ✅ **Native Kubernetes**: Certificates defined as Kubernetes Custom Resources
 - ✅ **Simplified Operations**: No manual certificate generation or rotation
 - ✅ **GitOps Friendly**: Certificate definitions version-controlled
 
 **Prerequisites:**
+
 1. Install cert-manager in your cluster:
    ```bash
    kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
@@ -757,6 +772,7 @@ certificates:
 ```
 
 When `use_cert_manager: true`:
+
 - Local certificate generation is skipped
 - cert-manager Certificate CRDs are generated for gateway and plugins
 - cert-manager automatically creates Kubernetes TLS secrets
@@ -771,6 +787,7 @@ When `use_cert_manager: true`:
 PostgreSQL and Redis are **automatically deployed** with the MCP Gateway stack using hardcoded defaults:
 
 **PostgreSQL (always deployed):**
+
 - Image: `postgres:17`
 - Database: `mcp`
 - User: `postgres`
@@ -779,6 +796,7 @@ PostgreSQL and Redis are **automatically deployed** with the MCP Gateway stack u
 - Kubernetes: Uses 10Gi PVC
 
 **Redis (always deployed):**
+
 - Image: `redis:latest`
 - Port: `6379`
 
@@ -848,6 +866,7 @@ cforge gateway deploy examples/deployment-configs/deploy-compose.yaml
 ```
 
 **Access:**
+
 - Gateway: http://localhost:4444
 - Admin UI: http://localhost:4444/admin
 - Plugin (exposed): http://localhost:8000
@@ -900,6 +919,7 @@ cforge gateway deploy examples/deployment-configs/deploy-compose.mtls.yaml
 ```
 
 **How mTLS works:**
+
 1. `cforge gateway certs` generates CA + gateway client cert + plugin server certs
 2. Gateway connects to plugins using client certificate
 3. Plugins verify gateway's client certificate against CA
@@ -1116,6 +1136,7 @@ kubectl get secrets -n mcp-gateway-test | grep mcp-
 ```
 
 **How it works:**
+
 1. `cforge gateway deploy` skips local certificate generation
 2. Generates cert-manager Certificate CRDs for gateway and plugins
 3. Applies Certificate CRDs to Kubernetes
@@ -1124,6 +1145,7 @@ kubectl get secrets -n mcp-gateway-test | grep mcp-
 6. cert-manager auto-renews certificates before expiry
 
 **Certificate lifecycle:**
+
 - **Creation**: cert-manager generates certificates when CRDs are applied
 - **Renewal**: Automatic renewal at 2/3 of lifetime (550 days for 825-day cert)
 - **Deletion**: Certificates deleted when stack is destroyed, Issuer remains
@@ -1135,6 +1157,7 @@ kubectl get secrets -n mcp-gateway-test | grep mcp-
 ### Understanding mTLS in MCP Gateway
 
 **mTLS (Mutual TLS)** provides:
+
 - **Encryption**: All gateway ↔ plugin traffic is encrypted
 - **Authentication**: Both parties prove their identity
 - **Authorization**: Only trusted certificates can communicate
@@ -1454,6 +1477,7 @@ plugins:
 ```
 
 This allows you to:
+
 - Push gateway to one registry, plugins to another
 - Skip registry push for some components
 - Use different namespaces per component
@@ -1472,6 +1496,7 @@ registry:
 ```
 
 **Use cases:**
+
 - Test registry configuration before pushing
 - Generate manifests with registry paths for GitOps
 - Manual push workflow
@@ -1502,6 +1527,7 @@ podman login $(oc registry info) -u $(oc whoami) -p $(oc whoami -t)
 **Error:** Pods show `ImagePullBackOff` status
 
 **Possible causes:**
+
 1. Image doesn't exist in registry (push failed)
 2. Registry authentication not configured in Kubernetes
 3. Network connectivity issues
@@ -1544,6 +1570,7 @@ oc policy add-role-to-user system:image-puller \
 **Error:** `image push failed: blob upload exceeds max size`
 
 **Solution:** Some registries have size limits. Options:
+
 1. Use multi-stage builds to reduce image size
 2. Switch to a registry with larger limits
 3. Split into smaller images
@@ -1611,6 +1638,7 @@ url: registry:5000                               # Include port in URL, not name
 ### Best Practices
 
 ✅ **DO:**
+
 - Authenticate to registry before building
 - Use specific version tags in production (not `:latest`)
 - Test registry configuration with `push: false` first
@@ -1619,6 +1647,7 @@ url: registry:5000                               # Include port in URL, not name
 - Organize images by namespace/project
 
 ❌ **DON'T:**
+
 - Commit registry credentials to Git
 - Use `latest` tag in production
 - Mix local and registry images without testing
@@ -1628,6 +1657,7 @@ url: registry:5000                               # Include port in URL, not name
 ### Example Configurations
 
 Full examples available in:
+
 - `examples/deployment-configs/deploy-openshift-local.yaml` - Registry config commented
 - `examples/deployment-configs/deploy-openshift-local-registry.yaml` - Full registry setup
 
@@ -1641,6 +1671,7 @@ Full examples available in:
 Pure Python implementation using standard tools (`docker`, `kubectl`, `git`, etc.). This is the **default mode** to avoid automatic downloads.
 
 **When to use:**
+
 - ✅ Default choice (no surprises)
 - ✅ Environments without Dagger support
 - ✅ Air-gapped networks
@@ -1648,6 +1679,7 @@ Pure Python implementation using standard tools (`docker`, `kubectl`, `git`, etc
 - ✅ Debugging/troubleshooting
 
 **Requirements:**
+
 - Python 3.11+
 - Docker CLI
 - `kubectl` (for Kubernetes deployments)
@@ -1660,6 +1692,7 @@ cforge gateway deploy deploy.yaml
 ```
 
 **Characteristics:**
+
 - Sequential builds
 - Standard caching
 - No external dependencies beyond Docker/kubectl
@@ -1670,18 +1703,21 @@ cforge gateway deploy deploy.yaml
 
 **What is Dagger?**
 Dagger is a programmable CI/CD engine that runs pipelines in containers. It provides:
+
 - **Reproducible builds**: Same results everywhere
 - **Parallel execution**: Faster builds
 - **Intelligent caching**: Only rebuild what changed
 - **Cross-platform**: Works on any system with Docker
 
 **When to use:**
+
 - ✅ Local development (fastest builds)
 - ✅ CI/CD pipelines (GitHub Actions, GitLab CI, etc.)
 - ✅ Team environments (consistent results)
 - ✅ When you want optimized build performance
 
 **Requirements:**
+
 - Docker or compatible container runtime
 - `dagger-io` Python package (optional, installed separately)
 - **Note**: First use will auto-download the Dagger CLI (~100MB)
@@ -1696,6 +1732,7 @@ cforge gateway --dagger deploy deploy.yaml
 ```
 
 **Performance benefits:**
+
 - 2-3x faster builds with caching
 - Parallel plugin builds
 - Efficient layer reuse
@@ -1790,12 +1827,14 @@ deploy:
 ### Configuration Management
 
 ✅ **DO:**
+
 - Version control your `deploy.yaml`
 - Use Git tags/branches for plugin versions (`ref: v1.2.3`)
 - Separate configs for dev/staging/prod
 - Document custom `env_vars` in comments
 
 ❌ **DON'T:**
+
 - Hardcode secrets in YAML (use environment files)
 - Use `ref: main` in production (pin versions)
 - Commit generated certificates to Git
@@ -1820,12 +1859,14 @@ cforge gateway deploy deploy.yaml  # May use default/insecure values
 ### Certificate Management
 
 ✅ **DO:**
+
 - Let `cforge` auto-generate certificates
 - Rotate certificates before expiry
 - Use separate CAs for dev/staging/prod
 - Backup CA private key securely
 
 ❌ **DON'T:**
+
 - Share certificates between environments
 - Commit CA private key to Git
 - Use expired certificates
@@ -1880,6 +1921,7 @@ Error: Failed to clone repository
 ```
 
 **Solution:**
+
 - Check `repo` URL is correct
 - Verify Git credentials/SSH keys
 - Ensure network connectivity
@@ -1893,6 +1935,7 @@ Error: Build failed for plugin MyPlugin
 ```
 
 **Solution:**
+
 1. Check `context` and `containerfile` paths
 2. Verify Containerfile syntax
 3. Review plugin repository structure
@@ -1913,6 +1956,7 @@ Error: CrashLoopBackOff
 ```
 
 **Solution:**
+
 1. Check logs:
    ```bash
    # Kubernetes
@@ -1933,6 +1977,7 @@ Error: SSL certificate verification failed
 ```
 
 **Solution:**
+
 1. Regenerate certificates:
    ```bash
    rm -rf certs/
@@ -1957,6 +2002,7 @@ Error: Verification failed: timeout waiting for deployment
 ```
 
 **Solution:**
+
 1. Increase timeout:
    ```bash
    cforge gateway verify deploy.yaml --timeout 600
@@ -2063,6 +2109,7 @@ cforge gateway deploy deploy.yaml --output-dir ./my-deploy
 **Q: How do I access the gateway after deployment?**
 
 A:
+
 - **Docker Compose**: `http://localhost:<host_port>` (default: 4444)
 - **Kubernetes LoadBalancer**: Get external IP:
   ```bash
@@ -2077,9 +2124,9 @@ A:
 
 ## Additional Resources
 
-- **Main Documentation**: [ContextForge Documentation](/)
-- **Plugin Development**: [Plugin Framework Guide](/plugins/framework)
-- **mTLS Setup**: [mTLS Configuration Guide](/using/plugins/mtls)
+- **Main Documentation**: [ContextForge Documentation](../index.md)
+- **Plugin Development**: [Plugin Framework Guide](../using/plugins/index.md)
+- **mTLS Setup**: [mTLS Configuration Guide](../using/plugins/mtls.md)
 - **Example Configs**: [`examples/deployment-configs/`](https://github.com/terylt/mcp-context-forge/tree/main/examples/deployment-configs)
 - **Source Code**: [`mcpgateway/tools/builder/`](https://github.com/terylt/mcp-context-forge/tree/main/mcpgateway/tools/builder)
 

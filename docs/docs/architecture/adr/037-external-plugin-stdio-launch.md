@@ -26,6 +26,7 @@ The gateway resolves STDIO launch as follows:
 
 - If `cmd` is provided, use it as the command + args.
 - Otherwise, use `script`:
+
   - `.py` runs via `python`.
   - `.sh` runs via `sh`.
   - Executables run directly.
@@ -41,10 +42,13 @@ This keeps STDIO isolation easy while preserving existing behavior for HTTP-base
 ## Consequences
 
 - **Pros:**
+
   - Run any MCP server (any language) with STDIO, no wrapper scripts required.
   - Per-plugin env and working directory are supported.
   - Backward compatible with existing `script` usage.
+
 - **Cons:**
+
   - Larger configuration surface area.
   - More responsibility on operators to manage environment/cwd security and correctness.
 

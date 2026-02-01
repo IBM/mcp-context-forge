@@ -18,9 +18,11 @@ We will introduce an **experimental Rust-based backend** for the **Streamable HT
 
 - The existing Transport API and external behavior must remain unchanged.
 - Protocol semantics must be preserved, including:
+
   - Streamable HTTP behavior
   - SSE keepalive and `session_id`
   - stdio newline-delimited JSON-RPC framing
+
 - Tokio will be used as the async runtime.
 - The Rust backend will be exposed to Python via PyO3/FFI, while retaining the existing Python implementation as a fallback.
 - Performance will be benchmarked against the current Python implementation using `make load-test-ui` (Locust).

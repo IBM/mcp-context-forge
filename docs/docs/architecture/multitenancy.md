@@ -193,11 +193,13 @@ Discoverable; membership by invite/request"]
 **Note**: These are team membership levels, separate from RBAC roles. A user can have both a membership level and RBAC role assignments within the same team.
 
 - **Owner** (Team Membership Level):
+
   - Manage team settings (name, description, visibility) and lifecycle (cannot delete personal teams).
   - Manage membership (invite, accept, change roles, remove members).
   - Full control over team resources (create/update/delete), subject to platform policies.
 
 - **Member** (Team Membership Level):
+
   - Access and use team resources; can create resources by default unless policies restrict it.
   - Cannot manage team membership or team‑level settings.
 
@@ -257,11 +259,13 @@ This section clarifies what Private and Public mean for teams, and what Private/
 ### Team Visibility (Design)
 
 - Private:
+
   - Discoverability: Not listed to non‑members; only visible to members/owner.
   - Membership: By invitation from a team owner (request‑to‑join is not exposed to non‑members).
   - API/UI: Team shows up only in the current user's teams list; direct deep links require membership.
 
 - Public:
+
   - Discoverability: Listed in public team discovery views for all authenticated users.
   - Membership: Still requires an invitation or explicit approval of a join request.
   - API/UI: Limited metadata may be visible without membership; all management and resource operations still require membership.
@@ -273,15 +277,18 @@ Note: Platform Admin is a global role and is not a team role. Admins can view/ma
 Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are owned by a team (team_id) and created by a user (owner_email).
 
 - Private:
+
   - Who sees it: Only the resource owner (owner_email).
   - Team members cannot see or use it unless they are the owner.
   - Mutations: Owner and Platform Admin can update/delete; team owners may be allowed by policy (see Enhancements).
 
 - Team:
+
   - Who sees it: All members of the owning team (owners and members).
   - Mutations: Owner can update/delete; team owners can administratively manage; Platform Admin can override.
 
 - Public:
+
   - Who sees it: All authenticated users across the platform (cross‑team visibility).
   - Mutations: Only the resource owner, team owners, or Platform Admins can modify/delete.
 
@@ -436,6 +443,7 @@ The following roles are created automatically when the system starts:
 
 #### 2. Team Admin (Team Scope)
 - **Permissions**:
+
   - `teams.read` - View team information
   - `teams.update` - Modify team settings
   - `teams.manage_members` - Add/remove team members
@@ -443,25 +451,30 @@ The following roles are created automatically when the system starts:
   - `tools.execute` - Execute tools
   - `resources.read` - View resources
   - `prompts.read` - View prompts
+
 - **Scope**: Team
 - **Description**: Team administrator with team management permissions
 - **Use Case**: Team leaders who manage team membership and resources
 
 #### 3. Developer (Team Scope)
 - **Permissions**:
+
   - `tools.read` - View tools
   - `tools.execute` - Execute tools
   - `resources.read` - View resources
   - `prompts.read` - View prompts
+
 - **Scope**: Team
 - **Description**: Developer with tool and resource access
 - **Use Case**: Team members who need to use tools and access resources
 
 #### 4. Viewer (Team Scope)
 - **Permissions**:
+
   - `tools.read` - View tools
   - `resources.read` - View resources
   - `prompts.read` - View prompts
+
 - **Scope**: Team
 - **Description**: Read-only access to resources
 - **Use Case**: Team members who only need to view resources without executing them
@@ -707,6 +720,7 @@ The user interface adapts based on the user's assigned roles:
 - Default on create: New resources (including MCP Servers, Tools, Resources, Prompts, and A2A Agents) default to `visibility="private"` unless a different value is explicitly provided by an allowed actor. For servers created via the UI, the visibility is enforced to `private` by default.
 - Team assignment: When a user creates a server and does not specify `team_id`, the server is automatically assigned to the user's personal team.
 - Sharing workflow:
+
   - Private → Team: Make the resource visible to the owning team by setting `visibility="team"`.
   - Private/Team → Public: Make the resource visible to all authenticated users by setting `visibility="public"`.
   - Cross-team: To have a resource under a different team, create it in that team or move/clone it per policy; cross-team "share" is by visibility, not multi-team ownership.
@@ -1182,23 +1196,29 @@ flowchart TD
 ## Enhancements & Roadmap (Part of the Design)
 
 - Public Team Discovery & Join Requests:
+
   - Add endpoints and UI to request membership on public teams; owner approval workflow; optional auto‑approve policy.
   - Admin toggles/policies to restrict who can create public teams and who can approve joins.
 
 - Unified Operation Audit:
+
   - System‑wide audit log for create/update/delete across teams, tools, servers, resources, prompts, agents with export/reporting.
 
 - Role Automation:
+
   - Auto‑assign default RBAC roles on resource creation (e.g., owner gets manager role in team scope; members get viewer).
   - Optional per‑team policies defining who may create public resources.
 
 - ABAC for Virtual Servers:
+
   - Attribute‑based conditions layered on top of RBAC (tenant tags, data classifications, environment, time windows, client IP).
 
 - Team/Resource Quotas and Policies:
+
   - Per‑team limits (tools/servers/resources/agents); per‑team defaults for resource visibility and creation rights.
 
 - Public Resource Access Controls:
+
   - Fine‑grained cross‑tenant rate limits and opt‑in masking for metadata shown to non‑members.
 
 This architecture provides a robust, secure, and scalable multi-tenant system that supports complex organizational structures while maintaining strict data isolation and flexible resource sharing capabilities.
