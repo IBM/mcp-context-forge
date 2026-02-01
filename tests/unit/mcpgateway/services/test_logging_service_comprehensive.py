@@ -122,6 +122,12 @@ async def test_initialize_with_file_logging_enabled():
             mock_settings.log_level = "INFO"
             mock_settings.log_buffer_size_mb = 1.0
 
+            # Reset cached file handler so rotation settings apply for this test
+            # First-Party
+            import mcpgateway.services.logging_service as ls
+
+            ls._file_handler = None
+
             service = LoggingService()
             await service.initialize()
 
