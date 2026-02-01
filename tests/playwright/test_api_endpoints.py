@@ -53,7 +53,9 @@ class TestAPIEndpoints:
 
     def test_api_docs_accessible(self, admin_page: Page, base_url: str):
         """Test that API documentation is accessible."""
+        # Standard
         import re
+
         # Test Swagger UI
         admin_page.goto(f"{base_url}/docs")
         expect(admin_page).to_have_title(re.compile(r"MCP[ _]Gateway - Swagger UI"))
