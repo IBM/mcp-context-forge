@@ -109,6 +109,69 @@ def test_llmprovider_factory_creates_correct_class(monkeypatch):
         mock_cls.assert_called_once()
 
 
+def test_provider_get_llm_chat_and_completion(monkeypatch):
+    class DummyLLM:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    # Azure OpenAI
+    monkeypatch.setattr(svc, "AzureChatOpenAI", DummyLLM)
+    monkeypatch.setattr(svc, "AzureOpenAI", DummyLLM)
+    az_conf = svc.AzureOpenAIConfig(api_key="k", azure_endpoint="https://end", azure_deployment="dep")
+    az_provider = svc.AzureOpenAIProvider(az_conf)
+    assert isinstance(az_provider.get_llm("chat"), DummyLLM)
+    az_provider = svc.AzureOpenAIProvider(az_conf)
+    assert isinstance(az_provider.get_llm("completion"), DummyLLM)
+
+    # OpenAI
+    monkeypatch.setattr(svc, "ChatOpenAI", DummyLLM)
+    monkeypatch.setattr(svc, "OpenAI", DummyLLM)
+    open_conf = svc.OpenAIConfig(api_key="sk-1", model="gpt-4")
+    open_provider = svc.OpenAIProvider(open_conf)
+    assert isinstance(open_provider.get_llm("chat"), DummyLLM)
+    open_provider = svc.OpenAIProvider(open_conf)
+    assert isinstance(open_provider.get_llm("completion"), DummyLLM)
+
+    # Ollama
+    monkeypatch.setattr(svc, "ChatOllama", DummyLLM)
+    monkeypatch.setattr(svc, "OllamaLLM", DummyLLM)
+    ollama_conf = svc.OllamaConfig(base_url="http://localhost:11434", model="llama2")
+    ollama_provider = svc.OllamaProvider(ollama_conf)
+    assert isinstance(ollama_provider.get_llm("chat"), DummyLLM)
+    ollama_provider = svc.OllamaProvider(ollama_conf)
+    assert isinstance(ollama_provider.get_llm("completion"), DummyLLM)
+
+    # Anthropic
+    monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatAnthropic", DummyLLM)
+    monkeypatch.setattr(svc, "AnthropicLLM", DummyLLM)
+    ant_conf = svc.AnthropicConfig(api_key="ant-1")
+    ant_provider = svc.AnthropicProvider(ant_conf)
+    assert isinstance(ant_provider.get_llm("chat"), DummyLLM)
+    ant_provider = svc.AnthropicProvider(ant_conf)
+    assert isinstance(ant_provider.get_llm("completion"), DummyLLM)
+
+    # AWS Bedrock
+    monkeypatch.setattr(svc, "_BEDROCK_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatBedrock", DummyLLM)
+    monkeypatch.setattr(svc, "BedrockLLM", DummyLLM)
+    bed_conf = svc.AWSBedrockConfig(model_id="anthropic.claude-v2", region_name="us-east-1")
+    bed_provider = svc.AWSBedrockProvider(bed_conf)
+    assert isinstance(bed_provider.get_llm("chat"), DummyLLM)
+    bed_provider = svc.AWSBedrockProvider(bed_conf)
+    assert isinstance(bed_provider.get_llm("completion"), DummyLLM)
+
+    # Watsonx
+    monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
+    monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
+    wat_conf = svc.WatsonxConfig(api_key="key", url="https://host", project_id="proj")
+    wat_provider = svc.WatsonxProvider(wat_conf)
+    assert isinstance(wat_provider.get_llm("chat"), DummyLLM)
+    wat_provider = svc.WatsonxProvider(wat_conf)
+    assert isinstance(wat_provider.get_llm("completion"), DummyLLM)
+
+
 # --------------------------------------------------------------------------- #
 # CHAT HISTORY MANAGER
 # --------------------------------------------------------------------------- #

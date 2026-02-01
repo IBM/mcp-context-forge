@@ -372,3 +372,270 @@ class TestObservability:
             # key2 should not be set
             for call in span.set_attribute.call_args_list:
                 assert call[0][0] != "key2" or call[0][0] == "error"
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_otlp_http_fallback(self):
+        """Test OTLP HTTP exporter fallback when gRPC exporter is unavailable."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http"
+
+        provider_instance = MagicMock()
+        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER", None):
+            with patch("mcpgateway.observability.HTTP_EXPORTER") as mock_http_exporter:
+                with patch("mcpgateway.observability.TracerProvider", return_value=provider_instance):
+                    with patch("mcpgateway.observability.BatchSpanProcessor"):
+                        with patch("mcpgateway.observability.trace") as mock_trace:
+                            mock_trace.get_tracer.return_value = MagicMock()
+                            init_telemetry()
+
+        call_kwargs = mock_http_exporter.call_args[1]
+        assert call_kwargs["endpoint"] == "http://localhost:4318/v1/traces"
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_otlp_no_exporter(self):
+        """Test OTLP init returns None when no exporter is available."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "otlp"
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
+
+        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER", None):
+            with patch("mcpgateway.observability.HTTP_EXPORTER", None):
+                with patch("mcpgateway.observability.logger") as mock_logger:
+                    result = init_telemetry()
+                    mock_logger.error.assert_called()
+                    assert result is None
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_jaeger_success(self):
+        """Test Jaeger exporter initialization path."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "jaeger"
+        os.environ["OTEL_EXPORTER_JAEGER_ENDPOINT"] = "http://jaeger:14268/api/traces"
+        os.environ["OTEL_EXPORTER_JAEGER_USER"] = "jaeger-user"
+        os.environ["OTEL_EXPORTER_JAEGER_PASSWORD"] = "jaeger-pass"
+
+        provider_instance = MagicMock()
+        with patch("mcpgateway.observability.JAEGER_EXPORTER") as mock_exporter:
+            with patch("mcpgateway.observability.TracerProvider", return_value=provider_instance):
+                with patch("mcpgateway.observability.BatchSpanProcessor"):
+                    init_telemetry()
+
+        mock_exporter.assert_called_once_with(
+            collector_endpoint="http://jaeger:14268/api/traces",
+            username="jaeger-user",
+            password="jaeger-pass",
+        )
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_zipkin_success(self):
+        """Test Zipkin exporter initialization path."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "zipkin"
+        os.environ["OTEL_EXPORTER_ZIPKIN_ENDPOINT"] = "http://zipkin:9411/api/v2/spans"
+
+        provider_instance = MagicMock()
+        with patch("mcpgateway.observability.ZIPKIN_EXPORTER") as mock_exporter:
+            with patch("mcpgateway.observability.TracerProvider", return_value=provider_instance):
+                with patch("mcpgateway.observability.BatchSpanProcessor"):
+                    init_telemetry()
+
+        mock_exporter.assert_called_once_with(endpoint="http://zipkin:9411/api/v2/spans")
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_resource_none_uses_default_provider(self):
+        """Test default TracerProvider path when Resource.create is unavailable."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+
+        provider_instance = MagicMock()
+        with patch("mcpgateway.observability.Resource", object()):
+            with patch("mcpgateway.observability.TracerProvider", return_value=provider_instance) as mock_provider:
+                with patch("mcpgateway.observability.ConsoleSpanExporter"):
+                    with patch("mcpgateway.observability.SimpleSpanProcessor"):
+                        init_telemetry()
+
+        mock_provider.assert_called_once_with()
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    def test_init_telemetry_sets_tracer_provider_and_noop_tracer(self):
+        """Test set_tracer_provider call and NoopTracer when get_tracer is missing."""
+        # Standard
+        from types import SimpleNamespace
+
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+
+        trace_stub = SimpleNamespace(set_tracer_provider=MagicMock())
+        provider_instance = MagicMock()
+        with patch("mcpgateway.observability.trace", trace_stub):
+            with patch("mcpgateway.observability.TracerProvider", return_value=provider_instance):
+                with patch("mcpgateway.observability.ConsoleSpanExporter"):
+                    with patch("mcpgateway.observability.SimpleSpanProcessor"):
+                        tracer = init_telemetry()
+
+        trace_stub.set_tracer_provider.assert_called_once_with(provider_instance)
+        with tracer.start_as_current_span("noop-span") as span:
+            assert span is None
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_resource_attribute_span_processor_copies_attrs(self, mock_processor, mock_provider, mock_exporter):
+        """Test ResourceAttributeSpanProcessor copies configured attributes."""
+        # Standard
+        from types import SimpleNamespace
+
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_COPY_RESOURCE_ATTRS_TO_SPANS"] = "true"
+
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+        init_telemetry()
+
+        processor = provider_instance.add_span_processor.call_args_list[0][0][0]
+        span = MagicMock()
+        span.resource = SimpleNamespace(attributes={"arize.project.name": "proj", "model_id": "model-1"})
+        processor.on_start(span)
+
+        span.set_attribute.assert_any_call("arize.project.name", "proj")
+        span.set_attribute.assert_any_call("model_id", "model-1")
+
+        span_no_resource = MagicMock()
+        span_no_resource.resource = None
+        processor.on_start(span_no_resource)
+
+    @patch("mcpgateway.observability.get_correlation_id", return_value="corr-123")
+    def test_create_span_injects_correlation_id(self, mock_get_correlation_id):
+        """Test correlation_id injection when missing from attributes."""
+        # First-Party
+        import mcpgateway.observability
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+
+        mock_tracer = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_context
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = mock_tracer
+
+        with create_span("test.operation") as span:
+            assert span is not None
+
+        span.set_attribute.assert_any_call("correlation_id", "corr-123")
+        span.set_attribute.assert_any_call("request_id", "corr-123")
+
+    def test_create_span_correlation_id_error_logs(self):
+        """Test correlation ID failures are logged and ignored."""
+        # First-Party
+        import mcpgateway.observability
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+
+        mock_tracer = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_context
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = mock_tracer
+
+        with patch("mcpgateway.observability.get_correlation_id", side_effect=RuntimeError("boom")):
+            with patch("mcpgateway.observability.logger") as mock_logger:
+                with create_span("test.operation", {"key": "value"}):
+                    pass
+
+        mock_logger.debug.assert_called()
+
+    def test_create_span_returns_span_context_when_no_attributes(self):
+        """Test create_span returns the raw span context when no attributes exist."""
+        # First-Party
+        import mcpgateway.observability
+
+        mock_context = MagicMock()
+        mock_tracer = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_context
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = mock_tracer
+
+        with patch("mcpgateway.observability.get_correlation_id", return_value=None):
+            context = create_span("test.operation")
+
+        assert context is mock_context
+
+    def test_span_with_attributes_records_exception_and_status(self):
+        """Test SpanWithAttributes records errors and sets status."""
+        # First-Party
+        import mcpgateway.observability
+
+        class DummyStatusCode:
+            OK = "ok"
+            ERROR = "error"
+
+        class DummyStatus:
+            def __init__(self, code, description=None):
+                self.code = code
+                self.description = description
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+
+        mock_tracer = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_context
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = mock_tracer
+
+        with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
+            with patch("mcpgateway.observability.Status", DummyStatus):
+                with patch("mcpgateway.observability.StatusCode", DummyStatusCode):
+                    with pytest.raises(ValueError):
+                        with create_span("test.operation", {"key": "value"}):
+                            raise ValueError("boom")
+
+        mock_span.record_exception.assert_called()
+        mock_span.set_attribute.assert_any_call("error", True)
+        mock_span.set_attribute.assert_any_call("error.type", "ValueError")
+        mock_span.set_attribute.assert_any_call("error.message", "boom")
+        status_arg = mock_span.set_status.call_args[0][0]
+        assert isinstance(status_arg, DummyStatus)
+        assert status_arg.code == DummyStatusCode.ERROR
+
+    def test_span_with_attributes_sets_ok_status(self):
+        """Test SpanWithAttributes sets OK status on success."""
+        # First-Party
+        import mcpgateway.observability
+
+        class DummyStatusCode:
+            OK = "ok"
+
+        class DummyStatus:
+            def __init__(self, code, description=None):
+                self.code = code
+                self.description = description
+
+        mock_span = MagicMock()
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_span)
+        mock_context.__exit__ = MagicMock(return_value=None)
+
+        mock_tracer = MagicMock()
+        mock_tracer.start_as_current_span.return_value = mock_context
+        # pylint: disable=protected-access
+        mcpgateway.observability._TRACER = mock_tracer
+
+        with patch("mcpgateway.observability.OTEL_AVAILABLE", True):
+            with patch("mcpgateway.observability.Status", DummyStatus):
+                with patch("mcpgateway.observability.StatusCode", DummyStatusCode):
+                    with create_span("test.operation", {"key": "value"}):
+                        pass
+
+        status_arg = mock_span.set_status.call_args[0][0]
+        assert isinstance(status_arg, DummyStatus)
+        assert status_arg.code == DummyStatusCode.OK

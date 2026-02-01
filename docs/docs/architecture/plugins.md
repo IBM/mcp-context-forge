@@ -383,7 +383,7 @@ documentation:
 testing:
   unit_tests: "tests/unit/"
   integration_tests: "tests/integration/"
-  coverage_threshold: 90
+  coverage_threshold: 80
 
 # Compatibility and versioning
 compatibility:

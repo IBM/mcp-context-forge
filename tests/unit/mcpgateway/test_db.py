@@ -8,7 +8,7 @@ Authors: Mihai Criveti
 # Standard
 from datetime import datetime, timedelta, timezone
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
@@ -133,6 +133,48 @@ def test_tool_metrics_summary_detached():
     assert summary["failure_rate"] == 0.0
 
 
+def test_build_engine_mysql_branch(monkeypatch):
+    monkeypatch.setattr(db, "backend", "mysql")
+    monkeypatch.setattr(db.settings, "database_url", "mysql://user:pass@localhost/db")
+    monkeypatch.setattr(db.settings, "db_pool_size", 5)
+    monkeypatch.setattr(db.settings, "db_max_overflow", 10)
+    monkeypatch.setattr(db.settings, "db_pool_timeout", 30)
+    monkeypatch.setattr(db.settings, "db_pool_recycle", 300)
+    monkeypatch.setattr(db, "connect_args", {"arg": "val"})
+
+    with patch("mcpgateway.db.create_engine") as mock_create:
+        db.build_engine()
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["pool_pre_ping"] is True
+        assert kwargs["pool_size"] == 5
+        assert kwargs["max_overflow"] == 10
+
+
+def test_build_engine_null_pool_branch(monkeypatch):
+    monkeypatch.setattr(db, "backend", "postgresql")
+    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@localhost/db")
+    monkeypatch.setattr(db.settings, "db_pool_class", "null")
+    monkeypatch.setattr(db, "connect_args", {})
+
+    with patch("mcpgateway.db.create_engine") as mock_create:
+        db.build_engine()
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["poolclass"] == db.NullPool
+
+
+def test_build_engine_auto_pgbouncer_branch(monkeypatch):
+    monkeypatch.setattr(db, "backend", "postgresql")
+    monkeypatch.setattr(db.settings, "database_url", "postgresql://user:pass@pgbouncer.example/db")
+    monkeypatch.setattr(db.settings, "db_pool_class", "auto")
+    monkeypatch.setattr(db.settings, "db_pool_pre_ping", "auto")
+    monkeypatch.setattr(db, "connect_args", {})
+
+    with patch("mcpgateway.db.create_engine") as mock_create:
+        db.build_engine()
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["poolclass"] == db.NullPool
+
+
 def test_tool_get_metric_counts_sql_path(monkeypatch):
     """Test _get_metric_counts uses SQL aggregation when metrics not loaded but session exists."""
     tool = db.Tool()
@@ -217,6 +259,25 @@ def test_resource_metrics_properties():
     assert resource.max_response_time == 2.0
     assert resource.avg_response_time == 1.5
     assert resource.last_execution_time == now + timedelta(seconds=1)
+
+
+def test_resource_metrics_summary_loaded():
+    """Test metrics_summary uses loaded metrics path."""
+    now = datetime.now(timezone.utc)
+    metrics = [
+        db.ResourceMetric(response_time=1.0, is_success=True, timestamp=now),
+        db.ResourceMetric(response_time=3.0, is_success=False, timestamp=now + timedelta(seconds=1)),
+    ]
+    resource = make_resource_with_metrics(metrics)
+    summary = resource.metrics_summary
+    assert summary["total_executions"] == 2
+    assert summary["successful_executions"] == 1
+    assert summary["failed_executions"] == 1
+    assert summary["failure_rate"] == 0.5
+    assert summary["min_response_time"] == 1.0
+    assert summary["max_response_time"] == 3.0
+    assert summary["avg_response_time"] == 2.0
+    assert summary["last_execution_time"] == now + timedelta(seconds=1)
 
 
 def test_resource_metrics_properties_empty():
@@ -312,6 +373,25 @@ def test_prompt_metrics_properties():
     assert prompt.last_execution_time == now + timedelta(seconds=1)
 
 
+def test_prompt_metrics_summary_loaded():
+    """Test metrics_summary uses loaded metrics path."""
+    now = datetime.now(timezone.utc)
+    metrics = [
+        db.PromptMetric(response_time=2.0, is_success=True, timestamp=now),
+        db.PromptMetric(response_time=4.0, is_success=False, timestamp=now + timedelta(seconds=1)),
+    ]
+    prompt = make_prompt_with_metrics(metrics)
+    summary = prompt.metrics_summary
+    assert summary["total_executions"] == 2
+    assert summary["successful_executions"] == 1
+    assert summary["failed_executions"] == 1
+    assert summary["failure_rate"] == 0.5
+    assert summary["min_response_time"] == 2.0
+    assert summary["max_response_time"] == 4.0
+    assert summary["avg_response_time"] == 3.0
+    assert summary["last_execution_time"] == now + timedelta(seconds=1)
+
+
 def test_prompt_metrics_properties_empty():
     prompt = db.Prompt()
     prompt.metrics = []
@@ -403,6 +483,25 @@ def test_server_metrics_properties():
     assert server.max_response_time == 2.0
     assert server.avg_response_time == 1.5
     assert server.last_execution_time == now + timedelta(seconds=1)
+
+
+def test_server_metrics_summary_loaded():
+    """Test metrics_summary uses loaded metrics path."""
+    now = datetime.now(timezone.utc)
+    metrics = [
+        db.ServerMetric(response_time=1.0, is_success=True, timestamp=now),
+        db.ServerMetric(response_time=5.0, is_success=False, timestamp=now + timedelta(seconds=1)),
+    ]
+    server = make_server_with_metrics(metrics)
+    summary = server.metrics_summary
+    assert summary["total_executions"] == 2
+    assert summary["successful_executions"] == 1
+    assert summary["failed_executions"] == 1
+    assert summary["failure_rate"] == 0.5
+    assert summary["min_response_time"] == 1.0
+    assert summary["max_response_time"] == 5.0
+    assert summary["avg_response_time"] == 3.0
+    assert summary["last_execution_time"] == now + timedelta(seconds=1)
 
 
 def test_server_metrics_properties_empty():
@@ -1099,3 +1198,46 @@ def test_sso_auth_session_is_expired_handles_naive_datetime():
     session = db.SSOAuthSession(provider_id="github", state="state", redirect_uri="http://example.com")
     session.expires_at = datetime.now() - timedelta(minutes=1)
     assert session.is_expired is True
+
+
+def test_email_team_join_request_is_expired_timezone_mismatch():
+    """Ensure timezone mismatch is handled in join request expiration."""
+    expires_at = datetime.now() - timedelta(minutes=1)  # naive datetime
+    join_request = db.EmailTeamJoinRequest(team_id="team-1", user_email="user@example.com", expires_at=expires_at)
+    assert join_request.is_expired() is True
+
+
+def test_pending_user_approval_is_expired_timezone_mismatch():
+    """Ensure timezone mismatch is handled in pending approval expiration."""
+    expires_at = datetime.now() - timedelta(minutes=1)  # naive datetime
+    approval = db.PendingUserApproval(email="user@example.com", full_name="User", auth_provider="github", expires_at=expires_at, status="pending")
+    assert approval.is_expired() is True
+
+
+def test_set_custom_name_and_slug_gateway_lookup():
+    """Ensure tool name/slug is built using gateway lookup when needed."""
+    tool = db.Tool(original_name="My Tool", gateway_id="gw-1")
+    connection = MagicMock()
+    connection.execute.return_value.fetchone.return_value = ("Gateway Name",)
+
+    db.set_custom_name_and_slug(None, connection, tool)
+
+    assert tool.custom_name == "My Tool"
+    assert tool.display_name == "My Tool"
+    assert tool.custom_name_slug == db.slugify("My Tool")
+    assert tool.name.startswith(db.slugify("Gateway Name"))
+
+
+def test_set_prompt_name_and_slug_gateway_lookup():
+    """Ensure prompt name/slug is built using gateway lookup when needed."""
+    prompt = db.Prompt(name="Prompt Name", gateway_id="gw-2")
+    connection = MagicMock()
+    connection.execute.return_value.fetchone.return_value = ("Gateway Prompt",)
+
+    db.set_prompt_name_and_slug(None, connection, prompt)
+
+    assert prompt.original_name == "Prompt Name"
+    assert prompt.custom_name == "Prompt Name"
+    assert prompt.display_name == "Prompt Name"
+    assert prompt.custom_name_slug == db.slugify("Prompt Name")
+    assert prompt.name.startswith(db.slugify("Gateway Prompt"))
