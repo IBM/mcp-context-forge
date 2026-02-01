@@ -150,25 +150,25 @@ class TestHTMXInteractions:
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
 
-    def test_tool_modal_interactions(self, page: Page):
+    def test_tool_modal_interactions(self, admin_page: Page):
         """Test tool detail and edit modal functionality."""
         # Navigate to tools tab
-        page.click("#tab-tools")
-        self._prepare_tools_table(page)
+        admin_page.click("#tab-tools")
+        self._prepare_tools_table(admin_page)
 
         # Click on a tool's view button (if any tools exist)
-        tool_rows = page.locator("#tools-table-body tr")
+        tool_rows = admin_page.locator("#tools-table-body tr")
         if tool_rows.count() > 0:
             # Click the first tool's View button
             tool_rows.first.locator('button:has-text("View")').click()
 
             # Verify the modal opens
-            expect(page.locator("#tool-modal")).to_be_visible()
-            expect(page.locator("#tool-details")).to_be_visible()
+            expect(admin_page.locator("#tool-modal")).to_be_visible()
+            expect(admin_page.locator("#tool-details")).to_be_visible()
 
             # Close the modal
-            page.click('#tool-modal button:has-text("Close")')
-            expect(page.locator("#tool-modal")).to_be_hidden()
+            admin_page.click('#tool-modal button:has-text("Close")')
+            expect(admin_page.locator("#tool-modal")).to_be_hidden()
 
     def test_tool_edit_modal(self, page: Page):
         """Test editing a tool via modal."""
