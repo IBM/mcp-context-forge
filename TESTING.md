@@ -104,15 +104,26 @@ Browser-based Admin UI testing with Playwright.
 # Install Playwright browsers
 make playwright-install
 
+# Start the testing stack (docker-compose.yml + nginx on :8080)
+make testing-up
+
 # Run UI tests
 make test-ui              # With browser UI
 make test-ui-headless     # Headless mode
 make test-ui-debug        # Debug mode with inspector
 make test-ui-parallel     # Parallel execution
+make test-ui-screenshots  # Always-on screenshots (headless)
+make test-ui-record       # Videos + screenshots (headless)
 
 # Generate test report
 make test-ui-report
+
+# Override endpoint if needed
+TEST_BASE_URL=http://localhost:8000 make test-ui
 ```
+
+Playwright artifacts (screenshots/videos/traces) are written to `test-results/` and are gitignored.
+Recording quality knobs: `PLAYWRIGHT_VIDEO_SIZE=1920x1080` (default), `PLAYWRIGHT_VIEWPORT_SIZE=1920x1080` (default), `PLAYWRIGHT_SLOWMO=750` (default).
 
 ### 6. Async Tests (`tests/async/`)
 Asynchronous operation and WebSocket testing.
