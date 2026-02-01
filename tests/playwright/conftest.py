@@ -14,7 +14,7 @@ import re
 from typing import Dict, Generator, Optional
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, BrowserContext, Page, Playwright, expect
+from playwright.sync_api import APIRequestContext, BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError, expect
 import pytest
 
 # First-Party
@@ -70,7 +70,10 @@ VIEWPORT_SIZE = _parse_video_size(PLAYWRIGHT_VIEWPORT_SIZE)
 
 def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -> None:
     """Wait for admin-related navigation after login actions."""
-    page.wait_for_load_state("domcontentloaded")
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=5000)
+    except PlaywrightTimeoutError:
+        page.wait_for_timeout(500)
     if previous_url and page.url == previous_url:
         page.wait_for_timeout(500)
 

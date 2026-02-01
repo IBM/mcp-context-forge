@@ -33,6 +33,33 @@ class TestHTMXInteractions:
         page.wait_for_selector("#tools-panel:not(.hidden)")
         page.wait_for_selector("#tools-table-body")
 
+    TAB_PANEL_CHECKS = [
+        ("overview", "overview-panel", None),
+        ("logs", "logs-panel", "#log-level-filter"),
+        ("export-import", "export-import-panel", "#export-tools"),
+        ("version-info", "version-info-panel", None),
+        ("maintenance", "maintenance-panel", None),
+        ("plugins", "plugins-panel", None),
+        ("performance", "performance-panel", None),
+        ("observability", "observability-panel", None),
+        ("llm-chat", "llm-chat-panel", "#llm-connect-btn"),
+        ("llm-settings", "llm-settings-panel", "#llm-settings-tab-providers"),
+        ("mcp-registry", "mcp-registry-panel", "#mcp-registry-servers"),
+        ("catalog", "catalog-panel", '[data-testid="server-list"]'),
+        ("tools", "tools-panel", "#add-tool-form"),
+        ("tool-ops", "tool-ops-panel", "#searchBox"),
+        ("resources", "resources-panel", "#resources-search-input"),
+        ("prompts", "prompts-panel", "#add-prompt-form"),
+        ("gateways", "gateways-panel", "#gateways-search-input"),
+        ("teams", "teams-panel", "#create-team-btn"),
+        ("users", "users-panel", "#create-user-form"),
+        ("tokens", "tokens-panel", "#create-token-form"),
+        ("a2a-agents", "a2a-agents-panel", "#a2a-agents-search-input"),
+        ("grpc-services", "grpc-services-panel", "#add-grpc-service-form"),
+        ("roots", "roots-panel", "table"),
+        ("metrics", "metrics-panel", "#top-performers-panel-tools"),
+    ]
+
     @staticmethod
     def _find_tool(page: Page, tool_name: str, retries: int = 5):
         """Find a tool by name via the admin JSON endpoint."""
@@ -409,19 +436,11 @@ class TestHTMXInteractions:
         expect(page.locator("#version-info-panel")).to_be_visible()
 
     @pytest.mark.parametrize(
-        "tab_name,panel_id",
-        [
-            ("catalog", "catalog-panel"),
-            ("tools", "tools-panel"),
-            ("resources", "resources-panel"),
-            ("prompts", "prompts-panel"),
-            ("gateways", "gateways-panel"),
-            ("roots", "roots-panel"),
-            ("metrics", "metrics-panel"),
-        ],
+        "tab_name,panel_id,selector",
+        TAB_PANEL_CHECKS,
     )
-    def test_all_tabs_navigation(self, page: Page, tab_name: str, panel_id: str):
-        """Test navigation to all available tabs."""
+    def test_all_tabs_navigation(self, page: Page, tab_name: str, panel_id: str, selector: str | None):
+        """Test navigation to all available tabs and key controls."""
         tab_selector = f"#tab-{tab_name}"
         panel_selector = f"#{panel_id}"
         if page.locator(tab_selector).count() == 0:
@@ -436,3 +455,7 @@ class TestHTMXInteractions:
         # Verify panel is visible and others are hidden
         expect(page.locator(panel_selector)).to_be_visible()
         expect(page.locator(panel_selector)).not_to_have_class(re.compile(r"hidden"))
+
+        if selector:
+            target = page.locator(panel_selector).locator(selector)
+            expect(target.first).to_be_visible()
