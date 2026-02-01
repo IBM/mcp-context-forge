@@ -10,8 +10,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=2.14.4",
-    "mcp>=1.25.0",
-    "numpy>=2.4.1",
+    "mcp>=1.26.0",
+    "numpy>=2.4.2",
     "opencv-python-headless>=4.13.0.90",
     "pydantic>=2.12.5",
     "pyyaml>=6.0.3",

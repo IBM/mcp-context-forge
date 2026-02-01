@@ -59,8 +59,7 @@ build-backend = "hatchling.build"
 packages = ["src/url_to_markdown_server"]
 
 [project.scripts]
-url-to-markdown-server = "url_to_markdown_server.server:main"
-url-to-markdown-server-fastmcp = "url_to_markdown_server.server_fastmcp:main"
+url-to-markdown-server = "url_to_markdown_server.server_fastmcp:main"
 
 [tool.black]
 line-length = 100
