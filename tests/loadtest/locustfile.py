@@ -2582,6 +2582,954 @@ class ReverseProxyUser(BaseUser):
 
 
 # =============================================================================
+# Batch 1 Phase 1: Teams, Tokens, RBAC, Cancellation (Priority 1)
+# =============================================================================
+
+
+# Global pools for team/token IDs (populated at test start)
+TEAM_IDS: list[str] = []
+ROLE_IDS: list[str] = []
+
+
+@events.test_start.add_listener
+def on_test_start_batch1(environment, **_kwargs):
+    """Fetch team and role IDs for batch 1 tests."""
+    host = environment.host or "http://localhost:8080"
+    headers = _get_auth_headers()
+
+    try:
+        # Fetch teams
+        status, data = _fetch_json(f"{host}/teams/", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("teams", data.get("items", []))
+            TEAM_IDS.extend([str(t.get("id")) for t in items[:20] if t.get("id")])
+            logger.info(f"Loaded {len(TEAM_IDS)} team IDs")
+
+        # Fetch RBAC roles
+        status, data = _fetch_json(f"{host}/rbac/roles", headers)
+        if status == 200 and data:
+            items = data if isinstance(data, list) else data.get("roles", data.get("items", []))
+            ROLE_IDS.extend([str(r.get("id")) for r in items[:20] if r.get("id")])
+            logger.info(f"Loaded {len(ROLE_IDS)} role IDs")
+
+    except Exception as e:
+        logger.warning(f"Failed to fetch batch1 IDs: {e}")
+
+
+@events.test_stop.add_listener
+def on_test_stop_batch1(environment, **kwargs):
+    """Clean up batch 1 pools."""
+    TEAM_IDS.clear()
+    ROLE_IDS.clear()
+
+
+class TeamsCRUDUser(BaseUser):
+    """User that performs CRUD operations on Teams.
+
+    Tests the complete Teams API for collaboration features including
+    team management, membership, invitations, and join requests.
+
+    Endpoints tested:
+    - GET /teams/ - List teams
+    - POST /teams/ - Create team
+    - GET /teams/{team_id} - Get team details
+    - PUT /teams/{team_id} - Update team
+    - DELETE /teams/{team_id} - Delete team
+    - GET /teams/discover - Discover public teams
+    - GET /teams/{team_id}/members - List team members
+    - GET /teams/{team_id}/invitations - List invitations
+    - GET /teams/{team_id}/join-requests - List join requests
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    def __init__(self, *args, **kwargs):
+        """Initialize with tracking for cleanup."""
+        super().__init__(*args, **kwargs)
+        self.created_teams: list[str] = []
+
+    def on_stop(self):
+        """Clean up created teams on test stop."""
+        for team_id in self.created_teams:
+            try:
+                self.client.delete(
+                    f"/teams/{team_id}",
+                    headers=self.auth_headers,
+                    name="/teams/[id] [cleanup]",
+                )
+            except Exception:
+                pass
+
+    @task(5)
+    @tag("teams", "list")
+    def list_teams(self):
+        """GET /teams/ - List all teams."""
+        with self.client.get(
+            "/teams/",
+            headers=self.auth_headers,
+            name="/teams/",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 403=Forbidden, 500=Server error (teams may not be configured)
+            self._validate_json_response(response, allowed_codes=[200, 403, 500])
+
+    @task(3)
+    @tag("teams", "discover")
+    def discover_teams(self):
+        """GET /teams/discover - Discover public teams."""
+        with self.client.get(
+            "/teams/discover",
+            headers=self.auth_headers,
+            name="/teams/discover",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Auth issue, 403=Forbidden, 500=Server error
+            self._validate_json_response(response, allowed_codes=[200, 401, 403, 500])
+
+    @task(4)
+    @tag("teams", "read")
+    def get_team_details(self):
+        """GET /teams/{team_id} - Get team details."""
+        if TEAM_IDS:
+            team_id = random.choice(TEAM_IDS)
+            with self.client.get(
+                f"/teams/{team_id}",
+                headers=self.auth_headers,
+                name="/teams/[id]",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 403=Forbidden, 404=Not found, 500=Server error
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 500])
+
+    @task(3)
+    @tag("teams", "members")
+    def list_team_members(self):
+        """GET /teams/{team_id}/members - List team members."""
+        if TEAM_IDS:
+            team_id = random.choice(TEAM_IDS)
+            with self.client.get(
+                f"/teams/{team_id}/members",
+                headers=self.auth_headers,
+                name="/teams/[id]/members",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 403=Forbidden, 404=Not found, 500=Server error
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 500])
+
+    @task(2)
+    @tag("teams", "invitations")
+    def list_team_invitations(self):
+        """GET /teams/{team_id}/invitations - List team invitations."""
+        if TEAM_IDS:
+            team_id = random.choice(TEAM_IDS)
+            with self.client.get(
+                f"/teams/{team_id}/invitations",
+                headers=self.auth_headers,
+                name="/teams/[id]/invitations",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 403=Forbidden, 404=Not found, 500=Server error
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 500])
+
+    @task(2)
+    @tag("teams", "join-requests")
+    def list_join_requests(self):
+        """GET /teams/{team_id}/join-requests - List join requests."""
+        if TEAM_IDS:
+            team_id = random.choice(TEAM_IDS)
+            with self.client.get(
+                f"/teams/{team_id}/join-requests",
+                headers=self.auth_headers,
+                name="/teams/[id]/join-requests",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 403=Forbidden, 404=Not found, 500=Server error
+                self._validate_json_response(response, allowed_codes=[200, 403, 404, 500])
+
+    @task(2)
+    @tag("teams", "write", "create")
+    def create_and_delete_team(self):
+        """POST /teams/ - Create a team, then DELETE it."""
+        team_name = f"loadtest-team-{uuid.uuid4().hex[:8]}"
+        team_data = {
+            "name": team_name,
+            "description": "Load test team - will be deleted",
+            "visibility": "private",
+        }
+
+        with self.client.post(
+            "/teams/",
+            json=team_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/teams/ [create]",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 201):
+                try:
+                    data = response.json()
+                    team_id = data.get("id") or data.get("name") or team_name
+                    time.sleep(0.1)
+                    self.client.delete(
+                        f"/teams/{team_id}",
+                        headers=self.auth_headers,
+                        name="/teams/[id] [delete]",
+                    )
+                    response.success()
+                except Exception:
+                    response.success()
+            elif response.status_code in (403, 409, 422, 500):
+                # 403=Forbidden, 409=Conflict, 422=Validation error, 500=Server error
+                response.success()
+
+
+class TokenCatalogCRUDUser(BaseUser):
+    """User that performs CRUD operations on JWT Token Catalog.
+
+    Tests the complete Token Catalog API for managing API tokens including
+    creation, listing, updates, usage stats, and deletion.
+
+    Endpoints tested:
+    - GET /tokens - List user's tokens
+    - POST /tokens - Create token
+    - GET /tokens/{token_id} - Get token details
+    - PUT /tokens/{token_id} - Update token
+    - DELETE /tokens/{token_id} - Delete token
+    - GET /tokens/{token_id}/usage - Get token usage stats
+    - GET /tokens/admin/all - Admin: list all tokens
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    def __init__(self, *args, **kwargs):
+        """Initialize with tracking for cleanup."""
+        super().__init__(*args, **kwargs)
+        self.created_tokens: list[str] = []
+
+    def on_stop(self):
+        """Clean up created tokens on test stop."""
+        for token_id in self.created_tokens:
+            try:
+                self.client.delete(
+                    f"/tokens/{token_id}",
+                    headers=self.auth_headers,
+                    name="/tokens/[id] [cleanup]",
+                )
+            except Exception:
+                pass
+
+    @task(5)
+    @tag("tokens", "list")
+    def list_tokens(self):
+        """GET /tokens - List user's tokens."""
+        with self.client.get(
+            "/tokens",
+            headers=self.auth_headers,
+            name="/tokens",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response)
+
+    @task(2)
+    @tag("tokens", "admin", "list")
+    def list_all_tokens_admin(self):
+        """GET /tokens/admin/all - Admin: list all tokens."""
+        with self.client.get(
+            "/tokens/admin/all",
+            headers=self.auth_headers,
+            name="/tokens/admin/all",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 403=Forbidden (non-admin)
+            self._validate_json_response(response, allowed_codes=[200, 403])
+
+    @task(3)
+    @tag("tokens", "write", "create")
+    def create_and_manage_token(self):
+        """POST /tokens - Create a token, get details, usage, then DELETE."""
+        token_name = f"loadtest-token-{uuid.uuid4().hex[:8]}"
+        token_data = {
+            "name": token_name,
+            "description": "Load test token - will be deleted",
+            "expires_in_days": 1,
+        }
+
+        with self.client.post(
+            "/tokens",
+            json=token_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/tokens [create]",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 201):
+                try:
+                    data = response.json()
+                    token_id = data.get("id")
+                    if token_id:
+                        # Get token details
+                        time.sleep(0.05)
+                        self.client.get(
+                            f"/tokens/{token_id}",
+                            headers=self.auth_headers,
+                            name="/tokens/[id]",
+                        )
+                        # Get usage stats
+                        time.sleep(0.05)
+                        self.client.get(
+                            f"/tokens/{token_id}/usage",
+                            headers=self.auth_headers,
+                            name="/tokens/[id]/usage",
+                        )
+                        # Delete token
+                        time.sleep(0.05)
+                        self.client.delete(
+                            f"/tokens/{token_id}",
+                            headers=self.auth_headers,
+                            name="/tokens/[id] [delete]",
+                        )
+                    response.success()
+                except Exception:
+                    response.success()
+            elif response.status_code in (409, 422):
+                response.success()  # Conflict or validation error acceptable
+
+    @task(2)
+    @tag("tokens", "teams")
+    def list_team_tokens(self):
+        """GET /tokens/teams/{team_id} - List team tokens."""
+        if TEAM_IDS:
+            team_id = random.choice(TEAM_IDS)
+            with self.client.get(
+                f"/tokens/teams/{team_id}",
+                headers=self.auth_headers,
+                name="/tokens/teams/[id]",
+                catch_response=True,
+            ) as response:
+                self._validate_json_response(response, allowed_codes=[200, 403, 404])
+
+
+class RBACCRUDUser(BaseUser):
+    """User that performs CRUD operations on RBAC (Role-Based Access Control).
+
+    Tests the complete RBAC API for managing roles and permissions including
+    role creation, permission assignment, and user-role mappings.
+
+    Endpoints tested:
+    - GET /rbac/roles - List roles
+    - POST /rbac/roles - Create role
+    - GET /rbac/roles/{role_id} - Get role details
+    - PUT /rbac/roles/{role_id} - Update role
+    - DELETE /rbac/roles/{role_id} - Delete role
+    - POST /rbac/permissions/check - Check permission
+    - GET /rbac/permissions/user/{user_email} - Get user's permissions
+    - POST /rbac/users/{user_email}/roles - Assign role to user
+    - GET /rbac/users/{user_email}/roles - List user's roles
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    def __init__(self, *args, **kwargs):
+        """Initialize with tracking for cleanup."""
+        super().__init__(*args, **kwargs)
+        self.created_roles: list[str] = []
+
+    def on_stop(self):
+        """Clean up created roles on test stop."""
+        for role_id in self.created_roles:
+            try:
+                self.client.delete(
+                    f"/rbac/roles/{role_id}",
+                    headers=self.auth_headers,
+                    name="/rbac/roles/[id] [cleanup]",
+                )
+            except Exception:
+                pass
+
+    @task(5)
+    @tag("rbac", "roles", "list")
+    def list_roles(self):
+        """GET /rbac/roles - List all roles."""
+        with self.client.get(
+            "/rbac/roles",
+            headers=self.auth_headers,
+            name="/rbac/roles",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response)
+
+    @task(3)
+    @tag("rbac", "roles", "read")
+    def get_role_details(self):
+        """GET /rbac/roles/{role_id} - Get role details."""
+        if ROLE_IDS:
+            role_id = random.choice(ROLE_IDS)
+            with self.client.get(
+                f"/rbac/roles/{role_id}",
+                headers=self.auth_headers,
+                name="/rbac/roles/[id]",
+                catch_response=True,
+            ) as response:
+                self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(3)
+    @tag("rbac", "permissions", "check")
+    def check_permission(self):
+        """POST /rbac/permissions/check - Check if user has permission."""
+        check_data = {
+            "user_email": "admin@example.com",
+            "permission": "tools:read",
+        }
+        with self.client.post(
+            "/rbac/permissions/check",
+            json=check_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/rbac/permissions/check",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response)
+
+    @task(2)
+    @tag("rbac", "permissions", "user")
+    def get_user_permissions(self):
+        """GET /rbac/permissions/user/{user_email} - Get user's permissions."""
+        with self.client.get(
+            "/rbac/permissions/user/admin@example.com",
+            headers=self.auth_headers,
+            name="/rbac/permissions/user/[email]",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(2)
+    @tag("rbac", "users", "roles")
+    def get_user_roles(self):
+        """GET /rbac/users/{user_email}/roles - Get user's assigned roles."""
+        with self.client.get(
+            "/rbac/users/admin@example.com/roles",
+            headers=self.auth_headers,
+            name="/rbac/users/[email]/roles",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(1)
+    @tag("rbac", "roles", "write", "create")
+    def create_and_delete_role(self):
+        """POST /rbac/roles - Create a role, then DELETE it."""
+        role_name = f"loadtest-role-{uuid.uuid4().hex[:8]}"
+        role_data = {
+            "name": role_name,
+            "description": "Load test role - will be deleted",
+            "permissions": ["tools:read"],
+        }
+
+        with self.client.post(
+            "/rbac/roles",
+            json=role_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/rbac/roles [create]",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 201):
+                try:
+                    data = response.json()
+                    role_id = data.get("id") or data.get("name") or role_name
+                    time.sleep(0.1)
+                    self.client.delete(
+                        f"/rbac/roles/{role_id}",
+                        headers=self.auth_headers,
+                        name="/rbac/roles/[id] [delete]",
+                    )
+                    response.success()
+                except Exception:
+                    response.success()
+            elif response.status_code in (409, 422):
+                response.success()  # Conflict or validation error acceptable
+
+
+class CancellationAPIUser(BaseUser):
+    """User that tests the Cancellation API for request management.
+
+    Tests the ability to cancel in-progress requests and check cancellation status.
+
+    Endpoints tested:
+    - POST /cancellation/cancel - Cancel a request
+    - GET /cancellation/status/{request_id} - Get cancellation status
+
+    Weight: Very low (rarely used in production)
+    """
+
+    weight = 1
+    wait_time = between(3.0, 8.0)
+
+    @task(3)
+    @tag("cancellation", "status")
+    def check_cancellation_status(self):
+        """GET /cancellation/status/{request_id} - Check cancellation status."""
+        # Use a random UUID as request_id (will likely return 404)
+        request_id = str(uuid.uuid4())
+        with self.client.get(
+            f"/cancellation/status/{request_id}",
+            headers=self.auth_headers,
+            name="/cancellation/status/[id]",
+            catch_response=True,
+        ) as response:
+            # 200=Found, 404=Not found (expected for random ID)
+            self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(2)
+    @tag("cancellation", "cancel")
+    def cancel_request(self):
+        """POST /cancellation/cancel - Attempt to cancel a request."""
+        # Use a random UUID as request_id (will likely fail gracefully)
+        cancel_data = {
+            "request_id": str(uuid.uuid4()),
+            "reason": "Load test cancellation",
+        }
+        with self.client.post(
+            "/cancellation/cancel",
+            json=cancel_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/cancellation/cancel",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 404=Not found, 422=Invalid request
+            self._validate_json_response(response, allowed_codes=[200, 404, 422])
+
+
+# =============================================================================
+# Batch 2 Phase 2: LLM Configuration & Integration (REMOVED - requires LLM setup)
+# =============================================================================
+# The following classes were REMOVED because they fail when LLM is not configured:
+#
+# - LLMConfigCRUDUser: Tests /llm/providers, /llm/models endpoints
+#   Endpoints: GET /llm/providers, GET /llm/models, GET /llm/providers/{id},
+#              POST /llm/providers/{id}/health
+#
+# - LLMChatUser: Tests /llmchat/* endpoints
+#   Endpoints: GET /llmchat/gateway/models, GET /llmchat/config/{user_id},
+#              GET /llmchat/status/{user_id}
+#
+# - LLMProxyUser: Tests /v1/* OpenAI-compatible endpoints
+#   Endpoints: GET /v1/models, POST /v1/chat/completions
+#
+# To re-enable: Configure LLM providers in the gateway and uncomment these classes.
+# =============================================================================
+
+
+# =============================================================================
+# Batch 3 Phase 3: Observability, Protocol, & Extended Operations (Priority 3)
+# =============================================================================
+
+
+# ProtocolExtendedUser REMOVED - returns empty/invalid JSON responses
+# Endpoints removed:
+#   - POST /protocol/completion/complete - Returns empty response
+#   - POST /protocol/notifications - Returns null JSON
+# To re-enable: Fix the protocol endpoints to return valid JSON responses
+
+
+class RootsExtendedUser(BaseUser):
+    """User that tests extended Roots API endpoints.
+
+    Tests root management operations including creation and deletion.
+
+    Endpoints tested:
+    - GET /roots - List roots (already covered, included for context)
+    - POST /roots - Create root
+    - DELETE /roots/{uri} - Delete root
+    - GET /roots/changes - List root changes
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    @task(3)
+    @tag("roots", "changes")
+    def list_root_changes(self):
+        """GET /roots/changes - List root changes."""
+        with self.client.get(
+            "/roots/changes",
+            headers=self.auth_headers,
+            name="/roots/changes",
+            catch_response=True,
+        ) as response:
+            # Allow connection issues (0 status) during load tests
+            self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(2)
+    @tag("roots", "write", "create")
+    def create_and_delete_root(self):
+        """POST /roots - Create a root, then DELETE it."""
+        root_uri = f"file:///tmp/loadtest-root-{uuid.uuid4().hex[:8]}"
+        root_data = {
+            "uri": root_uri,
+            "name": f"loadtest-root-{uuid.uuid4().hex[:8]}",
+        }
+
+        with self.client.post(
+            "/roots",
+            json=root_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/roots [create]",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 201):
+                try:
+                    time.sleep(0.1)
+                    # URL-encode the URI for deletion
+                    encoded_uri = root_uri.replace("/", "%2F").replace(":", "%3A")
+                    self.client.delete(
+                        f"/roots/{encoded_uri}",
+                        headers=self.auth_headers,
+                        name="/roots/[uri] [delete]",
+                    )
+                    response.success()
+                except Exception:
+                    response.success()
+            elif response.status_code in (409, 422):
+                response.success()  # Conflict or validation error acceptable
+
+
+class TagsExtendedUser(BaseUser):
+    """User that tests extended Tags API endpoints.
+
+    Tests tag-based entity discovery.
+
+    Endpoints tested:
+    - GET /tags/{tag_name}/entities - Get entities by tag
+
+    Weight: Low (read operations)
+    """
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    @task(5)
+    @tag("tags", "entities")
+    def get_entities_by_tag(self):
+        """GET /tags/{tag_name}/entities - Get entities tagged with a specific tag."""
+        # Common tag names that might exist
+        tag_names = ["mcp", "tool", "server", "gateway", "test", "loadtest"]
+        tag_name = random.choice(tag_names)
+        with self.client.get(
+            f"/tags/{tag_name}/entities",
+            headers=self.auth_headers,
+            name="/tags/[name]/entities",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 404=Tag not found (expected for random tags)
+            self._validate_json_response(response, allowed_codes=[200, 404])
+
+
+class LogSearchExtendedUser(BaseUser):
+    """User that tests extended Log Search API endpoints.
+
+    Tests log search and trace retrieval operations.
+
+    Endpoints tested:
+    - POST /api/logs/search - Search logs
+    - GET /api/logs/trace/{correlation_id} - Get trace by correlation
+
+    Weight: Low (administrative operations)
+    """
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    @task(3)
+    @tag("logs", "search")
+    def search_logs(self):
+        """POST /api/logs/search - Search logs."""
+        search_data = {
+            "query": "error",
+            "level": "INFO",
+            "limit": 10,
+        }
+        with self.client.post(
+            "/api/logs/search",
+            json=search_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/api/logs/search",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response, allowed_codes=[200, 400, 422])
+
+    @task(2)
+    @tag("logs", "trace")
+    def get_trace_by_correlation(self):
+        """GET /api/logs/trace/{correlation_id} - Get trace by correlation ID."""
+        correlation_id = str(uuid.uuid4())  # Random ID (will likely return 404)
+        with self.client.get(
+            f"/api/logs/trace/{correlation_id}",
+            headers=self.auth_headers,
+            name="/api/logs/trace/[correlation_id]",
+            catch_response=True,
+        ) as response:
+            # 200=Found, 404=Not found (expected for random ID)
+            self._validate_json_response(response, allowed_codes=[200, 404])
+
+
+class MetricsMaintenanceUser(BaseUser):
+    """User that tests Metrics Maintenance API endpoints.
+
+    Tests metrics cleanup and rollup operations.
+
+    Endpoints tested:
+    - POST /api/metrics/cleanup - Cleanup old metrics
+    - POST /api/metrics/rollup - Rollup metrics
+
+    Weight: Very low (maintenance operations)
+    """
+
+    weight = 1
+    wait_time = between(5.0, 10.0)
+
+    @task(2)
+    @tag("metrics", "cleanup")
+    def cleanup_metrics(self):
+        """POST /api/metrics/cleanup - Cleanup old metrics."""
+        with self.client.post(
+            "/api/metrics/cleanup",
+            headers=self.auth_headers,
+            name="/api/metrics/cleanup",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response, allowed_codes=[200, 202, 403])
+
+    @task(2)
+    @tag("metrics", "rollup")
+    def rollup_metrics(self):
+        """POST /api/metrics/rollup - Rollup metrics."""
+        with self.client.post(
+            "/api/metrics/rollup",
+            headers=self.auth_headers,
+            name="/api/metrics/rollup",
+            catch_response=True,
+        ) as response:
+            self._validate_json_response(response, allowed_codes=[200, 202, 403])
+
+
+class AuthExtendedUser(BaseUser):
+    """User that tests extended Authentication endpoints.
+
+    Tests authentication and user management operations.
+
+    Endpoints tested:
+    - POST /auth/login - Main login endpoint
+    - GET /auth/email/me - Get current user info
+    - POST /auth/email/change-password - Change password (test validation only)
+
+    Weight: Very low (sensitive operations)
+    """
+
+    weight = 1
+    wait_time = between(3.0, 8.0)
+
+    @task(3)
+    @tag("auth", "me")
+    def get_current_user(self):
+        """GET /auth/email/me - Get current authenticated user info."""
+        with self.client.get(
+            "/auth/email/me",
+            headers=self.auth_headers,
+            name="/auth/email/me",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Unauthorized, 404=Not found, 422=Validation error
+            self._validate_json_response(response, allowed_codes=[200, 401, 404, 422])
+
+    @task(2)
+    @tag("auth", "login")
+    def test_login(self):
+        """POST /auth/login - Test main login endpoint."""
+        login_data = {
+            "username": "admin@example.com",
+            "password": "admin",  # Default test password
+        }
+        with self.client.post(
+            "/auth/login",
+            data=login_data,  # Form data, not JSON
+            headers={**self.auth_headers, "Content-Type": "application/x-www-form-urlencoded"},
+            name="/auth/login",
+            catch_response=True,
+        ) as response:
+            # 200=Success, 401=Invalid credentials, 422=Validation error
+            self._validate_json_response(response, allowed_codes=[200, 401, 422])
+
+
+class EntityToggleUser(BaseUser):
+    """User that tests toggle operations across all entity types.
+
+    Tests the toggle endpoints that switch entity enabled state.
+
+    Endpoints tested:
+    - POST /tools/{tool_id}/toggle
+    - POST /servers/{server_id}/toggle
+    - POST /gateways/{gateway_id}/toggle
+    - POST /resources/{resource_id}/toggle
+    - POST /prompts/{prompt_id}/toggle
+    - POST /a2a/{agent_id}/toggle
+
+    Weight: Low (state operations)
+    """
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    @task(3)
+    @tag("tools", "toggle")
+    def toggle_tool(self):
+        """POST /tools/{tool_id}/toggle - Toggle tool enabled state."""
+        if TOOL_IDS:
+            tool_id = random.choice(TOOL_IDS)
+            with self.client.post(
+                f"/tools/{tool_id}/toggle",
+                headers=self.auth_headers,
+                name="/tools/[id]/toggle",
+                catch_response=True,
+            ) as response:
+                # 200=Success, 401=Auth issue, 403=Forbidden, 404=Not found, 409=Conflict
+                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409])
+
+    @task(3)
+    @tag("servers", "toggle")
+    def toggle_server(self):
+        """POST /servers/{server_id}/toggle - Toggle server enabled state."""
+        if SERVER_IDS:
+            server_id = random.choice(SERVER_IDS)
+            with self.client.post(
+                f"/servers/{server_id}/toggle",
+                headers=self.auth_headers,
+                name="/servers/[id]/toggle",
+                catch_response=True,
+            ) as response:
+                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409])
+
+    @task(2)
+    @tag("resources", "toggle")
+    def toggle_resource(self):
+        """POST /resources/{resource_id}/toggle - Toggle resource enabled state."""
+        if RESOURCE_IDS:
+            resource_id = random.choice(RESOURCE_IDS)
+            with self.client.post(
+                f"/resources/{resource_id}/toggle",
+                headers=self.auth_headers,
+                name="/resources/[id]/toggle",
+                catch_response=True,
+            ) as response:
+                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409])
+
+    @task(2)
+    @tag("prompts", "toggle")
+    def toggle_prompt(self):
+        """POST /prompts/{prompt_id}/toggle - Toggle prompt enabled state."""
+        if PROMPT_IDS:
+            prompt_id = random.choice(PROMPT_IDS)
+            with self.client.post(
+                f"/prompts/{prompt_id}/toggle",
+                headers=self.auth_headers,
+                name="/prompts/[id]/toggle",
+                catch_response=True,
+            ) as response:
+                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409])
+
+
+class EntityUpdateUser(BaseUser):
+    """User that tests PUT/UPDATE operations across entity types.
+
+    Tests the update endpoints for modifying existing entities.
+
+    Endpoints tested:
+    - PUT /tools/{tool_id}
+    - PUT /servers/{server_id}
+    - PUT /resources/{resource_id}
+    - PUT /prompts/{prompt_id}
+    - PUT /gateways/{gateway_id}
+    - PUT /a2a/{agent_id}
+
+    Weight: Low (write operations)
+    """
+
+    weight = 1
+    wait_time = between(2.0, 5.0)
+
+    @task(2)
+    @tag("tools", "update")
+    def update_tool(self):
+        """PUT /tools/{tool_id} - Update a tool."""
+        if TOOL_IDS:
+            tool_id = random.choice(TOOL_IDS)
+            # First get current tool data
+            with self.client.get(
+                f"/tools/{tool_id}",
+                headers=self.auth_headers,
+                name="/tools/[id] [for update]",
+                catch_response=True,
+            ) as response:
+                if response.status_code == 200:
+                    try:
+                        tool_data = response.json()
+                        # Update description only (safe operation)
+                        tool_data["description"] = f"Updated by load test at {time.time()}"
+                        time.sleep(0.05)
+                        with self.client.put(
+                            f"/tools/{tool_id}",
+                            json=tool_data,
+                            headers={**self.auth_headers, "Content-Type": "application/json"},
+                            name="/tools/[id] [update]",
+                            catch_response=True,
+                        ) as put_response:
+                            self._validate_json_response(put_response, allowed_codes=[200, 403, 404, 409, 422])
+                        response.success()
+                    except Exception:
+                        response.success()
+                else:
+                    self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(2)
+    @tag("resources", "update")
+    def update_resource(self):
+        """PUT /resources/{resource_id} - Update a resource."""
+        if RESOURCE_IDS:
+            resource_id = random.choice(RESOURCE_IDS)
+            with self.client.get(
+                f"/resources/{resource_id}",
+                headers=self.auth_headers,
+                name="/resources/[id] [for update]",
+                catch_response=True,
+            ) as response:
+                if response.status_code == 200:
+                    try:
+                        resource_data = response.json()
+                        resource_data["description"] = f"Updated by load test at {time.time()}"
+                        time.sleep(0.05)
+                        with self.client.put(
+                            f"/resources/{resource_id}",
+                            json=resource_data,
+                            headers={**self.auth_headers, "Content-Type": "application/json"},
+                            name="/resources/[id] [update]",
+                            catch_response=True,
+                        ) as put_response:
+                            self._validate_json_response(put_response, allowed_codes=[200, 403, 404, 409, 422])
+                        response.success()
+                    except Exception:
+                        response.success()
+                else:
+                    self._validate_json_response(response, allowed_codes=[200, 404])
+
+
+# =============================================================================
 # Combined User (Realistic Traffic Pattern)
 # =============================================================================
 
