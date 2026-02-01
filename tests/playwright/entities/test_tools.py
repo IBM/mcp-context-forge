@@ -37,64 +37,64 @@ class TestToolsCRUD:
         pytest tests/playwright/entities/test_tools.py
     """
 
-    def test_create_new_tool(self, page: Page, test_tool_data, admin_page):
+    def test_create_new_tool(self, admin_page: Page, test_tool_data):
         """Test creating a new tool with debug screenshots and waits."""
         # Go to the Global Tools tab (if not already there)
-        page.click('[data-testid="tools-tab"]')
+        admin_page.click('[data-testid="tools-tab"]')
 
         # Wait for the tools panel to be visible
-        page.wait_for_selector("#tools-panel:not(.hidden)")
+        admin_page.wait_for_selector("#tools-panel:not(.hidden)")
 
         # Add a small delay to ensure the UI has time to update
-        page.wait_for_timeout(500)
+        admin_page.wait_for_timeout(500)
 
         # Fill the always-visible form
-        page.locator('#add-tool-form [name="name"]').fill(test_tool_data["name"])
-        page.wait_for_timeout(300)
-        page.locator('#add-tool-form [name="url"]').fill(test_tool_data["url"])
-        page.wait_for_timeout(300)
-        page.locator('#add-tool-form [name="description"]').fill(test_tool_data["description"])
-        page.wait_for_timeout(300)
-        page.locator('#add-tool-form [name="integrationType"]').select_option(test_tool_data["integrationType"])
-        page.wait_for_timeout(300)
+        admin_page.locator('#add-tool-form [name="name"]').fill(test_tool_data["name"])
+        admin_page.wait_for_timeout(300)
+        admin_page.locator('#add-tool-form [name="url"]').fill(test_tool_data["url"])
+        admin_page.wait_for_timeout(300)
+        admin_page.locator('#add-tool-form [name="description"]').fill(test_tool_data["description"])
+        admin_page.wait_for_timeout(300)
+        admin_page.locator('#add-tool-form [name="integrationType"]').select_option(test_tool_data["integrationType"])
+        admin_page.wait_for_timeout(300)
 
         # Submit the form and assert success response
-        with page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
-            page.click('#add-tool-form button[type="submit"]')
+        with admin_page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
+            admin_page.click('#add-tool-form button[type="submit"]')
         response = response_info.value
 
         # Verify tool exists via JSON list (avoids cached HTML)
-        created_tool = _find_tool(page, test_tool_data["name"])
+        created_tool = _find_tool(admin_page, test_tool_data["name"])
         assert created_tool is not None, f"Newly created tool not found via admin API (status {response.status})"
 
-    def test_delete_tool(self, page: Page, test_tool_data, admin_page):
+    def test_delete_tool(self, admin_page: Page, test_tool_data):
         """Test deleting a tool."""
         # Go to the Global Tools tab (if not already there)
-        page.click('[data-testid="tools-tab"]')
+        admin_page.click('[data-testid="tools-tab"]')
 
         # Wait for the tools panel to be visible
-        page.wait_for_selector("#tools-panel:not(.hidden)")
+        admin_page.wait_for_selector("#tools-panel:not(.hidden)")
 
         # Create tool first
-        page.locator('#add-tool-form [name="name"]').fill(test_tool_data["name"])
-        page.wait_for_timeout(300)
-        page.locator('#add-tool-form [name="url"]').fill(test_tool_data["url"])
-        page.wait_for_timeout(300)
-        page.locator('#add-tool-form [name="description"]').fill(test_tool_data["description"])
-        page.wait_for_timeout(300)
-        page.locator('#add-tool-form [name="integrationType"]').select_option(test_tool_data["integrationType"])
-        page.wait_for_timeout(300)
-        with page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
-            page.click('#add-tool-form button[type="submit"]')
+        admin_page.locator('#add-tool-form [name="name"]').fill(test_tool_data["name"])
+        admin_page.wait_for_timeout(300)
+        admin_page.locator('#add-tool-form [name="url"]').fill(test_tool_data["url"])
+        admin_page.wait_for_timeout(300)
+        admin_page.locator('#add-tool-form [name="description"]').fill(test_tool_data["description"])
+        admin_page.wait_for_timeout(300)
+        admin_page.locator('#add-tool-form [name="integrationType"]').select_option(test_tool_data["integrationType"])
+        admin_page.wait_for_timeout(300)
+        with admin_page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
+            admin_page.click('#add-tool-form button[type="submit"]')
         response = response_info.value
-        created_tool = _find_tool(page, test_tool_data["name"])
+        created_tool = _find_tool(admin_page, test_tool_data["name"])
         assert created_tool is not None, f"Created tool not found for deletion (status {response.status})"
 
         # Delete via admin endpoint (form-encoded) and verify removal
-        delete_response = page.request.post(
+        delete_response = admin_page.request.post(
             f"/admin/tools/{created_tool['id']}/delete",
             data="is_inactive_checked=false",
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         assert delete_response.status < 400
-        assert _find_tool(page, test_tool_data["name"]) is None
+        assert _find_tool(admin_page, test_tool_data["name"]) is None

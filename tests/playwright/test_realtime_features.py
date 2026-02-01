@@ -20,7 +20,7 @@ class TestRealtimeFeatures:
         pytest tests/playwright/test_realtime_features.py
     """
 
-    @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
+    @pytest.mark.skip(reason="Monitoring tab not available in current UI")
     def test_websocket_connection_lifecycle(self, page: Page, admin_page):
         """Test complete WebSocket connection lifecycle."""
         ws_events = []
@@ -54,7 +54,7 @@ class TestRealtimeFeatures:
         page.click('button:has-text("Stop Monitoring")')
         page.wait_for_selector(".connection-status:has-text('Disconnected')")
 
-    @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
+    @pytest.mark.skip(reason="Monitoring tab not available in current UI")
     def test_server_sent_events(self, page: Page, admin_page):
         """Test Server-Sent Events (SSE) functionality."""
         sse_messages = []
