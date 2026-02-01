@@ -11,11 +11,12 @@ Tests for error conditions, edge cases, and uncovered code paths.
 # Standard
 import os
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 # Third-Party
-from mcp.types import CallToolResult, TextContent as MCPTextContent
 import pytest
+from mcp.types import CallToolResult, TextContent as MCPTextContent
 
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent, TransportType
@@ -33,9 +34,9 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPreInvokePayload,
 )
-from mcpgateway.plugins.framework.models import MCPClientConfig
 from mcpgateway.plugins.framework.errors import PluginError
 from mcpgateway.plugins.framework.external.mcp.client import ExternalPlugin
+from mcpgateway.plugins.framework.models import MCPClientConfig
 
 
 @pytest.mark.asyncio
@@ -63,7 +64,8 @@ async def test_initialize_stdio_missing_script():
     # Mock the script path to be missing
     plugin._config.mcp.script = "/path/to/missing.sh"
 
-    with pytest.raises(PluginError, match="Server script /path/to/missing.sh does not exist."):
+    # Cross-platform: Windows uses backslashes, Unix uses forward slashes
+    with pytest.raises(PluginError, match=r"Server script .+[/\\]missing\.sh does not exist\."):
         await plugin.initialize()
 
 
@@ -89,7 +91,8 @@ async def test_resolve_stdio_command_from_script_py():
     script_path = "mcpgateway/plugins/framework/external/mcp/server/runtime.py"
     command, args = plugin._ExternalPlugin__resolve_stdio_command(script_path, None, None)
     assert command == sys.executable
-    assert args == [script_path]
+    assert len(args) == 1
+    assert Path(args[0]) == Path(script_path)
 
 
 @pytest.mark.asyncio
@@ -121,6 +124,7 @@ async def test_initialize_config_retrieval_failure():
         mock_stdio_client.return_value.__aenter__ = AsyncMock(return_value=(mock_stdio, mock_write))
         mock_stdio_client.return_value.__aexit__ = AsyncMock(return_value=False)
 
+        # This test is about config retrieval failure, not missing script
         with pytest.raises(PluginError, match="Unable to retrieve configuration for external plugin"):
             await plugin.initialize()
 
@@ -242,7 +246,11 @@ async def test_shutdown():
 def test_mcp_config_env_rejected_for_http():
     """STDIO-only env should be rejected for HTTP transports."""
     with pytest.raises(ValueError, match="script/cmd/env/cwd are only valid for STDIO transport"):
-        MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost:8000/mcp", env={"PLUGINS_CONFIG_PATH": "plugins/config.yaml"})
+        MCPClientConfig(
+            proto=TransportType.STREAMABLEHTTP,
+            url="http://localhost:8000/mcp",
+            env={"PLUGINS_CONFIG_PATH": "plugins/config.yaml"},
+        )
 
 
 def test_mcp_config_env_accepts_stdio():
