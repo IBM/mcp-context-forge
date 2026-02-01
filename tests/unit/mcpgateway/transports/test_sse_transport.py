@@ -13,7 +13,7 @@ from fastapi import Request
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.transports import sse_transport
-from mcpgateway.transports.sse_transport import SSETransport, _build_sse_frame
+from mcpgateway.transports.sse_transport import SSETransport, _build_sse_frame, _get_sse_cleanup_timeout
 
 
 class _DummyResponse:
@@ -156,3 +156,58 @@ def test_anyio_cancel_delivery_patch_toggle(monkeypatch):
 
     assert sse_transport.remove_anyio_cancel_delivery_patch() is True
     assert sse_transport.CancelScope._deliver_cancellation is original
+
+
+def test_get_sse_cleanup_timeout_fallback(monkeypatch):
+    class _BadSettings:
+        @property
+        def sse_task_group_cleanup_timeout(self):  # noqa: D401 - property for test
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(sse_transport, "settings", _BadSettings())
+    assert _get_sse_cleanup_timeout() == 5.0
+
+
+def test_patched_deliver_cancellation_limits_iterations(monkeypatch):
+    calls = []
+
+    def _orig(self, origin):  # noqa: D401 - test stub
+        calls.append((self, origin))
+        return True
+
+    monkeypatch.setattr(sse_transport, "_original_deliver_cancellation", _orig)
+    patched = sse_transport._create_patched_deliver_cancellation(1)
+
+    origin = SimpleNamespace()
+    scope = SimpleNamespace(_cancel_handle="handle")
+
+    assert patched(scope, origin) is True
+    assert patched(scope, origin) is False
+    assert scope._cancel_handle is None
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_sse_response_errors_trigger_disconnect(monkeypatch):
+    transport = SSETransport("http://base")
+    monkeypatch.setattr(sse_transport, "EventSourceResponse", _DummyResponse)
+    monkeypatch.setattr(settings, "sse_keepalive_enabled", False)
+    monkeypatch.setattr(settings, "sse_retry_timeout", 123)
+    monkeypatch.setattr(settings, "sse_send_timeout", 0)
+
+    request = MagicMock(spec=Request)
+    request.is_disconnected = AsyncMock(return_value=False)
+    on_disconnect = AsyncMock()
+
+    transport._message_queue.get = AsyncMock(side_effect=RuntimeError("boom"))
+
+    response = await transport.create_sse_response(request, on_disconnect_callback=on_disconnect)
+    generator = response.body_iterator
+
+    first = await anext(generator)
+    assert first.startswith(b"event: endpoint")
+
+    with pytest.raises(StopAsyncIteration):
+        await anext(generator)
+
+    on_disconnect.assert_awaited()

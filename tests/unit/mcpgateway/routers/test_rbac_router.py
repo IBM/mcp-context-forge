@@ -201,3 +201,120 @@ async def test_available_and_my_permissions(monkeypatch):
 
     perms = await rbac_router.get_my_permissions(team_id=None, user={"email": "user@example.com"}, db=MagicMock())
     assert perms == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_list_roles_error(monkeypatch):
+    service = MagicMock()
+    service.list_roles = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.list_roles(scope=None, active_only=True, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_update_role_not_found(monkeypatch):
+    service = MagicMock()
+    service.update_role = AsyncMock(return_value=None)
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    request = RoleUpdateRequest(description="updated")
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.update_role("missing", request, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_role_validation_error(monkeypatch):
+    service = MagicMock()
+    service.update_role = AsyncMock(side_effect=ValueError("bad"))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    request = RoleUpdateRequest(description="updated")
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.update_role("r1", request, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_delete_role_not_found(monkeypatch):
+    service = MagicMock()
+    service.delete_role = AsyncMock(return_value=False)
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_assign_role_validation_error(monkeypatch):
+    service = MagicMock()
+    service.assign_role_to_user = AsyncMock(side_effect=ValueError("bad"))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_revoke_role_not_found(monkeypatch):
+    service = MagicMock()
+    service.revoke_role_from_user = AsyncMock(return_value=False)
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_permission_service_errors(monkeypatch):
+    perm_service = MagicMock()
+    perm_service.get_user_roles = AsyncMock(side_effect=RuntimeError("fail"))
+    perm_service.check_permission = AsyncMock(side_effect=RuntimeError("fail"))
+    perm_service.get_user_permissions = AsyncMock(side_effect=RuntimeError("fail"))
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 500
+
+    check_request = PermissionCheckRequest(user_email="user@example.com", permission="p1")
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.check_permission(check_request, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 500
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.get_user_permissions("user@example.com", team_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_available_permissions_error(monkeypatch):
+    monkeypatch.setattr(rbac_router.Permissions, "get_all_permissions", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(rbac_router.Permissions, "get_permissions_by_resource", lambda: {"tools": ["p1"]})
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.get_available_permissions(user={"email": "admin@example.com"})
+    assert excinfo.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_my_permissions_errors(monkeypatch):
+    perm_service = MagicMock()
+    perm_service.get_user_roles = AsyncMock(side_effect=RuntimeError("fail"))
+    perm_service.get_user_permissions = AsyncMock(side_effect=RuntimeError("fail"))
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.get_my_roles(user={"email": "user@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 500
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.get_my_permissions(team_id=None, user={"email": "user@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 500

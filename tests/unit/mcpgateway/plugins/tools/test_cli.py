@@ -10,6 +10,12 @@ Tests for the mcpplugins CLI module (plugins/tools/cli.py).
 # Future
 from __future__ import annotations
 
+# Standard
+import builtins
+import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 # Third-Party
 import pytest
 from typer.testing import CliRunner
@@ -48,3 +54,70 @@ def test_install_manifest():
         manifest = InstallManifest.model_validate(data)
         assert manifest
         assert len(manifest.packages) > 0
+
+
+def test_command_exists(monkeypatch):
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: "/bin/true")
+    assert cli.command_exists("git") is True
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _name: None)
+    assert cli.command_exists("git") is False
+
+
+def test_git_user_name_email(monkeypatch):
+    class _Result:
+        returncode = 0
+        stdout = b"Jane Doe\n"
+
+    monkeypatch.setattr(cli.subprocess, "run", lambda *_args, **_kwargs: _Result())
+    assert cli.git_user_name() == "Jane Doe"
+
+    class _EmailResult:
+        returncode = 0
+        stdout = b"jane@example.com\n"
+
+    monkeypatch.setattr(cli.subprocess, "run", lambda *_args, **_kwargs: _EmailResult())
+    assert cli.git_user_email() == "jane@example.com"
+
+
+def test_git_user_name_email_defaults_on_error(monkeypatch):
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("fail")
+
+    monkeypatch.setattr(cli.subprocess, "run", _boom)
+    assert cli.git_user_name() == cli.DEFAULT_AUTHOR_NAME
+    assert cli.git_user_email() == cli.DEFAULT_AUTHOR_EMAIL
+
+
+def test_bootstrap_missing_copier_raises(monkeypatch):
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "copier":
+            raise ImportError("no copier")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+    with pytest.raises(cli.typer.Exit) as excinfo:
+        cli.bootstrap()
+    assert excinfo.value.exit_code == 1
+
+
+def test_bootstrap_skips_without_git(monkeypatch, tmp_path):
+    run_copy = MagicMock()
+    monkeypatch.setitem(sys.modules, "copier", SimpleNamespace(run_copy=run_copy))
+    monkeypatch.setattr(cli, "command_exists", lambda _name: False)
+
+    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", dry_run=True)
+    run_copy.assert_not_called()
+
+
+def test_bootstrap_calls_copier_when_git_available(monkeypatch, tmp_path):
+    run_copy = MagicMock()
+    monkeypatch.setitem(sys.modules, "copier", SimpleNamespace(run_copy=run_copy))
+    monkeypatch.setattr(cli, "command_exists", lambda _name: True)
+    monkeypatch.setattr(cli, "git_user_name", lambda: "Alice")
+    monkeypatch.setattr(cli, "git_user_email", lambda: "alice@example.com")
+
+    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", defaults=True, dry_run=True)
+    run_copy.assert_called_once()

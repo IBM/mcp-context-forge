@@ -2,6 +2,8 @@
 """Tests for cancellation_service."""
 
 # Standard
+import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
@@ -119,3 +121,66 @@ async def test_get_status_and_is_registered():
     assert status["name"] == "tool"
     await service.unregister_run("run-1")
     assert await service.is_registered("run-1") is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_already_cancelled(monkeypatch):
+    service = CancellationService()
+    await service.register_run("run-1", name="tool")
+    service._runs["run-1"]["cancelled"] = True
+    service._publish_cancellation = AsyncMock()
+
+    result = await service.cancel_run("run-1", reason="again")
+    assert result is True
+    service._publish_cancellation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_listen_for_cancellations_processes_messages(monkeypatch):
+    service = CancellationService()
+
+    messages = [
+        None,
+        {"type": "subscribe"},
+        {"type": "message", "data": json.dumps({"run_id": "run-1", "reason": "stop"}).encode()},
+        {"type": "message", "data": b"not-json"},
+    ]
+
+    class DummyPubSub:
+        def __init__(self, items):
+            self._items = list(items)
+            self.unsubscribe_called = False
+            self.closed = False
+
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            if self._items:
+                return self._items.pop(0)
+            raise asyncio.CancelledError()
+
+        async def unsubscribe(self, _channel):
+            self.unsubscribe_called = True
+
+        async def aclose(self):
+            self.closed = True
+
+    class DummyRedis:
+        def __init__(self, pubsub):
+            self._pubsub = pubsub
+
+        def pubsub(self):
+            return self._pubsub
+
+    pubsub = DummyPubSub(messages)
+    service._redis = DummyRedis(pubsub)
+    monkeypatch.setattr(service, "_cancel_run_local", AsyncMock())
+
+    task = asyncio.create_task(service._listen_for_cancellations())
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    service._cancel_run_local.assert_awaited_with("run-1", reason="stop")
+    assert pubsub.unsubscribe_called is True
+    assert pubsub.closed is True

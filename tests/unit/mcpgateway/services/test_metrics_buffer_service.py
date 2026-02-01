@@ -6,7 +6,10 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
+import asyncio
 import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
@@ -220,3 +223,127 @@ class TestMetricsBufferServiceRecording:
 
         assert len(service._tool_metrics) == 5
         assert service._total_buffered == 5
+
+
+@pytest.mark.asyncio
+async def test_start_creates_flush_task(monkeypatch):
+    service = MetricsBufferService(enabled=True)
+    service.recording_enabled = True
+    service._flush_loop = AsyncMock()
+
+    created = {}
+
+    def _fake_create_task(coro):
+        created["coro"] = coro
+        task = MagicMock()
+        task.done.return_value = False
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", _fake_create_task)
+    await service.start()
+
+    assert service._flush_task is not None
+    assert created["coro"] is not None
+    created["coro"].close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_and_flushes(monkeypatch):
+    service = MetricsBufferService(enabled=True)
+
+    class DummyTask:
+        def __init__(self):
+            self.cancel_called = False
+
+        def cancel(self):
+            self.cancel_called = True
+
+        def __await__(self):
+            async def _noop():
+                return None
+
+            return _noop().__await__()
+
+    task = DummyTask()
+    service._flush_task = task
+    service._flush_all = AsyncMock()
+
+    await service.shutdown()
+
+    assert task.cancel_called is True
+    service._flush_all.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_flush_all_batches_metrics(monkeypatch):
+    service = MetricsBufferService(enabled=True)
+
+    service.record_tool_metric("tool-1", start_time=time.monotonic() - 0.1, success=True)
+    service.record_resource_metric("resource-1", start_time=time.monotonic() - 0.2, success=False)
+
+    captured = {}
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        captured["func"] = func
+        captured["args"] = args
+
+    monkeypatch.setattr(asyncio, "to_thread", _fake_to_thread)
+
+    await service._flush_all()
+
+    assert service._total_flushed == 2
+    assert service._flush_count == 1
+    assert captured["func"] == service._flush_to_db
+
+
+def test_flush_to_db_writes_batches(monkeypatch):
+    service = MetricsBufferService(enabled=True)
+
+    holder = {}
+
+    class DummyDB:
+        def __init__(self):
+            self.bulk_calls = []
+            self.committed = False
+
+        def bulk_insert_mappings(self, model, payload):
+            self.bulk_calls.append((model, payload))
+
+        def commit(self):
+            self.committed = True
+
+    class DummySession:
+        def __enter__(self):
+            holder["db"] = DummyDB()
+            return holder["db"]
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("mcpgateway.services.metrics_buffer_service.fresh_db_session", lambda: DummySession())
+
+    tool_metric = SimpleNamespace(tool_id="t1", timestamp=time.time(), response_time=0.1, is_success=True, error_message=None)
+    resource_metric = SimpleNamespace(resource_id="r1", timestamp=time.time(), response_time=0.2, is_success=False, error_message="err")
+
+    service._flush_to_db([tool_metric], [resource_metric], [], [], [])
+    assert holder["db"].committed is True
+    assert holder["db"].bulk_calls
+
+
+def test_record_tool_metric_falls_back_to_immediate_write(monkeypatch):
+    service = MetricsBufferService(enabled=False)
+    service.recording_enabled = True
+    service._write_tool_metric_immediately = MagicMock()
+
+    service.record_tool_metric("tool-1", start_time=time.monotonic(), success=True)
+
+    service._write_tool_metric_immediately.assert_called_once()
+
+
+def test_get_metrics_buffer_service_singleton(monkeypatch):
+    from mcpgateway.services import metrics_buffer_service as mbs
+
+    mbs._metrics_buffer_service = None
+    first = mbs.get_metrics_buffer_service()
+    second = mbs.get_metrics_buffer_service()
+    assert first is second

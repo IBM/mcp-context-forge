@@ -17,11 +17,14 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timezone, timedelta
+import sys
+from types import SimpleNamespace
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
+from pydantic import ValidationError
 from url_normalize import url_normalize
 
 # First-Party
@@ -2330,3 +2333,76 @@ class TestGatewayHealth:
                     await gateway_service._check_single_gateway_health(mock_gateway_health)
 
                     gateway_service._refresh_gateway_tools_resources_prompts.assert_not_called()
+
+
+def test_validate_tools_mixed_errors(monkeypatch):
+    service = GatewayService()
+    from mcpgateway.schemas import ToolCreate
+
+    validation_error = None
+    try:
+        ToolCreate.model_validate({})
+    except ValidationError as exc:
+        validation_error = exc
+    assert validation_error is not None
+
+    def _validate(tool_dict):
+        if tool_dict["name"] == "ok":
+            return MagicMock()
+        raise validation_error
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ToolCreate.model_validate", _validate)
+
+    tools, errors = service._validate_tools([{"name": "ok"}, {"name": "bad"}])
+    assert len(tools) == 1
+    assert errors
+
+
+def test_validate_tools_all_invalid_default(monkeypatch):
+    service = GatewayService()
+    from mcpgateway.schemas import ToolCreate
+
+    validation_error = None
+    try:
+        ToolCreate.model_validate({})
+    except ValidationError as exc:
+        validation_error = exc
+    assert validation_error is not None
+    monkeypatch.setattr("mcpgateway.services.gateway_service.ToolCreate.model_validate", lambda _tool: (_ for _ in ()).throw(validation_error))
+
+    with pytest.raises(GatewayConnectionError):
+        service._validate_tools([{"name": "bad"}])
+
+
+def test_validate_tools_all_invalid_oauth(monkeypatch):
+    service = GatewayService()
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.ToolCreate.model_validate",
+        lambda _tool: (_ for _ in ()).throw(ValueError("JSON structure exceeds maximum depth")),
+    )
+
+    with pytest.raises(OAuthToolValidationError):
+        service._validate_tools([{"name": "bad"}], context="oauth")
+
+
+def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
+    import mcpgateway.services.gateway_service as gs
+
+    gs._gateway_service_instance = None
+    instance = gs.gateway_service
+    assert isinstance(instance, GatewayService)
+    assert gs.gateway_service is instance
+
+    with pytest.raises(AttributeError):
+        getattr(gs, "missing_attr")
+
+    registry_sentinel = object()
+    tool_sentinel = object()
+    gs._REGISTRY_CACHE = None
+    gs._TOOL_LOOKUP_CACHE = None
+
+    monkeypatch.setitem(sys.modules, "mcpgateway.cache.registry_cache", SimpleNamespace(registry_cache=registry_sentinel))
+    monkeypatch.setitem(sys.modules, "mcpgateway.cache.tool_lookup_cache", SimpleNamespace(tool_lookup_cache=tool_sentinel))
+
+    assert gs._get_registry_cache() is registry_sentinel
+    assert gs._get_tool_lookup_cache() is tool_sentinel
