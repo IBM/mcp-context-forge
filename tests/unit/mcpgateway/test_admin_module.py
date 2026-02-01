@@ -3,6 +3,7 @@
 
 # Standard
 from datetime import datetime, timezone
+import inspect
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -40,6 +41,31 @@ def _allow_permissions(monkeypatch):
         return True
 
     monkeypatch.setattr(PermissionService, "check_permission", _ok)
+
+
+def _unwrap(func):
+    target = func
+    seen = set()
+    while True:
+        if hasattr(target, "__wrapped__"):
+            target = target.__wrapped__
+            continue
+        closure = getattr(target, "__closure__", None)
+        if not closure:
+            return target
+        inner = None
+        for cell in closure:
+            try:
+                value = cell.cell_contents
+            except ValueError:
+                continue
+            if inspect.isfunction(value) and value not in seen:
+                inner = value
+                break
+        if inner is None:
+            return target
+        seen.add(target)
+        target = inner
 
 
 class _StubTeamService:
@@ -201,7 +227,7 @@ async def test_global_passthrough_headers_endpoints(monkeypatch):
     monkeypatch.setattr(admin.settings, "default_passthrough_headers", ["X-Default"])
     monkeypatch.setattr(admin.global_config_cache, "get_passthrough_headers", lambda *_args: ["X-Test"])
 
-    get_func = admin.get_global_passthrough_headers.__wrapped__.__wrapped__
+    get_func = _unwrap(admin.get_global_passthrough_headers)
     result = await get_func(db, _user={"email": "user@example.com"})
     assert result.passthrough_headers == ["X-Test"]
 
@@ -209,16 +235,15 @@ async def test_global_passthrough_headers_endpoints(monkeypatch):
     monkeypatch.setattr(admin.global_config_cache, "invalidate", lambda: invalidate_called.append(True))
 
     config_update = admin.GlobalConfigUpdate(passthrough_headers=["X-New"])
-    update_func = admin.update_global_passthrough_headers.__wrapped__.__wrapped__
+    update_func = _unwrap(admin.update_global_passthrough_headers)
     db.query.return_value.first.return_value = None
-    update_func = admin.update_global_passthrough_headers.__wrapped__.__wrapped__
     update_result = await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
     assert update_result.passthrough_headers == ["X-New"]
     assert invalidate_called
 
     stats = {"hits": 1}
     monkeypatch.setattr(admin.global_config_cache, "stats", lambda: stats)
-    invalidate_func = admin.invalidate_passthrough_headers_cache.__wrapped__.__wrapped__
+    invalidate_func = _unwrap(admin.invalidate_passthrough_headers_cache)
     cache_result = await invalidate_func(_user={"email": "user@example.com"})
     assert cache_result["status"] == "invalidated"
     assert cache_result["cache_stats"] == stats
@@ -231,7 +256,7 @@ async def test_update_global_passthrough_headers_errors(monkeypatch):
     db.query.return_value.first.return_value = MagicMock()
 
     config_update = admin.GlobalConfigUpdate(passthrough_headers=["X-New"])
-    update_func = admin.update_global_passthrough_headers.__wrapped__.__wrapped__
+    update_func = _unwrap(admin.update_global_passthrough_headers)
 
     from sqlalchemy.exc import IntegrityError
 
