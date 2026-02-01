@@ -2013,6 +2013,8 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx) as sse_client_mock,
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+            patch("mcpgateway.services.tool_service.settings.mcp_session_pool_enabled", False),
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value=None),
         ):
             # ------------------------------------------------------------------
             # 4.  Act
@@ -2024,11 +2026,11 @@ class TestToolService:
 
         sse_ctx.__aenter__.assert_awaited_once()
 
-        sse_client_mock.assert_called_once_with(
-            url=mock_gateway.url,
-            headers={"Authorization": "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="},
-            httpx_client_factory=ANY,
-        )
+        sse_client_mock.assert_called_once()
+        sse_call_kwargs = sse_client_mock.call_args.kwargs
+        assert sse_call_kwargs["url"] == mock_gateway.url
+        assert sse_call_kwargs["headers"]["Authorization"] == "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="
+        assert sse_call_kwargs["httpx_client_factory"] is not None
 
     @pytest.mark.asyncio
     async def test_invoke_tool_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
