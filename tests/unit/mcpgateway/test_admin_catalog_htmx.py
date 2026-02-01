@@ -74,8 +74,11 @@ def client():
     streamable_shutdown.start()
 
     # Avoid SharedHttpClient shutdown errors when other tests monkeypatch the singleton
+    from mcpgateway.services.http_client_service import SharedHttpClient
     shared_client = MagicMock()
     shared_client.close = AsyncMock()
+    original_shared_instance = SharedHttpClient._instance
+    SharedHttpClient._instance = shared_client
     shared_get_instance = patch("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", new=AsyncMock(return_value=shared_client))
     shared_shutdown = patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new=AsyncMock())
     shared_get_instance.start()
@@ -92,6 +95,7 @@ def client():
     streamable_shutdown.stop()
     shared_get_instance.stop()
     shared_shutdown.stop()
+    SharedHttpClient._instance = original_shared_instance
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
     settings.auth_required = original_auth_required
