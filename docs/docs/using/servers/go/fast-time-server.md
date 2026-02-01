@@ -1030,6 +1030,7 @@ curl -X POST http://localhost:8080/http \
    ```
 
 5. **STDIO Mode Issues**
+
    - Ensure each JSON message is on a single line
    - Use `-log-level=error` or `-log-level=none` to avoid log interference
    - Check that the binary has proper permissions
@@ -1688,7 +1689,7 @@ print(f"Converted time: {result['converted_time']}")
 
 ## Version History
 
-- **v0.9.0** - Current Docker image version with full MCP protocol support
+- **v1.5.0** - Current server version (see `main.appVersion` in `mcp-servers/go/fast-time-server`)
 
 ## Security Considerations
 

@@ -167,6 +167,7 @@ make certs-passphrase
 ```
 
 This creates:
+
 - `certs/cert.pem` - SSL certificate
 - `certs/key.pem` - Unencrypted private key
 - `certs/key-encrypted.pem` - Passphrase-protected private key (if using make certs-passphrase)
@@ -180,11 +181,13 @@ This creates:
 - They only protect keys "at rest" when the service is stopped
 
 **When passphrase protection helps:**
+
 - The gateway (Gunicorn/Granian) can decrypt keys programmatically from environment variables
 - Adds marginal protection if an attacker gets read-only filesystem access but not environment access
 - Useful for compliance requirements that mandate encrypted keys at rest
 
 **Recommended approach:**
+
 - **Development/Testing**: Use unencrypted keys (`make certs`)
 - **Production**: Use proper secrets management (see Security Best Practices section)
 
@@ -250,6 +253,7 @@ environment:
 ```
 
 Gunicorn uses a custom Python SSL key manager that:
+
 - Decrypts passphrase-protected keys at startup
 - Creates temporary unencrypted key files
 - Supports all SSL/TLS configurations
@@ -261,6 +265,7 @@ environment:
 ```
 
 Granian has native Rust TLS support:
+
 - Supports passphrase-protected keys via `--ssl-keyfile-password`
 - Better performance (Rust + Tokio)
 - Native HTTP/2 support
@@ -327,6 +332,7 @@ server {
 ```
 
 **Note on Nginx and Key Encryption**: While nginx supports passphrase-protected keys via `ssl_password_file`, this requires storing the passphrase in a plaintext file, which provides no security benefit over using an unencrypted key with proper filesystem permissions. For automated services, use unencrypted keys and protect them via:
+
 - Filesystem permissions (mode 640 with group 0 for containers)
 - Read-only volume mounts
 - Secrets management systems (production)
@@ -347,6 +353,7 @@ sudo chgrp 0 key.pem  # Set group to 0 for container access
 ```
 
 The `make certs-remove-passphrase` command will:
+
 1. Prompt for your passphrase to decrypt the key
 2. Create `certs/key.pem` with 640 permissions
 3. Automatically set group to 0 using sudo (you'll be prompted for password)
@@ -432,6 +439,7 @@ docker compose ps
 ```
 
 **What these commands do:**
+
 - `make docker-prod` - Builds the gateway container image using `Containerfile.lite`
 - `make compose-up` - Validates `docker-compose.yml` and starts all services in detached mode
 
@@ -483,12 +491,15 @@ curl -fkv https://localhost:8443/health
 ### Test with Browser
 
 1. **Direct Gateway**: `https://localhost:4444/health`
+
    - Accept security warning for self-signed certificate
 
 2. **Nginx HTTP**: `http://localhost:8080/health`
+
    - No security warning (plain HTTP)
 
 3. **Nginx HTTPS**: `https://localhost:8443/health`
+
    - Accept security warning for self-signed certificate
 
 ## Troubleshooting
@@ -517,15 +528,18 @@ docker compose restart nginx
 **Possible Causes**:
 
 1. **Nginx using HTTP to connect to HTTPS gateway**
+
    - Check: `proxy_pass` should be `https://gateway_backend`
    - Fix: Update nginx.conf and restart: `docker compose restart nginx`
 
 2. **SSL certificate hostname mismatch**
+
    - Check nginx error logs: `docker compose logs nginx`
    - Error: `upstream SSL certificate does not match "gateway_backend"`
    - Fix: Set `proxy_ssl_verify off;` in nginx.conf for self-signed certs
 
 3. **Missing certificates in nginx container**
+
    - Check: Verify volume mount in docker-compose.yml
    - Fix: Add `- ./certs:/app/certs:ro` to nginx volumes
 
@@ -551,6 +565,7 @@ The `-k` flag skips SSL certificate verification for self-signed certificates.
 **Cause**: Missing or incorrect `KEY_FILE_PASSWORD` environment variable.
 
 **Fix**:
+
 1. Verify `.env` file contains: `KEY_FILE_PASSWORD=your-passphrase`
 2. Verify docker-compose.yml references it: `- KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}`
 3. Restart gateway: `docker compose restart gateway`
@@ -570,6 +585,7 @@ The `-k` flag skips SSL certificate verification for self-signed certificates.
 **Cause**: Gateway port not exposed or service not started.
 
 **Fix**:
+
 1. Check service is running: `docker compose ps gateway`
 2. Check port mapping: Should show `0.0.0.0:4444->4444/tcp`
 3. Uncomment ports in docker-compose.yml if commented
@@ -581,6 +597,7 @@ The `-k` flag skips SSL certificate verification for self-signed certificates.
 **Expected Behavior**: This is normal for self-signed certificates in development.
 
 **Solutions**:
+
 - **Development**: Click "Advanced" → "Proceed to localhost (unsafe)"
 - **CI/CD**: Use `curl -k` flag to skip verification
 - **Production**: Use trusted certificates from a CA
@@ -643,14 +660,17 @@ docker compose restart gateway
    - Container runs as UID 1001, GID 0 (see Containerfile.lite line 236, 271)
    - Host files are owned by your UID (e.g., 1000), not container UID (1001)
    - By setting group to 0 (root group) and permissions to 640:
+
      - Owner (your UID): Read/write access ✅
      - Group 0: Read access ✅ ← **Container (1001:0) accesses via this**
      - Others: No access ✅
+
    - More secure than 644 (no world access)
 
    **Sudo requirement**: The make commands use `sudo chgrp 0` to set the group. You'll be prompted for your password once. If sudo is not available, you'll see a warning but cert generation will still succeed (you can set the group manually later).
 
 2. **Never commit secrets to git**
+
    - Certificate files are in `.gitignore`
    - Never commit `.env` files with passwords/passphrases
    - Use `.env.example` as a template without real secrets
@@ -662,8 +682,8 @@ docker compose restart gateway
    ```
 
 4. **Rotate certificates regularly** (every 90 days minimum, even for self-signed)
-
 5. **Passphrase protection consideration**
+
    - Passphrase-protected keys provide minimal benefit in automated environments
    - Only protects keys when service is stopped
    - Consider for compliance requirements or gateway-only deployments
@@ -671,11 +691,13 @@ docker compose restart gateway
 ### Production
 
 1. **Use trusted CA certificates** (Let's Encrypt, commercial CA, internal PKI)
+
    - Let's Encrypt is free and automated
    - Commercial CAs for enterprise support
    - Internal CA for private networks
 
 2. **Implement proper secrets management**
+
    - **Kubernetes**: Use Secrets with RBAC
      ```yaml
      apiVersion: v1
@@ -704,15 +726,18 @@ docker compose restart gateway
    ```
 
 4. **Use strong TLS protocols** (TLSv1.2 and TLSv1.3 only)
+
    - Disable SSLv3, TLS 1.0, TLS 1.1
    - Use modern cipher suites
 
 5. **Implement certificate rotation automation**
+
    - Let's Encrypt with certbot (auto-renewal)
    - cert-manager for Kubernetes
    - Custom rotation scripts
 
 6. **Monitor certificate expiration** (30 days warning minimum)
+
    - Prometheus + alertmanager
    - Cloud monitoring services
    - Custom monitoring scripts
@@ -723,11 +748,13 @@ docker compose restart gateway
    ```
 
 8. **Consider certificate pinning** for highly sensitive deployments
+
    - Public Key Pinning Extension (HPKP) - deprecated
    - Certificate Transparency monitoring
    - Application-level pinning
 
 9. **Use Hardware Security Modules (HSM)** for high-security environments
+
    - Cloud HSM services (AWS CloudHSM, Azure Dedicated HSM)
    - On-premises HSMs
    - PKCS#11 integration with nginx/gateway
@@ -738,8 +765,10 @@ docker compose restart gateway
 
 1. **Access control** - Who can read the key file or secret
 2. **Filesystem permissions** - Unix permissions with proper group ownership
+
    - Containers: 640 with group 0 (owner+group, no world access)
    - Container user (UID 1001, GID 0) accesses via group membership
+
 3. **Secrets management** - Proper injection and rotation
 4. **Network isolation** - Limit exposure of TLS endpoints
 5. **Audit logging** - Track secret access
@@ -869,5 +898,5 @@ server {
 
 - [Docker Compose Deployment](compose.md)
 - [Kubernetes TLS Configuration](kubernetes.md)
-- [Security Best Practices](../best-practices/security.md)
+- [Security Best Practices](../manage/securing.md)
 - [Proxy Authentication](proxy-auth.md)

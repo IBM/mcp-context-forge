@@ -21,24 +21,29 @@ This feature enables automatic role assignment for Microsoft EntraID (formerly A
 Context Forge includes a comprehensive RBAC system with the following default roles:
 
 1. **`platform_admin`** (global scope)
+
    - Permissions: `["*"]` (all permissions)
    - Full platform access
 
 2. **`team_admin`** (team scope)
+
    - Permissions: Team management, tools, resources, prompts
    - Can manage team members and settings
 
 3. **`developer`** (team scope)
+
    - Permissions: Tool execution, resource access, prompts
    - Can execute tools and access resources
 
 4. **`viewer`** (team scope)
+
    - Permissions: Read-only access to tools, resources, prompts
    - Cannot execute tools or modify resources
 
 ### Implementation Components
 
 1. **Configuration** (`mcpgateway/config.py`)
+
    - `sso_entra_groups_claim`: JWT claim for groups (default: "groups")
    - `sso_entra_admin_groups`: Groups granting platform_admin role
    - `sso_entra_role_mappings`: Map groups to roles
@@ -46,23 +51,27 @@ Context Forge includes a comprehensive RBAC system with the following default ro
    - `sso_entra_sync_roles_on_login`: Sync roles on each login
 
 2. **Token Parsing** (`_get_user_info()` and `_decode_jwt_claims()`)
+
    - Parses the `id_token` JWT to extract claims (Microsoft's userinfo endpoint doesn't return groups)
    - Extracts `groups` claim (Security Groups as Object IDs)
    - Extracts `roles` claim (App Roles)
    - Falls back to userinfo for basic profile claims (email, name, etc.)
 
 3. **Group Normalization** (`_normalize_user_info()`)
+
    - Combines groups and roles from id_token
    - Deduplicates and returns normalized user info
    - Supports custom groups claim via provider metadata
 
 4. **Role Mapping** (`_map_groups_to_roles()`)
+
    - Maps EntraID groups to Context Forge roles
    - Checks admin groups first (case-insensitive)
    - Applies role mappings from configuration
    - Assigns default role if no mappings found
 
 5. **Role Synchronization** (`_sync_user_roles()`)
+
    - Synchronizes roles on user creation and login
    - Revokes SSO-granted roles no longer in groups
    - Assigns new roles based on current groups
@@ -70,6 +79,7 @@ Context Forge includes a comprehensive RBAC system with the following default ro
    - Maintains audit trail with `granted_by='sso_system'`
 
 6. **Admin Status Synchronization** (`authenticate_or_create_user()`)
+
    - Upgrades `is_admin` flag when user gains admin group membership
    - **Never downgrades** `is_admin` - manual admin grants via Admin UI/API are preserved
    - To revoke admin access, use the Admin UI/API directly
@@ -88,8 +98,10 @@ Context Forge includes a comprehensive RBAC system with the following default ro
 3. Click **+ Add groups claim**
 4. Select token types: **ID** (required), Access (optional)
 5. Select group types:
+
    - **Security groups** (recommended for most use cases)
    - Or **All groups** if you need Microsoft 365 groups
+
 6. Choose **Group ID** format for stability (Object IDs won't change)
 7. For App Roles: Go to **App Roles** and create roles (they are automatically included in tokens)
 
@@ -157,6 +169,7 @@ You can also configure role mappings in the SSO provider metadata:
 ### Example 1: Using App Roles (Recommended)
 
 **EntraID Configuration:**
+
 - App Roles: `Admin`, `Developer`, `Viewer`
 - Token includes `roles` claim
 
@@ -169,6 +182,7 @@ SSO_ENTRA_DEFAULT_ROLE=viewer
 ```
 
 **Result:**
+
 - User with `Admin` role → `platform_admin` (global scope)
 - User with `Developer` role → `developer` (team scope)
 - User with `Viewer` role → `viewer` (team scope)
@@ -177,6 +191,7 @@ SSO_ENTRA_DEFAULT_ROLE=viewer
 ### Example 2: Using Security Groups (Object IDs)
 
 **EntraID Configuration:**
+
 - Security Groups with Object IDs
 - Token includes `groups` claim
 
@@ -188,6 +203,7 @@ SSO_ENTRA_ROLE_MAPPINGS={"e5f6g7h8-1234-5678-90ab-cdef12345678":"developer","i9j
 ```
 
 **Result:**
+
 - User in group `a1b2c3d4-...` → `platform_admin`
 - User in group `e5f6g7h8-...` → `developer`
 - User in group `i9j0k1l2-...` → `viewer`
@@ -195,6 +211,7 @@ SSO_ENTRA_ROLE_MAPPINGS={"e5f6g7h8-1234-5678-90ab-cdef12345678":"developer","i9j
 ### Example 3: Mixed Approach
 
 **EntraID Configuration:**
+
 - Both Security Groups and App Roles
 - Token includes both `groups` and `roles` claims
 
@@ -223,6 +240,7 @@ When an existing user logs in:
 
 1. User info is updated (name, provider, etc.)
 2. If `sso_entra_sync_roles_on_login=true`:
+
    - Current groups are extracted
    - Groups are mapped to roles
    - Old SSO-granted roles are revoked if no longer in groups
@@ -310,6 +328,7 @@ Role mapping may be incomplete. Consider using App Roles or Azure group filterin
 ### Issue: Users not getting roles
 
 **Check:**
+
 1. Token includes `groups` or `roles` claim
 2. `SSO_ENTRA_GROUPS_CLAIM` matches claim name in token
 3. Group IDs/names match `SSO_ENTRA_ROLE_MAPPINGS`
@@ -330,6 +349,7 @@ WHERE ur.user_email='user@example.com';
 ### Issue: Admin users not getting admin access
 
 **Check:**
+
 1. User's group is in `SSO_ENTRA_ADMIN_GROUPS`
 2. Group ID/name matches exactly (case-insensitive)
 3. `is_admin` flag is set on user record
@@ -343,6 +363,7 @@ SELECT email, is_admin, auth_provider FROM email_users WHERE email='user@example
 ### Issue: Roles not syncing on login
 
 **Check:**
+
 1. `SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true`
 2. User has groups in token
 3. No errors in application logs
@@ -357,6 +378,7 @@ grep "Revoked SSO role" /var/log/mcpgateway.log
 ### Issue: Group overage - user has too many groups
 
 **Symptoms:**
+
 - User doesn't receive expected roles
 - Application logs show: `Group overage detected for user ... token contains too many groups (>200)`
 
@@ -364,6 +386,7 @@ grep "Revoked SSO role" /var/log/mcpgateway.log
 User belongs to more than ~200 security groups. EntraID cannot fit all groups in the token and instead includes a "groups overage" indicator.
 
 **Solutions:**
+
 1. **Use App Roles** (Recommended) - Not subject to token size limits
 2. **Configure group filtering** - In Azure Portal, limit which groups are included in the token
 3. **Assign groups to the application** - Use application-assigned groups instead of user memberships
@@ -450,6 +473,7 @@ Maps EntraID groups to Context Forge roles.
 Synchronizes user's role assignments.
 
 **Side Effects:**
+
 - Revokes old SSO-granted roles
 - Assigns new roles from current groups
 - Commits changes to database
@@ -487,6 +511,7 @@ This section documents key architectural decisions. See [ADR-034](../architectur
 | Manual admin grant | Preserved across all SSO logins |
 
 **Rationale**:
+
 - Manual admin grants via Admin UI/API are intentional decisions
 - RBAC roles (`platform_admin`) already handle group-based role sync with revocation
 - To revoke admin access, use the Admin UI/API explicitly
@@ -511,6 +536,7 @@ Result: {"groups_claim": "custom", "new_feature": true, "sync_roles": false}
 ```
 
 **To change a key that exists in database**:
+
 1. Use Admin API to update the provider
 2. Or delete the provider and restart (bootstrap recreates from env)
 
@@ -534,6 +560,7 @@ Groups and roles are extracted from the `id_token` JWT received from the token e
 ## Support
 
 For issues or questions:
+
 1. Check application logs for error messages
 2. Verify EntraID token configuration in Azure Portal
 3. Test with a single user before rolling out

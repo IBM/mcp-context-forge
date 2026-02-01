@@ -9,10 +9,10 @@
 Under high-concurrency load testing, two additional performance bottlenecks were identified beyond authentication (addressed in ADR-028):
 
 1. **Registry List Endpoints**: Tools, prompts, resources, agents, servers, and gateways list endpoints each query the database on every request. With pagination, filtering, and team-based access control, these queries became expensive under load.
-
 2. **Admin Dashboard Stats**: The admin dashboard aggregates statistics from multiple tables (tools, prompts, resources, servers, users, teams) with expensive COUNT queries executed on every page load.
 
 At 1000+ concurrent users:
+
 - Registry list endpoints: ~50-100ms per request due to complex JOIN queries
 - Admin stats: ~200-500ms per request aggregating across tables
 - N+1 query patterns in team name resolution
@@ -26,22 +26,26 @@ Implement distributed caching for registry list endpoints and admin dashboard st
 ### Changes Made
 
 1. **New module: `mcpgateway/cache/registry_cache.py`**
+
    - `RegistryCache` class with Redis primary + in-memory fallback
    - Per-entity-type TTL configuration (tools, prompts, resources, agents, servers, gateways)
    - Filter-aware cache keys (tags, include_inactive, pagination cursor)
    - Automatic invalidation on CRUD operations
 
 2. **New module: `mcpgateway/cache/admin_stats_cache.py`**
+
    - `AdminStatsCache` class with Redis primary + in-memory fallback
    - Separate TTLs for system stats, observability, users, and teams
    - Cached versions of expensive aggregate queries
 
 3. **N+1 Query Fixes**
+
    - `prompt_service.py:list_prompts()` - Batch team name fetching
    - `resource_service.py:list_resources()` - Batch team name fetching
    - Single query fetches all team names for a page of results
 
 4. **Cache Integration in Services**
+
    - `tool_service.py:list_tools()` - Cache first page results
    - `prompt_service.py:list_prompts()` - Cache first page results
    - `resource_service.py:list_resources()` - Cache first page results
@@ -51,6 +55,7 @@ Implement distributed caching for registry list endpoints and admin dashboard st
    - `system_stats_service.py:get_comprehensive_stats_cached()` - Cached stats
 
 5. **Cache Invalidation Hooks**
+
    - Tool create/update/delete triggers `cache.invalidate_tools()`
    - Prompt create/update/delete triggers `cache.invalidate_prompts()`
    - Resource create/update/delete triggers `cache.invalidate_resources()`
@@ -59,6 +64,7 @@ Implement distributed caching for registry list endpoints and admin dashboard st
 6. **Configuration Settings**
 
    Registry Cache:
+
    - `REGISTRY_CACHE_ENABLED` (default: true)
    - `REGISTRY_CACHE_TOOLS_TTL` (default: 20s)
    - `REGISTRY_CACHE_PROMPTS_TTL` (default: 15s)
@@ -68,6 +74,7 @@ Implement distributed caching for registry list endpoints and admin dashboard st
    - `REGISTRY_CACHE_GATEWAYS_TTL` (default: 20s)
 
    Admin Stats Cache:
+
    - `ADMIN_STATS_CACHE_ENABLED` (default: true)
    - `ADMIN_STATS_CACHE_SYSTEM_TTL` (default: 60s)
    - `ADMIN_STATS_CACHE_OBSERVABILITY_TTL` (default: 30s)
@@ -134,8 +141,10 @@ Default prefix: `mcpgw:` → `mcpgw:registry:tools:abc123`
 ### Negative
 
 - Cache staleness window (up to TTL) after modifications:
+
   - Registry changes: up to 15-20s
   - Stats changes: up to 30-60s
+
 - Additional memory usage for in-memory fallback cache
 - Complexity in cache key management for filtered queries
 

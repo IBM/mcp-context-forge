@@ -255,7 +255,6 @@ plugin_settings:
 ```
 
 2. Ensure `.env` contains: `PLUGINS_ENABLED=true` and `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
-
 3. Start the gateway: `make dev` (or `make serve`).
 
 That's it — the gateway now runs the enabled plugins at the selected hook points.
@@ -409,6 +408,7 @@ The plugin framework provides comprehensive hook coverage across the entire MCP 
 
 !!! note "Agent-to-Agent (A2A) Hooks"
     Agent hooks enable filtering and monitoring of Agent-to-Agent interactions. These hooks allow you to:
+
     - Filter/transform messages before they reach agents
     - Control which tools are available to agents
     - Override model or system prompt settings
@@ -1101,6 +1101,7 @@ Errors inside a plugin should be raised as exceptions.  The plugin manager will 
 
 1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of the MCP Context Forge regardless of the plugin mode.
 2. if `plugin_settings.fail_on_plugin_error` is set to false the error is handled based off of the plugin mode in the plugin's config as follows:
+
   * if `mode` is `enforce`, both violations and errors are bubbled up as exceptions and the execution is blocked.
   * if `mode` is `enforce_ignore_error`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.
   * if `mode` is `permissive`, execution is allowed to proceed whether there are errors or violations. Both are logged.

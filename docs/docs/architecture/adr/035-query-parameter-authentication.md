@@ -49,7 +49,7 @@ sequenceDiagram
     participant Upstream MCP Server
 
     Note over Admin,Upstream MCP Server: Gateway Registration
-    Admin->>Gateway: POST /gateways (auth_type=query_param, key, value)
+    Admin->>Gateway: POST /gateways (auth_type=query_param, auth_query_param_key, auth_query_param_value)
     Gateway->>Gateway: Validate feature flag enabled
     Gateway->>Gateway: Validate host in allowlist
     Gateway->>Gateway: Encrypt API key value
@@ -113,10 +113,12 @@ sequenceDiagram
 ### Negative Consequences
 
 - **Inherent Security Risk**: API keys in URLs may appear in:
+
   - Proxy server logs (if not configured to redact query strings)
   - Browser history (if URLs are exposed to browsers)
   - Server access logs (upstream server's logs)
   - Network monitoring tools
+
 - **CWE-598 Violation**: This authentication method violates security best practices (Use of GET Request Method With Sensitive Query Strings)
 - **Operational Burden**: Administrators must ensure proxy servers and monitoring tools are configured to redact sensitive query parameters
 

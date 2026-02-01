@@ -61,16 +61,19 @@ Before using the API, you need to:
 3. **Set the base URL**:
 
     ```bash
-    # Development server
+    # Development server (make dev)
     export BASE_URL="http://localhost:8000"
 
-    # Production server
+    # Direct production server (make serve, uvx, or docker run)
     export BASE_URL="http://localhost:4444"
+
+    # Docker Compose with nginx proxy
+    # export BASE_URL="http://localhost:8080"
     ```
 
 ## Authentication
 
-All API requests require JWT Bearer token authentication:
+Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
@@ -86,11 +89,13 @@ curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
 The API supports two pagination approaches:
 
 1. **Cursor-based pagination** (Main API endpoints: `/tools`, `/servers`, `/gateways`, etc.)
+
    - Uses opaque cursors for efficient traversal
    - Best for real-time data and large datasets
    - No knowledge of total pages required
 
 2. **Page-based pagination** (Admin API endpoints: `/admin/tools`, `/admin/servers`, etc.)
+
    - Uses page numbers and per-page limits
    - Provides total count and page information
    - Easier for UI components with page numbers
@@ -208,6 +213,23 @@ Expected output:
 ```bash
 # Readiness check (for load balancers)
 curl -s $BASE_URL/ready | jq '.'
+```
+
+Expected output:
+
+```json
+{
+  "status": "ready"
+}
+```
+
+If the gateway is not ready, this endpoint returns HTTP 503 with:
+
+```json
+{
+  "status": "not ready",
+  "error": "..."
+}
 ```
 
 ### Get Version Information
@@ -1156,14 +1178,17 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 Access interactive Swagger UI documentation:
 
 ```
-http://localhost:8000/docs
+$BASE_URL/docs
 ```
 
 Access ReDoc documentation:
 
 ```
-http://localhost:8000/redoc
+$BASE_URL/redoc
 ```
+
+!!! tip "Docs authentication"
+    `/docs`, `/redoc`, and `/openapi.json` are JWT-protected by default. Log in to the Admin UI to get a session cookie, or enable `DOCS_ALLOW_BASIC_AUTH=true` and use Basic auth in the browser.
 
 ## End-to-End Workflow Example
 
@@ -1173,7 +1198,9 @@ This complete example demonstrates a typical workflow: registering a gateway, di
 #!/bin/bash
 
 # Configuration
-export BASE_URL="http://localhost:8000"
+export BASE_URL="http://localhost:4444"
+# export BASE_URL="http://localhost:8080"  # docker-compose with nginx
+# export BASE_URL="http://localhost:8000"  # make dev (uvicorn)
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
   --username admin@example.com \
   --exp 10080 \
@@ -1379,7 +1406,9 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
 # batch-enable-tools.sh - Enable all tools from a specific gateway
 
 export TOKEN="your-token"
-export BASE_URL="http://localhost:8000"
+export BASE_URL="http://localhost:4444"
+# export BASE_URL="http://localhost:8080"  # docker-compose with nginx
+# export BASE_URL="http://localhost:8000"  # make dev (uvicorn)
 export GATEWAY_SLUG="my-gateway"
 
 # Get all tools from the gateway
@@ -1411,4 +1440,4 @@ For issues or questions:
 
 - [GitHub Issues](https://github.com/cmihai/mcp-context-forge/issues)
 - [Documentation](https://mcpgateway.org)
-- [API Reference](/openapi.json)
+- API Reference: `$BASE_URL/openapi.json`

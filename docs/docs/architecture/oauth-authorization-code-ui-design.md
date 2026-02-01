@@ -1,825 +1,244 @@
 # OAuth 2.0 Authorization Code Flow UI Implementation Design
 
-**Version**: 1.0
-**Status**: Design Document
-**Date**: December 2024
+**Version**: 1.1
+**Status**: Design + implementation notes
+**Date**: February 2026
 **Related**: [OAuth Design Document](./oauth-design.md)
 
 ## Executive Summary
 
-This document outlines the design for implementing OAuth 2.0 Authorization Code flow with user consent in the MCP Gateway UI. The implementation will extend the existing OAuth infrastructure to support user delegation flows, token storage, and automatic token refresh, enabling agents to act on behalf of users with proper consent and scoped permissions.
+This document describes how the Admin UI initiates OAuth 2.0 Authorization Code flow for MCP gateways and how the backend stores and uses user-delegated tokens. It reflects current behavior in code and calls out remaining gaps.
 
-## Current State Analysis
+## Current Implementation Snapshot
 
-### Existing Implementation
-- ✅ OAuth Manager service with Client Credentials flow
-- ✅ Basic Authorization Code flow support in OAuth Manager
-- ✅ OAuth configuration fields in Gateway creation UI
-- ✅ OAuth callback endpoint (`/oauth/callback`)
-- ✅ Database schema with `oauth_config` JSON field
-- ✅ Client secret encryption/decryption
+### Implemented today
 
-### Current Limitations
-- ❌ No token storage mechanism for Authorization Code flow
-- ❌ No refresh token handling
-- ❌ Incomplete UI flow for user consent
-- ❌ No token expiration management
-- ❌ Limited error handling for OAuth flows
+- Admin UI exposes OAuth configuration fields for gateways and an "Authorize" action.
+- Authorization Code flow uses PKCE (S256) and an HMAC-signed state value with a 300-second TTL.
+- OAuth state is stored in Redis when `CACHE_TYPE=redis`, in the database when `CACHE_TYPE=database`, and in memory otherwise.
+- Tokens are stored per gateway and app user (email) in `oauth_tokens`, encrypted with `AUTH_ENCRYPTION_SECRET`.
+- Refresh tokens are used when access tokens are near expiry; invalid refresh tokens are cleared.
+- DCR auto-registration can run during `/oauth/authorize/{gateway_id}` when `issuer` is set and `client_id` is missing.
+
+### Known gaps and constraints
+
+- `oauth_store_tokens` and `oauth_auto_refresh` checkboxes exist in the UI but are not persisted or enforced by the backend.
+- `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD` is defined but PKCE is always S256 today.
+- No admin UI to list or revoke stored OAuth tokens per user.
+- Token cleanup is a helper method only; there is no scheduler invoking it.
 
 ## Architecture Overview
 
 ```mermaid
 graph TD
-    subgraph "MCP Gateway UI"
-        A[Gateway Configuration]
-        B[OAuth Authorization Flow]
-        C[Token Management]
-        D[User Consent Interface]
+    subgraph "Admin UI"
+        A[Gateway OAuth Configuration]
+        B[Authorize Button]
     end
 
-    subgraph "Backend Services"
-        E[OAuth Manager]
-        F[Token Storage Service]
-        G[Gateway Service]
+    subgraph "Backend"
+        C[OAuth Router]
+        D[OAuth Manager]
+        E[Token Storage Service]
+    end
+
+    subgraph "State Store"
+        S[Redis / Database / Memory]
     end
 
     subgraph "Database"
-        H[Gateway Table]
-        I[OAuth Tokens Table]
+        G[gateways.oauth_config]
+        T[oauth_tokens]
+        ST[oauth_states when CACHE_TYPE=database]
     end
 
     subgraph "External"
-        J[OAuth Provider]
-        K[User Browser]
+        U[User Browser]
+        O[OAuth Provider]
     end
 
-    A --> E
-    B --> E
-    E --> F
-    F --> I
-    G --> F
-    B --> K
-    K --> J
-    J --> B
-    E --> J
+    A --> G
+    B --> C
+    C --> D
+    D --> S
+    D --> O
+    O --> C
+    C --> E
+    E --> T
+    E --> ST
+    B --> U
+    U --> O
 ```
 
-## Database Schema Changes
+Authorize redirects to `/oauth/authorize/{gateway_id}`. The OAuth Manager performs PKCE and state handling.
 
-### New OAuth Tokens Table
+## Data Model
 
-```sql
-CREATE TABLE oauth_tokens (
-    id VARCHAR(36) PRIMARY KEY DEFAULT (uuid()),
-    gateway_id VARCHAR(36) NOT NULL,
-    user_id VARCHAR(255) NOT NULL,  -- OAuth provider user ID
-    access_token TEXT NOT NULL,
-    refresh_token TEXT,
-    token_type VARCHAR(50) DEFAULT 'Bearer',
-    expires_at TIMESTAMP,
-    scopes JSON,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+### Gateway OAuth configuration (`gateways.oauth_config`)
 
-    FOREIGN KEY (gateway_id) REFERENCES gateways(id) ON DELETE CASCADE,
-    UNIQUE KEY unique_gateway_user (gateway_id, user_id)
-);
+Stored as JSON and assembled from Admin UI fields or API payloads.
 
--- Index for efficient token lookup
-CREATE INDEX idx_oauth_tokens_gateway_user ON oauth_tokens(gateway_id, user_id);
-CREATE INDEX idx_oauth_tokens_expires ON oauth_tokens(expires_at);
-```
+- `grant_type`: `authorization_code`, `client_credentials`, or `password`
+- `issuer`: OAuth Authorization Server issuer URL (required for DCR)
+- `authorization_url`: OAuth authorization endpoint
+- `token_url`: OAuth token endpoint
+- `redirect_uri`: Must match the OAuth client registration
+- `client_id`: OAuth client identifier
+- `client_secret`: Encrypted before storage
+- `username` / `password`: Used only for password grant
+- `scopes`: Array of requested scopes
+- `resource` (optional): RFC 8707 resource parameter; when omitted, `/oauth/authorize` derives it from the gateway URL
 
-### Modified Gateway Table
+### `oauth_tokens`
 
-```sql
--- Add new fields to existing oauth_config JSON structure
-ALTER TABLE gateways
-MODIFY COLUMN oauth_config JSON COMMENT 'OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, scopes, and token management settings';
+One token record per gateway and app user (email).
 
--- Updated oauth_config structure:
-{
-  "grant_type": "client_credentials|authorization_code",
-  "client_id": "string",
-  "client_secret": "encrypted_string",
-  "authorization_url": "string",
-  "token_url": "string",
-  "redirect_uri": "string",
-  "scopes": ["scope1", "scope2"],
-  "token_management": {
-    "store_tokens": true,
-    "auto_refresh": true,
-    "refresh_threshold_seconds": 300
-  }
-}
-```
+- `gateway_id`, `app_user_email` (unique pair)
+- `user_id` (OAuth provider user identifier)
+- `access_token`, `refresh_token` (encrypted at rest)
+- `token_type`, `expires_at`, `scopes`
+- `created_at`, `updated_at`
 
-## Core Components
+### `oauth_states` (database-backed state storage)
 
-### 1. Token Storage Service
+Used only when `CACHE_TYPE=database`.
 
-**Location**: `mcpgateway/services/token_storage_service.py`
+- `gateway_id`, `state` (unique)
+- `code_verifier` (PKCE)
+- `expires_at`, `used`, `created_at`
+- TTL is enforced in logic (300 seconds)
 
-```python
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
-from sqlalchemy.orm import Session
-from mcpgateway.db import OAuthToken, DbGateway
-from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+### `registered_oauth_clients` (DCR, optional)
 
-class TokenStorageService:
-    """Manages OAuth token storage and retrieval."""
+Stored when Dynamic Client Registration succeeds.
 
-    def __init__(self, db: Session):
-        self.db = db
-        self.encryption = get_oauth_encryption()
+- `issuer`, `client_id`, `client_secret_encrypted`
+- `redirect_uris`, `grant_types`, `response_types`, `scope`
+- `token_endpoint_auth_method`, `registration_client_uri`
+- `created_at`, `expires_at`, `is_active`
 
-    async def store_tokens(
-        self,
-        gateway_id: str,
-        user_id: str,
-        access_token: str,
-        refresh_token: Optional[str],
-        expires_in: int,
-        scopes: List[str]
-    ) -> OAuthToken:
-        """Store OAuth tokens for a gateway-user combination."""
+## UI and Flow
 
-        # Encrypt sensitive tokens
-        encrypted_access = self.encryption.encrypt_secret(access_token)
-        encrypted_refresh = None
-        if refresh_token:
-            encrypted_refresh = self.encryption.encrypt_secret(refresh_token)
+### Admin UI touchpoints
 
-        # Calculate expiration
-        expires_at = datetime.now(tz=timezone.utc) + timedelta(seconds=expires_in)
+The gateway form maps these inputs into `oauth_config`:
 
-        # Create or update token record
-        token_record = self.db.query(OAuthToken).filter(
-            OAuthToken.gateway_id == gateway_id,
-            OAuthToken.user_id == user_id
-        ).first()
+- `oauth_grant_type`
+- `oauth_issuer`
+- `oauth_client_id`
+- `oauth_client_secret`
+- `oauth_authorization_url`
+- `oauth_token_url`
+- `oauth_redirect_uri`
+- `oauth_scopes`
+- `oauth_username` / `oauth_password` (password grant only)
 
-        if token_record:
-            # Update existing record
-            token_record.access_token = encrypted_access
-            token_record.refresh_token = encrypted_refresh
-            token_record.expires_at = expires_at
-            token_record.scopes = scopes
-            token_record.updated_at = datetime.now(tz=timezone.utc)
-        else:
-            # Create new record
-            token_record = OAuthToken(
-                gateway_id=gateway_id,
-                user_id=user_id,
-                access_token=encrypted_access,
-                refresh_token=encrypted_refresh,
-                expires_at=expires_at,
-                scopes=scopes
-            )
-            self.db.add(token_record)
+The gateway list shows an **Authorize** button for OAuth gateways, which sends the current user through `/oauth/authorize/{gateway_id}`.
 
-        self.db.commit()
-        return token_record
-```
-
-    async def get_valid_token(
-        self,
-        gateway_id: str,
-        user_id: str
-    ) -> Optional[str]:
-        """Get a valid access token, refreshing if necessary."""
-
-        token_record = self.db.query(OAuthToken).filter(
-            OAuthToken.gateway_id == gateway_id,
-            OAuthToken.user_id == user_id
-        ).first()
-
-        if not token_record:
-            return None
-
-        # Check if token is expired or near expiration
-        if self._is_token_expired(token_record):
-            if token_record.refresh_token:
-                # Attempt to refresh token
-                new_token = await self._refresh_access_token(token_record)
-                if new_token:
-                    return new_token
-            return None
-
-        # Decrypt and return valid token
-        return self.encryption.decrypt_secret(token_record.access_token)
-
-    async def _refresh_access_token(self, token_record: OAuthToken) -> Optional[str]:
-        """Refresh an expired access token using refresh token."""
-        # Implementation for token refresh
-        pass
-
-    def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:
-        """Check if token is expired or near expiration."""
-        return datetime.now(tz=timezone.utc) + timedelta(seconds=threshold_seconds) >= token_record.expires_at
-```
-
-### 2. Enhanced OAuth Manager
-
-**Location**: `mcpgateway/services/oauth_manager.py`
-
-```python
-class OAuthManager:
-    """Enhanced OAuth Manager with token storage support."""
-
-    def __init__(self, token_storage: TokenStorageService):
-        self.token_storage = token_storage
-
-    async def initiate_authorization_code_flow(
-        self,
-        gateway_id: str,
-        credentials: Dict[str, Any]
-    ) -> Dict[str, str]:
-        """Initiate Authorization Code flow and return authorization URL."""
-
-        # Generate state parameter for CSRF protection
-        state = self._generate_state(gateway_id)
-
-        # Store state in session/cache for validation
-        await self._store_authorization_state(gateway_id, state)
-
-        # Generate authorization URL
-        auth_url, _ = self._create_authorization_url(credentials, state)
-
-        return {
-            'authorization_url': auth_url,
-            'state': state,
-            'gateway_id': gateway_id
-        }
-```
-
-    async def complete_authorization_code_flow(
-        self,
-        gateway_id: str,
-        code: str,
-        state: str,
-        credentials: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Complete Authorization Code flow and store tokens."""
-
-        # Validate state parameter
-        if not await self._validate_authorization_state(gateway_id, state):
-            raise OAuthError("Invalid state parameter")
-
-        # Exchange code for tokens
-        token_response = await self._exchange_code_for_tokens(credentials, code)
-
-        # Extract user information from token response
-        user_id = self._extract_user_id(token_response, credentials)
-
-        # Store tokens
-        token_record = await self.token_storage.store_tokens(
-            gateway_id=gateway_id,
-            user_id=user_id,
-            access_token=token_response['access_token'],
-            refresh_token=token_response.get('refresh_token'),
-            expires_in=token_response.get('expires_in', 3600),
-            scopes=token_response.get('scope', '').split()
-        )
-
-        return {
-            'success': True,
-            'user_id': user_id,
-            'expires_at': token_record.expires_at.isoformat()
-        }
-
-    async def get_access_token_for_user(
-        self,
-        gateway_id: str,
-        user_id: str
-    ) -> Optional[str]:
-        """Get valid access token for a specific user."""
-        return await self.token_storage.get_valid_token(gateway_id, user_id)
-```
-
-### 3. OAuth Callback Handler
-
-**Location**: `mcpgateway/routers/oauth_router.py`
-
-```python
-from fastapi import APIRouter, Depends, Request, HTTPException
-from fastapi.responses import RedirectResponse, HTMLResponse
-
-oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
-
-@oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(
-    gateway_id: str,
-    request: Request,
-    db: Session = Depends(get_db)
-) -> RedirectResponse:
-    """Initiate OAuth Authorization Code flow."""
-
-    # Get gateway configuration
-    gateway = db.query(DbGateway).filter(DbGateway.id == gateway_id).first()
-    if not gateway or not gateway.oauth_config:
-        raise HTTPException(status_code=404, detail="Gateway not found or not configured for OAuth")
-
-    # Initiate OAuth flow
-    oauth_manager = OAuthManager(TokenStorageService(db))
-    auth_data = await oauth_manager.initiate_authorization_code_flow(
-        gateway_id, gateway.oauth_config
-    )
-
-    # Redirect user to OAuth provider
-    return RedirectResponse(url=auth_data['authorization_url'])
-```
-
-@oauth_router.get("/callback")
-async def oauth_callback(
-    code: str,
-    state: str,
-    gateway_id: str,
-    request: Request,
-    db: Session = Depends(get_db)
-) -> HTMLResponse:
-    """Handle OAuth callback and complete authorization."""
-
-    try:
-        # Complete OAuth flow
-        oauth_manager = OAuthManager(TokenStorageService(db))
-        gateway = db.query(DbGateway).filter(DbGateway.id == gateway_id).first()
-
-        result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id, code, state, gateway.oauth_config
-        )
-
-        # Return success page with option to return to admin
-        return HTMLResponse(content=f"""
-        <!DOCTYPE html>
-        <html>
-        <head><title>OAuth Authorization Successful</title></head>
-        <body>
-            <h1>✅ OAuth Authorization Successful</h1>
-            <p>Gateway: {gateway.name}</p>
-            <p>User: {result['user_id']}</p>
-            <p>Expires: {result['expires_at']}</p>
-            <a href="/admin#gateways">Return to Admin Panel</a>
-        </body>
-        </html>
-        """)
-
-    except Exception as e:
-        return HTMLResponse(content=f"""
-        <!DOCTYPE html>
-        <html>
-        <head><title>OAuth Authorization Failed</title></head>
-        <body>
-            <h1>❌ OAuth Authorization Failed</h1>
-            <p>Error: {str(e)}</p>
-            <a href="/admin#gateways">Return to Admin Panel</a>
-        </body>
-        </html>
-        """, status_code=400)
-```
-
-## UI Implementation
-
-### 1. Enhanced Gateway Creation Form
-
-**File**: `mcpgateway/templates/admin.html`
-
-```html
-<!-- OAuth Configuration Fields -->
-<div id="auth-oauth-fields-gw" style="display: none">
-  <div class="space-y-4">
-    <div>
-      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-        Grant Type
-      </label>
-      <select
-        name="oauth_grant_type"
-        id="oauth-grant-type-gw"
-        onchange="toggleOAuthFields()"
-        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-      >
-        <option value="client_credentials">Client Credentials (Machine-to-Machine)</option>
-        <option value="authorization_code">Authorization Code (User Delegation)</option>
-      </select>
-    </div>
-
-    <!-- Common OAuth fields -->
-    <div>
-      <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-        Client ID
-      </label>
-      <input
-        type="text"
-        name="oauth_client_id"
-        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-        placeholder="Your OAuth client ID"
-      />
-    </div>
-```
-
-    <!-- Authorization Code specific fields -->
-    <div id="oauth-auth-code-fields-gw" style="display: none">
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-          Authorization URL
-        </label>
-        <input
-          type="url"
-          name="oauth_authorization_url"
-          class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-          placeholder="https://oauth.example.com/authorize"
-        />
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-          Redirect URI
-        </label>
-        <input
-          type="url"
-          name="oauth_redirect_uri"
-          class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-          placeholder="https://gateway.example.com/oauth/callback"
-        />
-        <p class="mt-1 text-sm text-gray-500">
-          This must match the redirect URI configured in your OAuth application
-        </p>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-          Token Management
-        </label>
-        <div class="mt-2 space-y-2">
-          <label class="flex items-center">
-            <input
-              type="checkbox"
-              name="oauth_store_tokens"
-              checked
-              class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">
-              Store access tokens for reuse
-            </span>
-          </label>
-          <label class="flex items-center">
-            <input
-              type="checkbox"
-              name="oauth_auto_refresh"
-              checked
-              class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">
-              Automatically refresh expired tokens
-            </span>
-          </label>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-```
-
-### 2. JavaScript for Dynamic Field Management
-
-**File**: `mcpgateway/static/admin.js`
-
-```javascript
-// OAuth field management
-function toggleOAuthFields() {
-    const grantType = document.getElementById('oauth-grant-type-gw').value;
-    const authCodeFields = document.getElementById('oauth-auth-code-fields-gw');
-
-    if (grantType === 'authorization_code') {
-        authCodeFields.style.display = 'block';
-        // Show additional validation for required fields
-        document.querySelectorAll('#oauth-auth-code-fields-gw input').forEach(input => {
-            input.required = true;
-        });
-    } else {
-        authCodeFields.style.display = 'none';
-        // Remove required validation for hidden fields
-        document.querySelectorAll('#oauth-auth-code-fields-gw input').forEach(input => {
-            input.required = false;
-        });
-    }
-}
-
-// Enhanced gateway form submission
-async function submitGatewayForm(formData) {
-    const grantType = formData.get('oauth_grant_type');
-
-    if (grantType === 'authorization_code') {
-        // Validate required fields
-        const requiredFields = [
-            'oauth_authorization_url',
-            'oauth_redirect_uri'
-        ];
-
-        for (const field of requiredFields) {
-            if (!formData.get(field)) {
-                showError(`Field ${field} is required for Authorization Code flow`);
-                return false;
-            }
-        }
-
-        // Check if redirect URI matches expected pattern
-        const redirectUri = formData.get('oauth_redirect_uri');
-        const expectedPattern = window.location.origin + '/oauth/callback';
-
-        if (!redirectUri.includes('/oauth/callback')) {
-            showWarning('Redirect URI should typically end with /oauth/callback for security');
-        }
-    }
-
-    return true;
-}
-```
-
-### 3. Gateway Management Interface
-
-**Enhanced Gateway List View**
-
-```html
-<!-- Gateway Status and OAuth Information -->
-<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
-  <div class="space-y-1">
-    <div class="flex items-center">
-      <span class="text-gray-500">Status:</span>
-      {% if gateway.enabled %}
-        <span class="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-          Active
-        </span>
-      {% else %}
-        <span class="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-          Inactive
-        </span>
-      {% endif %}
-    </div>
-
-    {% if gateway.auth_type == 'oauth' and gateway.oauth_config %}
-      <div class="text-xs text-gray-500">
-        OAuth: {{ gateway.oauth_config.grant_type.replace('_', ' ').title() }}
-        {% if gateway.oauth_config.grant_type == 'authorization_code' %}
-          <br>
-          <a href="/oauth/authorize/{{ gateway.id }}"
-             class="text-indigo-600 hover:text-indigo-500 underline">
-            🔐 Authorize Users
-          </a>
-        {% endif %}
-      </div>
-    {% endif %}
-  </div>
-</td>
-```
-
-## OAuth Flow Sequences
-
-### Authorization Code Flow with Token Storage
+### Authorization Code flow (current)
 
 ```mermaid
 sequenceDiagram
     participant Admin
-    participant Gateway
-    participant OAuth Manager
-    participant Token Storage
-    participant OAuth Provider
-    participant Database
+    participant UI as Admin UI
+    participant Gateway as OAuth Router (/oauth/authorize)
+    participant OAuthMgr as OAuth Manager
+    participant StateStore as State Store
+    participant Provider as OAuth Provider
+    participant TokenStore as Token Storage Service
+    participant DB as Database
 
-    Admin->>Gateway: Configure OAuth (Auth Code)
-    Gateway->>Database: Store OAuth config
+    Admin->>UI: Configure gateway OAuth settings
+    UI->>DB: Save oauth_config in gateways
 
-    Admin->>Gateway: Click "Authorize Users"
-    Gateway->>OAuth Manager: Initiate auth flow
-    OAuth Manager->>Token Storage: Store auth state
-    OAuth Manager-->>Gateway: Authorization URL
-    Gateway-->>Admin: Redirect to OAuth Provider
+    Admin->>UI: Click "Authorize"
+    UI->>Gateway: GET /oauth/authorize/{gateway_id}
+    Gateway->>OAuthMgr: Initiate auth code flow (PKCE)
+    OAuthMgr->>StateStore: Store state + code_verifier (TTL 300s)
+    OAuthMgr-->>Gateway: Authorization URL
+    Gateway-->>Admin: Redirect to provider
 
-    Admin->>OAuth Provider: Login & Authorize
-    OAuth Provider-->>Gateway: Callback with code
-    Gateway->>OAuth Manager: Exchange code for tokens
-    OAuth Manager->>OAuth Provider: POST /token
-    OAuth Provider-->>OAuth Manager: Access + Refresh tokens
-
-    OAuth Manager->>Token Storage: Store encrypted tokens
-    Token Storage->>Database: Save token record
-    Token Storage-->>OAuth Manager: Confirmation
-    OAuth Manager-->>Gateway: Success
-    Gateway-->>Admin: Authorization complete
+    Admin->>Provider: Login + consent
+    Provider-->>Gateway: Redirect /oauth/callback?code&state
+    Gateway->>OAuthMgr: Validate state + exchange code
+    OAuthMgr->>Provider: POST /token (code + code_verifier)
+    Provider-->>OAuthMgr: access_token + refresh_token
+    OAuthMgr->>TokenStore: Store tokens for app_user_email
+    TokenStore->>DB: Upsert oauth_tokens
+    Gateway-->>Admin: Success page
 ```
 
-### Tool Invocation with Stored Tokens
+### Tool invocation using stored tokens
 
 ```mermaid
 sequenceDiagram
-    participant Client
+    participant Client as MCP Client (authenticated user)
     participant Gateway
-    participant Token Storage
-    participant OAuth Provider
-    participant MCP Server
+    participant TokenStore as Token Storage Service
+    participant Provider as OAuth Provider
+    participant MCP as MCP Server
 
-    Client->>Gateway: Invoke Tool
-    Gateway->>Token Storage: Get valid access token
-    Token Storage->>Token Storage: Check expiration
+    Client->>Gateway: Invoke tool
+    Gateway->>TokenStore: Get token for gateway + app_user_email
+    TokenStore->>TokenStore: Check expiration
 
     alt Token valid
-        Token Storage-->>Gateway: Decrypted access token
-        Gateway->>MCP Server: Tool request + Bearer token
-        MCP Server-->>Gateway: Tool response
+        TokenStore-->>Gateway: Decrypted access token
+        Gateway->>MCP: Tool request + Bearer token
+        MCP-->>Gateway: Tool response
         Gateway-->>Client: Result
     else Token expired
-        Token Storage->>OAuth Provider: Refresh token request
-        OAuth Provider-->>Token Storage: New access token
-        Token Storage->>Database: Update token record
-        Token Storage-->>Gateway: New access token
-        Gateway->>MCP Server: Tool request + Bearer token
-        MCP Server-->>Gateway: Tool response
+        TokenStore->>Provider: Refresh token request
+        Provider-->>TokenStore: New access token
+        TokenStore->>DB: Update oauth_tokens
+        TokenStore-->>Gateway: New access token
+        Gateway->>MCP: Tool request + Bearer token
+        MCP-->>Gateway: Tool response
         Gateway-->>Client: Result
     end
 ```
 
-## Security Considerations
+## Security and Operational Notes
 
-### 1. Token Security
-- **Encryption**: All tokens stored encrypted using `AUTH_ENCRYPTION_SECRET`
-- **Access Control**: Tokens only accessible to authorized gateway operations
-- **Audit Logging**: Track all token operations and access attempts
-
-### 2. OAuth Flow Security
-- **State Validation**: CSRF protection using state parameters
-- **Redirect URI Validation**: Strict validation of callback URLs
-- **Scope Limitation**: Request minimum required scopes only
-- **HTTPS Enforcement**: All OAuth endpoints require HTTPS
-
-### 3. Data Protection
-- **Token Expiration**: Automatic cleanup of expired tokens
-- **User Consent**: Clear indication of what permissions are granted
-- **Revocation Support**: Ability to revoke user access when needed
+- Tokens are encrypted at rest using `AUTH_ENCRYPTION_SECRET` (via the encryption service).
+- State is HMAC-signed with `AUTH_ENCRYPTION_SECRET`, single-use, and expires after 300 seconds.
+- Tokens are scoped per gateway and app user (email); cross-user reuse is blocked.
+- The gateway derives an RFC 8707 `resource` value from the gateway URL when `oauth_config.resource` is absent.
+- HTTPS is recommended in production; the gateway does not enforce it automatically.
 
 ## Configuration
 
-### Environment Variables
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `OAUTH_REQUEST_TIMEOUT` | `30` | Timeout for OAuth HTTP requests |
+| `OAUTH_MAX_RETRIES` | `3` | Retry count for token exchanges |
+| `OAUTH_DEFAULT_TIMEOUT` | `3600` | Default `expires_in` when provider omits it |
+| `AUTH_ENCRYPTION_SECRET` | `my-test-salt` | Encrypts OAuth tokens and signs state |
+| `CACHE_TYPE` | `database` | `redis`, `database`, `memory`, or `none` |
+| `REDIS_URL` | `redis://localhost:6379` | Required when `CACHE_TYPE=redis` |
+| `DATABASE_URL` | `sqlite:///./mcp.db` | Required when `CACHE_TYPE=database` |
+| `DCR_ENABLED` | `true` | Enable Dynamic Client Registration |
+| `DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | `true` | Auto-register when issuer is set but client_id is missing |
+| `DCR_DEFAULT_SCOPES` | `["mcp:read"]` | Default scopes for DCR |
+| `DCR_ALLOWED_ISSUERS` | `[]` | Allowlist of issuer URLs |
+| `DCR_TOKEN_ENDPOINT_AUTH_METHOD` | `client_secret_basic` | Token endpoint auth method |
+| `DCR_METADATA_CACHE_TTL` | `3600` | Cache TTL for AS metadata discovery |
+| `DCR_CLIENT_NAME_TEMPLATE` | `MCP Gateway ({gateway_name})` | DCR client_name template |
+| `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | `false` | Request refresh token even if AS metadata omits support |
+| `OAUTH_DISCOVERY_ENABLED` | `true` | Enable RFC 8414 discovery |
+| `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD` | `S256` | Defined but currently unused; PKCE is always S256 |
 
-```env
-# OAuth Token Management
-OAUTH_TOKEN_CLEANUP_INTERVAL=3600        # Token cleanup interval in seconds
-OAUTH_TOKEN_EXPIRY_THRESHOLD=300         # Refresh tokens this many seconds before expiry
-OAUTH_MAX_STORED_TOKENS_PER_GATEWAY=100  # Maximum tokens to store per gateway
+## Validation Checklist
 
-# Security
-OAUTH_STATE_EXPIRY=300                   # Authorization state expiry in seconds
-OAUTH_MAX_AUTHORIZATION_ATTEMPTS=5        # Maximum failed authorization attempts
-```
-
-### Example Gateway Configuration
-
-```json
-{
-  "name": "GitHub MCP with User Delegation",
-  "url": "https://github-mcp.example.com/sse",
-  "auth_type": "oauth",
-  "oauth_config": {
-    "grant_type": "authorization_code",
-    "client_id": "your_github_app_id",
-    "client_secret": "your_github_app_secret",
-    "authorization_url": "https://github.com/login/oauth/authorize",
-    "token_url": "https://github.com/login/oauth/access_token",
-    "redirect_uri": "https://gateway.example.com/oauth/callback",
-    "scopes": ["repo", "read:user"],
-    "token_management": {
-      "store_tokens": true,
-      "auto_refresh": true,
-      "refresh_threshold_seconds": 300
-    }
-  }
-}
-```
-
-## Implementation Phases
-
-### Phase 1: Database and Core Services (Week 1)
-- [ ] Create `oauth_tokens` table
-- [ ] Implement `TokenStorageService`
-- [ ] Enhance `OAuthManager` with token storage
-- [ ] Add token refresh functionality
-
-### Phase 2: OAuth Router and Callback (Week 2)
-- [ ] Implement OAuth authorization router
-- [ ] Create callback handler with token storage
-- [ ] Add state management and validation
-- [ ] Implement user ID extraction from tokens
-
-### Phase 3: UI Enhancements (Week 3)
-- [ ] Update gateway creation form
-- [ ] Add dynamic field management
-- [ ] Implement authorization flow UI
-- [ ] Add token status display
-
-### Phase 4: Integration and Testing (Week 4)
-- [ ] Integrate with existing gateway service
-- [ ] Update tool invocation to use stored tokens
-- [ ] Comprehensive testing of OAuth flows
-- [ ] Security review and documentation
-
-## Testing Strategy
-
-### Unit Tests
-
-```python
-async def test_token_storage_service():
-    """Test token storage and retrieval."""
-    service = TokenStorageService(db)
-
-    # Test token storage
-    token_record = await service.store_tokens(
-        gateway_id="test_gateway",
-        user_id="test_user",
-        access_token="test_token",
-        refresh_token="test_refresh",
-        expires_in=3600,
-        scopes=["repo", "read:user"]
-    )
-
-    assert token_record is not None
-    assert token_record.user_id == "test_user"
-
-    # Test token retrieval
-    token = await service.get_valid_token("test_gateway", "test_user")
-    assert token == "test_token"
-
-async def test_authorization_code_flow():
-    """Test complete authorization code flow."""
-    oauth_manager = OAuthManager(TokenStorageService(db))
-
-    # Test flow initiation
-    auth_data = await oauth_manager.initiate_authorization_code_flow(
-        "test_gateway", test_credentials
-    )
-
-    assert "authorization_url" in auth_data
-    assert "state" in auth_data
-```
-
-### Integration Tests
-
-```python
-async def test_oauth_callback_end_to_end():
-    """Test complete OAuth callback flow."""
-    # Mock OAuth provider responses
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.POST,
-            "https://oauth.example.com/token",
-            json={
-                "access_token": "test_access_token",
-                "refresh_token": "test_refresh_token",
-                "expires_in": 3600,
-                "scope": "repo read:user"
-            }
-        )
-
-        # Test callback
-        response = await client.get(
-            "/oauth/callback",
-            params={
-                "code": "test_code",
-                "state": "test_state",
-                "gateway_id": "test_gateway"
-            }
-        )
-
-        assert response.status_code == 200
-        assert "OAuth Authorization Successful" in response.text
-```
+- Create an OAuth gateway with `authorization_code` grant and complete provider consent via **Authorize**.
+- Confirm an `oauth_tokens` record exists for your user and gateway.
+- Invoke a tool to verify the stored token is used.
+- Let the access token expire and confirm refresh happens when a refresh token is available.
+- Switch `CACHE_TYPE` between `database` and `redis` to confirm state storage works in both modes.
 
 ## Future Enhancements
 
-### 1. Advanced Token Management
-- **Token Rotation**: Automatic token rotation for enhanced security
-- **Multi-User Support**: Support for multiple users per gateway
-- **Token Analytics**: Usage analytics and monitoring
-
-### 2. OAuth Provider Templates
-- **Pre-configured Providers**: Templates for GitHub, GitLab, etc.
-- **Provider-Specific Scopes**: Recommended scopes for common providers
-- **Auto-discovery**: OAuth provider metadata discovery
-
-### 3. Enhanced Security
-- **PKCE Support**: Proof Key for Code Exchange for public clients
-- **JWT Validation**: Support for JWT-based tokens
-- **Audit Trail**: Comprehensive audit logging for compliance
-
-## Conclusion
-
-This design provides a comprehensive framework for implementing OAuth 2.0 Authorization Code flow with user consent in the MCP Gateway UI. The implementation balances security, usability, and maintainability while extending the existing OAuth infrastructure.
-
-Key benefits of this approach:
-
-- **User Consent**: Proper user delegation with scoped permissions
-- **Token Efficiency**: Reuse of valid tokens with automatic refresh
-- **Security**: Encrypted token storage and comprehensive validation
-- **Scalability**: Support for multiple users and gateways
-- **Maintainability**: Clean separation of concerns and modular design
-
-The phased implementation approach ensures minimal disruption to existing functionality while delivering value incrementally. The design follows OAuth 2.0 best practices and provides a solid foundation for future enhancements.
+- Wire `oauth_store_tokens` and `oauth_auto_refresh` to backend behavior.
+- Make PKCE method configurable using `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`.
+- Add admin UI for token status and revocation.
+- Schedule periodic cleanup of expired OAuth tokens.

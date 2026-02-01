@@ -1,6 +1,6 @@
 # MCP Server Catalog
 
-> 🆕 **New in v0.7.0**: The MCP Server Catalog feature allows you to define a catalog of pre-configured MCP servers in a YAML file for easy discovery, registration, and management via the Admin UI and API.
+> 🆕 **Introduced in v0.7.0**: The MCP Server Catalog feature allows you to define a catalog of pre-configured MCP servers in a YAML file for easy discovery, registration, and management via the Admin UI and API.
 
 ## Overview
 
@@ -484,12 +484,12 @@ auth_types:
 **Solutions:**
 
 1. Verify the `auth_type` matches the server's requirements:
+
    - `"Open"` - No authentication required
    - `"API Key"` - Requires API key (set `requires_api_key: true`)
    - `"OAuth2.1"` - Requires OAuth configuration
 
 2. For OAuth servers, ensure you complete the OAuth flow after registration via the Admin UI
-
 3. For API Key servers, provide the API key during registration
 
 ### Transport Type Issues
@@ -508,13 +508,14 @@ auth_types:
    ```
 
 2. Verify URL scheme matches transport type:
+
    - WebSocket: `ws://` or `wss://`
    - SSE: `http://` or `https://` with `/sse` path
    - HTTP: `http://` or `https://` with `/mcp` path
 
 ---
 
-## Recent Improvements (v0.9.0)
+## Recent Improvements (introduced in v0.9.0)
 
 ### Enhanced UI Features
 
@@ -533,6 +534,7 @@ The catalog now supports:
 
 - **Explicit Transport**: Specify `transport` field in catalog YAML (`SSE`, `WEBSOCKET`, `STREAMABLEHTTP`)
 - **Auto-Detection**: Automatically detects transport from URL if not specified
+
   - `ws://` or `wss://` → `WEBSOCKET`
   - URLs ending in `/sse` → `SSE`
   - URLs with `/mcp` path → `STREAMABLEHTTP`

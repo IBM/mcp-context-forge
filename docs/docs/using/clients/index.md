@@ -1,6 +1,6 @@
 # MCP Clients
 
-MCP Gateway is compatible with any client that speaks the [Model Context Protocol (MCP)](https://github.com/modelcontext/protocol). This section documents tested clients, their configuration, and any integration tips.
+MCP Gateway is compatible with any client that speaks the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). This section documents tested clients, their configuration, and any integration tips.
 
 ---
 
@@ -23,6 +23,10 @@ There are two ways clients typically connect:
 | [MCP Inspector](mcp-inspector.md) | Web debugger | Great for manual testing and exploring protocol features |
 
 Each of these tools can consume the MCP protocol and dynamically detect tools from the Gateway.
+
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
 
 ---
 

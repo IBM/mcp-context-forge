@@ -1,9 +1,14 @@
 # 🧩 Docker Compose
 
-Running **MCP Gateway** with **Compose** spins up a full stack (Gateway, Postgres, Redis, optional MPC servers) behind a single YAML file.
+Running **MCP Gateway** with **Compose** spins up a full stack (Gateway, Postgres, Redis, optional MCP servers) behind a single YAML file.
 The Makefile detects Podman or Docker automatically, and you can override it with `COMPOSE_CMD=`.
 Health-checks (`service_healthy`) gate the Gateway until the database is ready, preventing race conditions.
 If dependencies become temporarily unavailable, the Gateway uses **exponential backoff with jitter** for connection retries—see [Startup Resilience](../architecture/performance-architecture.md#startup-resilience) for details.
+
+!!! tip "Gateway base URL"
+    Docker Compose routes the gateway through nginx on `http://localhost:8080`.
+
+    Direct access to the gateway container (port 4444) is intentionally disabled in `docker-compose.yml`.
 
 ---
 
@@ -125,8 +130,8 @@ docker build -t mcpgateway:latest -f Containerfile.lite .
 
 ```bash
 make compose-up                   # auto-detects engine
-COMPOSE_ENGINE=docker make compose-up   # force Docker
-COMPOSE_ENGINE=podman make compose-up   # force Podman
+COMPOSE_CMD="docker compose" make compose-up   # force Docker
+COMPOSE_CMD="podman compose" make compose-up   # force Podman
 ```
 
 ### Without Make
@@ -145,11 +150,11 @@ COMPOSE_ENGINE=podman make compose-up   # force Podman
 
 ## 🌐 Access and verify
 
-* **Gateway URL:** [http://localhost:4444](http://localhost:4444)
-  (Bound to `0.0.0.0` inside the container so port-forwarding works.)
+* **Gateway URL:** [http://localhost:8080](http://localhost:8080)
+  (Nginx reverse proxy; gateway port 4444 is not published in Compose.)
 
 ```bash
-curl http://localhost:4444/health    # {"status":"ok"}
+curl http://localhost:8080/health    # {"status":"healthy"}
 ```
 
 * **Logs:** `make compose-logs` or raw `docker compose logs -f gateway`.
@@ -294,14 +299,17 @@ SHOW SERVERS;
 ### Troubleshooting
 
 **Connection timeouts:**
+
 - Increase `RESERVE_POOL_SIZE` for burst handling
 - Check if `MAX_DB_CONNECTIONS` is sufficient
 
 **Slow queries with PgBouncer:**
+
 - Verify pool mode is appropriate for your workload
 - Check for long-running transactions holding connections
 
 **Authentication failures:**
+
 - Ensure `AUTH_TYPE` matches PostgreSQL's `pg_hba.conf`
 - Verify password is correct in `DATABASE_URL`
 
@@ -373,24 +381,24 @@ For advanced TLS configuration (end-to-end encryption, custom ciphers, etc.), se
 
 ```bash
 # Verify the port is listening (dual-stack)
-ss -tlnp | grep 4444        # modern tool
-netstat -anp | grep 4444    # legacy fallback
+ss -tlnp | grep 8080        # modern tool
+netstat -anp | grep 8080    # legacy fallback
 ```
 
-> A line like `:::4444 LISTEN rootlessport` is **normal** - the IPv6
+> A line like `:::8080 LISTEN rootlessport` is **normal** - the IPv6
 > wildcard socket (`::`) also accepts IPv4 when `net.ipv6.bindv6only=0`
 > (the default on Linux).
 
 **WSL2 quirk**
 
-WSL's NAT maps only the IPv6 side, so `http://127.0.0.1:4444` fails from Windows. Tell Podman you are inside WSL and restart your containers:
+WSL's NAT maps only the IPv6 side, so `http://127.0.0.1:8080` fails from Windows. Tell Podman you are inside WSL and restart your containers:
 
 ```bash
 # inside the WSL distro
 echo "wsl" | sudo tee /etc/containers/podman-machine
 ```
 
-`ss` should now show an explicit `0.0.0.0:4444` listener, making the
+`ss` should now show an explicit `0.0.0.0:8080` listener, making the
 service reachable from Windows and the LAN.
 
 ## 📚 References

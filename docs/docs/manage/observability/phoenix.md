@@ -112,6 +112,7 @@ services:
 1. Navigate to http://localhost:6006
 2. Click on "Traces" in the left sidebar
 3. You'll see:
+
    - Timeline view of all operations
    - Span details with attributes
    - Error rates and latencies
@@ -122,11 +123,13 @@ services:
 Phoenix provides specialized views for tool calls:
 
 1. **Tool Performance**
+
    - Average latency per tool
    - Success/failure rates
    - Usage frequency
 
 2. **Cost Analysis** (when token tracking is implemented)
+
    - Token usage per tool
    - Estimated costs by model
    - Cost trends over time
@@ -290,16 +293,19 @@ traces_df.to_csv("mcp_gateway_traces.csv")
 ### Key Metrics to Track
 
 1. **Response Times**
+
    - P50, P95, P99 latencies
    - Slowest operations
    - Timeout rates
 
 2. **Error Rates**
+
    - Error percentage by tool
    - Error types distribution
    - Error trends
 
 3. **Usage Patterns**
+
    - Most used tools
    - Peak usage times
    - User distribution
@@ -310,6 +316,7 @@ Configure alerts in Phoenix Cloud:
 
 1. Go to Settings → Alerts
 2. Create rules for:
+
    - High error rates (> 5%)
    - Slow responses (P95 > 2s)
    - Unusual token usage

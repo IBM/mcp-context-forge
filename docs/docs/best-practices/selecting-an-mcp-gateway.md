@@ -159,9 +159,6 @@ flowchart LR
     validate --> backend
     backend --> rate --> mtls
 
-    style gate1 fill:#e3f2fd,stroke:#1976d2
-    style gate2 fill:#fff3e0,stroke:#f57c00
-    style gate3 fill:#e8f5e9,stroke:#388e3c
 ```
 
 | Gate | Layer | Focus | Controls |
@@ -226,8 +223,6 @@ flowchart LR
 
     clients --> transports --> gateway
     gateway --> backends
-
-    style gateway fill:#1976d2,stroke:#0d47a1,color:#fff
 ```
 
 ---
@@ -472,8 +467,6 @@ flowchart LR
     otel --> datadog
     prom --> grafana
     logs --> grafana
-
-    style cf fill:#fff3e0,stroke:#f57c00
 ```
 
 ---
@@ -808,14 +801,10 @@ flowchart TD
     G -.- g1["Release cadence, contributors"]
     H -.- h1["License, support, viability"]
 
-    style A fill:#e3f2fd,stroke:#1976d2
-    style B fill:#ffebee,stroke:#c62828
-    style C fill:#fff3e0,stroke:#f57c00
-    style D fill:#e8f5e9,stroke:#388e3c
-    style E fill:#f3e5f5,stroke:#7b1fa2
-    style F fill:#e0f7fa,stroke:#00838f
-    style G fill:#fce4ec,stroke:#c2185b
-    style H fill:#ede7f6,stroke:#512da8
+    classDef step fill:#f8fafc,stroke:#334155,color:#0f172a;
+    classDef note fill:#ffffff,stroke:#64748b,color:#0f172a,stroke-dasharray: 4 2;
+    class A,B,C,D,E,F,G,H step;
+    class a1,b1,c1,d1,e1,f1,g1,h1 note;
 ```
 
 1. **Architecture fit:** Does it support your transports and backend types?

@@ -228,10 +228,14 @@ Use the web interface for visual export/import management.
 
 1. **Select Entity Types**: Check boxes for Tools, Gateways, Servers
 2. **Apply Filters**:
+
    - Tags: `production, api`
    - Include Inactive: ✅
+
 3. **Export Options**:
+
    - Include Dependencies: ✅
+
 4. **Download**: Click "Export Configuration"
 
 ### Step 3: Import with Preview
@@ -239,8 +243,10 @@ Use the web interface for visual export/import management.
 1. **Upload File**: Drag-and-drop your export JSON file
 2. **Preview**: Review entity counts and potential conflicts
 3. **Configure Options**:
+
    - Conflict Strategy: "Update existing items"
    - Dry Run: ✅ (for testing)
+
 4. **Execute**: Click "Import Configuration"
 5. **Monitor**: Watch real-time progress and results
 

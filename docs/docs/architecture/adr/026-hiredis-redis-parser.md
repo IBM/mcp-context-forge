@@ -20,6 +20,7 @@ Hiredis is a minimalistic C client library for Redis that provides significantly
 We will use **hiredis** as the **default Redis parser** while providing a pure-Python fallback option.
 
 **Key points:**
+
 - `redis[hiredis]` is the default dependency (includes hiredis)
 - `redis-pure` optional dependency available for environments where hiredis wheels aren't available
 - Users can switch parsers via the `REDIS_PARSER` environment variable
@@ -118,12 +119,14 @@ pip install "mcp-contextforge-gateway[redis-pure]"
 ## When to Use Each Parser
 
 ### Use Hiredis (default) when:
+
 - Running in production environments
 - Handling large response payloads
 - Maximum throughput is required
 - Pre-built wheels are available for your platform
 
 ### Use Pure-Python parser when:
+
 - Debugging Redis protocol issues
 - Platform lacks hiredis wheel support
 - Minimizing binary dependencies
@@ -161,11 +164,13 @@ Redis client initialized: parser=HiredisParser (C extension, auto-detected), poo
 **For most users: Use the default (auto)**
 
 The default `REDIS_PARSER=auto` setting provides the best experience:
+
 - Uses hiredis when available for maximum performance
 - Falls back gracefully to pure-Python if needed
 - No configuration required
 
 **Consider `REDIS_PARSER=python` when:**
+
 - Debugging Redis protocol issues
 - Troubleshooting connection problems
 - Running on platforms without hiredis wheels
@@ -173,6 +178,7 @@ The default `REDIS_PARSER=auto` setting provides the best experience:
 ## Status
 
 This decision has been implemented. Both parsers are available:
+
 - Hiredis: **Default** (via `redis[hiredis]`)
 - Pure-Python: **Fallback** (via `redis-pure` or `REDIS_PARSER=python`)
 
