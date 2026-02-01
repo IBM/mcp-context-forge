@@ -313,6 +313,39 @@ class TestCalculateErrorCount:
         assert result == 1
 
 
+class TestResolveWindowBounds:
+    """Tests for _resolve_window_bounds helper."""
+
+    def test_resolve_window_bounds_with_explicit_values(self):
+        aggregator = LogAggregator()
+        window_start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        window_end = datetime(2026, 1, 1, 12, 5, 0, tzinfo=timezone.utc)
+
+        resolved_start, resolved_end = aggregator._resolve_window_bounds(window_start, window_end)
+
+        assert resolved_start == window_start
+        assert resolved_end == window_end
+
+    def test_resolve_window_bounds_adjusts_end_when_reversed(self):
+        aggregator = LogAggregator()
+        window_start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        window_end = datetime(2026, 1, 1, 11, 59, 0, tzinfo=timezone.utc)
+
+        resolved_start, resolved_end = aggregator._resolve_window_bounds(window_start, window_end)
+
+        assert resolved_start == window_start
+        assert resolved_end > resolved_start
+
+    def test_resolve_window_bounds_defaults_from_end(self):
+        aggregator = LogAggregator()
+        window_end = datetime(2026, 1, 1, 12, 7, 30, tzinfo=timezone.utc)
+
+        resolved_start, resolved_end = aggregator._resolve_window_bounds(None, window_end)
+
+        assert resolved_end == window_end.replace(second=0, microsecond=0)
+        assert resolved_start < resolved_end
+
+
 class TestAggregateAllComponentsBatch:
     """Tests for aggregate_all_components_batch method."""
 
@@ -710,3 +743,67 @@ class TestAggregatePerformanceMetrics:
 
         assert len(alerts) == 1
         assert alerts[0]["component"] == "comp"
+
+
+class TestUpsertMetric:
+    """Tests for _upsert_metric helper."""
+
+    def test_upsert_metric_creates_new(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_db.execute.return_value.scalars.return_value = mock_scalars
+
+        metric = aggregator._upsert_metric(
+            component="comp",
+            operation_type="op",
+            window_start=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            request_count=10,
+            error_count=1,
+            error_rate=0.1,
+            avg_duration_ms=5.0,
+            min_duration_ms=1.0,
+            max_duration_ms=9.0,
+            p50_duration_ms=4.0,
+            p95_duration_ms=8.0,
+            p99_duration_ms=9.0,
+            metric_metadata={"k": "v"},
+            db=mock_db,
+        )
+
+        assert metric is not None
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once()
+
+    def test_upsert_metric_prunes_duplicates(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        metric = MagicMock()
+        duplicate = MagicMock()
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [metric, duplicate]
+        mock_db.execute.return_value.scalars.return_value = mock_scalars
+
+        result = aggregator._upsert_metric(
+            component="comp",
+            operation_type="op",
+            window_start=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+            request_count=5,
+            error_count=0,
+            error_rate=0.0,
+            avg_duration_ms=2.0,
+            min_duration_ms=1.0,
+            max_duration_ms=3.0,
+            p50_duration_ms=2.0,
+            p95_duration_ms=3.0,
+            p99_duration_ms=3.0,
+            metric_metadata=None,
+            db=mock_db,
+        )
+
+        assert result == metric
+        mock_db.delete.assert_called_once_with(duplicate)

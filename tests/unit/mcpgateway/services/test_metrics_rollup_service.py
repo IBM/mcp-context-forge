@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 # Standard
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
@@ -17,6 +17,7 @@ import pytest
 from mcpgateway.services import metrics_rollup_service
 from mcpgateway.services.metrics_rollup_service import (
     get_metrics_rollup_service,
+    get_metrics_rollup_service_if_initialized,
     HourlyAggregation,
     MetricsRollupService,
     RollupResult,
@@ -345,6 +346,39 @@ class TestRollupLoop:
         assert service._rollup_runs == 0
 
 
+class TestRollupAll:
+    """Tests for rollup_all aggregation."""
+
+    @pytest.mark.asyncio
+    async def test_rollup_all_aggregates_table_results(self, monkeypatch):
+        service = MetricsRollupService()
+
+        async def fake_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        def fake_rollup_table(*_args, **_kwargs):
+            return RollupResult(
+                table_name="tool_metrics",
+                hours_processed=1,
+                records_aggregated=5,
+                rollups_created=2,
+                rollups_updated=1,
+                raw_deleted=0,
+                duration_seconds=0.01,
+            )
+
+        monkeypatch.setattr(metrics_rollup_service.asyncio, "to_thread", fake_to_thread)
+        monkeypatch.setattr(service, "_rollup_table", fake_rollup_table)
+        service.METRIC_TABLES = [("tool_metrics", MagicMock(), MagicMock(), MagicMock(), "tool_id", "name")]
+
+        summary = await service.rollup_all(hours_back=1)
+
+        assert summary.total_hours_processed == 1
+        assert summary.total_records_aggregated == 5
+        assert summary.total_rollups_created == 2
+        assert summary.total_rollups_updated == 1
+
+
 class TestGetMetricsRollupService:
     """Tests for the singleton getter."""
 
@@ -359,6 +393,15 @@ class TestGetMetricsRollupService:
         service2 = get_metrics_rollup_service()
 
         assert service1 is service2
+
+    def test_get_metrics_rollup_service_if_initialized(self):
+        import mcpgateway.services.metrics_rollup_service as module
+
+        module._metrics_rollup_service = None
+        assert get_metrics_rollup_service_if_initialized() is None
+
+        service = get_metrics_rollup_service()
+        assert get_metrics_rollup_service_if_initialized() is service
 
 
 @pytest.fixture
@@ -410,20 +453,34 @@ class TestRollupInternals:
         mock_db = MagicMock()
         mock_db.execute.return_value.rowcount = 5
 
-        raw_model = MagicMock()
-        raw_model.timestamp = MagicMock()
+        class _Timestamp:
+            def __ge__(self, _other):
+                return MagicMock()
 
-        deleted = service._delete_raw_metrics(
-            mock_db,
-            raw_model,
-            datetime.now(timezone.utc) - timedelta(hours=1),
-            datetime.now(timezone.utc),
-        )
+            def __lt__(self, _other):
+                return MagicMock()
+
+        raw_model = MagicMock()
+        raw_model.timestamp = _Timestamp()
+
+        class _Delete:
+            def where(self, *_args, **_kwargs):
+                return self
+
+        with patch.object(metrics_rollup_service, "delete", lambda _model: _Delete()):
+            with patch.object(metrics_rollup_service, "and_", lambda *_args, **_kwargs: MagicMock()):
+                deleted = service._delete_raw_metrics(
+                    mock_db,
+                    raw_model,
+                    datetime.now(timezone.utc) - timedelta(hours=1),
+                    datetime.now(timezone.utc),
+                )
 
         assert deleted == 5
 
     def test_rollup_table_processes_raw_metrics(self, monkeypatch):
         service = MetricsRollupService(delete_raw_after_rollup=True, delete_raw_after_rollup_hours=0)
+        service.delete_raw_after_rollup_hours = 0
 
         start_hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
         end_hour = start_hour + timedelta(hours=1)
@@ -458,14 +515,33 @@ class TestRollupInternals:
         def fake_session():
             yield _FakeDB()
 
+        class _Select:
+            def select_from(self, *_args, **_kwargs):
+                return self
+
+            def where(self, *_args, **_kwargs):
+                return self
+
+        class _Timestamp:
+            def __ge__(self, _other):
+                return MagicMock()
+
+            def __lt__(self, _other):
+                return MagicMock()
+
+        monkeypatch.setattr(metrics_rollup_service, "select", lambda *_args, **_kwargs: _Select())
+        monkeypatch.setattr(metrics_rollup_service, "and_", lambda *_args, **_kwargs: MagicMock())
         monkeypatch.setattr(metrics_rollup_service, "fresh_db_session", fake_session)
         monkeypatch.setattr(service, "_aggregate_hour", lambda *args, **kwargs: [agg])
         monkeypatch.setattr(service, "_upsert_rollup", lambda *args, **kwargs: (1, 0))
         monkeypatch.setattr(service, "_delete_raw_metrics", lambda *args, **kwargs: 2)
 
+        raw_model = MagicMock()
+        raw_model.timestamp = _Timestamp()
+
         result = service._rollup_table(
             "tool_metrics",
-            MagicMock(),
+            raw_model,
             MagicMock(),
             MagicMock(),
             "tool_id",

@@ -24,6 +24,79 @@ from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
 
 
+@pytest.fixture
+def mock_db():
+    """Create mock database session."""
+    db = Mock(spec=Session)
+    return db
+
+
+@pytest.fixture
+def mock_request():
+    """Create mock FastAPI request."""
+    request = Mock(spec=Request)
+    request.url = Mock()
+    request.url.scheme = "https"
+    request.url.netloc = "gateway.example.com"
+    request.scope = {"root_path": ""}
+    return request
+
+
+@pytest.fixture
+def mock_gateway():
+    """Create mock gateway with OAuth config."""
+    gateway = Mock(spec=Gateway)
+    gateway.id = "gateway123"
+    gateway.name = "Test Gateway"
+    gateway.url = "https://mcp.example.com"  # MCP server URL
+    gateway.team_id = None  # No team restriction - allow all authenticated users
+    gateway.oauth_config = {
+        "grant_type": "authorization_code",
+        "client_id": "test_client",
+        "client_secret": "test_secret",
+        "authorization_url": "https://oauth.example.com/authorize",
+        "token_url": "https://oauth.example.com/token",
+        "redirect_uri": "https://gateway.example.com/oauth/callback",
+        "scopes": ["read", "write"],
+    }
+    return gateway
+
+
+@pytest.fixture
+def mock_current_user():
+    """Create mock current user."""
+    user = Mock(spec=EmailUserResponse)
+    user.get = Mock(return_value="test@example.com")
+    user.email = "test@example.com"
+    user.full_name = "Test User"
+    user.is_active = True
+    user.is_admin = False
+    return user
+
+
+class TestNormalizeResourceUrl:
+    """Tests for _normalize_resource_url helper."""
+
+    def test_normalize_resource_url_invalid(self):
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        assert _normalize_resource_url(None) is None
+        assert _normalize_resource_url("") is None
+        assert _normalize_resource_url("example.com/path") is None
+
+    def test_normalize_resource_url_strips_fragment_and_query(self):
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        result = _normalize_resource_url("https://example.com/path?x=1#frag")
+        assert result == "https://example.com/path"
+
+    def test_normalize_resource_url_preserves_query_when_requested(self):
+        from mcpgateway.routers.oauth_router import _normalize_resource_url
+
+        result = _normalize_resource_url("https://example.com/path?x=1#frag", preserve_query=True)
+        assert result == "https://example.com/path?x=1"
+
+
 class TestOAuthRouter:
     """Test cases for OAuth router endpoints."""
 
@@ -167,6 +240,67 @@ class TestOAuthRouter:
 
         assert exc_info.value.status_code == 400
         assert "Gateway is not configured for Authorization Code flow" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_disabled_missing_client_id(self, mock_db, mock_request, mock_current_user):
+        """Test OAuth flow when issuer exists but DCR auto-registration is disabled."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.team_id = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.dcr_enabled = False
+            mock_settings.dcr_auto_register_on_missing_credentials = False
+
+            from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+            with pytest.raises(HTTPException) as exc_info:
+                await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+            assert exc_info.value.status_code == 400
+            assert "incomplete" in str(exc_info.value.detail).lower()
+
+    @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_normalizes_resource_list(self, mock_db, mock_request, mock_current_user):
+        """Test that resource list is normalized and invalid entries removed."""
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.team_id = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "client-id",
+            "client_secret": "secret",
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+            "resource": ["https://api.example.com/path?x=1#frag", "invalid-resource"],
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://auth.example.com/authorize?state=x", "state": "x"}
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        oauth_config_passed = mock_oauth_manager.initiate_authorization_code_flow.call_args[0][1]
+        assert oauth_config_passed["resource"] == ["https://api.example.com/path?x=1"]
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_oauth_manager_error(self, mock_db, mock_request, mock_gateway, mock_current_user):
@@ -698,7 +832,7 @@ class TestOAuthRouterAdditionalCoverage:
             async def get_user_by_email(self, _email):
                 return _User()
 
-        with patch("mcpgateway.routers.oauth_router.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
             # First-Party
             from mcpgateway.routers.oauth_router import get_oauth_status
 
