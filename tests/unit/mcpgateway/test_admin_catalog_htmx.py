@@ -67,6 +67,20 @@ def client():
 
     PermissionService.check_permission = mock_check_permission
 
+    # Avoid StreamableHTTPSessionManager reuse errors during repeated lifespan runs
+    streamable_init = patch("mcpgateway.main.streamable_http_session.initialize", new_callable=AsyncMock)
+    streamable_shutdown = patch("mcpgateway.main.streamable_http_session.shutdown", new_callable=AsyncMock)
+    streamable_init.start()
+    streamable_shutdown.start()
+
+    # Avoid SharedHttpClient shutdown errors when other tests monkeypatch the singleton
+    shared_client = MagicMock()
+    shared_client.close = AsyncMock()
+    shared_get_instance = patch("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", new=AsyncMock(return_value=shared_client))
+    shared_shutdown = patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new=AsyncMock())
+    shared_get_instance.start()
+    shared_shutdown.start()
+
     with TestClient(app) as test_client:
         yield test_client
 
@@ -74,6 +88,10 @@ def client():
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_user_with_permissions, None)
     sec_patcher.stop()
+    streamable_init.stop()
+    streamable_shutdown.stop()
+    shared_get_instance.stop()
+    shared_shutdown.stop()
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
     settings.auth_required = original_auth_required

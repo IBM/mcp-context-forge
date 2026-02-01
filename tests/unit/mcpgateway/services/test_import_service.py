@@ -1912,6 +1912,43 @@ async def test_process_tool_conflict_update_found(import_service, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_process_tool_conflict_update_not_found(import_service, mock_db):
+    status = ImportStatus("import-3b")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
+    import_service.tool_service.list_tools.return_value = ([], None)
+
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+
+    assert status.skipped_entities == 1
+    assert any("Could not find existing tool to update" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_tool_conflict_update_error(import_service, mock_db):
+    status = ImportStatus("import-3c")
+    tool_data = {
+        "name": "tool1",
+        "url": "http://example.com",
+        "integration_type": "REST",
+        "request_type": "GET",
+    }
+    import_service.tool_service.register_tool.side_effect = ToolNameConflictError("tool1")
+    import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1", id="t1")], None)
+    import_service.tool_service.update_tool.side_effect = Exception("update failed")
+
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+
+    assert status.skipped_entities == 1
+    assert any("Could not update tool" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
 async def test_process_tool_conflict_rename(import_service, mock_db):
     status = ImportStatus("import-4")
     tool_data = {
@@ -1957,6 +1994,52 @@ async def test_process_prompt_conflict_update(import_service, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_process_prompt_dry_run_adds_warning(import_service, mock_db):
+    status = ImportStatus("import-6a")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+
+    await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.UPDATE, True, status)
+
+    assert any("Would import prompt" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_conflict_skip(import_service, mock_db):
+    status = ImportStatus("import-6b")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+    import_service.prompt_service.register_prompt.side_effect = PromptNameConflictError("prompt1")
+
+    await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.SKIP, False, status)
+
+    assert status.skipped_entities == 1
+    assert any("Skipped existing prompt" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_conflict_rename(import_service, mock_db):
+    status = ImportStatus("import-6c")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+    import_service.prompt_service.register_prompt.side_effect = [PromptNameConflictError("prompt1"), None]
+
+    await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.RENAME, False, status)
+
+    assert status.created_entities == 1
+    assert any("Renamed prompt" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_conflict_fail(import_service, mock_db):
+    status = ImportStatus("import-6d")
+    prompt_data = {"name": "prompt1", "template": "Hello"}
+    import_service.prompt_service.register_prompt.side_effect = PromptNameConflictError("prompt1")
+
+    with pytest.raises(ImportError) as exc:
+        await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.FAIL, False, status)
+
+    assert "Prompt name conflict" in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_process_resource_conflict_update(import_service, mock_db):
     status = ImportStatus("import-7")
     resource_data = {"name": "res1", "uri": "file:///res1"}
@@ -1966,6 +2049,52 @@ async def test_process_resource_conflict_update(import_service, mock_db):
     await import_service._process_resource(mock_db, resource_data, ConflictStrategy.UPDATE, False, status)
     import_service.resource_service.update_resource.assert_called_with(mock_db, "file:///res1", ANY)
     assert status.updated_entities == 1
+
+
+@pytest.mark.asyncio
+async def test_process_resource_dry_run_adds_warning(import_service, mock_db):
+    status = ImportStatus("import-7a")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+
+    await import_service._process_resource(mock_db, resource_data, ConflictStrategy.UPDATE, True, status)
+
+    assert any("Would import resource" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_resource_conflict_skip(import_service, mock_db):
+    status = ImportStatus("import-7b")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+    import_service.resource_service.register_resource.side_effect = ResourceURIConflictError("res1")
+
+    await import_service._process_resource(mock_db, resource_data, ConflictStrategy.SKIP, False, status)
+
+    assert status.skipped_entities == 1
+    assert any("Skipped existing resource" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_resource_conflict_rename(import_service, mock_db):
+    status = ImportStatus("import-7c")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+    import_service.resource_service.register_resource.side_effect = [ResourceURIConflictError("res1"), None]
+
+    await import_service._process_resource(mock_db, resource_data, ConflictStrategy.RENAME, False, status)
+
+    assert status.created_entities == 1
+    assert any("Renamed resource" in msg for msg in status.warnings)
+
+
+@pytest.mark.asyncio
+async def test_process_resource_conflict_fail(import_service, mock_db):
+    status = ImportStatus("import-7d")
+    resource_data = {"name": "res1", "uri": "file:///res1"}
+    import_service.resource_service.register_resource.side_effect = ResourceURIConflictError("res1")
+
+    with pytest.raises(ImportError) as exc:
+        await import_service._process_resource(mock_db, resource_data, ConflictStrategy.FAIL, False, status)
+
+    assert "Resource URI conflict" in str(exc.value)
 
 
 @pytest.mark.asyncio
