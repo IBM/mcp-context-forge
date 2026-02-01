@@ -91,6 +91,10 @@ coverage.xml
 .pytest_cache/
 mutants
 .mutmut-cache
+test-results/
+tests/playwright/reports/
+tests/playwright/videos/
+tests/playwright/screenshots/
 
 # ========================================
 # Fuzzing
