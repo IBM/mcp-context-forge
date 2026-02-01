@@ -3,6 +3,7 @@
 
 # Standard
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, List
 
 # Third-Party
@@ -125,3 +126,116 @@ def test_get_raw_connection(monkeypatch):
             raise RuntimeError("boom")
 
     assert psy.get_raw_connection(ConnDB()) is None
+
+
+def test_bulk_insert_with_copy_psycopg3_success(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+
+    class DummyCopy:
+        def __init__(self):
+            self.writes = []
+
+        def write(self, data):
+            self.writes.append(data)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class DummyCursor:
+        def __init__(self):
+            self.copy_calls = []
+            self.copy_obj = DummyCopy()
+
+        def copy(self, cmd):
+            self.copy_calls.append(cmd)
+            return self.copy_obj
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class DummyRawConn:
+        def __init__(self):
+            self.cursor_obj = DummyCursor()
+
+        def cursor(self):
+            return self.cursor_obj
+
+    raw_conn = DummyRawConn()
+
+    class DummyDB:
+        def connection(self):
+            return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
+
+    db = DummyDB()
+    count = psy.bulk_insert_with_copy(db, "items", ["id", "name"], [(1, "a"), (2, "b")])
+
+    assert count == 2
+    assert raw_conn.cursor_obj.copy_calls
+
+
+def test_execute_pipelined_psycopg3_success(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+
+    class DummyCursor:
+        def __init__(self, rows, raise_on_fetch=False):
+            self._rows = rows
+            self._raise_on_fetch = raise_on_fetch
+
+        def fetchall(self):
+            if self._raise_on_fetch:
+                raise RuntimeError("fetch failed")
+            return self._rows
+
+    class DummyRawConn:
+        def __init__(self):
+            self.executed = []
+            self._call_count = 0
+
+        def pipeline(self):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params):
+            self.executed.append((sql, params))
+            self._call_count += 1
+            if self._call_count == 2:
+                return DummyCursor([], raise_on_fetch=True)
+            return DummyCursor([("ok",)])
+
+    raw_conn = DummyRawConn()
+
+    class DummyDB:
+        def connection(self):
+            return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
+
+    db = DummyDB()
+    results = psy.execute_pipelined(db, [("select 1", {"id": 1}), ("select 2", {"id": 2})])
+
+    assert results == [[("ok",)], []]
+
+
+def test_execute_pipelined_empty_queries(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+    assert psy.execute_pipelined(db=None, queries=[]) == []
+
+
+def test_get_raw_connection_psycopg3_success(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+    raw_conn = object()
+
+    class DummyDB:
+        def connection(self):
+            return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
+
+    assert psy.get_raw_connection(DummyDB()) is raw_conn

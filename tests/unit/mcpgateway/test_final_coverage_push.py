@@ -13,6 +13,8 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+from fastapi import HTTPException
+import orjson
 import pytest
 
 # First-Party
@@ -323,3 +325,122 @@ def test_cli_module_main_execution():
 
     # Test module can be executed
     assert cli_export_import.__name__ == 'mcpgateway.cli_export_import'
+
+
+@pytest.mark.asyncio
+async def test_toolops_generate_testcases_success(monkeypatch):
+    """Exercise toolops test case generation endpoint."""
+    # First-Party
+    from mcpgateway.routers import toolops_router
+
+    monkeypatch.setattr(
+        toolops_router,
+        "validation_generate_test_cases",
+        AsyncMock(return_value=[{"case": 1}]),
+    )
+
+    result = await toolops_router.generate_testcases_for_tool.__wrapped__(
+        tool_id="tool1",
+        number_of_test_cases=1,
+        number_of_nl_variations=1,
+        mode="generate",
+        db=MagicMock(),
+        _user={"email": "user@example.com"},
+    )
+
+    assert result == [{"case": 1}]
+
+
+@pytest.mark.asyncio
+async def test_toolops_generate_testcases_invalid_json(monkeypatch):
+    """Ensure JSON decode errors surface as HTTP 400."""
+    # First-Party
+    from mcpgateway.routers import toolops_router
+
+    monkeypatch.setattr(
+        toolops_router,
+        "validation_generate_test_cases",
+        AsyncMock(side_effect=orjson.JSONDecodeError("err", "doc", 0)),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await toolops_router.generate_testcases_for_tool.__wrapped__(
+            tool_id="tool1",
+            number_of_test_cases=1,
+            number_of_nl_variations=1,
+            mode="generate",
+            db=MagicMock(),
+            _user={"email": "user@example.com"},
+        )
+
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_toolops_execute_nl_testcases_success(monkeypatch):
+    """Exercise toolops NL test execution endpoint."""
+    # First-Party
+    from mcpgateway.routers import toolops_router
+
+    monkeypatch.setattr(
+        toolops_router,
+        "execute_tool_nl_test_cases",
+        AsyncMock(return_value=["ok"]),
+    )
+
+    payload = toolops_router.ToolNLTestInput(tool_id="tool1", tool_nl_test_cases=["hello"])
+    result = await toolops_router.execute_tool_nl_testcases.__wrapped__(
+        tool_nl_test_input=payload,
+        db=MagicMock(),
+        _user={"email": "user@example.com"},
+    )
+
+    assert result == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_toolops_enrich_tool_success(monkeypatch):
+    """Exercise tool enrichment endpoint."""
+    # First-Party
+    from mcpgateway.routers import toolops_router
+
+    tool_schema = MagicMock()
+    tool_schema.name = "Tool"
+    tool_schema.description = "desc"
+
+    monkeypatch.setattr(
+        toolops_router,
+        "enrich_tool",
+        AsyncMock(return_value=("enriched", tool_schema)),
+    )
+
+    result = await toolops_router.enrich_a_tool.__wrapped__(
+        tool_id="tool1",
+        db=MagicMock(),
+        _user={"email": "user@example.com"},
+    )
+
+    assert result["tool_id"] == "tool1"
+    assert result["enriched_desc"] == "enriched"
+
+
+@pytest.mark.asyncio
+async def test_toolops_enrich_tool_error(monkeypatch):
+    """Ensure enrich errors surface as HTTP 400."""
+    # First-Party
+    from mcpgateway.routers import toolops_router
+
+    monkeypatch.setattr(
+        toolops_router,
+        "enrich_tool",
+        AsyncMock(side_effect=Exception("boom")),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await toolops_router.enrich_a_tool.__wrapped__(
+            tool_id="tool1",
+            db=MagicMock(),
+            _user={"email": "user@example.com"},
+        )
+
+    assert exc.value.status_code == 400
