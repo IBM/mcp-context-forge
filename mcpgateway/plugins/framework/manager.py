@@ -492,6 +492,9 @@ class PluginManager:
             cls._config = None
             cls._config_path = None
             cls._async_lock = None
+            cls._registry = PluginInstanceRegistry()
+            cls._executor = PluginExecutor()
+            cls._loader = PluginLoader()
 
     @property
     def config(self) -> Config | None:
@@ -576,6 +579,11 @@ class PluginManager:
             if self._initialized:
                 logger.debug("Plugin manager already initialized")
                 return
+
+            # Defensive cleanup: registry should be empty when not initialized
+            if self._registry.plugin_count:
+                logger.debug("Plugin registry not empty before initialize; clearing stale plugins")
+                await self._registry.shutdown()
 
             plugins = self._config.plugins if self._config and self._config.plugins else []
             loaded_count = 0

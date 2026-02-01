@@ -114,8 +114,8 @@ You can load your `.env` as a ConfigMap:
     DATABASE_URL=sqlite:///./mcp.db
     JWT_ALGORITHM=HS256
     JWT_SECRET_KEY=your-strong-secret-key-here
-    BASIC_AUTH_USER=admin
-    BASIC_AUTH_PASSWORD=changeme
+    PLATFORM_ADMIN_EMAIL=admin@example.com
+    PLATFORM_ADMIN_PASSWORD=changeme
     MCPGATEWAY_UI_ENABLED=true
     MCPGATEWAY_ADMIN_API_ENABLED=true
     EOF
@@ -138,6 +138,9 @@ You can load your `.env` as a ConfigMap:
     #    JWT_PRIVATE_KEY_PATH=/etc/jwt/private.pem
     ```
 
+    !!! info "Authentication"
+        The Admin UI uses email/password authentication. Basic auth for API endpoints is disabled by default. Use JWT tokens for API access.
+
 === "With MariaDB"
     ```bash
     # Create .env file
@@ -146,8 +149,8 @@ You can load your `.env` as a ConfigMap:
     PORT=4444
     DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb-service:3306/mcp
     JWT_SECRET_KEY=your-secret-key
-    BASIC_AUTH_USER=admin
-    BASIC_AUTH_PASSWORD=changeme
+    PLATFORM_ADMIN_EMAIL=admin@example.com
+    PLATFORM_ADMIN_PASSWORD=changeme
     MCPGATEWAY_UI_ENABLED=true
     MCPGATEWAY_ADMIN_API_ENABLED=true
     EOF
@@ -163,8 +166,8 @@ You can load your `.env` as a ConfigMap:
     PORT=4444
     DATABASE_URL=mysql+pymysql://mysql:changeme@mysql-service:3306/mcp
     JWT_SECRET_KEY=your-secret-key
-    BASIC_AUTH_USER=admin
-    BASIC_AUTH_PASSWORD=changeme
+    PLATFORM_ADMIN_EMAIL=admin@example.com
+    PLATFORM_ADMIN_PASSWORD=changeme
     MCPGATEWAY_UI_ENABLED=true
     MCPGATEWAY_ADMIN_API_ENABLED=true
     EOF
@@ -180,8 +183,8 @@ You can load your `.env` as a ConfigMap:
     PORT=4444
     DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres-service:5432/mcp
     JWT_SECRET_KEY=your-secret-key
-    BASIC_AUTH_USER=admin
-    BASIC_AUTH_PASSWORD=changeme
+    PLATFORM_ADMIN_EMAIL=admin@example.com
+    PLATFORM_ADMIN_PASSWORD=changeme
     MCPGATEWAY_UI_ENABLED=true
     MCPGATEWAY_ADMIN_API_ENABLED=true
     EOF
@@ -189,7 +192,7 @@ You can load your `.env` as a ConfigMap:
     kubectl create configmap mcpgateway-env --from-env-file=.env
 ```
 
-> Make sure it includes `JWT_SECRET_KEY`, `AUTH_REQUIRED`, etc.
+> Make sure it includes `JWT_SECRET_KEY`, `PLATFORM_ADMIN_EMAIL`, etc.
 
 ---
 
@@ -321,8 +324,8 @@ data:
   ENVIRONMENT: "production"
   MCPGATEWAY_UI_ENABLED: "false"        # Disable for production
   MCPGATEWAY_ADMIN_API_ENABLED: "false" # Disable for production
-  BASIC_AUTH_USER: "admin"
-  BASIC_AUTH_PASSWORD: "changeme"
+  # Note: Admin UI uses PLATFORM_ADMIN_EMAIL/PASSWORD for authentication
+  # Basic auth for API is disabled by default (API_ALLOW_BASIC_AUTH=false)
 ```
 
 ### Step 3: Production Deployment with JWT Keys

@@ -158,33 +158,54 @@ class PluginService:
         registry = self._plugin_manager._registry  # pylint: disable=protected-access
         plugin_ref = registry.get_plugin(name)
 
-        if not plugin_ref:
-            return None
+        if plugin_ref:
+            # Get the plugin config from the plugin reference
+            plugin_config = plugin_ref.plugin.config if hasattr(plugin_ref, "plugin") else plugin_ref._plugin.config if hasattr(plugin_ref, "_plugin") else None  # pylint: disable=protected-access
 
-        # Get the plugin config from the plugin reference
-        plugin_config = plugin_ref.plugin.config if hasattr(plugin_ref, "plugin") else plugin_ref._plugin.config if hasattr(plugin_ref, "_plugin") else None  # pylint: disable=protected-access
+            plugin_dict = {
+                "name": plugin_ref.name,
+                "description": plugin_config.description if plugin_config and plugin_config.description else "",
+                "author": plugin_config.author if plugin_config and plugin_config.author else "Unknown",
+                "version": plugin_config.version if plugin_config and plugin_config.version else "0.0.0",
+                "mode": plugin_ref.mode if isinstance(plugin_ref.mode, str) else plugin_ref.mode.value if plugin_ref.mode else "disabled",
+                "priority": plugin_ref.priority,
+                "hooks": [hook if isinstance(hook, str) else hook.value for hook in plugin_ref.hooks] if plugin_ref.hooks else [],
+                "tags": plugin_ref.tags or [],
+                "kind": plugin_config.kind if plugin_config and plugin_config.kind else "",
+                "namespace": plugin_config.namespace if plugin_config and plugin_config.namespace else "",
+                "status": "enabled" if plugin_ref.mode != PluginMode.DISABLED else "disabled",
+                "conditions": plugin_ref.conditions or [],
+                "config": plugin_config.config if plugin_config and hasattr(plugin_config, "config") else {},
+            }
 
-        plugin_dict = {
-            "name": plugin_ref.name,
-            "description": plugin_config.description if plugin_config and plugin_config.description else "",
-            "author": plugin_config.author if plugin_config and plugin_config.author else "Unknown",
-            "version": plugin_config.version if plugin_config and plugin_config.version else "0.0.0",
-            "mode": plugin_ref.mode if isinstance(plugin_ref.mode, str) else plugin_ref.mode.value if plugin_ref.mode else "disabled",
-            "priority": plugin_ref.priority,
-            "hooks": [hook if isinstance(hook, str) else hook.value for hook in plugin_ref.hooks] if plugin_ref.hooks else [],
-            "tags": plugin_ref.tags or [],
-            "kind": plugin_config.kind if plugin_config and plugin_config.kind else "",
-            "namespace": plugin_config.namespace if plugin_config and plugin_config.namespace else "",
-            "status": "enabled" if plugin_ref.mode != PluginMode.DISABLED else "disabled",
-            "conditions": plugin_ref.conditions or [],
-            "config": plugin_config.config if plugin_config and hasattr(plugin_config, "config") else {},
-        }
+            # Add manifest info if available
+            if hasattr(plugin_ref, "manifest"):
+                plugin_dict["manifest"] = {"available_hooks": plugin_ref.manifest.available_hooks, "default_config": plugin_ref.manifest.default_config}
 
-        # Add manifest info if available
-        if hasattr(plugin_ref, "manifest"):
-            plugin_dict["manifest"] = {"available_hooks": plugin_ref.manifest.available_hooks, "default_config": plugin_ref.manifest.default_config}
+            return plugin_dict
 
-        return plugin_dict
+        # Fallback: check config for disabled plugins not in registry
+        config = self._plugin_manager._config  # pylint: disable=protected-access
+        if config and config.plugins:
+            for plugin_config in config.plugins:
+                if plugin_config.name == name:
+                    return {
+                        "name": plugin_config.name,
+                        "description": plugin_config.description or "",
+                        "author": plugin_config.author or "Unknown",
+                        "version": plugin_config.version or "0.0.0",
+                        "mode": plugin_config.mode if isinstance(plugin_config.mode, str) else plugin_config.mode.value,
+                        "priority": plugin_config.priority or 100,
+                        "hooks": [hook if isinstance(hook, str) else hook.value for hook in plugin_config.hooks] if plugin_config.hooks else [],
+                        "tags": plugin_config.tags or [],
+                        "kind": plugin_config.kind or "",
+                        "namespace": plugin_config.namespace or "",
+                        "status": "disabled",
+                        "conditions": plugin_config.conditions or [],
+                        "config": plugin_config.config if hasattr(plugin_config, "config") else {},
+                    }
+
+        return None
 
     async def get_plugin_statistics(self) -> Dict[str, Any]:
         """Get statistics about all plugins.

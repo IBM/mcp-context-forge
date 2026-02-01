@@ -271,6 +271,7 @@ Notes:
 - Ensure the server exposes `http://localhost:4444/openapi.json`.
 - For authenticated specs, supply tokens/headers to RESTler as needed.
 - Increase `--time_budget` for deeper exploration in nightly runs.
+
  - In CI, prefer running `fuzz-restler-auto` only on runners with Docker available, or skip otherwise.
 
 ## Understanding Results

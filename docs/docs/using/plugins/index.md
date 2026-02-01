@@ -53,6 +53,13 @@ The plugin framework implements a **hybrid architecture** supporting both native
 - **Use Cases:** Advanced AI safety, complex ML inference, policy engines (e.g., OPA)
 - **Examples:** OPA external plugin server, LlamaGuard integration, OpenAI Moderation
 
+### Gunicorn Workers and External Transports
+
+When running the gateway under Gunicorn with multiple workers:
+
+- **STDIO:** Each worker spawns its own plugin subprocess and maintains a separate session. This maximizes isolation but multiplies plugin processes and does not share state across workers.
+- **Streamable HTTP over UDS:** Run the plugin server as a separate long‑lived process and point all workers to the same Unix socket. This reduces process count and allows shared plugin state, while avoiding TCP port exposure.
+
 ### Unified Plugin Interface
 
 Both plugin types implement the same interface, enabling seamless switching between deployment models:
@@ -135,6 +142,7 @@ plugins:
     mcp:
       proto: STREAMABLEHTTP
       url: http://localhost:8000/mcp
+      # uds: /var/run/mcp-plugin.sock  # use UDS instead of TCP
 ```
 
 ### Plugin Configuration
@@ -247,7 +255,6 @@ plugin_settings:
 ```
 
 2. Ensure `.env` contains: `PLUGINS_ENABLED=true` and `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
-
 3. Start the gateway: `make dev` (or `make serve`).
 
 That's it — the gateway now runs the enabled plugins at the selected hook points.
@@ -324,7 +331,11 @@ For external plugins (`kind: "external"`), the `mcp` object configures the MCP s
 |-------|------|----------|-------------|---------|
 | `proto` | `string` | Yes | MCP transport protocol | `"stdio"`, `"sse"`, `"streamablehttp"`, `"websocket"` |
 | `url` | `string` |  | Service URL for HTTP-based transports | `"http://openai-plugin:3000/mcp"` |
+| `uds` | `string` |  | Unix domain socket path for Streamable HTTP | `"/var/run/mcp-plugin.sock"` |
 | `script` | `string` |  | Script path for STDIO transport | `"/opt/plugins/custom-filter.py"` |
+| `cmd` | `string[]` |  | Command + args for STDIO transport | `["/opt/plugins/custom-filter"]` |
+| `env` | `object` |  | Environment overrides for STDIO transport | `{"PLUGINS_CONFIG_PATH": "/opt/plugins/config.yaml"}` |
+| `cwd` | `string` |  | Working directory for STDIO transport | `"/opt/plugins"` |
 
 #### Global Plugin Settings
 
@@ -397,6 +408,7 @@ The plugin framework provides comprehensive hook coverage across the entire MCP 
 
 !!! note "Agent-to-Agent (A2A) Hooks"
     Agent hooks enable filtering and monitoring of Agent-to-Agent interactions. These hooks allow you to:
+
     - Filter/transform messages before they reach agents
     - Control which tools are available to agents
     - Override model or system prompt settings
@@ -1089,6 +1101,7 @@ Errors inside a plugin should be raised as exceptions.  The plugin manager will 
 
 1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of the MCP Context Forge regardless of the plugin mode.
 2. if `plugin_settings.fail_on_plugin_error` is set to false the error is handled based off of the plugin mode in the plugin's config as follows:
+
   * if `mode` is `enforce`, both violations and errors are bubbled up as exceptions and the execution is blocked.
   * if `mode` is `enforce_ignore_error`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.
   * if `mode` is `permissive`, execution is allowed to proceed whether there are errors or violations. Both are logged.
@@ -1309,6 +1322,7 @@ plugins:
 
 - **Native Plugins:** <1ms latency overhead per hook
 - **External Service Plugins:** 10-100ms depending on service (cached responses: <5ms)
+- **Streamable HTTP over UDS:** Typically lower overhead than STDIO, no TCP port exposure
 - **Memory Usage:** ~5MB base overhead + ~1MB per active plugin
 - **Throughput:** Tested to 1,000+ req/s with 5 active plugins
 

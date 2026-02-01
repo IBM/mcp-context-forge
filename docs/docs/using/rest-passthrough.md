@@ -48,6 +48,7 @@ When creating a REST tool, the `base_url` and `path_template` are automatically 
 ```
 
 **Validation:**
+
 - `base_url` must have a valid scheme (http/https) and netloc
 - `path_template` must start with `/`
 
@@ -122,10 +123,12 @@ Set per-tool timeout in milliseconds:
 ```
 
 **Default Behavior:**
+
 - For REST tools with `expose_passthrough: true`: `20000ms` (20 seconds)
 - For other integration types: No default timeout
 
 **Validation:**
+
 - Must be a positive integer
 - Recommended range: `5000-60000ms` (5-60 seconds)
 
@@ -140,6 +143,7 @@ Control whether the passthrough endpoint is exposed:
 ```
 
 **Use Cases:**
+
 - `true` (default): Expose passthrough endpoint for direct REST invocation
 - `false`: Hide passthrough, only allow invocation through gateway
 
@@ -158,10 +162,12 @@ Restrict upstream hosts/schemes that tools can connect to:
 ```
 
 **Validation:**
+
 - Each entry must match hostname regex: `^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$`
 - Supports optional scheme prefix and port suffix
 
 **Security Benefits:**
+
 - Prevents SSRF (Server-Side Request Forgery) attacks
 - Restricts tool access to approved endpoints only
 - Enforces organizational security policies
@@ -178,6 +184,7 @@ Configure pre and post-request plugin processing:
 ```
 
 **Allowed Plugins:**
+
 - `deny_filter` - Block requests matching deny patterns
 - `rate_limit` - Rate limiting enforcement
 - `pii_filter` - PII detection and filtering
@@ -186,6 +193,7 @@ Configure pre and post-request plugin processing:
 - `resource_filter` - Resource access control
 
 **Execution Order:**
+
 1. **Pre-request plugins** (`plugin_chain_pre`) execute before the REST call
 2. REST call to upstream API
 3. **Post-request plugins** (`plugin_chain_post`) execute after receiving response
@@ -200,6 +208,7 @@ Configure pre and post-request plugin processing:
 4. Enter the **URL** (e.g., `https://api.example.com/v1/users`)
 5. Click **Advanced: Add Passthrough** button
 6. Configure passthrough fields in the expanded section:
+
    - **Query Mapping (JSON)**: `{"userId": "user_id"}`
    - **Header Mapping (JSON)**: `{"apiKey": "X-API-Key"}`
    - **Timeout MS**: `30000`
@@ -207,6 +216,7 @@ Configure pre and post-request plugin processing:
    - **Allowlist**: `["api.example.com"]`
    - **Plugin Chain Pre**: `["rate_limit", "pii_filter"]`
    - **Plugin Chain Post**: `["response_shape"]`
+
 7. Click **Save**
 
 ## Setting Passthrough Fields via API
@@ -257,6 +267,7 @@ curl -X POST /tools \
 ```
 
 **Auto-applied Defaults:**
+
 - `base_url`: `https://api.example.com` (extracted)
 - `path_template`: `/v1/create` (extracted)
 - `timeout_ms`: `20000` (default for REST passthrough)
@@ -416,6 +427,7 @@ curl -X PUT /tools/{tool_id} \
 ```
 
 **Benefits:**
+
 - Prevents SSRF attacks
 - Enforces approved endpoints only
 - Auditable security policy
@@ -429,6 +441,7 @@ curl -X PUT /tools/{tool_id} \
 ```
 
 **Guidelines:**
+
 - Fast APIs: `5000-10000ms`
 - Standard APIs: `15000-25000ms`
 - Batch/Long-running: `30000-60000ms`
@@ -443,6 +456,7 @@ curl -X PUT /tools/{tool_id} \
 ```
 
 **Protects:**
+
 - Personally identifiable information
 - Credit card numbers
 - Social security numbers
@@ -457,6 +471,7 @@ curl -X PUT /tools/{tool_id} \
 ```
 
 **Prevents:**
+
 - API quota exhaustion
 - DDoS to upstream services
 - Unexpected billing charges
@@ -470,6 +485,7 @@ curl -X PUT /tools/{tool_id} \
 ```
 
 **Ensures:**
+
 - Consistent response formats
 - Expected data structures
 - Type safety
@@ -589,6 +605,6 @@ interface ToolCreate {
 ## See Also
 
 - [Tool Annotations](./tool-annotations.md) - Behavioral hints for tools
-- [Plugin Framework](../plugins/index.md) - Plugin development and usage
+- [Plugin Framework](plugins/index.md) - Plugin development and usage
 - [Multi-Auth Headers](./multi-auth-headers.md) - Authentication header configuration
 - [Reverse Proxy](./reverse-proxy.md) - Reverse proxy configuration

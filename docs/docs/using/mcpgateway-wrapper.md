@@ -7,6 +7,10 @@ while connecting securely to the gateway using `SSE` + `JWT`.
 > Perfect for clients that can't open SSE streams or attach JWT headers
 > (e.g. **Claude Desktop**, **Cline**, **Continue**, custom CLI scripts).
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 🔑 Key Highlights
@@ -263,7 +267,7 @@ Open two shells or use a tool like `jq -c | nc -U` to pipe messages in and view 
         "resources":{"subscribe":false,"listChanged":false},
         "tools":{"listChanged":false}
       },
-      "serverInfo":{"name":"mcpgateway-wrapper","version":"0.9.0"}
+      "serverInfo":{"name":"mcpgateway-wrapper","version":"1.0.0-BETA-2"}
     }}
 
     # Empty tool list

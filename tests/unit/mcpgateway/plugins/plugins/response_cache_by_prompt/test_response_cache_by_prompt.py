@@ -299,8 +299,14 @@ class TestEvictionAndIndexRebuild:
         assert "unique1" not in tool_index
 
     @pytest.mark.asyncio
-    async def test_ttl_expiration_and_index_rebuild(self):
+    async def test_ttl_expiration_and_index_rebuild(self, monkeypatch):
         """Test that expired entries are removed and index is rebuilt."""
+        # Stabilize time-dependent behavior by controlling time.time()
+        from plugins.response_cache_by_prompt import response_cache_by_prompt as rcbp
+
+        now = [1_000.0]
+        monkeypatch.setattr(rcbp.time, "time", lambda: now[0])
+
         plugin = ResponseCacheByPromptPlugin(
             PluginConfig(
                 name="cache",
@@ -315,8 +321,8 @@ class TestEvictionAndIndexRebuild:
         await plugin.tool_pre_invoke(ToolPreInvokePayload(name="test_tool", args={"prompt": "temporary entry"}), ctx1)
         await plugin.tool_post_invoke(ToolPostInvokePayload(name="test_tool", result={"data": "temp"}), ctx1)
 
-        # Wait for TTL to expire
-        await asyncio.sleep(1.5)
+        # Advance time beyond TTL to expire the first entry
+        now[0] += 2.0
 
         # Add new entry to trigger eviction
         ctx2 = PluginContext(global_context=GlobalContext(request_id="r2"))

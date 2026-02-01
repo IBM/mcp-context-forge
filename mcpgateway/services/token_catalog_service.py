@@ -372,6 +372,7 @@ class TokenCatalogService:
         tags: Optional[List[str]] = None,
         team_id: Optional[str] = None,
         caller_permissions: Optional[List[str]] = None,
+        is_active: bool = True,
     ) -> tuple[EmailApiToken, str]:
         """
         Create a new API token with team-level scoping and additional configurations.
@@ -398,6 +399,7 @@ class TokenCatalogService:
             team_id (Optional[str]): The team ID to which the token should be scoped. This is required for team-level scoping.
             caller_permissions (Optional[List[str]]): The permissions of the caller creating the token. Used for
                 scope containment validation to ensure the new token cannot have broader permissions than the caller.
+            is_active (bool): Whether the token should be created as active (default is True).
 
         Returns:
             tuple[EmailApiToken, str]: A tuple where the first element is the `EmailApiToken` database record and
@@ -488,7 +490,7 @@ class TokenCatalogService:
             time_restrictions=scope.time_restrictions if scope else {},
             usage_limits=scope.usage_limits if scope else {},
             # Token status
-            is_active=True,
+            is_active=is_active,
             created_at=utc_now(),
             last_used=None,
         )
@@ -603,6 +605,7 @@ class TokenCatalogService:
         scope: Optional[TokenScope] = None,
         tags: Optional[List[str]] = None,
         caller_permissions: Optional[List[str]] = None,
+        is_active: Optional[bool] = None,
     ) -> Optional[EmailApiToken]:
         """Update an existing token with scope containment validation.
 
@@ -614,6 +617,7 @@ class TokenCatalogService:
             scope: New scoping configuration
             tags: New tags
             caller_permissions: Caller's effective permissions for scope containment
+            is_active: New token active status
 
         Returns:
             Optional[EmailApiToken]: Updated token if found
@@ -649,6 +653,9 @@ class TokenCatalogService:
 
         if tags is not None:
             token.tags = tags
+
+        if is_active is not None:
+            token.is_active = is_active
 
         if scope:
             token.server_id = scope.server_id

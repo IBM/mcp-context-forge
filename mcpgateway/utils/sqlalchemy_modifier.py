@@ -77,6 +77,10 @@ def _sqlite_tag_any_template(col_ref: str, prefix: str, n: int) -> TextClause:
     (e.g., {"id": "api"}). It safely guards `json_extract` with
     `CASE WHEN type = 'object'` to avoid malformed JSON errors on string values.
 
+    Design: We only filter by 'id' field, not 'label'. TagValidator ensures
+    all properly validated tags have an 'id' field. See json_contains_tag_expr
+    docstring for rationale.
+
     The generated SQL uses unique bind parameters with the provided prefix
     (e.g., :resources_tags_42_p0) to avoid collisions when multiple tag
     filters are used in the same query.
@@ -178,15 +182,38 @@ def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], matc
         return and_(*conditions)
 
     # ---------- PostgreSQL ----------
-    # For dict-format tags: use jsonb_path_query_array to extract ids
+    # For dict-format tags: use JSON functions that work with both JSON and JSONB types
+    # Note: .contains() only works with JSONB, but our column is JSON type
+    #
+    # Design: We only filter by 'id' field, not 'label'. This is intentional because:
+    # 1. TagValidator.validate_list() always creates tags with both id and label
+    # 2. The 'id' is the normalized, canonical identifier for matching
+    # 3. The 'label' is for display purposes only
+    # If a tag somehow exists without 'id' (malformed data), it won't match at DB level,
+    # but _get_tag_id() has a Python-side fallback for graceful handling.
     if dialect == "postgresql":
-        # Build conditions for each tag value
+        # Third-Party
+        from sqlalchemy import bindparam, cast, exists, select
+        from sqlalchemy.dialects.postgresql import JSONB
+        from sqlalchemy.sql import literal_column
+
+        # Build conditions for each tag value using JSON functions
         conditions = []
         for tag_value in values_list:
-            # Check if any element is the string OR has id matching the value
-            # This handles both ["tag"] and [{"id": "tag", "label": "Tag"}] formats
-            string_match = col.contains([tag_value])
-            dict_match = col.contains([{"id": tag_value}])
+            # Generate unique parameter name
+            param_name = f"tag_{uuid.uuid4().hex[:8]}"
+            param_dict = f"tag_{uuid.uuid4().hex[:8]}"
+
+            # For string tags: use @> operator to check if JSONB array contains the value
+            # Cast the tag_value to JSONB array and check containment
+            string_match = cast(col, JSONB).op("@>")(cast(func.jsonb_build_array(bindparam(param_name, value=tag_value)), JSONB))
+
+            # For dict tags: use EXISTS with jsonb_array_elements to check 'id' field
+            # Use table_valued() for explicit column reference (elem.c.value)
+            # This is the idiomatic SQLAlchemy pattern for table-valued functions
+            elem_table = func.jsonb_array_elements(cast(col, JSONB)).table_valued("value").alias("elem")
+            dict_match = exists(select(literal_column("1")).select_from(elem_table).where(elem_table.c.value.op("->>")(literal_column("'id'")) == bindparam(param_dict, value=tag_value)))
+
             conditions.append(or_(string_match, dict_match))
 
         if match_any:

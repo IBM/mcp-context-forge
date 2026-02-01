@@ -4,7 +4,7 @@ This guide provides essential security configurations and best practices for dep
 
 ## ⚠️ Critical Security Notice
 
-**MCP Gateway is currently in beta (v0.9.0)** and requires careful security configuration for production use:
+**MCP Gateway is currently in beta (v1.0.0-BETA-2)** and requires careful security configuration for production use:
 
 - The **Admin UI is development-only** and must be disabled in production
 - Expect **breaking changes** between versions until 1.0 release
@@ -33,8 +33,15 @@ users by removing the corresponding permissions.
 ```bash
 # Configure strong authentication
 AUTH_REQUIRED=true
-BASIC_AUTH_USER=custom-username       # Change from default
-BASIC_AUTH_PASSWORD=strong-password-here  # Use secrets manager
+
+# Basic auth is DISABLED by default (recommended for security)
+# API_ALLOW_BASIC_AUTH=false    # Default - use JWT tokens instead
+# DOCS_ALLOW_BASIC_AUTH=false   # Default - use JWT tokens instead
+
+# If you MUST use Basic auth (legacy compatibility only):
+# API_ALLOW_BASIC_AUTH=true
+# BASIC_AUTH_USER=custom-username       # Change from default
+# BASIC_AUTH_PASSWORD=strong-password-here  # Use secrets manager
 
 # Platform admin user (auto-created during bootstrap)
 PLATFORM_ADMIN_EMAIL=admin@yourcompany.com  # Change from default
@@ -86,7 +93,8 @@ JWT_AUDIENCE=your-api-identifier
 JWT_ISSUER=your-organization
 JWT_AUDIENCE_VERIFICATION=true
 JWT_ISSUER_VERIFICATION=true
-REQUIRE_TOKEN_EXPIRATION=true
+REQUIRE_TOKEN_EXPIRATION=true              # Reject tokens without exp claim
+REQUIRE_JTI=true                           # Require JWT ID for token tracking/revocation
 ```
 
 ##### Development JWT Security
@@ -99,7 +107,8 @@ JWT_AUDIENCE=mcpgateway-api
 JWT_ISSUER=mcpgateway
 JWT_AUDIENCE_VERIFICATION=true
 JWT_ISSUER_VERIFICATION=true
-REQUIRE_TOKEN_EXPIRATION=true
+REQUIRE_TOKEN_EXPIRATION=true              # Reject tokens without exp claim
+REQUIRE_JTI=true                           # Require JWT ID for token tracking/revocation
 ```
 
 ##### JWT Key Management Best Practices
@@ -243,7 +252,8 @@ python3 -m mcpgateway.utils.create_jwt_token \
 **Security Features:**
 
 - Server-scoped tokens **cannot access `/admin`** endpoints (security hardening)
-- Only truly public endpoints (`/health`, `/metrics`, `/docs`) bypass server restrictions
+- Only truly public endpoints (`/health`, `/ready`) bypass server restrictions
+- Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are exempt from server scoping but still require auth by default
 - RBAC permission checks still apply to all endpoints
 
 #### Permission-Scoped Tokens
@@ -264,7 +274,92 @@ python3 -m mcpgateway.utils.create_jwt_token \
 - `resources.create`, `resources.read`, `resources.update`, `resources.delete`
 - `admin.system_config`, `admin.user_management`, `admin.security_audit`
 
-### 4. Network Security
+### 4. Token Lifecycle Management
+
+MCP Gateway provides token lifecycle controls including revocation and validation requirements.
+
+#### Token Revocation
+
+Tokens with a `jti` (JWT ID) claim are tracked and can be revoked before expiration:
+
+- Revoked tokens are rejected immediately on all endpoints
+- Token revocation is checked against the `token_revocations` database table
+- Administrators can revoke tokens via the Admin UI or API
+
+```bash
+# Enable token tracking (required for revocation)
+REQUIRE_JTI=true
+```
+
+#### Token Validation Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `REQUIRE_TOKEN_EXPIRATION` | `true` | Reject tokens without `exp` claim |
+| `REQUIRE_JTI` | `true` | Require `jti` claim for token tracking |
+
+These settings are enabled by default for security. For backward compatibility with existing tokens that lack these claims, you can disable them (not recommended for production).
+
+### 5. Admin Route Authentication
+
+The Admin UI (`/admin/*`) enforces additional authentication checks beyond standard API authentication:
+
+#### Authentication Requirements
+
+- **Valid JWT token** with admin privileges, OR
+- **Proxy authentication** when `TRUST_PROXY_AUTH=true` (for deployments behind OAuth2 Proxy, Authelia, etc.)
+
+#### Validation Checks
+
+Admin routes perform the following validations:
+
+1. **Token revocation**: Tokens are checked against the revocation list
+2. **Account status**: Disabled accounts (`is_active=false`) are blocked
+3. **Admin privilege**: User must have `is_admin=true` in their profile
+
+#### Proxy Authentication
+
+For deployments using an authentication proxy:
+
+```bash
+# Enable proxy header authentication
+TRUST_PROXY_AUTH=true
+PROXY_USER_HEADER=X-Forwarded-User    # Header containing authenticated username
+
+# Important: Only enable when MCP Gateway is behind a trusted proxy
+# that properly sets and validates this header
+```
+
+### 6. Session Management
+
+The reverse proxy session management (`/reverse-proxy/sessions`) implements access controls:
+
+#### Session Access Rules
+
+| User Type | Access Level |
+|-----------|--------------|
+| Admin | View all active sessions |
+| Regular User | View only their own sessions |
+| Unauthenticated | No access (401) |
+
+#### Session Security Features
+
+- **Server-side ID generation**: Session IDs are generated server-side using UUIDs
+- **Ownership tracking**: Sessions are associated with the creating user
+- **No client-supplied IDs**: Client-provided session ID headers are ignored
+
+### 7. User Registration
+
+Control whether users can self-register accounts:
+
+```bash
+# Disable public registration (recommended for production)
+PUBLIC_REGISTRATION_ENABLED=false
+```
+
+When disabled, only administrators can create user accounts via the Admin UI or API.
+
+### 8. Network Security
 
 - [ ] Configure TLS/HTTPS with valid certificates
 - [ ] Implement firewall rules and network policies
@@ -274,7 +369,7 @@ python3 -m mcpgateway.utils.create_jwt_token \
 - [ ] Verify security headers are present (automatically added by SecurityHeadersMiddleware)
 - [ ] Configure iframe embedding policy (X_FRAME_OPTIONS=DENY by default, change to SAMEORIGIN if needed)
 
-### 4. Container Security
+### 9. Container Security
 
 ```bash
 # Run containers with security constraints
@@ -292,7 +387,7 @@ docker run \
 - [ ] Set resource limits (CPU, memory)
 - [ ] Scan images for vulnerabilities
 
-### 5. Secrets Management
+### 10. Secrets Management
 
 - [ ] **Never store secrets in environment variables directly**
 - [ ] Use a secrets management system (Vault, AWS Secrets Manager, etc.)
@@ -300,7 +395,7 @@ docker run \
 - [ ] Restrict container access to secrets
 - [ ] Never commit `.env` files to version control
 
-### 6. MCP Server Validation
+### 11. MCP Server Validation
 
 Before connecting any MCP server:
 
@@ -310,7 +405,7 @@ Before connecting any MCP server:
 - [ ] Monitor server behavior for anomalies
 - [ ] Implement rate limiting for untrusted servers
 
-### 7. Database Security
+### 12. Database Security
 
 - [ ] Use TLS for database connections
 - [ ] Configure strong passwords
@@ -318,7 +413,7 @@ Before connecting any MCP server:
 - [ ] Enable audit logging
 - [ ] Regular backups with encryption
 
-### 8. Monitoring & Logging
+### 13. Monitoring & Logging
 
 - [ ] Set up structured logging without sensitive data
 - [ ] Configure log rotation and secure storage
@@ -326,7 +421,7 @@ Before connecting any MCP server:
 - [ ] Set up anomaly detection
 - [ ] Create incident response procedures
 
-### 9. Integration Security
+### 14. Integration Security
 
 MCP Gateway should be integrated with:
 
@@ -336,7 +431,7 @@ MCP Gateway should be integrated with:
 - [ ] SIEM for security monitoring
 - [ ] Load balancer with TLS termination
 
-### 10. Well-Known URI Security
+### 15. Well-Known URI Security
 
 Configure well-known URIs appropriately for your deployment:
 
@@ -360,7 +455,7 @@ Security considerations:
 - [ ] Update security.txt Expires field before expiration
 - [ ] Consider custom well-known files only if necessary
 
-### 11. Downstream Application Security
+### 16. Downstream Application Security
 
 Applications consuming MCP Gateway data must:
 
@@ -379,12 +474,17 @@ Applications consuming MCP Gateway data must:
 MCPGATEWAY_UI_ENABLED=false              # Must be false in production
 MCPGATEWAY_ADMIN_API_ENABLED=false       # Must be false in production
 AUTH_REQUIRED=true                       # Enforce auth for every request
-BASIC_AUTH_USER=custom-user              # Change from default
-BASIC_AUTH_PASSWORD=<from-secrets>       # Use secrets manager or secret store
+API_ALLOW_BASIC_AUTH=false               # Keep disabled (use JWT instead)
+DOCS_ALLOW_BASIC_AUTH=false              # Keep disabled (use JWT instead)
 
 # Feature Flags (disable unused features)
 MCPGATEWAY_BULK_IMPORT_ENABLED=false
 MCPGATEWAY_A2A_ENABLED=false
+PUBLIC_REGISTRATION_ENABLED=false        # Disable user self-registration
+
+# Token Security
+REQUIRE_TOKEN_EXPIRATION=true            # Reject tokens without exp claim
+REQUIRE_JTI=true                         # Require JWT ID for revocation support
 
 # Network Security
 CORS_ENABLED=true
@@ -441,12 +541,17 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
    ```
 
 2. **Validate Configuration**
+
    - Review all environment variables
    - Confirm admin features disabled
    - Verify authentication enabled
    - Check TLS configuration
+   - Confirm `REQUIRE_JTI=true` for token tracking
+   - Confirm `REQUIRE_TOKEN_EXPIRATION=true`
+   - Confirm `PUBLIC_REGISTRATION_ENABLED=false`
 
 3. **Test Security Controls**
+
    - Attempt unauthorized access
    - Verify rate limiting works
    - Test input validation
@@ -462,7 +567,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
 
 - [Security Policy](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) - Full security documentation
 - [Deployment Options](index.md) - Various deployment methods
-- [Environment Variables](../index.md#configuration-env-or-env-vars) - Complete configuration reference
+- [Environment Variables](configuration.md) - Complete configuration reference
 
 ## ⚡ Quick Start Security Commands
 

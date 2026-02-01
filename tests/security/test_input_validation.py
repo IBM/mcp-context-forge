@@ -379,7 +379,7 @@ class TestSecurityValidation:
             "tool[name]",
             "tool|name",
             "tool\\name",
-            "tool/name",
+            # "tool/name",      # slash allowed per SEP-986
             "tool<name>",
             "tool>name>",
             "tool?name",
@@ -391,7 +391,7 @@ class TestSecurityValidation:
             "\n",  # newline
             "\t",  # tab
             "a" * 256,  # too long
-            "1tool",  # must start with a letter
+            "-tool",  # must start with letter, number, or underscore (hyphen not allowed)
         ]
         for name in invalid_names:
             logger.debug("Testing invalid tool name: %r", name)
@@ -1179,16 +1179,52 @@ class TestSecurityValidation:
             "%{7*7}",
             "{{''.class.mro[2].subclasses()}}",
             "{{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}",
+            # Unterminated expressions should fail closed
+            "{{",
+            # Payloads with single delimiter chars before dangerous keywords
+            "{{ '}' + self.__class__ }}",
+            "{% set x='%' ~ __import__('os') %}",
+            "{{ '}' ~ config }}",
+            "{{ x if '}' else self }}",
+            # Payloads with closing delimiter sequences inside quoted strings
+            '{{ "}}" ~ self.__class__ }}',
+            '{% set x = "%}" ~ __import__("os") %}',
+            '{{ "}}" ~ config }}',
+            '{{ "}}" ~ 7*7 }}',
+            # String-based attribute access (attr filter and bracket notation)
+            "{{ ''|attr('__class__') }}",
+            '{{ ""["__class__"] }}',
+            "{{ ''|attr('__import__') }}",
+            "{{ ''['__globals__'] }}",
+            # Escaped quote bypasses
+            '{{ "a\\"}}b" ~ self.__class__ }}',
+            "{{ 'a\\'}}b' ~ self.__class__ }}",
+            # String concatenation bypasses (building dunder names dynamically)
+            "{{ ''|attr('__' ~ 'class__') }}",
+            "{{ ''['__' ~ 'class__'] }}",
+            # Jinja filter bypasses (filters that take attribute names as strings)
+            "{{ users|map(attribute='__class__') }}",
+            "{{ users|selectattr('__class__') }}",
+            "{{ users|sort(attribute='__class__') }}",
+            # Additional dangerous dunder methods
+            "{{ ''|attr('__base__') }}",
+            "{{ ''|attr('__getattribute__') }}",
         ]
 
         for i, payload in enumerate(ssti_payloads):
             logger.debug(f"Testing SSTI payload: {payload[:50]}...")
             must_fail(payload, f"SSTI #{i + 1} ({payload[:20]}...)")
 
+    @pytest.mark.timeout(30)
     def test_regex_dos_prevention(self):
-        """Test prevention of ReDoS attacks."""
+        """Test prevention of ReDoS attacks.
+
+        Uses pytest-timeout for deterministic timeout instead of wall-clock assertions.
+        If this test times out, it indicates a ReDoS vulnerability in the regex patterns.
+        """
         logger.debug("Testing ReDoS prevention")
 
+        # Test 1: User-provided patterns in schemas
         redos_patterns = [
             "(a+)+$",
             "([a-zA-Z]+)*",
@@ -1205,6 +1241,30 @@ class TestSecurityValidation:
             tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, input_schema=schema)
             # Input schema might have defaults
             assert tool.input_schema is not None
+
+        # Test 2: SSTI validation patterns should not be vulnerable to ReDoS
+        # The SSTI patterns previously used .* which could cause catastrophic backtracking
+        logger.debug("Testing SSTI ReDoS prevention")
+
+        # Pathological inputs that would trigger catastrophic backtracking with .*
+        # These have opening delimiters but no closing ones, with many repetitions
+        redos_payloads = [
+            "{{" + "a" * 10000,  # Jinja2 double braces without closing
+            "{%" + "b" * 10000,  # Jinja2 tags without closing
+            "${" + "c" * 10000,  # Template expression without closing
+            "#{" + "d" * 10000,  # ERB/Hash without closing
+            "%{" + "e" * 10000,  # Apache/Velocity without closing
+        ]
+
+        for i, payload in enumerate(redos_payloads):
+            logger.debug(f"Testing SSTI ReDoS payload {i + 1}: {payload[:20]}... (length: {len(payload)})")
+            try:
+                # This should either reject quickly or accept (doesn't match dangerous patterns)
+                # If patterns are vulnerable to ReDoS, this will hang and pytest-timeout will fail the test
+                PromptCreate(name="test_prompt", template=payload)
+                logger.debug(f"  Payload {i + 1} accepted (no dangerous pattern matched)")
+            except ValidationError:
+                logger.debug(f"  Payload {i + 1} rejected (validation failed)")
 
     @pytest.mark.skip(reason="Currently not applicable, XML parsing not used")
     def test_billion_laughs_attack(self):

@@ -468,7 +468,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         - List return → CallToolResult with content only
         - Tuple return → CallToolResult with both content and structuredContent fields
 
-        Logs and returns an empty list on failure.
+    Raises:
+        Exception: Re-raised after logging to allow MCP SDK to convert to JSON-RPC error response.
 
     Examples:
         >>> # Test call_tool function signature
@@ -639,7 +640,9 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
             return unstructured
     except Exception as e:
         logger.exception(f"Error calling tool '{name}': {e}")
-        return []
+        # Re-raise the exception so the MCP SDK can properly convert it to an error response
+        # This ensures error details are propagated to the client instead of returning empty results
+        raise
 
 
 @mcp_app.list_tools()

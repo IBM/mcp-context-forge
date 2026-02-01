@@ -679,6 +679,7 @@ DB_PREPARE_THRESHOLD=5
 ```
 
 After N executions of the same query pattern, psycopg3 creates a server-side prepared statement, reducing:
+
 - Query parsing overhead (5-15% per query)
 - Network round-trips for query plans
 - PostgreSQL CPU usage for repeated queries
@@ -1038,6 +1039,7 @@ MCP Gateway uses `redis[hiredis]` for significantly faster Redis protocol parsin
 | LRANGE (999 items) | Baseline | +8220% | **83x** |
 
 The larger the response, the greater the improvement. This is critical for:
+
 - Tool registry queries returning many tools
 - Bulk operations and federation
 - Cached response retrieval
@@ -1203,11 +1205,13 @@ GRANIAN_RESPAWN_FAILED=true
 - No queuing, no memory growth, no cascading timeouts
 
 **When to use Granian:**
+
 - Load spike protection (backpressure rejects excess gracefully)
 - Bursty or unpredictable traffic patterns
 - High-concurrency deployments (1000+ concurrent users)
 
 **When to use Gunicorn:**
+
 - Memory-constrained environments (32% less RAM)
 - Maximum stability and compatibility
 - Standard deployments with predictable traffic
@@ -1310,6 +1314,7 @@ JWT_CACHE_MAX_SIZE=10000      # Max cached tokens
 ```
 
 **Impact:**
+
 - Auth overhead: 5-12ms → <1ms (with cache hit)
 - Cache hit rate: >80% under normal load
 
@@ -1330,6 +1335,7 @@ AUTH_CACHE_BATCH_QUERIES=true # Batch related queries together
 ```
 
 **Impact:**
+
 - Auth database queries: 3-4 per request → 0-1 per request
 - Auth latency: 8-15ms → 1-3ms
 - Database load: 75% reduction for auth operations
@@ -1345,6 +1351,7 @@ GLOBAL_CONFIG_CACHE_TTL=60
 ```
 
 **Impact:**
+
 - Eliminates 42,000+ database queries per load test
 - Query latency: ~1ms → ~0.00001ms
 
@@ -1374,6 +1381,7 @@ TEAM_CACHE_ROLE_TTL=60
 ```
 
 **Impact:**
+
 - Dashboard load: 15-20 queries → 0-2 queries (95%+ cache hit)
 - List endpoints: 50-200 queries → 0-1 queries per request
 - Database load reduction: 80-95%
@@ -1401,6 +1409,7 @@ All SSE streaming, WebSocket messages, Redis pub/sub, and message parsing use or
 Comprehensive database indexing provides 10-100x query performance improvement:
 
 **Key indexed patterns:**
+
 - Foreign key columns for efficient JOINs
 - Composite indexes for common filter patterns (e.g., `team_id, enabled`)
 - Boolean filter columns (`is_active`, `enabled`, `status`)
@@ -1408,6 +1417,7 @@ Comprehensive database indexing provides 10-100x query performance improvement:
 - Unique lookups (`email`, `slug`, `token`)
 
 **Impact:**
+
 - Query time: seconds → milliseconds for filtered queries
 - Database CPU: 30-60% reduction
 - Scalability: Support 10x more concurrent users
@@ -1425,6 +1435,7 @@ AUDIT_TRAIL_ENABLED=true
 ```
 
 **Impact (under load with 2000 concurrent users):**
+
 - Disabled: 0 rows/hour, 0 writes/request
 - Enabled: ~140,000+ rows/hour, 1 write/request
 
@@ -1615,6 +1626,7 @@ Server: Content-Encoding: br  (uses Brotli if available)
 | Configuration | Environment variables | nginx.conf |
 
 **Recommendation**:
+
 - **With Nginx proxy**: Disable gateway compression, let Nginx handle it
 - **Direct access**: Enable gateway compression
 
@@ -1731,7 +1743,7 @@ brew install k6            # macOS
 ```bash
 # Get JWT token
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 0 --secret my-test-key)
+  --username admin@example.com --exp 10080 --secret my-test-key)
 
 # Create test payload
 cat > payload.json <<EOF
@@ -2457,16 +2469,19 @@ MCP Gateway is built on a high-performance foundation:
 ### Scaling Checklist
 
 - [ ] **Vertical Scaling**
+
   - [ ] Configure Gunicorn workers: `(2 × CPU) + 1`
   - [ ] Allocate CPU: 1 core per 2 workers
   - [ ] Allocate memory: 256MB + (workers × 200MB)
 
 - [ ] **Horizontal Scaling**
+
   - [ ] Deploy to Kubernetes with HPA enabled
   - [ ] Set `minReplicas` ≥ 3 for high availability
   - [ ] Configure shared PostgreSQL and Redis
 
 - [ ] **Database Optimization**
+
   - [ ] Calculate `max_connections`: `(pods × workers × pool) × 1.2`
   - [ ] Set `DB_POOL_SIZE` per worker (recommended: 50)
   - [ ] Configure `DB_POOL_RECYCLE=3600` to prevent stale connections
@@ -2476,6 +2491,7 @@ MCP Gateway is built on a high-performance foundation:
   - [ ] Verify database indexes are applied (10-100x query improvement)
 
 - [ ] **Caching**
+
   - [ ] Enable Redis: `CACHE_TYPE=redis`
   - [ ] Set `REDIS_URL` to shared Redis instance
   - [ ] Configure TTLs: `SESSION_TTL=3600`, `MESSAGE_TTL=600`
@@ -2487,6 +2503,7 @@ MCP Gateway is built on a high-performance foundation:
   - [ ] Enable admin stats caching: `ADMIN_STATS_CACHE_ENABLED=true`
 
 - [ ] **Performance**
+
   - [ ] Select HTTP server: `HTTP_SERVER=gunicorn` (stable) or `granian` (faster)
   - [ ] Tune Gunicorn: `GUNICORN_PRELOAD_APP=true`, `GUNICORN_WORKERS=auto`
   - [ ] Or tune Granian: `GRANIAN_BACKLOG=4096`, `GRANIAN_BACKPRESSURE=64`
@@ -2496,6 +2513,7 @@ MCP Gateway is built on a high-performance foundation:
   - [ ] Disable audit trail for load testing: `AUDIT_TRAIL_ENABLED=false`
 
 - [ ] **Logging & Metrics**
+
   - [ ] Set log level: `LOG_LEVEL=ERROR` (production)
   - [ ] Disable access logs: `DISABLE_ACCESS_LOG=true`
   - [ ] Disable DB logging: `STRUCTURED_LOGGING_DATABASE_ENABLED=false`
@@ -2503,16 +2521,19 @@ MCP Gateway is built on a high-performance foundation:
   - [ ] Enable metrics cache: `METRICS_CACHE_ENABLED=true`
 
 - [ ] **Health Checks**
+
   - [ ] Configure `/health` liveness probe
   - [ ] Configure `/ready` readiness probe
   - [ ] Set appropriate thresholds and timeouts
 
 - [ ] **Monitoring**
+
   - [ ] Enable OpenTelemetry: `OTEL_ENABLE_OBSERVABILITY=true`
   - [ ] Deploy Prometheus and Grafana
   - [ ] Configure alerts for errors, latency, and resources
 
 - [ ] **Load Testing**
+
   - [ ] Benchmark with `hey` or `k6`
   - [ ] Target: >1000 RPS per pod, P99 <500ms
   - [ ] Test failover scenarios

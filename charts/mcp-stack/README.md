@@ -305,7 +305,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.VALIDATION_NAME_PATTERN | string | `"^[a-zA-Z0-9_.\\-\\s]+$"` |  |
 | mcpContextForge.config.VALIDATION_SAFE_URI_PATTERN | string | `"^[a-zA-Z0-9_\\-.:/?=&%{}]+$"` |  |
 | mcpContextForge.config.VALIDATION_TOOL_METHOD_PATTERN | string | `"^[a-zA-Z][a-zA-Z0-9_\\./-]*$"` |  |
-| mcpContextForge.config.VALIDATION_TOOL_NAME_PATTERN | string | `"^[a-zA-Z][a-zA-Z0-9._-]*$"` |  |
+| mcpContextForge.config.VALIDATION_TOOL_NAME_PATTERN | string | `"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"` |  |
 | mcpContextForge.config.VALIDATION_UNSAFE_URI_PATTERN | string | `"[<>\"'\\\\]"` |  |
 | mcpContextForge.config.WEBSOCKET_PING_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.WELL_KNOWN_CACHE_MAX_AGE | string | `"3600"` |  |
@@ -381,8 +381,9 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.AUTH_ENCRYPTION_SECRET | string | `"my-test-salt"` |  |
 | mcpContextForge.secret.AUTH_REQUIRED | string | `"true"` |  |
 | mcpContextForge.secret.AUTO_CREATE_PERSONAL_TEAMS | string | `"true"` |  |
-| mcpContextForge.secret.BASIC_AUTH_PASSWORD | string | `"changeme"` |  |
-| mcpContextForge.secret.BASIC_AUTH_USER | string | `"admin"` |  |
+| mcpContextForge.secret.BASIC_AUTH_PASSWORD | string | `"changeme"` | Password for Basic auth (when enabled) |
+| mcpContextForge.secret.BASIC_AUTH_USER | string | `"admin"` | Username for Basic auth (when enabled) |
+| mcpContextForge.secret.API_ALLOW_BASIC_AUTH | string | `"false"` | Enable Basic auth for API endpoints (disabled by default for security) |
 | mcpContextForge.secret.DCR_ALLOWED_ISSUERS | string | `"[]"` |  |
 | mcpContextForge.secret.DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS | string | `"true"` |  |
 | mcpContextForge.secret.DCR_CLIENT_NAME_TEMPLATE | string | `"MCP Gateway ({gateway_name})"` |  |

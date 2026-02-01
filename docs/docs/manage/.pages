@@ -1,6 +1,7 @@
 nav:
   - index.md
   - configuration.md
+  - troubleshooting.md
   - api-usage.md
   - scale.md
   - parallel-session-cleanup.md

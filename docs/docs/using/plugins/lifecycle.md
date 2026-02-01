@@ -138,12 +138,14 @@ The gateway ships with ready‑to‑use plugin templates under `plugin_templates
 Location and contents:
 
 - `plugin_templates/native`
+
   - `plugin.py.jinja`: Plugin class skeleton extending `Plugin`
   - `plugin-manifest.yaml.jinja`: Manifest metadata (description, author, version, available_hooks)
   - `config.yaml.jinja`: Example entry to add in `plugins/config.yaml`
   - `__init__.py.jinja`, `README.md.jinja`
 
 - `plugin_templates/external`
+
   - `{{ plugin_name }}/plugin.py.jinja`: External plugin implementation skeleton
   - `resources/plugins/config.yaml.jinja`: Plugin loader config for server
   - `resources/runtime/config.yaml.jinja`: External server runtime config
@@ -213,6 +215,20 @@ plugins:
     mcp:
       proto: STREAMABLEHTTP
       url: http://localhost:8000/mcp
+
+To use Streamable HTTP over a Unix domain socket (no TCP port):
+
+```yaml
+plugins:
+
+  - name: "MyFilter"
+    kind: "external"
+    priority: 10
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://localhost/mcp
+      uds: /var/run/mcp-plugin.sock
+```
 ```
 
 To use STDIO instead of HTTP:
@@ -225,7 +241,12 @@ plugins:
     priority: 10
     mcp:
       proto: STDIO
-      script: path/to/your/plugin_server.py  # must be a .py file
+      cmd: ["python", "path/to/your/plugin_server.py"]
+      env:
+        PLUGINS_CONFIG_PATH: "/opt/plugins/config.yaml"
+      cwd: "/opt/plugins"
+      # Relative script paths are resolved from cwd when provided
+      # or: script: path/to/your/plugin_server.py  # .py/.sh or executable
 ```
 
 Then, start the gateway:

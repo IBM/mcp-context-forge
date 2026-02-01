@@ -64,6 +64,7 @@ from typing import Any, Dict
 
 # Third-Party
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 import uvicorn
 
 # First-Party
@@ -197,6 +198,26 @@ class SSLCapableFastMCP(FastMCP):
             kwargs["host"] = self.server_config.host
         if "port" not in kwargs:
             kwargs["port"] = self.server_config.port
+        if self.server_config.uds and kwargs.get("transport_security") is None:
+            kwargs["transport_security"] = TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=[
+                    "127.0.0.1",
+                    "localhost",
+                    "[::1]",
+                    "127.0.0.1:*",
+                    "localhost:*",
+                    "[::1]:*",
+                ],
+                allowed_origins=[
+                    "http://127.0.0.1",
+                    "http://localhost",
+                    "http://[::1]",
+                    "http://127.0.0.1:*",
+                    "http://localhost:*",
+                    "http://[::1]:*",
+                ],
+            )
 
         super().__init__(*args, **kwargs)
 
@@ -337,12 +358,18 @@ class SSLCapableFastMCP(FastMCP):
         }
         config_kwargs.update(ssl_config)
 
-        logger.info(f"Starting plugin server on {self.settings.host}:{self.settings.port}")
+        if self.server_config.uds:
+            config_kwargs.pop("host", None)
+            config_kwargs.pop("port", None)
+            config_kwargs["uds"] = self.server_config.uds
+            logger.info(f"Starting plugin server on unix socket {self.server_config.uds}")
+        else:
+            logger.info(f"Starting plugin server on {self.settings.host}:{self.settings.port}")
         config = uvicorn.Config(**config_kwargs)  # type: ignore[arg-type]
         server = uvicorn.Server(config)
 
         # If SSL is enabled, start a separate HTTP health check server
-        if ssl_config:
+        if ssl_config and not self.server_config.uds:
             health_port = self.settings.port + 1000  # Use port+1000 for health checks
             logger.info(f"SSL enabled - starting separate HTTP health check on port {health_port}")
             # Run both servers concurrently
@@ -362,6 +389,7 @@ async def run() -> None:
         - PLUGINS_TRANSPORT: Transport type - 'stdio' or 'http' (default: auto-detect)
         - PLUGINS_SERVER_HOST: Server host (default: 0.0.0.0) - HTTP mode only
         - PLUGINS_SERVER_PORT: Server port (default: 8000) - HTTP mode only
+        - PLUGINS_SERVER_UDS: Unix domain socket path - HTTP mode only (no TLS)
         - PLUGINS_SERVER_SSL_ENABLED: Enable SSL/TLS (true/false) - HTTP mode only
         - PLUGINS_SERVER_SSL_KEYFILE: Path to server private key - HTTP mode only
         - PLUGINS_SERVER_SSL_CERTFILE: Path to server certificate - HTTP mode only

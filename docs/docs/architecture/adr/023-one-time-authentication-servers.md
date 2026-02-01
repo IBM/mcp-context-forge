@@ -12,6 +12,7 @@ Context Forge Gateway allows users to register MCP servers with authentication c
 However, a significant use case emerged: organizations and users who want to leverage the gateway's tool proxying capabilities but cannot or will not store authentication credentials in the gateway database due to security policies, compliance requirements, or organizational constraints. These users still needed a mechanism to register MCP servers with authentication, discover available tools, and access them through the gateway using runtime-provided credentials via passthrough headers.
 
 The existing authentication flow required credentials to be persisted, making it incompatible with scenarios where:
+
 - Security policies prohibit credential storage in third-party systems
 - Organizations prefer to use runtime authentication with short-lived tokens
 - Users want to leverage passthrough header mechanisms for authentication
@@ -46,8 +47,8 @@ The solution introduces a `one_time_auth` boolean flag in the gateway registrati
 2. **One-Time Connection**: Gateway uses the provided credentials exactly once to establish a connection with the MCP server
 3. **Tool Discovery**: During this single authenticated connection, the gateway performs complete tool discovery, retrieving all available tools, their schemas, and metadata
 4. **Credential Discard**: After tool discovery completes successfully, the authentication credentials are immediately discarded and not persisted to the database
-5. **Passthrough Configuration**: Users must configure `passthrough_headers` (specifically `X-Upstream-Authorization` for authorization headers) to enable runtime authentication
-6. **Runtime Authentication**: Subsequent requests to the MCP server tools must include authentication credentials via passthrough headers provided by the client
+5. **Runtime Auth Header**: Clients must send `X-Upstream-Authorization`, which the gateway always maps to `Authorization` for upstream requests
+6. **Optional Passthrough Headers**: Configure `passthrough_headers` only for additional headers beyond `X-Upstream-Authorization`
 
 ```mermaid
 graph LR
@@ -55,7 +56,7 @@ graph LR
     B --> C{"Enable One-Time Authentication?"}
     C -->|Yes| D["Do Not Store Credentials in DB"]
     C -->|No| E["Store Credentials in DB"]
-    D --> F["Configure Passthrough Headers<br/>(X-Upstream-Authorization)"]
+    D --> F["Send X-Upstream-Authorization<br/>Header"]
     F --> G["Create Virtual Server"]
     G --> H["Link to MCP Server"]
     H --> I["Add Authentication Headers"]
@@ -63,8 +64,6 @@ graph LR
     J --> K["Successful Authentication"]
     E --> L["Create Virtual Server with Stored Credentials"]
 
-    classDef step fill:#1e1e1e,stroke:#ffffff,stroke-width:2px,color:#f5f5f5;
-    class A,B,C,D,E,F,G,H,I,J,K,L step;
 ```
 
 ### Technical Changes
@@ -185,6 +184,7 @@ The feature was tested and validated in the following scenarios:
 - Tool invocation from MCP Inspector via virtual server
 
 All test scenarios successfully validated that:
+
 - Credentials were not stored in the database
 - Tool discovery completed successfully during one-time authentication
 - Tool calls functioned correctly when authentication was provided via passthrough headers

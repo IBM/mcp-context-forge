@@ -50,10 +50,6 @@ flowchart TD
         langchain["LangChain Agent"]
     end
 
-    %% ---------- Styling for IBM Cloud ----
-    classDef cloud fill:#f5f5f5,stroke:#c6c6c6;
-    class vpc,iks,icr,argocd,helm,gateway,db,redis,kms,secrets,logs cloud;
-
     %% ------------ Edges ------------------
     repo   -- "git push"      --> build
     build  -- "docker push"   --> icr
@@ -66,8 +62,8 @@ flowchart TD
     secrets-- "TLS certs"     --> iks
     kms    -- "encryption"    --> iks
     logs   -- "audit logs"    --> iks
-    gateway-- "SSE/stdio"     --> vscode
-    gateway-- "wrapper"       --> claude
+    gateway-- "SSE/HTTP"      --> vscode
+    gateway-- "stdio wrapper" --> claude
     gateway-- "HTTP API"      --> langchain
 ```
 
@@ -561,7 +557,7 @@ networkPolicy:
 POSTGRES_PASSWORD=$(openssl rand -base64 32)
 REDIS_PASSWORD=$(openssl rand -base64 32)
 JWT_SECRET=$(openssl rand -hex 32)
-BASIC_AUTH_PASSWORD=$(openssl rand -base64 16)
+PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 16)
 
 # Create PostgreSQL secret
 kubectl create secret generic postgres-secret -n mcp \
@@ -574,7 +570,8 @@ kubectl create secret generic redis-secret -n mcp \
 # Create MCP Gateway config
 kubectl create secret generic mcp-gateway-secret -n mcp \
   --from-literal=JWT_SECRET_KEY="$JWT_SECRET" \
-  --from-literal=BASIC_AUTH_PASSWORD="$BASIC_AUTH_PASSWORD" \
+  --from-literal=PLATFORM_ADMIN_EMAIL="admin@example.com" \
+  --from-literal=PLATFORM_ADMIN_PASSWORD="$PLATFORM_ADMIN_PASSWORD" \
   --from-literal=DATABASE_URL="postgresql+psycopg://mcpgateway:$POSTGRES_PASSWORD@mcp-stack-postgres:5432/mcpgateway" \
   --from-literal=REDIS_URL="redis://:$REDIS_PASSWORD@mcp-stack-redis:6379/0"
 
@@ -582,9 +579,12 @@ kubectl create secret generic mcp-gateway-secret -n mcp \
 echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" >> ~/mcp-credentials.env
 echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> ~/mcp-credentials.env
 echo "JWT_SECRET=$JWT_SECRET" >> ~/mcp-credentials.env
-echo "BASIC_AUTH_PASSWORD=$BASIC_AUTH_PASSWORD" >> ~/mcp-credentials.env
+echo "PLATFORM_ADMIN_PASSWORD=$PLATFORM_ADMIN_PASSWORD" >> ~/mcp-credentials.env
 chmod 600 ~/mcp-credentials.env
 ```
+
+!!! info "Authentication"
+    The Admin UI uses email/password authentication. Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
 
 ---
 
@@ -626,11 +626,11 @@ kubectl get pv,pvc -n mcp
 ### 8.1. Generate API Token
 
 ```bash
-# Generate JWT token for API access
+# Generate JWT token for API access (expires in 1 week)
 source ~/mcp-credentials.env
 export MCPGATEWAY_BEARER_TOKEN=$(kubectl exec -n mcp deployment/mcp-stack-mcpcontextforge -- \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin --exp 0 --secret "$JWT_SECRET")
+  --username admin@example.com --exp 10080 --secret "$JWT_SECRET")
 
 echo "Bearer token: $MCPGATEWAY_BEARER_TOKEN"
 ```
@@ -654,8 +654,8 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
 # Open admin UI
 echo "Admin UI: $GATEWAY_URL/admin"
-echo "Username: admin"
-echo "Password: $BASIC_AUTH_PASSWORD"
+echo "Email: admin@example.com"
+echo "Password: $PLATFORM_ADMIN_PASSWORD"
 ```
 
 ### 8.3. Add MCP Servers

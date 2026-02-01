@@ -1,0 +1,902 @@
+# TLS/SSL Configuration Guide
+
+This guide explains how to configure TLS/SSL encryption for the MCP Gateway and nginx reverse proxy in Docker Compose deployments.
+
+**⚠️ Important: TLS is OPTIONAL and DISABLED by default.** The default deployment uses HTTP-only for simplicity. Enable TLS only when needed for production or testing secure connections.
+
+---
+
+## Quick Start: Zero-Config TLS
+
+The fastest way to enable HTTPS is using the `--profile tls` Docker Compose profile. This automatically generates self-signed certificates and configures nginx with TLS—no manual configuration required.
+
+### One Command
+
+```bash
+make compose-tls
+```
+
+This starts the full stack with:
+
+- **HTTP:** `http://localhost:8080`
+- **HTTPS:** `https://localhost:8443`
+- **Admin UI:** `https://localhost:8443/admin`
+
+### What Happens
+
+1. The `cert_init` container checks if certificates exist in `./certs/`
+2. If missing, it auto-generates a self-signed certificate valid for 365 days
+3. The `nginx_tls` service starts with TLS enabled on port 8443
+4. Both HTTP (8080) and HTTPS (8443) are available
+
+### Using Custom Certificates
+
+To use your own CA-signed certificates instead of auto-generated ones:
+
+```bash
+# Create certs directory and add your certificates
+mkdir -p certs
+cp /path/to/your/certificate.pem certs/cert.pem
+cp /path/to/your/private-key.pem certs/key.pem
+
+# Start the TLS stack (will use existing certs)
+make compose-tls
+```
+
+The `cert_init` container detects existing certificates and skips generation.
+
+### TLS Profile Commands
+
+| Command | Description |
+|---------|-------------|
+| `make compose-tls` | Start with TLS (HTTP + HTTPS both available) |
+| `make compose-tls-https` | Start with forced HTTPS (HTTP redirects to HTTPS) |
+| `make compose-tls-down` | Stop TLS-enabled stack |
+| `make compose-tls-logs` | Tail logs from TLS services |
+| `make compose-tls-ps` | Show TLS stack status |
+
+### Forcing HTTPS Redirect
+
+To redirect all HTTP traffic to HTTPS (recommended for production):
+
+```bash
+# Option 1: Use the convenience command
+make compose-tls-https
+
+# Option 2: Set environment variable
+NGINX_FORCE_HTTPS=true make compose-tls
+```
+
+When enabled, requests to `http://localhost:8080` automatically redirect to `https://localhost:8443`.
+
+### Combining with Other Profiles
+
+The TLS profile works alongside other Docker Compose profiles:
+
+```bash
+# TLS + Monitoring (Prometheus, Grafana, etc.)
+docker compose --profile tls --profile monitoring up -d --scale nginx=0
+
+# TLS + Benchmark servers
+docker compose --profile tls --profile benchmark up -d --scale nginx=0
+```
+
+!!! note "Scaling nginx to 0"
+    When using `--profile tls`, add `--scale nginx=0` to prevent the default nginx from conflicting with `nginx_tls` on port 8080.
+
+### Verifying TLS
+
+```bash
+# Test HTTP endpoint
+curl http://localhost:8080/health
+
+# Test HTTPS endpoint (skip cert verification for self-signed)
+curl -sk https://localhost:8443/health
+
+# Check TLS version
+openssl s_client -connect localhost:8443 -brief 2>&1 | head -5
+```
+
+Expected output:
+```
+{"status":"healthy"}
+```
+
+### Certificate Details
+
+Auto-generated certificates include:
+
+- **Validity:** 365 days
+- **Key size:** RSA 4096-bit
+- **Subject Alternative Names:** `localhost`, `gateway`, `nginx`, `127.0.0.1`
+- **Protocols:** TLS 1.2 and TLS 1.3
+
+---
+
+## Overview
+
+The MCP Gateway supports TLS/SSL encryption at multiple layers:
+
+1. **Gateway TLS** - Direct HTTPS connections to the gateway (port 4444)
+2. **Nginx Frontend TLS** - HTTPS connections from clients to nginx (port 8443)
+3. **Nginx Backend TLS** - HTTPS connections from nginx to the gateway backend
+
+## Architecture Options
+
+### Option 1: Gateway TLS Only (Simplest)
+```
+Client -> HTTPS (self-signed) -> Gateway (port 4444)
+```
+Best for: Development, testing, internal networks
+
+### Option 2: Nginx SSL Termination (Recommended)
+```
+Client -> HTTPS (trusted cert) -> Nginx (port 8443) -> HTTP -> Gateway
+```
+Best for: Production with trusted certificates, load balancing
+
+### Option 3: End-to-End TLS (Most Secure)
+```
+Client -> HTTPS (trusted cert) -> Nginx (port 8443) -> HTTPS (self-signed) -> Gateway
+```
+Best for: Zero-trust networks, defense in depth
+
+This guide focuses on **Option 3** (end-to-end TLS).
+
+## Prerequisites
+
+- Docker and Docker Compose installed
+- OpenSSL installed (for certificate generation)
+- Basic understanding of TLS/SSL concepts
+
+## Step 1: Generate SSL Certificates
+
+### Generate Self-Signed Certificates
+
+For development and testing, generate self-signed certificates:
+
+```bash
+# Navigate to project root
+cd /path/to/mcp-context-forge
+
+# Generate certificates without passphrase (recommended for automated services)
+make certs
+
+# Or with passphrase protection (for gateway only - see note below)
+make certs-passphrase
+```
+
+This creates:
+
+- `certs/cert.pem` - SSL certificate
+- `certs/key.pem` - Unencrypted private key
+- `certs/key-encrypted.pem` - Passphrase-protected private key (if using make certs-passphrase)
+
+### Understanding Passphrase-Protected Keys
+
+**Important Security Note**: Passphrase-protected keys are designed for **interactive systems** where a human enters the passphrase at startup. In automated/containerized environments, they provide **minimal security benefit** because:
+
+- The passphrase must be stored alongside the key (in environment variables or files)
+- Any process that can read the key can also read the passphrase
+- They only protect keys "at rest" when the service is stopped
+
+**When passphrase protection helps:**
+
+- The gateway (Gunicorn/Granian) can decrypt keys programmatically from environment variables
+- Adds marginal protection if an attacker gets read-only filesystem access but not environment access
+- Useful for compliance requirements that mandate encrypted keys at rest
+
+**Recommended approach:**
+
+- **Development/Testing**: Use unencrypted keys (`make certs`)
+- **Production**: Use proper secrets management (see Security Best Practices section)
+
+### Set Passphrase in Environment (Optional)
+
+If using passphrase-protected keys for the gateway:
+
+```bash
+# Add to .env file
+KEY_FILE_PASSWORD=your-secure-passphrase
+```
+
+### For Production: Use Trusted Certificates
+
+For production deployments, obtain certificates from a trusted Certificate Authority (CA):
+
+- **Let's Encrypt** - Free automated certificates
+- **Commercial CA** - DigiCert, GlobalSign, etc.
+- **Internal CA** - For enterprise deployments
+
+Place your certificates in the `certs/` directory:
+```bash
+certs/
+├── cert.pem          # Your certificate chain
+├── key.pem           # Unencrypted key (for nginx)
+└── key-encrypted.pem # Encrypted key (for gateway)
+```
+
+## Step 2: Configure Gateway TLS
+
+### Environment Variables
+
+Edit `docker-compose.yml` gateway service environment section:
+
+```yaml
+gateway:
+  environment:
+    # Enable SSL
+    - SSL=true
+    - CERT_FILE=/app/certs/cert.pem
+    - KEY_FILE=/app/certs/key-encrypted.pem
+    - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}  # From .env file
+```
+
+### Mount Certificates
+
+Ensure certificates are mounted in the gateway container:
+
+```yaml
+gateway:
+  volumes:
+    - ./certs:/app/certs:ro   # Read-only mount
+```
+
+### HTTP Server Selection
+
+The gateway supports two HTTP servers with different TLS implementations:
+
+#### Gunicorn (Default)
+```yaml
+environment:
+  - HTTP_SERVER=gunicorn
+```
+
+Gunicorn uses a custom Python SSL key manager that:
+
+- Decrypts passphrase-protected keys at startup
+- Creates temporary unencrypted key files
+- Supports all SSL/TLS configurations
+
+#### Granian (Rust-based)
+```yaml
+environment:
+  - HTTP_SERVER=granian
+```
+
+Granian has native Rust TLS support:
+
+- Supports passphrase-protected keys via `--ssl-keyfile-password`
+- Better performance (Rust + Tokio)
+- Native HTTP/2 support
+
+Both servers work identically from a client perspective.
+
+### Update Healthcheck
+
+For HTTPS gateway, update the healthcheck to skip SSL verification for self-signed certificates:
+
+```yaml
+gateway:
+  healthcheck:
+    test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 30s
+```
+
+### Expose Gateway Port (Optional)
+
+To access the gateway directly via HTTPS:
+
+```yaml
+gateway:
+  ports:
+    - "4444:4444"  # Expose HTTPS port
+```
+
+## Step 3: Configure Nginx TLS
+
+### Frontend TLS (Client → Nginx)
+
+Edit `infra/nginx/nginx.conf` to add HTTPS listeners:
+
+```nginx
+server {
+    # HTTP listener (port 80)
+    listen 80 backlog=4096 reuseport;
+    listen [::]:80 backlog=4096 reuseport;
+
+    # HTTPS listener (port 443)
+    listen 443 ssl backlog=4096 reuseport;
+    listen [::]:443 ssl backlog=4096 reuseport;
+
+    # SSL certificate configuration
+    ssl_certificate /app/certs/cert.pem;
+    ssl_certificate_key /app/certs/key.pem;  # Use unencrypted key
+
+    # SSL protocols and ciphers
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+
+    # SSL session caching for performance
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    server_name localhost;
+
+    # ... rest of configuration
+}
+```
+
+**Note on Nginx and Key Encryption**: While nginx supports passphrase-protected keys via `ssl_password_file`, this requires storing the passphrase in a plaintext file, which provides no security benefit over using an unencrypted key with proper filesystem permissions. For automated services, use unencrypted keys and protect them via:
+
+- Filesystem permissions (mode 640 with group 0 for containers)
+- Read-only volume mounts
+- Secrets management systems (production)
+
+### Creating Unencrypted Key from Encrypted Key
+
+If you have a passphrase-protected key and need an unencrypted version for nginx:
+
+```bash
+# Using make command (recommended - handles permissions automatically)
+make certs-remove-passphrase
+
+# Or manually with openssl
+cd certs
+openssl rsa -in key-encrypted.pem -out key.pem -passin pass:YOUR_PASSWORD
+chmod 640 key.pem
+sudo chgrp 0 key.pem  # Set group to 0 for container access
+```
+
+The `make certs-remove-passphrase` command will:
+
+1. Prompt for your passphrase to decrypt the key
+2. Create `certs/key.pem` with 640 permissions
+3. Automatically set group to 0 using sudo (you'll be prompted for password)
+
+### Backend TLS (Nginx → Gateway)
+
+Configure nginx to connect to the gateway via HTTPS:
+
+```nginx
+# Upstream configuration (before server block)
+upstream gateway_backend {
+    least_conn;
+    server gateway:4444 max_fails=0;
+
+    keepalive 512;
+    keepalive_requests 100000;
+    keepalive_timeout 60s;
+}
+
+# SSL Backend Configuration
+proxy_ssl_protocols TLSv1.2 TLSv1.3;
+proxy_ssl_verify off;  # Disable for self-signed certs
+# Or enable verification with trusted CA:
+# proxy_ssl_verify on;
+# proxy_ssl_trusted_certificate /app/certs/ca-bundle.pem;
+proxy_ssl_session_reuse on;
+```
+
+Update all `proxy_pass` directives to use HTTPS:
+
+```nginx
+location / {
+    proxy_pass https://gateway_backend;  # Changed from http:// to https://
+    # ... other proxy settings
+}
+```
+
+### Mount Certificates in Nginx
+
+In `docker-compose.yml`, mount certificates and config:
+
+```yaml
+nginx:
+  volumes:
+    - nginx_cache:/var/cache/nginx
+    - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    - ./certs:/app/certs:ro  # Mount certificates
+```
+
+### Expose Nginx HTTPS Port
+
+```yaml
+nginx:
+  ports:
+    - "8080:80"    # HTTP
+    - "8443:443"   # HTTPS
+```
+
+### Update Nginx Dockerfile
+
+Edit `infra/nginx/Dockerfile` to expose port 443:
+
+```dockerfile
+# Expose HTTP and HTTPS ports
+EXPOSE 80 443
+```
+
+## Step 4: Deploy with TLS
+
+### Build and Start Services
+
+Use the standard make commands to build and deploy:
+
+```bash
+# Build production container image
+make docker-prod
+
+# Start all services (validates compose file and starts stack)
+make compose-up
+
+# Check service status
+docker compose ps
+```
+
+**What these commands do:**
+
+- `make docker-prod` - Builds the gateway container image using `Containerfile.lite`
+- `make compose-up` - Validates `docker-compose.yml` and starts all services in detached mode
+
+These commands automatically handle image tagging and validation.
+
+### Verify Gateway Health
+
+```bash
+# Direct HTTPS to gateway (skip SSL verification for self-signed)
+curl -fk https://localhost:4444/health
+
+# Expected output: {"status":"healthy"}
+```
+
+### Verify Nginx Health
+
+```bash
+# HTTP via nginx
+curl -f http://localhost:8080/health
+
+# HTTPS via nginx (skip SSL verification for self-signed)
+curl -fk https://localhost:8443/health
+
+# Expected output: {"status":"healthy"}
+```
+
+## Step 5: Testing
+
+### Test Direct Gateway Access
+
+```bash
+# HTTPS to gateway
+curl -fkv https://localhost:4444/health
+
+# Check certificate details
+openssl s_client -connect localhost:4444 -servername localhost < /dev/null
+```
+
+### Test Nginx Proxy
+
+```bash
+# HTTP to nginx (proxies to HTTPS gateway)
+curl -fv http://localhost:8080/health
+
+# HTTPS to nginx (proxies to HTTPS gateway)
+curl -fkv https://localhost:8443/health
+```
+
+### Test with Browser
+
+1. **Direct Gateway**: `https://localhost:4444/health`
+
+   - Accept security warning for self-signed certificate
+
+2. **Nginx HTTP**: `http://localhost:8080/health`
+
+   - No security warning (plain HTTP)
+
+3. **Nginx HTTPS**: `https://localhost:8443/health`
+
+   - Accept security warning for self-signed certificate
+
+## Troubleshooting
+
+### TLS Handshake Errors
+
+**Symptom**: Gateway logs show TLS handshake failures:
+```
+[INFO] TCP handshake failed with error: TlsAcceptError {
+  error: Custom { kind: InvalidData, error: InvalidMessage(InvalidContentType) },
+  peer_addr: 172.18.0.X:XXXXX
+}
+```
+
+**Cause**: Nginx's keepalive connection pool is trying to reuse old HTTP connections to the now-HTTPS gateway.
+
+**Solution**: Restart nginx to clear the connection pool:
+```bash
+docker compose restart nginx
+```
+
+### 502 Bad Gateway from Nginx
+
+**Symptom**: Nginx returns 502 errors when proxying to gateway.
+
+**Possible Causes**:
+
+1. **Nginx using HTTP to connect to HTTPS gateway**
+
+   - Check: `proxy_pass` should be `https://gateway_backend`
+   - Fix: Update nginx.conf and restart: `docker compose restart nginx`
+
+2. **SSL certificate hostname mismatch**
+
+   - Check nginx error logs: `docker compose logs nginx`
+   - Error: `upstream SSL certificate does not match "gateway_backend"`
+   - Fix: Set `proxy_ssl_verify off;` in nginx.conf for self-signed certs
+
+3. **Missing certificates in nginx container**
+
+   - Check: Verify volume mount in docker-compose.yml
+   - Fix: Add `- ./certs:/app/certs:ro` to nginx volumes
+
+### Gateway Healthcheck Failing
+
+**Symptom**: `docker compose ps` shows gateway as "unhealthy"
+
+**Cause**: Healthcheck using HTTP to check HTTPS endpoint, or not skipping SSL verification.
+
+**Fix**: Update healthcheck in docker-compose.yml:
+```yaml
+gateway:
+  healthcheck:
+    test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
+```
+
+The `-k` flag skips SSL certificate verification for self-signed certificates.
+
+### Passphrase Errors with Gunicorn
+
+**Symptom**: Gunicorn fails to start with SSL key errors.
+
+**Cause**: Missing or incorrect `KEY_FILE_PASSWORD` environment variable.
+
+**Fix**:
+
+1. Verify `.env` file contains: `KEY_FILE_PASSWORD=your-passphrase`
+2. Verify docker-compose.yml references it: `- KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}`
+3. Restart gateway: `docker compose restart gateway`
+
+### Granian TLS Errors
+
+**Symptom**: Granian fails to start or shows TLS initialization errors.
+
+**Cause**: Passphrase not passed correctly to Granian.
+
+**Fix**: Granian expects the passphrase via environment variable. Ensure `KEY_FILE_PASSWORD` is set in `.env` and referenced in docker-compose.yml.
+
+### Connection Refused
+
+**Symptom**: `curl: (7) Failed to connect to localhost port 4444: Connection refused`
+
+**Cause**: Gateway port not exposed or service not started.
+
+**Fix**:
+
+1. Check service is running: `docker compose ps gateway`
+2. Check port mapping: Should show `0.0.0.0:4444->4444/tcp`
+3. Uncomment ports in docker-compose.yml if commented
+
+### Self-Signed Certificate Warnings
+
+**Symptom**: Browser shows "Your connection is not private" warning.
+
+**Expected Behavior**: This is normal for self-signed certificates in development.
+
+**Solutions**:
+
+- **Development**: Click "Advanced" → "Proceed to localhost (unsafe)"
+- **CI/CD**: Use `curl -k` flag to skip verification
+- **Production**: Use trusted certificates from a CA
+
+## Clean Network and Reset
+
+If you encounter persistent connection errors after changing TLS configuration:
+
+### Full Reset Procedure
+
+```bash
+# Stop all services
+docker compose down
+
+# Remove network (clears all connection pools)
+docker network rm mcp-context-forge_mcpnet
+
+# Recreate and start services
+docker compose up -d
+
+# Verify health
+docker compose ps
+curl -fk https://localhost:4444/health
+curl -f http://localhost:8080/health
+curl -fk https://localhost:8443/health
+```
+
+### Selective Service Restart
+
+If only nginx has stale connections:
+
+```bash
+# Stop and start (recreates container)
+docker compose stop nginx
+docker compose start nginx
+```
+
+If gateway needs fresh connections:
+
+```bash
+docker compose restart gateway
+```
+
+## Security Best Practices
+
+### Development and Testing
+
+1. **Protect keys with filesystem permissions**
+
+   The `make certs` and `make certs-passphrase` commands automatically set correct permissions:
+
+   ```bash
+   # Permissions set automatically by make commands:
+   chmod 644 certs/cert.pem          # Public certificate - world-readable is OK
+   chmod 640 certs/key.pem           # Private key - owner+group only, no world access
+   sudo chgrp 0 certs/key.pem        # Set group to 0 for container access
+   ```
+
+   **Why group 0 and 640?**
+   - Container runs as UID 1001, GID 0 (see Containerfile.lite line 236, 271)
+   - Host files are owned by your UID (e.g., 1000), not container UID (1001)
+   - By setting group to 0 (root group) and permissions to 640:
+
+     - Owner (your UID): Read/write access ✅
+     - Group 0: Read access ✅ ← **Container (1001:0) accesses via this**
+     - Others: No access ✅
+
+   - More secure than 644 (no world access)
+
+   **Sudo requirement**: The make commands use `sudo chgrp 0` to set the group. You'll be prompted for your password once. If sudo is not available, you'll see a warning but cert generation will still succeed (you can set the group manually later).
+
+2. **Never commit secrets to git**
+
+   - Certificate files are in `.gitignore`
+   - Never commit `.env` files with passwords/passphrases
+   - Use `.env.example` as a template without real secrets
+
+3. **Use read-only volume mounts**
+   ```yaml
+   volumes:
+     - ./certs:/app/certs:ro  # :ro = read-only
+   ```
+
+4. **Rotate certificates regularly** (every 90 days minimum, even for self-signed)
+5. **Passphrase protection consideration**
+
+   - Passphrase-protected keys provide minimal benefit in automated environments
+   - Only protects keys when service is stopped
+   - Consider for compliance requirements or gateway-only deployments
+
+### Production
+
+1. **Use trusted CA certificates** (Let's Encrypt, commercial CA, internal PKI)
+
+   - Let's Encrypt is free and automated
+   - Commercial CAs for enterprise support
+   - Internal CA for private networks
+
+2. **Implement proper secrets management**
+
+   - **Kubernetes**: Use Secrets with RBAC
+     ```yaml
+     apiVersion: v1
+     kind: Secret
+     metadata:
+       name: tls-secret
+     type: kubernetes.io/tls
+     data:
+       tls.crt: <base64-encoded-cert>
+       tls.key: <base64-encoded-key>
+     ```
+
+   - **Docker Swarm**: Use Docker Secrets
+     ```bash
+     docker secret create tls_cert cert.pem
+     docker secret create tls_key key.pem
+     ```
+
+   - **HashiCorp Vault**: Store and inject secrets at runtime
+   - **Cloud KMS**: AWS KMS, Google Cloud KMS, Azure Key Vault
+
+3. **Enable certificate validation** for backend connections
+   ```nginx
+   proxy_ssl_verify on;
+   proxy_ssl_trusted_certificate /etc/ssl/certs/ca-bundle.crt;
+   ```
+
+4. **Use strong TLS protocols** (TLSv1.2 and TLSv1.3 only)
+
+   - Disable SSLv3, TLS 1.0, TLS 1.1
+   - Use modern cipher suites
+
+5. **Implement certificate rotation automation**
+
+   - Let's Encrypt with certbot (auto-renewal)
+   - cert-manager for Kubernetes
+   - Custom rotation scripts
+
+6. **Monitor certificate expiration** (30 days warning minimum)
+
+   - Prometheus + alertmanager
+   - Cloud monitoring services
+   - Custom monitoring scripts
+
+7. **Use HSTS headers** to enforce HTTPS
+   ```nginx
+   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+   ```
+
+8. **Consider certificate pinning** for highly sensitive deployments
+
+   - Public Key Pinning Extension (HPKP) - deprecated
+   - Certificate Transparency monitoring
+   - Application-level pinning
+
+9. **Use Hardware Security Modules (HSM)** for high-security environments
+
+   - Cloud HSM services (AWS CloudHSM, Azure Dedicated HSM)
+   - On-premises HSMs
+   - PKCS#11 integration with nginx/gateway
+
+### Key Security Reality
+
+**Important**: For automated services (containers, VMs, cloud), key security relies on:
+
+1. **Access control** - Who can read the key file or secret
+2. **Filesystem permissions** - Unix permissions with proper group ownership
+
+   - Containers: 640 with group 0 (owner+group, no world access)
+   - Container user (UID 1001, GID 0) accesses via group membership
+
+3. **Secrets management** - Proper injection and rotation
+4. **Network isolation** - Limit exposure of TLS endpoints
+5. **Audit logging** - Track secret access
+
+**Passphrase protection does NOT add security** when the passphrase must be stored alongside the key. The real security boundary is access control to the secret store (filesystem, Kubernetes API, Vault, etc.).
+
+### Certificate Management
+
+```bash
+# Check certificate expiration
+openssl x509 -in certs/cert.pem -noout -dates
+
+# Verify certificate matches private key
+openssl x509 -noout -modulus -in certs/cert.pem | openssl md5
+openssl rsa -noout -modulus -in certs/key.pem | openssl md5
+# Output should match
+
+# View certificate details
+openssl x509 -in certs/cert.pem -text -noout
+```
+
+## Configuration Examples
+
+### Complete docker-compose.yml TLS Configuration
+
+```yaml
+services:
+  gateway:
+    image: mcpgateway/mcpgateway:latest
+    ports:
+      - "4444:4444"
+    environment:
+      # TLS Configuration
+      - SSL=true
+      - CERT_FILE=/app/certs/cert.pem
+      - KEY_FILE=/app/certs/key-encrypted.pem
+      - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}
+
+      # HTTP Server (gunicorn or granian)
+      - HTTP_SERVER=granian
+
+      # Other settings...
+      - HOST=0.0.0.0
+      - PORT=4444
+    volumes:
+      - ./certs:/app/certs:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  nginx:
+    image: mcpgateway/nginx-cache:latest
+    ports:
+      - "8080:80"    # HTTP
+      - "8443:443"   # HTTPS
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/app/certs:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+volumes:
+  nginx_cache:
+```
+
+### Complete nginx.conf TLS Configuration
+
+```nginx
+upstream gateway_backend {
+    least_conn;
+    server gateway:4444 max_fails=0;
+    keepalive 512;
+    keepalive_requests 100000;
+    keepalive_timeout 60s;
+}
+
+# Backend SSL configuration
+proxy_ssl_protocols TLSv1.2 TLSv1.3;
+proxy_ssl_verify off;
+proxy_ssl_session_reuse on;
+
+server {
+    # HTTP listener
+    listen 80 backlog=4096 reuseport;
+    listen [::]:80 backlog=4096 reuseport;
+
+    # HTTPS listener
+    listen 443 ssl backlog=4096 reuseport;
+    listen [::]:443 ssl backlog=4096 reuseport;
+
+    # SSL certificates
+    ssl_certificate /app/certs/cert.pem;
+    ssl_certificate_key /app/certs/key.pem;
+
+    # SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    server_name localhost;
+
+    location / {
+        proxy_pass https://gateway_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+## Additional Resources
+
+- [OpenSSL Documentation](https://www.openssl.org/docs/)
+- [Let's Encrypt](https://letsencrypt.org/)
+- [Nginx SSL Module](https://nginx.org/en/docs/http/ngx_http_ssl_module.html)
+- [Mozilla SSL Configuration Generator](https://ssl-config.mozilla.org/)
+
+## Related Documentation
+
+- [Docker Compose Deployment](compose.md)
+- [Kubernetes TLS Configuration](kubernetes.md)
+- [Security Best Practices](../manage/securing.md)
+- [Proxy Authentication](proxy-auth.md)

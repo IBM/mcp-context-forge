@@ -47,16 +47,20 @@ class AuthenticationError(CLIError):
 async def get_auth_token() -> Optional[str]:
     """Get authentication token from environment or config.
 
+    Preference order:
+    1. MCPGATEWAY_BEARER_TOKEN environment variable (JWT) - preferred
+    2. Basic auth fallback (only if API_ALLOW_BASIC_AUTH=true)
+
     Returns:
         Authentication token string or None if not configured
     """
-    # Try environment variable first
+    # Try environment variable first (preferred)
     token = os.getenv("MCPGATEWAY_BEARER_TOKEN")
     if token:
         return token
 
-    # Fallback to basic auth if configured
-    if settings.basic_auth_user and settings.basic_auth_password:
+    # Fallback to basic auth only if enabled and configured
+    if settings.api_allow_basic_auth and settings.basic_auth_user and settings.basic_auth_password:
         creds = base64.b64encode(f"{settings.basic_auth_user}:{settings.basic_auth_password}".encode()).decode()
         return f"Basic {creds}"
 

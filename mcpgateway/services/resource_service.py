@@ -331,7 +331,21 @@ class ResourceService:
         else:
             resource_dict["metrics"] = None
 
-        resource_dict["tags"] = resource.tags or []
+        raw_tags = resource.tags or []
+        normalized_tags = []
+        for tag in raw_tags:
+            if isinstance(tag, str):
+                normalized_tags.append(tag)
+                continue
+            if isinstance(tag, dict):
+                label = tag.get("label") or tag.get("name")
+                if label:
+                    normalized_tags.append(label)
+                continue
+            label = getattr(tag, "label", None) or getattr(tag, "name", None)
+            if label:
+                normalized_tags.append(label)
+        resource_dict["tags"] = normalized_tags
         resource_dict["team"] = getattr(resource, "team", None)
 
         # Include metadata fields for proper API response
@@ -415,16 +429,22 @@ class ResourceService:
         """
         try:
             logger.info(f"Registering resource: {resource.uri}")
+
+            # Extract gateway_id from resource if present
+            gateway_id = getattr(resource, "gateway_id", None)
+
             # Check for existing server with the same uri
             if visibility.lower() == "public":
                 logger.info(f"visibility:: {visibility}")
-                # Check for existing public resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                # Check for existing public resource with the same uri and gateway_id
+                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public", DbResource.gateway_id == gateway_id)).scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team" and team_id:
-                # Check for existing team resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                # Check for existing team resource with the same uri and gateway_id
+                existing_resource = db.execute(
+                    select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
+                ).scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
@@ -459,6 +479,7 @@ class ResourceService:
                 owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
                 # Endpoint visibility parameter takes precedence over schema default
                 visibility=visibility if visibility is not None else getattr(resource, "visibility", "public"),
+                gateway_id=gateway_id,
             )
 
             # Add to DB
@@ -648,16 +669,19 @@ class ResourceService:
                 # Batch check for existing resources to detect conflicts
                 resource_uris = [resource.uri for resource in chunk]
 
+                # Build base query conditions
                 if visibility.lower() == "public":
-                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "public")
+                    base_conditions = [DbResource.uri.in_(resource_uris), DbResource.visibility == "public"]
                 elif visibility.lower() == "team" and team_id:
-                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "team", DbResource.team_id == team_id)
+                    base_conditions = [DbResource.uri.in_(resource_uris), DbResource.visibility == "team", DbResource.team_id == team_id]
                 else:
                     # Private resources - check by owner
-                    existing_resources_query = select(DbResource).where(DbResource.uri.in_(resource_uris), DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by))
+                    base_conditions = [DbResource.uri.in_(resource_uris), DbResource.visibility == "private", DbResource.owner_email == (owner_email or created_by)]
 
+                existing_resources_query = select(DbResource).where(*base_conditions)
                 existing_resources = db.execute(existing_resources_query).scalars().all()
-                existing_resources_map = {resource.uri: resource for resource in existing_resources}
+                # Use (uri, gateway_id) tuple as key for proper conflict detection with gateway_id scoping
+                existing_resources_map = {(r.uri, r.gateway_id): r for r in existing_resources}
 
                 resources_to_add = []
                 resources_to_update = []
@@ -668,8 +692,10 @@ class ResourceService:
                         resource_team_id = team_id if team_id is not None else getattr(resource, "team_id", None)
                         resource_owner_email = owner_email or getattr(resource, "owner_email", None) or created_by
                         resource_visibility = visibility if visibility is not None else getattr(resource, "visibility", "public")
+                        resource_gateway_id = getattr(resource, "gateway_id", None)
 
-                        existing_resource = existing_resources_map.get(resource.uri)
+                        # Look up existing resource by (uri, gateway_id) tuple
+                        existing_resource = existing_resources_map.get((resource.uri, resource_gateway_id))
 
                         if existing_resource:
                             # Handle conflict based on strategy
@@ -3494,3 +3520,28 @@ class ResourceService:
 
         metrics_cache.invalidate("resources")
         metrics_cache.invalidate_prefix("top_resources:")
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_resource_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The resource_service singleton instance if name is "resource_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "resource_service".
+    """
+    global _resource_service_instance  # pylint: disable=global-statement
+    if name == "resource_service":
+        if _resource_service_instance is None:
+            _resource_service_instance = ResourceService()
+        return _resource_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -9,6 +9,7 @@
 The MCP Gateway serves large JSON responses for endpoints like GET /tools, GET /servers, GET /openapi.json, and JSON-RPC messages. These responses can range from tens of kilobytes to several megabytes, especially in deployments with many registered tools and servers.
 
 Bandwidth consumption impacts:
+
 - Cloud egress costs (charged per GB transferred)
 - Response latency (larger payloads take longer to transfer)
 - Mobile client performance (slow networks, data caps)
@@ -25,6 +26,7 @@ We will implement **built-in response compression middleware** directly in the F
 - **GZip** (universal compatibility, fallback)
 
 **Implementation:**
+
 - Middleware location: `mcpgateway/main.py:888-907`
 - Configuration: `mcpgateway/config.py:379-384`
 - Algorithm priority: Brotli > Zstd > GZip (based on client Accept-Encoding header)
@@ -41,6 +43,7 @@ COMPRESSION_ZSTD_LEVEL=3                 # Zstd: 1-22 (default: 3 fast)
 ```
 
 **Compression applies to:**
+
 - JSON responses (application/json)
 - HTML (text/html)
 - CSS (text/css)
@@ -48,6 +51,7 @@ COMPRESSION_ZSTD_LEVEL=3                 # Zstd: 1-22 (default: 3 fast)
 - Plain text (text/plain)
 
 **Compression skips:**
+
 - Responses smaller than COMPRESSION_MINIMUM_SIZE
 - Already compressed content (images, videos)
 - Streaming responses (SSE, WebSocket)
@@ -89,6 +93,7 @@ Based on testing with real endpoints:
 | Health check | 42 bytes | Not compressed (below threshold) | - | - |
 
 **Latency impact:**
+
 - Brotli level 4: +5-10ms (balanced)
 - GZip level 6: +3-7ms (faster)
 - Zstd level 3: +2-5ms (fastest)
@@ -128,6 +133,7 @@ We considered delegating compression to nginx, CDN, or service mesh:
 | **No compression** | Wastes bandwidth; slow for mobile clients; higher cloud egress costs |
 
 **Decision rationale:**
+
 - Built-in compression works in **all deployment modes** (standalone, serverless, containers)
 - **Application-level control** - Different compression for different endpoints
 - **Zero infrastructure dependency** - Works without nginx/Envoy/CDN

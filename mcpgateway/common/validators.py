@@ -53,7 +53,7 @@ import logging
 from pathlib import Path
 import re
 import shlex
-from typing import Any, List, Optional, Pattern
+from typing import Any, Iterable, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
 
@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)
 # precompiled at module level.
 
 # Static inline patterns used multiple times
-_HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\'/]')
+_HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
 _DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
 _EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
 _MIME_TYPE_RE: Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*$")
@@ -90,18 +90,114 @@ _POLYGLOT_PATTERNS: List[Pattern[str]] = [
     re.compile(r"javascript:.*\(", re.IGNORECASE),
 ]
 
-# SSTI prevention patterns (precompiled with IGNORECASE)
-_SSTI_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}", re.IGNORECASE),
-    re.compile(r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}", re.IGNORECASE),
-    re.compile(r"\$\{.*\}", re.IGNORECASE),
-    re.compile(r"#\{.*\}", re.IGNORECASE),
-    re.compile(r"%\{.*\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\*.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\/.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\+.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\-.*\}\}", re.IGNORECASE),
-]
+# SSTI prevention - safe scanning without regex backtracking.
+_SSTI_DANGEROUS_SUBSTRINGS: tuple[str, ...] = (
+    "__",
+    ".",
+    "config",
+    "self",
+    "request",
+    "application",
+    "globals",
+    "builtins",
+    "import",
+    "getattr",  # Python getattr function
+    "|attr",  # Jinja2 attr filter (checked after whitespace normalization)
+    "|selectattr",  # Jinja2 selectattr filter (takes attribute name as arg)
+    "|sort",  # Jinja2 sort filter with attribute parameter
+    "|map",  # Jinja2 map filter with attribute parameter
+    "attribute=",  # Jinja2 filters: map(attribute=...), selectattr, sort(attribute=...)
+    "\\x",  # Hex escape sequences (e.g., \x5f for underscore)
+    "\\u",  # Unicode escape sequences (e.g., \u005f for underscore)
+    "\\n{",  # Named unicode escapes (e.g., \N{LOW LINE})
+    "\\0",
+    "\\1",
+    "\\2",
+    "\\3",
+    "\\4",
+    "\\5",
+    "\\6",
+    "\\7",  # Octal escapes
+)
+# Operators that enable code execution or dynamic construction
+_SSTI_DANGEROUS_OPERATORS: tuple[str, ...] = (
+    "*",
+    "/",
+    "+",
+    "-",
+    "~",  # Jinja2 string concatenation (can build dunder names dynamically)
+    "[",  # Bracket notation for dynamic attribute access
+    "%",  # Python string formatting (e.g., '%c' % 95 produces '_')
+)
+_SSTI_SIMPLE_TEMPLATE_PREFIXES: tuple[str, ...] = ("${", "#{", "%{")
+
+
+def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str]:
+    """Yield template expression contents for a start/end delimiter, skipping delimiters inside quotes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+        end (str): Closing delimiter.
+
+    Yields:
+        str: The template expression contents between delimiters.
+
+    Raises:
+        ValueError: If an unterminated template expression is found (fail-closed behavior).
+    """
+    start_len = len(start)
+    end_len = len(end)
+    i = 0
+    value_len = len(value)
+    while i <= value_len - start_len:
+        if value.startswith(start, i):
+            j = i + start_len
+            in_quote: Optional[str] = None
+            escaped = False
+            while j <= value_len - end_len:
+                ch = value[j]
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif in_quote:
+                    if ch == in_quote:
+                        in_quote = None
+                else:
+                    if ch in ("'", '"'):
+                        in_quote = ch
+                    elif value.startswith(end, j):
+                        yield value[i + start_len : j]
+                        i = j + end_len
+                        break
+                j += 1
+            else:
+                raise ValueError("Template contains potentially dangerous expressions")
+        else:
+            i += 1
+
+
+def _has_simple_template_expression(value: str, start: str) -> bool:
+    """Return True if start is followed by any closing brace.
+
+    Uses O(n) linear scan by finding last } first, then checking prefixes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+
+    Returns:
+        bool: True if a closing brace exists after the delimiter.
+    """
+    # Find the last closing brace - if none exists, no expression can be complete
+    last_close = value.rfind("}")
+    if last_close == -1:
+        return False
+    # Check if any prefix exists before the last closing brace - O(n) single find
+    idx = value.find(start)
+    return idx != -1 and idx < last_close
+
 
 # Dangerous URL protocol patterns (precompiled with IGNORECASE)
 _DANGEROUS_URL_PATTERNS: List[Pattern[str]] = [
@@ -139,7 +235,7 @@ class SecurityValidator:
     IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$
     VALIDATION_SAFE_URI_PATTERN = settings.validation_safe_uri_pattern  # Default: ^[a-zA-Z0-9_\-.:/?=&%]+$
     VALIDATION_UNSAFE_URI_PATTERN = settings.validation_unsafe_uri_pattern  # Default: [<>"\'\\]
-    TOOL_NAME_PATTERN = settings.validation_tool_name_pattern  # Default: ^[a-zA-Z][a-zA-Z0-9_-]*$
+    TOOL_NAME_PATTERN = settings.validation_tool_name_pattern  # Default: ^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$ (SEP-986)
 
     # MCP-compliant limits (configurable)
     MAX_NAME_LENGTH = settings.validation_max_name_length  # Default: 255
@@ -450,33 +546,33 @@ class SecurityValidator:
         Examples:
             >>> SecurityValidator.validate_tool_name('tool_1')
             'tool_1'
+            >>> SecurityValidator.validate_tool_name('_5gpt_query')
+            '_5gpt_query'
             >>> SecurityValidator.validate_tool_name('1tool')
-            Traceback (most recent call last):
-                ...
-            ValueError: Tool name must start with a letter and contain only letters, numbers, and underscore
+            '1tool'
 
-            Test HTML special characters (line 310):
+            Test invalid characters (rejected by pattern):
 
             >>> try:
             ...     SecurityValidator.validate_tool_name('tool<script>')
             ... except ValueError as e:
-            ...     'must start with a letter' in str(e)
+            ...     'must start with a letter, number, or underscore' in str(e)
             True
             >>> try:
             ...     SecurityValidator.validate_tool_name('tool"test')
             ... except ValueError as e:
-            ...     'must start with a letter' in str(e)
+            ...     'must start with a letter, number, or underscore' in str(e)
             True
             >>> try:
             ...     SecurityValidator.validate_tool_name("tool'test")
             ... except ValueError as e:
-            ...     'must start with a letter' in str(e)
+            ...     'must start with a letter, number, or underscore' in str(e)
             True
-            >>> try:
-            ...     SecurityValidator.validate_tool_name('tool/test')
-            ... except ValueError as e:
-            ...     'must start with a letter' in str(e)
-            True
+            >>> # Slashes are allowed per SEP-986
+            >>> SecurityValidator.validate_tool_name('tool/test')
+            'tool/test'
+            >>> SecurityValidator.validate_tool_name('namespace/subtool')
+            'namespace/subtool'
 
             Test length limit (line 313):
 
@@ -492,7 +588,7 @@ class SecurityValidator:
 
         # MCP tools have specific naming requirements
         if not re.match(cls.TOOL_NAME_PATTERN, value):
-            raise ValueError("Tool name must start with a letter and contain only letters, numbers, and underscore")
+            raise ValueError("Tool name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes")
 
         # Ensure no HTML-like content (uses precompiled regex)
         if _HTML_SPECIAL_CHARS_RE.search(value):
@@ -695,10 +791,29 @@ class SecurityValidator:
         if _EVENT_HANDLER_RE.search(value):
             raise ValueError("Template contains event handlers that may cause display issues")
 
-        # SSTI Prevention - block dangerous template expressions (uses precompiled regex list)
-        for pattern in _SSTI_PATTERNS:
-            if pattern.search(value):
+        # SSTI prevention - scan expressions without regex backtracking.
+        for expr in _iter_template_expressions(value, "{{", "}}"):
+            expr_lower = expr.lower()
+            # Normalize whitespace around | and = to catch bypass variants
+            expr_normalized = re.sub(r"\s*\|\s*", "|", expr_lower)
+            expr_normalized = re.sub(r"\s*=\s*", "=", expr_normalized)
+            if any(token in expr_normalized for token in _SSTI_DANGEROUS_SUBSTRINGS):
                 raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        for expr in _iter_template_expressions(value, "{%", "%}"):
+            expr_lower = expr.lower()
+            # Normalize whitespace around | and = to catch bypass variants
+            expr_normalized = re.sub(r"\s*\|\s*", "|", expr_lower)
+            expr_normalized = re.sub(r"\s*=\s*", "=", expr_normalized)
+            if any(token in expr_normalized for token in _SSTI_DANGEROUS_SUBSTRINGS):
+                raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        if any(_has_simple_template_expression(value, prefix) for prefix in _SSTI_SIMPLE_TEMPLATE_PREFIXES):
+            raise ValueError("Template contains potentially dangerous expressions")
 
         return value
 
@@ -1349,7 +1464,7 @@ class SecurityValidator:
         return value
 
     @classmethod
-    def validate_parameter_length(cls, value: str, max_length: int = None) -> str:
+    def validate_parameter_length(cls, value: str, max_length: Optional[int] = None) -> str:
         """Validate parameter length against configured limits.
 
         Args:

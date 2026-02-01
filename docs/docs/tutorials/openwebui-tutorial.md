@@ -50,16 +50,6 @@ flowchart TD
   MCG -->|"MCP Protocol"| MCP2
   MCG -->|"MCP Protocol"| MCPN
 
-  %% Styling
-  classDef deployment fill:#1F618D,stroke:#85C1E9,stroke-width:2px,color:#FFF;
-  classDef ai fill:#27AE60,stroke:#58D68D,stroke-width:2px,color:#FFF;
-  classDef mcp fill:#8E44AD,stroke:#BB8FCE,stroke-width:2px,color:#FFF;
-  classDef external fill:#E74C3C,stroke:#F5B7B1,stroke-width:2px,color:#FFF;
-
-  class OW,LL,DB deployment;
-  class OL ai;
-  class MCPO,MCG,MCP1,MCP2,MCPN mcp;
-  class OP external;
 ```
 
 ### Components Overview
@@ -223,18 +213,18 @@ docker run -d \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=your-secret-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
   ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
 
-# Generate an API token for later use
+# Generate an API token for later use (expires in 1 week)
 docker exec mcpgateway \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin --exp 0 --secret your-secret-key
+  --username admin@example.com --exp 10080 --secret your-secret-key
 ```
 
-Access the MCP Gateway UI at http://localhost:4444/admin (admin/changeme).
+Access the MCP Gateway UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).
 
 ### Step 5: Deploy MCPO
 
@@ -332,6 +322,7 @@ docker logs -f openwebui
 2. Create an admin account on first login
 3. Navigate to **Settings** → **Connections**
 4. Verify the OpenAI connection is configured:
+
    - **API Base URL**: `http://litellm:4000/v1`
    - **API Key**: `sk-1234567890`
 
@@ -432,6 +423,7 @@ OpenWebUI supports custom functions for extending capabilities:
 1. Go to **Settings** → **Functions**
 2. Enable built-in functions or import custom ones
 3. Functions can:
+
    - Act as custom models (Pipe Functions)
    - Modify inputs/outputs (Filter Functions)
    - Add action buttons (Action Functions)
@@ -604,9 +596,9 @@ services:
       DATABASE_URL: "sqlite:////data/mcp.db"
       HOST: "0.0.0.0"
       JWT_SECRET_KEY: "your-secret-key"
-      BASIC_AUTH_USER: "admin"
-      BASIC_AUTH_PASSWORD: "changeme"
       AUTH_REQUIRED: "true"
+      PLATFORM_ADMIN_EMAIL: "admin@example.com"
+      PLATFORM_ADMIN_PASSWORD: "changeme"
     volumes:
 
       - mcpgateway_data:/data

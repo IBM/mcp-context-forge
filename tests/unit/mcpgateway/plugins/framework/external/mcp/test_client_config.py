@@ -10,14 +10,15 @@ Tests for error conditions, edge cases, and uncovered code paths.
 
 # Standard
 import os
+import sys
 from unittest.mock import AsyncMock, Mock, patch
 
 # Third-Party
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, TextContent as MCPTextContent
 import pytest
 
 # First-Party
-from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent
+from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent, TransportType
 from mcpgateway.plugins.framework import (
     ConfigLoader,
     GlobalContext,
@@ -32,6 +33,7 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPreInvokePayload,
 )
+from mcpgateway.plugins.framework.models import MCPClientConfig
 from mcpgateway.plugins.framework.errors import PluginError
 from mcpgateway.plugins.framework.external.mcp.client import ExternalPlugin
 
@@ -52,17 +54,42 @@ async def test_initialize_missing_mcp_config():
 
 
 @pytest.mark.asyncio
-async def test_initialize_stdio_non_python_script():
-    """Test initialize raises ValueError for non-Python stdio script."""
+async def test_initialize_stdio_missing_script():
+    """Test initialize raises ValueError for missing stdio script."""
     config = ConfigLoader.load_config("tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin.yaml")
     plugin_config = config.plugins[0]
     plugin = ExternalPlugin(plugin_config)
 
-    # Mock the script path to be non-Python
-    plugin._config.mcp.script = "/path/to/script.sh"
+    # Mock the script path to be missing
+    plugin._config.mcp.script = "/path/to/missing.sh"
 
-    with pytest.raises(PluginError, match="Server script must be a .py file"):
+    with pytest.raises(PluginError, match="Server script /path/to/missing.sh does not exist."):
         await plugin.initialize()
+
+
+@pytest.mark.asyncio
+async def test_resolve_stdio_command_from_cmd():
+    """Test cmd-based stdio command resolution."""
+    config = ConfigLoader.load_config("tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin.yaml")
+    plugin_config = config.plugins[0]
+    plugin = ExternalPlugin(plugin_config)
+
+    command, args = plugin._ExternalPlugin__resolve_stdio_command(None, ["node", "server.js", "--flag"], None)
+    assert command == "node"
+    assert args == ["server.js", "--flag"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_stdio_command_from_script_py():
+    """Test script-based stdio command resolution for Python scripts."""
+    config = ConfigLoader.load_config("tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin.yaml")
+    plugin_config = config.plugins[0]
+    plugin = ExternalPlugin(plugin_config)
+
+    script_path = "mcpgateway/plugins/framework/external/mcp/server/runtime.py"
+    command, args = plugin._ExternalPlugin__resolve_stdio_command(script_path, None, None)
+    assert command == sys.executable
+    assert args == [script_path]
 
 
 @pytest.mark.asyncio
@@ -149,7 +176,7 @@ async def test_hook_methods_empty_content():
         await plugin.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, payload, context)
 
     # Test resource_post_fetch with empty content - should raise PluginError
-    resource_content = ResourceContent(type="resource", id="123",uri="file://test.txt", text="content")
+    resource_content = ResourceContent(type="resource", id="123", uri="file://test.txt", text="content")
     payload = ResourcePostFetchPayload(uri="file://test.txt", content=resource_content)
     with pytest.raises(PluginError):
         await plugin.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, payload, context)
@@ -179,6 +206,25 @@ async def test_get_plugin_config_no_content():
 
 
 @pytest.mark.asyncio
+async def test_get_plugin_config_empty_dict():
+    """Test __get_plugin_config returns None on empty config payload."""
+    config = ConfigLoader.load_config("tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin.yaml")
+    plugin_config = config.plugins[0]
+    plugin = ExternalPlugin(plugin_config)
+
+    mock_session = AsyncMock()
+    plugin._session = mock_session
+
+    mock_session.call_tool = AsyncMock()
+    mock_session.call_tool.return_value = CallToolResult(content=[MCPTextContent(type="text", text="{}")])
+
+    result = await plugin._ExternalPlugin__get_plugin_config()
+    assert result is None
+
+    await plugin.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_shutdown():
     """Test shutdown method calls exit_stack.aclose()."""
     config = ConfigLoader.load_config("tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin.yaml")
@@ -191,3 +237,64 @@ async def test_shutdown():
 
     await plugin.shutdown()
     mock_exit_stack.aclose.assert_called_once()
+
+
+def test_mcp_config_env_rejected_for_http():
+    """STDIO-only env should be rejected for HTTP transports."""
+    with pytest.raises(ValueError, match="script/cmd/env/cwd are only valid for STDIO transport"):
+        MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost:8000/mcp", env={"PLUGINS_CONFIG_PATH": "plugins/config.yaml"})
+
+
+def test_mcp_config_env_accepts_stdio():
+    """STDIO env overrides are accepted for STDIO transports."""
+    cfg = MCPClientConfig(
+        proto=TransportType.STDIO,
+        script="mcpgateway/plugins/framework/external/mcp/server/runtime.py",
+        env={"PLUGINS_CONFIG_PATH": "plugins/config.yaml"},
+    )
+    assert cfg.env is not None
+
+
+def test_mcp_config_cwd_invalid():
+    """STDIO cwd must be a valid directory."""
+    with pytest.raises(ValueError, match="MCP stdio cwd"):
+        MCPClientConfig(
+            proto=TransportType.STDIO,
+            script="mcpgateway/plugins/framework/external/mcp/server/runtime.py",
+            cwd="/path/to/nowhere",
+        )
+
+
+def test_mcp_config_cwd_valid():
+    """STDIO cwd accepts existing directories and returns canonical path."""
+    cfg = MCPClientConfig(
+        proto=TransportType.STDIO,
+        script="mcpgateway/plugins/framework/external/mcp/server/runtime.py",
+        cwd=".",
+    )
+    # cwd is resolved to canonical absolute path
+    assert os.path.isabs(cfg.cwd)
+    assert os.path.isdir(cfg.cwd)
+
+
+def test_mcp_config_uds_invalid_transport(tmp_path):
+    """UDS is only valid for streamable HTTP."""
+    uds_path = str(tmp_path / "mcp.sock")
+    with pytest.raises(ValueError, match="uds is only valid for STREAMABLEHTTP transport"):
+        MCPClientConfig(proto=TransportType.STDIO, script="mcpgateway/plugins/framework/external/mcp/server/runtime.py", uds=uds_path)
+
+
+def test_mcp_config_uds_accepts_streamable_http(tmp_path):
+    """UDS is accepted for streamable HTTP and returns canonical path."""
+    uds_path = str(tmp_path / "mcp.sock")
+    cfg = MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds=uds_path)
+    # uds is resolved to canonical absolute path
+    assert os.path.isabs(cfg.uds)
+    assert cfg.uds.endswith("mcp.sock")
+
+
+def test_mcp_config_uds_tls_rejected(tmp_path):
+    """UDS should not allow TLS configuration."""
+    uds_path = str(tmp_path / "mcp.sock")
+    with pytest.raises(ValueError, match="TLS configuration is not supported for Unix domain sockets"):
+        MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds=uds_path, tls={})

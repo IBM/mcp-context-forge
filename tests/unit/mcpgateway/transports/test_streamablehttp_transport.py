@@ -261,7 +261,7 @@ async def test_call_tool_no_content(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_call_tool_exception(monkeypatch, caplog):
-    """Test call_tool returns [] and logs exception on error."""
+    """Test call_tool re-raises exception after logging for proper MCP SDK error handling."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
 
@@ -275,8 +275,8 @@ async def test_call_tool_exception(monkeypatch, caplog):
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=Exception("fail!")))
 
     with caplog.at_level("ERROR"):
-        result = await call_tool("mytool", {"foo": "bar"})
-        assert result == []
+        with pytest.raises(Exception, match="fail!"):
+            await call_tool("mytool", {"foo": "bar"})
         assert "Error calling tool 'mytool': fail!" in caplog.text
 
 

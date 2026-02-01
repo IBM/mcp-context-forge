@@ -4,7 +4,49 @@ This guide provides comprehensive configuration options for MCP Gateway, includi
 
 ---
 
-## 🗄 Database Configuration
+## 🔐 Required: Change Before Use
+
+These variables have insecure defaults and **must be changed** before production deployment:
+
+| Variable | Description | Default | Action Required |
+|----------|-------------|---------|-----------------|
+| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | `my-test-key` | Generate with `openssl rand -hex 32` |
+| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `my-test-salt` | Generate with `openssl rand -hex 32` |
+| `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
+| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
+| `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` | Use real admin email |
+| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | `changeme` | Set a strong password |
+| `DEFAULT_USER_PASSWORD` | Default password for new users | `changeme` | Set a strong password |
+
+Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and update these values.
+
+!!! warning "Startup Validation"
+    If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
+
+### 🔒 Security Defaults (Secure by Default)
+
+These settings are enabled by default for security—only disable for backward compatibility:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `REQUIRE_JTI` | Require JTI claim in tokens for revocation support | `true` |
+| `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
+| `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
+
+### ⚙️ Project Defaults (Dev Setup)
+
+These values in `.env.example` differ from code defaults to provide a working local/dev setup:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HOST` | Bind address | `0.0.0.0` |
+| `MCPGATEWAY_UI_ENABLED` | Enable Admin UI dashboard | `true` |
+| `MCPGATEWAY_ADMIN_API_ENABLED` | Enable Admin API endpoints | `true` |
+| `DATABASE_URL` | SQLAlchemy connection URL | `sqlite:///./mcp.db` |
+
+---
+
+## 🗄️ Database Configuration
 
 MCP Gateway supports multiple database backends with full feature parity across all supported systems.
 
@@ -90,34 +132,6 @@ DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
     sudo mysql -e "FLUSH PRIVILEGES;"
     ```
 
-=== "CentOS/RHEL/Fedora (MariaDB)"
-    ```bash
-    # Install MariaDB server
-    sudo dnf install mariadb-server
-    sudo systemctl start mariadb
-    sudo systemctl enable mariadb
-
-    # Create database and user
-    sudo mariadb -e "CREATE DATABASE mcp;"
-    sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    sudo mariadb -e "FLUSH PRIVILEGES;"
-    ```
-
-=== "CentOS/RHEL/Fedora (MySQL)"
-    ```bash
-    # Install MySQL server
-    sudo dnf install mysql-server  # or: sudo yum install mysql-server
-    sudo systemctl start mysqld
-    sudo systemctl enable mysqld
-
-    # Create database and user
-    sudo mysql -e "CREATE DATABASE mcp;"
-    sudo mysql -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    sudo mysql -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    sudo mysql -e "FLUSH PRIVILEGES;"
-    ```
-
 === "macOS (Homebrew - MariaDB)"
     ```bash
     # Install MariaDB
@@ -129,19 +143,6 @@ DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
     mariadb -u root -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
     mariadb -u root -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
     mariadb -u root -e "FLUSH PRIVILEGES;"
-    ```
-
-=== "macOS (Homebrew - MySQL)"
-    ```bash
-    # Install MySQL
-    brew install mysql
-    brew services start mysql
-
-    # Create database and user
-    mysql -u root -e "CREATE DATABASE mcp;"
-    mysql -u root -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
-    mysql -u root -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
-    mysql -u root -e "FLUSH PRIVILEGES;"
     ```
 
 #### Docker MariaDB/MySQL Setup
@@ -171,571 +172,226 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
 ---
 
-## 🔧 Core Environment Variables
-
-### Database Settings
-
-```bash
-# Database connection (choose one)
-DATABASE_URL=sqlite:///./mcp.db                                        # SQLite (default)
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MariaDB/MySQL
-DATABASE_URL=postgresql+psycopg://postgres:changeme@localhost:5432/mcp  # PostgreSQL
-
-# Connection pool settings (optional)
-DB_POOL_SIZE=200                   # Pool size (QueuePool only)
-DB_MAX_OVERFLOW=5                  # Max overflow connections (QueuePool only)
-DB_POOL_TIMEOUT=60                 # Wait timeout for connection
-DB_POOL_RECYCLE=3600               # Recycle connections after N seconds
-DB_MAX_RETRIES=30                  # Retry attempts on connection failure (default: 30)
-DB_RETRY_INTERVAL_MS=2000          # Base retry interval in ms (uses exponential backoff with jitter)
-
-# Connection pool class selection
-# - "auto": NullPool with PgBouncer, QueuePool otherwise (default)
-# - "null": Always NullPool (recommended with PgBouncer)
-# - "queue": Always QueuePool (application-side pooling)
-DB_POOL_CLASS=auto
-
-# Pre-ping connections before checkout (validates connection is alive)
-# - "auto": Enabled for non-PgBouncer setups (default)
-# - "true": Always enable (adds SELECT 1 overhead but catches stale connections)
-# - "false": Always disable
-DB_POOL_PRE_PING=auto
-
-# psycopg3 auto-prepared statements (PostgreSQL only)
-# Queries executed N+ times are prepared server-side for performance
-DB_PREPARE_THRESHOLD=5
-```
-
-#### Database Startup Resilience
-
-The gateway uses **exponential backoff with jitter** when waiting for the database at startup:
-
-- **Retry progression**: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
-- **Jitter**: ±25% randomization prevents thundering herd when multiple workers reconnect
-- **Default behavior**: 30 retries with 2s base interval ≈ 5 minutes total wait
-
-This prevents CPU-intensive crash-respawn loops when the database is temporarily unavailable.
-
-### Server Configuration
-
-```bash
-# Network binding & runtime
-HOST=0.0.0.0
-PORT=4444
-ENVIRONMENT=development
-APP_DOMAIN=localhost
-APP_ROOT_PATH=
-
-# HTTP Server selection (for containers)
-HTTP_SERVER=gunicorn              # Options: gunicorn (default), granian
-```
-
-### Gunicorn Production Server (Default)
-
-The production server uses Gunicorn with UVicorn workers by default. Configure via environment variables or `.env` file:
-
-```bash
-# Worker Configuration
-GUNICORN_WORKERS=auto                 # Number of workers ("auto" = 2*CPU+1, capped at 16)
-GUNICORN_TIMEOUT=600                  # Worker timeout in seconds (increase for long requests)
-GUNICORN_MAX_REQUESTS=100000          # Requests per worker before restart (prevents memory leaks)
-GUNICORN_MAX_REQUESTS_JITTER=100      # Random jitter to prevent thundering herd
-
-# Performance Options
-GUNICORN_PRELOAD_APP=true             # Preload app before forking (saves memory, runs migrations once)
-GUNICORN_DEV_MODE=false               # Enable hot reload (not for production!)
-DISABLE_ACCESS_LOG=true               # Disable access logs for performance (default: true)
-
-# TLS/SSL Configuration
-SSL=false                             # Enable TLS/SSL
-CERT_FILE=certs/cert.pem              # Path to SSL certificate
-KEY_FILE=certs/key.pem                # Path to SSL private key
-KEY_FILE_PASSWORD=                    # Passphrase for encrypted private key
-
-# Process Management
-FORCE_START=false                     # Bypass lock file check
-```
-
-**Starting the Production Server:**
-
-```bash
-# Basic startup
-./run-gunicorn.sh
-
-# With TLS
-SSL=true ./run-gunicorn.sh
-
-# With custom workers
-GUNICORN_WORKERS=8 ./run-gunicorn.sh
-
-# Use fixed worker count instead of auto-detection
-GUNICORN_WORKERS=4 ./run-gunicorn.sh
-
-# High-performance mode (disable access logs)
-DISABLE_ACCESS_LOG=true ./run-gunicorn.sh
-```
-
-!!! tip "Worker Count Recommendations"
-    - **CPU-bound workloads**: 2-4 × CPU cores
-    - **I/O-bound workloads**: 4-12 × CPU cores
-    - **Memory-constrained**: Start with 2 and monitor
-    - **Auto mode**: Uses formula `min(2*CPU+1, 16)`
-
-### Granian Production Server (Alternative)
-
-Granian is a Rust-based HTTP server with native backpressure for overload protection. Under load, excess requests receive immediate 503 responses instead of queuing indefinitely.
-
-```bash
-# Worker Configuration
-GRANIAN_WORKERS=auto              # Number of workers (auto = CPU cores, max 16)
-GRANIAN_RUNTIME_MODE=auto         # Runtime mode: auto, mt (multi-threaded), st (single-threaded)
-GRANIAN_RUNTIME_THREADS=1         # Runtime threads per worker
-GRANIAN_BLOCKING_THREADS=1        # Blocking threads per worker (must be 1 for ASGI)
-
-# Backpressure Configuration (overload protection)
-GRANIAN_BACKLOG=4096              # OS socket backlog for pending connections
-GRANIAN_BACKPRESSURE=64           # Max concurrent requests per worker before 503
-# Total capacity = WORKERS × BACKPRESSURE (e.g., 16 × 64 = 1024 concurrent requests)
-
-# Performance Options
-GRANIAN_HTTP=auto                 # HTTP version: auto, 1, 2
-GRANIAN_LOOP=uvloop               # Event loop: uvloop, asyncio, rloop
-GRANIAN_HTTP1_BUFFER_SIZE=524288  # HTTP/1 buffer size (512KB)
-GRANIAN_RESPAWN_FAILED=true       # Auto-restart failed workers
-GRANIAN_DEV_MODE=false            # Enable hot reload
-DISABLE_ACCESS_LOG=true           # Disable access logs for performance
-
-# TLS/SSL (same as Gunicorn)
-SSL=false
-CERT_FILE=certs/cert.pem
-KEY_FILE=certs/key.pem
-```
-
-**Starting with Granian:**
-
-```bash
-# Local development
-make serve-granian
-
-# With HTTP/2 + TLS
-make serve-granian-http2
-
-# Container with Granian
-docker run -e HTTP_SERVER=granian mcpgateway/mcpgateway
-```
-
-!!! info "When to use Granian"
-    - **Load spike protection**: Backpressure rejects excess requests with 503 instead of queuing
-    - **Bursty traffic**: Graceful degradation under unpredictable load
-    - **Native HTTP/2**: Without reverse proxy
-    - **High concurrency**: 1000+ concurrent users
-
-    See [ADR-0025](../architecture/adr/025-granian-http-server.md) for detailed comparison and [Tuning Guide](tuning.md#backpressure-for-overload-protection) for backpressure configuration.
-
-### Authentication & Security
-
-```bash
-# JWT Algorithm Configuration
-JWT_ALGORITHM=HS256                    # HMAC: HS256, HS384, HS512 | RSA: RS256, RS384, RS512 | ECDSA: ES256, ES384, ES512
-
-# Symmetric (HMAC) JWT Configuration - Default
-JWT_SECRET_KEY=your-secret-key-here    # Required for HMAC algorithms (HS256, HS384, HS512)
-
-# Asymmetric (RSA/ECDSA) JWT Configuration - Enterprise
-JWT_PUBLIC_KEY_PATH=jwt/public.pem     # Required for asymmetric algorithms (RS*/ES*)
-JWT_PRIVATE_KEY_PATH=jwt/private.pem   # Required for asymmetric algorithms (RS*/ES*)
-
-# JWT Claims & Validation
-JWT_AUDIENCE=mcpgateway-api
-JWT_ISSUER=mcpgateway
-JWT_AUDIENCE_VERIFICATION=true         # Set to false for Dynamic Client Registration
-JWT_ISSUER_VERIFICATION=true           # Set to false if issuer validation is not needed
-REQUIRE_TOKEN_EXPIRATION=true
-EMBED_ENVIRONMENT_IN_TOKENS=false      # Embed env claim in tokens for environment isolation
-VALIDATE_TOKEN_ENVIRONMENT=false       # Reject tokens with mismatched env claim
-
-# Basic Auth (Admin UI)
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASSWORD=changeme
-
-# Email-based Auth
-EMAIL_AUTH_ENABLED=true
-PLATFORM_ADMIN_EMAIL=admin@example.com
-PLATFORM_ADMIN_PASSWORD=changeme
-
-# Security Features
-AUTH_REQUIRED=true
-SECURITY_HEADERS_ENABLED=true
-CORS_ENABLED=true
-CORS_ALLOW_CREDENTIALS=true
-ALLOWED_ORIGINS="https://admin.example.com,https://api.example.com"
-AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
-```
-
-### Feature Flags
-
-```bash
-# Core Features
-MCPGATEWAY_UI_ENABLED=true
-MCPGATEWAY_ADMIN_API_ENABLED=true
-MCPGATEWAY_UI_AIRGAPPED=false          # Use local CDN assets for airgapped deployments
-MCPGATEWAY_BULK_IMPORT_ENABLED=true
-MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200
-
-# A2A (Agent-to-Agent) Features
-MCPGATEWAY_A2A_ENABLED=true
-MCPGATEWAY_A2A_MAX_AGENTS=100
-MCPGATEWAY_A2A_DEFAULT_TIMEOUT=30
-MCPGATEWAY_A2A_MAX_RETRIES=3
-MCPGATEWAY_A2A_METRICS_ENABLED=true
-```
-
-### Airgapped Deployments
-
-For environments without internet access, the Admin UI can be configured to use local CDN assets instead of external CDNs.
-
-```bash
-# Enable airgapped mode (loads CSS/JS from local files)
-MCPGATEWAY_UI_AIRGAPPED=true
-```
-
-!!! info "Airgapped Mode Features"
-    When `MCPGATEWAY_UI_AIRGAPPED=true`:
-
-    - All CSS and JavaScript libraries are loaded from local files
-    - No external CDN connections required (Tailwind, HTMX, CodeMirror, Alpine.js, Chart.js)
-    - Assets are automatically downloaded during container build
-    - Total asset size: ~932KB
-    - Full UI functionality maintained
-
-!!! warning "Container Build Required"
-    Airgapped mode requires building with `Containerfile.lite` which automatically downloads all CDN assets during the build process. The assets are not included in the Git repository.
-
-**Container Build Example:**
-```bash
-docker build -f Containerfile.lite -t mcpgateway:airgapped .
-docker run -e MCPGATEWAY_UI_AIRGAPPED=true -p 4444:4444 mcpgateway:airgapped
-```
-
-### Caching Configuration
-
-```bash
-# Cache Backend
-CACHE_TYPE=redis                    # Options: memory, redis, database, none
-REDIS_URL=redis://localhost:6379/0
-CACHE_PREFIX=mcpgateway
-
-# Redis Startup Resilience (exponential backoff with jitter)
-REDIS_MAX_RETRIES=30                # Max attempts before worker exits (default: 30)
-REDIS_RETRY_INTERVAL_MS=2000        # Base interval in ms (uses exponential backoff with jitter)
-
-# Cache TTL (seconds)
-SESSION_TTL=3600
-MESSAGE_TTL=600
-RESOURCE_CACHE_TTL=1800
-
-# Redis Connection Pool (performance-tuned defaults)
-REDIS_MAX_CONNECTIONS=50            # Pool size per worker
-REDIS_SOCKET_TIMEOUT=2.0            # Read/write timeout (seconds)
-REDIS_SOCKET_CONNECT_TIMEOUT=2.0    # Connection timeout (seconds)
-REDIS_RETRY_ON_TIMEOUT=true         # Retry commands on timeout
-REDIS_HEALTH_CHECK_INTERVAL=30      # Health check interval (seconds, 0=disabled)
-REDIS_DECODE_RESPONSES=true         # Return strings instead of bytes
-
-# Redis Parser (ADR-026 - performance optimization)
-REDIS_PARSER=auto                   # auto, hiredis, python (auto uses hiredis if available)
-
-# Redis Leader Election (multi-node deployments)
-REDIS_LEADER_TTL=15                 # Leader TTL (seconds)
-REDIS_LEADER_KEY=gateway_service_leader
-REDIS_LEADER_HEARTBEAT_INTERVAL=5   # Heartbeat interval (seconds)
-
-# Authentication Cache (ADR-028 - reduces DB queries per auth from 3-4 to 0-1)
-AUTH_CACHE_ENABLED=true             # Enable auth data caching (user, team, revocation)
-AUTH_CACHE_USER_TTL=60              # User data cache TTL in seconds (10-300)
-AUTH_CACHE_REVOCATION_TTL=30        # Token revocation cache TTL (5-120, security-critical)
-AUTH_CACHE_TEAM_TTL=60              # Team membership cache TTL in seconds (10-300)
-AUTH_CACHE_BATCH_QUERIES=true       # Batch auth DB queries into single call
-```
-
-#### Redis Startup Resilience
-
-The gateway uses **exponential backoff with jitter** when waiting for Redis at startup:
-
-- **Retry progression**: 2s → 4s → 8s → 16s → 30s (capped) → 30s...
-- **Jitter**: ±25% randomization prevents thundering herd when multiple workers reconnect
-- **Default behavior**: 30 retries with 2s base interval ≈ 5 minutes total wait
-
-This prevents CPU-intensive crash-respawn loops when Redis is temporarily unavailable.
-
-#### Authentication Cache
-
-When `AUTH_CACHE_ENABLED=true` (default), authentication data is cached to reduce database queries:
-
-- **User data**: Cached for `AUTH_CACHE_USER_TTL` seconds (default: 60)
-- **Team memberships**: Cached for `AUTH_CACHE_TEAM_TTL` seconds (default: 60)
-- **User roles in teams**: Cached for `AUTH_CACHE_ROLE_TTL` seconds (default: 60)
-- **User teams list**: Cached for `AUTH_CACHE_TEAMS_TTL` seconds (default: 60) when `AUTH_CACHE_TEAMS_ENABLED=true`
-- **Token revocations**: Cached for `AUTH_CACHE_REVOCATION_TTL` seconds (default: 30)
-
-The cache uses Redis when available (`CACHE_TYPE=redis`) and falls back to in-memory caching.
-
-When `AUTH_CACHE_BATCH_QUERIES=true` (default), the 3 separate authentication database queries are batched into a single query, reducing thread pool contention and connection overhead.
-
-**Performance Note**: The role cache (`AUTH_CACHE_ROLE_TTL`) caches `get_user_role_in_team()` which is called 11+ times per team operation. The teams list cache (`AUTH_CACHE_TEAMS_TTL`) caches `get_user_teams()` which is called 20+ times per request for authorization checks. Together, these can reduce "idle in transaction" connections by 50-70% under high load.
-
-**Security Note**: Keep `AUTH_CACHE_REVOCATION_TTL` short (30s default) to limit the window where revoked tokens may still work.
-
-See [ADR-028](../architecture/adr/028-auth-caching.md) for implementation details.
-
-#### Registry Cache
-
-```bash
-# Registry Cache (ADR-029 - caches list endpoints for tools, prompts, resources, etc.)
-REGISTRY_CACHE_ENABLED=true         # Enable registry list caching
-REGISTRY_CACHE_TOOLS_TTL=20         # Tools list cache TTL in seconds (5-300)
-REGISTRY_CACHE_PROMPTS_TTL=15       # Prompts list cache TTL in seconds (5-300)
-REGISTRY_CACHE_RESOURCES_TTL=15     # Resources list cache TTL in seconds (5-300)
-REGISTRY_CACHE_AGENTS_TTL=20        # Agents list cache TTL in seconds (5-300)
-REGISTRY_CACHE_SERVERS_TTL=20       # Servers list cache TTL in seconds (5-300)
-REGISTRY_CACHE_GATEWAYS_TTL=20      # Gateways list cache TTL in seconds (5-300)
-REGISTRY_CACHE_CATALOG_TTL=300      # Catalog servers cache TTL in seconds (60-600)
-```
-
-When `REGISTRY_CACHE_ENABLED=true` (default), the first page of registry list results is cached:
-
-- **Tools**: Cached for `REGISTRY_CACHE_TOOLS_TTL` seconds (default: 20)
-- **Prompts**: Cached for `REGISTRY_CACHE_PROMPTS_TTL` seconds (default: 15)
-- **Resources**: Cached for `REGISTRY_CACHE_RESOURCES_TTL` seconds (default: 15)
-- **Agents**: Cached for `REGISTRY_CACHE_AGENTS_TTL` seconds (default: 20)
-- **Servers**: Cached for `REGISTRY_CACHE_SERVERS_TTL` seconds (default: 20)
-- **Gateways**: Cached for `REGISTRY_CACHE_GATEWAYS_TTL` seconds (default: 20)
-- **Catalog**: Cached for `REGISTRY_CACHE_CATALOG_TTL` seconds (default: 300, longer since external catalog changes infrequently)
-
-Cache is automatically invalidated when items are created, updated, or deleted.
-
-#### Admin Stats Cache
-
-```bash
-# Admin Stats Cache (ADR-029 - caches admin dashboard statistics)
-ADMIN_STATS_CACHE_ENABLED=true      # Enable admin stats caching
-ADMIN_STATS_CACHE_SYSTEM_TTL=60     # System stats cache TTL in seconds (10-300)
-ADMIN_STATS_CACHE_OBSERVABILITY_TTL=30  # Observability stats TTL (10-120)
-```
-
-When `ADMIN_STATS_CACHE_ENABLED=true` (default), admin dashboard statistics are cached:
-
-- **System stats**: Cached for `ADMIN_STATS_CACHE_SYSTEM_TTL` seconds (default: 60)
-- **Observability**: Cached for `ADMIN_STATS_CACHE_OBSERVABILITY_TTL` seconds (default: 30)
-
-See [ADR-029](../architecture/adr/029-registry-admin-stats-caching.md) for implementation details.
-
-#### Team Member Count Cache
-
-```bash
-# Team member count cache (reduces N+1 queries in admin UI)
-TEAM_MEMBER_COUNT_CACHE_ENABLED=true  # Enable team member count caching
-TEAM_MEMBER_COUNT_CACHE_TTL=300       # Cache TTL in seconds (30-3600)
-```
-
-When `TEAM_MEMBER_COUNT_CACHE_ENABLED=true` (default), team member counts are cached in Redis:
-
-- **Member counts**: Cached for `TEAM_MEMBER_COUNT_CACHE_TTL` seconds (default: 300)
-
-Cache is automatically invalidated when team members are added, removed, or their `is_active` status changes.
-
-**Performance Note**: This cache eliminates N+1 query patterns in the admin UI team listings, reducing `/admin/` P95 latency from ~14s to <500ms under load.
-
-#### Metrics Aggregation Cache
-
-```bash
-# Metrics aggregation cache (reduces full table scans, see #1906)
-METRICS_CACHE_ENABLED=true       # Enable metrics query caching (default: true)
-METRICS_CACHE_TTL_SECONDS=60     # Cache TTL in seconds (1-300, default: 60)
-```
-
-When `METRICS_CACHE_ENABLED=true` (default), aggregate metrics queries are cached in memory:
-
-- **Aggregated metrics**: Cached for `METRICS_CACHE_TTL_SECONDS` seconds (default: 60)
-- **Top performers**: Cached separately with the same TTL
-
-Cache is automatically invalidated when metrics are recorded.
-
-**Performance Note**: This cache reduces full table scans on metrics tables. Under high load (3000+ users), increasing TTL to 60-120 seconds can reduce sequential scans by 6-12×. See [Issue #1906](https://github.com/IBM/mcp-context-forge/issues/1906) for details.
-
-### Session Registry Polling (Database Backend)
-
-When using `CACHE_TYPE=database`, sessions poll the database to check for incoming messages. Adaptive backoff reduces database load by ~90% during idle periods while maintaining responsiveness when messages arrive.
-
-```bash
-# Adaptive backoff polling configuration
-POLL_INTERVAL=1.0          # Initial polling interval in seconds (default: 1.0)
-MAX_INTERVAL=5.0           # Maximum polling interval cap in seconds (default: 5.0)
-BACKOFF_FACTOR=1.5         # Multiplier for exponential backoff (default: 1.5)
-```
-
-**How Adaptive Backoff Works:**
-
-1. Polling starts at `POLL_INTERVAL` (1.0s by default)
-2. When no message is found, interval increases by `BACKOFF_FACTOR` (1.5×)
-3. Interval continues growing until it reaches `MAX_INTERVAL` (5.0s cap)
-4. When a message arrives, interval immediately resets to `POLL_INTERVAL`
-
-**Example Progression:**
-
-```
-1.0s → 1.5s → 2.25s → 3.375s → 5.0s (capped) → 5.0s → ...
-         ↓ message arrives
-         1.0s (reset)
-```
-
-**Tuning Guide:**
-
-| Use Case | POLL_INTERVAL | MAX_INTERVAL | BACKOFF_FACTOR |
-|----------|---------------|--------------|----------------|
-| Real-time (<1s latency) | 0.1-0.5 | 2.0-5.0 | 1.5 |
-| Standard (default) | 1.0 | 5.0 | 1.5 |
-| Batch workloads | 1.0-2.0 | 10.0-30.0 | 2.0 |
-| Minimal DB load | 2.0 | 30.0 | 2.0 |
-
-**Per-Session Database Impact:**
-
-| Configuration | Idle Queries/Min | Active Queries/Min |
-|---------------|------------------|-------------------|
-| Default (1.0s/5.0s) | 12 | 60 |
-| Aggressive (0.1s/2.0s) | 30-600 | 600 |
-| Conservative (2.0s/30.0s) | 2 | 30 |
-
-!!! tip "Redis Eliminates Polling"
-    With `CACHE_TYPE=redis`, sessions use Redis Pub/Sub for instant message delivery with zero polling overhead. Redis is recommended for production deployments with many concurrent sessions.
-
-### HTTPX Client Connection Pool
-
-MCP Gateway uses HTTP client connection pooling for outbound requests, providing ~20x better performance than per-request clients by reusing TCP connections. These settings affect federation, health checks, A2A agent calls, SSO, MCP server connections, and catalog operations.
-
-!!! note "Shared vs Factory Clients"
-    Most requests use a shared singleton client for optimal connection reuse. SSE/streaming MCP connections use factory-created clients with the same settings, as they require dedicated long-lived connections for proper lifecycle management.
-
-```bash
-# Connection Pool Limits
-HTTPX_MAX_CONNECTIONS=200              # Total connections in pool (10-1000, default: 200)
-HTTPX_MAX_KEEPALIVE_CONNECTIONS=100    # Keepalive connections (1-500, default: 100)
-HTTPX_KEEPALIVE_EXPIRY=30.0            # Idle connection expiry in seconds (5.0-300.0)
-
-# Timeout Configuration
-HTTPX_CONNECT_TIMEOUT=5.0              # TCP connection timeout in seconds (default: 5, fast for LAN)
-HTTPX_READ_TIMEOUT=120.0               # Response read timeout in seconds (default: 120, high for slow tools)
-HTTPX_WRITE_TIMEOUT=30.0               # Request write timeout in seconds (default: 30)
-HTTPX_POOL_TIMEOUT=10.0                # Wait for available connection in seconds (default: 10, fail fast)
-
-# Protocol Configuration
-HTTPX_HTTP2_ENABLED=false              # Enable HTTP/2 (requires server support)
-
-# Admin Operations Timeout
-HTTPX_ADMIN_READ_TIMEOUT=30.0          # Admin UI operations timeout (default: 30, fail fast)
-```
-
-**Sizing Guidelines:**
-
-| Deployment Size | `HTTPX_MAX_CONNECTIONS` | `HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Notes |
-|----------------|------------------------|----------------------------------|-------|
-| Development    | 50                     | 25                               | Minimal footprint |
-| Production     | 200                    | 100                              | Default, handles typical load |
-| High-traffic   | 300-500                | 150-250                          | Heavy federation/A2A usage |
-
-**Formula:** `HTTPX_MAX_CONNECTIONS = concurrent_outbound_requests × 1.5`
-
-!!! tip "Connection Pool vs Per-Request Clients"
-    The shared connection pool eliminates TCP handshake and TLS negotiation overhead for each request. In benchmarks, this provides ~20x improvement in throughput compared to creating a new client per request.
-
-!!! warning "HTTP/2 Support"
-    HTTP/2 (`HTTPX_HTTP2_ENABLED=true`) enables multiplexing over a single connection but requires upstream servers to support HTTP/2. Leave disabled unless all upstream services support HTTP/2.
-
-### Logging Settings
-
-```bash
-# Log Level
-LOG_LEVEL=INFO                      # DEBUG, INFO, WARNING, ERROR, CRITICAL
-
-# Log Destinations
-LOG_TO_FILE=false
-LOG_ROTATION_ENABLED=false
-LOG_FILE=mcpgateway.log
-LOG_FOLDER=logs
-
-# Structured Logging
-LOG_FORMAT=json                     # json, plain
-
-# Database Log Persistence (disabled by default for performance)
-STRUCTURED_LOGGING_DATABASE_ENABLED=false
-
-# Audit Trail Logging (disabled by default for performance)
-AUDIT_TRAIL_ENABLED=false
-
-# Security Event Logging (disabled by default for performance)
-SECURITY_LOGGING_ENABLED=false
-SECURITY_LOGGING_LEVEL=failures_only  # all, failures_only, high_severity
-```
-
-#### Audit Trail Logging
-
-When `AUDIT_TRAIL_ENABLED=true`, all CRUD operations (create, read, update, delete) on resources are logged to the `audit_trails` database table. This provides:
-
-- **Compliance logging** for SOC2, HIPAA, and other regulatory requirements
-- **Data access tracking** - who accessed what resources and when
-- **Change history** - before/after values for updates and deletes
-- **Admin UI Audit Log Viewer** - browse and filter audit entries
-
-**Warning:** Enabling audit trails causes a database write on **every API request**, which can significantly impact performance. During load testing, this can generate millions of rows. Only enable for production compliance requirements.
-
-#### Structured Log Database Persistence
-
-When `STRUCTURED_LOGGING_DATABASE_ENABLED=true`, logs are persisted to the database enabling:
-
-- **Log Search API** (`/api/logs/search`) - Search logs by level, component, user, time range
-- **Request Tracing** (`/api/logs/trace/{correlation_id}`) - Trace all logs for a request
-- **Performance Metrics** - Aggregated p50/p95/p99 latencies and error rates
-- **Admin UI Log Viewer** - Browse and filter logs in the web interface
-
-When disabled (default), logs only go to console/file. This improves performance by avoiding synchronous database writes on each log entry. Use this setting if you have an external log aggregator (ELK, Datadog, Splunk, etc.).
-
-### Development & Debug
-
-```bash
-# Development Mode
-ENVIRONMENT=development             # development, staging, production
-DEV_MODE=true
-RELOAD=true
-TEMPLATES_AUTO_RELOAD=true          # Auto-reload Jinja2 templates (default: false for production)
-DEBUG=true
-
-# Observability
-OTEL_ENABLE_OBSERVABILITY=true
-OTEL_TRACES_EXPORTER=otlp
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-```
+## 🔧 Environment Variables Reference
+
+### Basic Settings
+
+| Setting            | Description                              | Default                | Options                |
+|--------------------|------------------------------------------|------------------------|------------------------|
+| `APP_NAME`         | Gateway / OpenAPI title                  | `MCP_Gateway`          | string                 |
+| `HOST`             | Bind address for the app                 | `127.0.0.1`            | IPv4/IPv6              |
+| `PORT`             | Port the server listens on               | `4444`                 | 1-65535                |
+| `CLIENT_MODE`      | Client-only mode for gateway-as-client   | `false`                | bool                   |
+| `DATABASE_URL`     | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
+| `APP_ROOT_PATH`    | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
+| `TEMPLATES_DIR`    | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
+| `STATIC_DIR`       | Path to static files                     | `mcpgateway/static`    | path                   |
+| `PROTOCOL_VERSION` | MCP protocol version supported           | `2025-06-18`           | string                 |
+| `FORGE_CONTENT_TYPE` | Content-Type for outgoing requests to Forge | `application/json`  | `application/json`, `application/x-www-form-urlencoded` |
+
+!!! tip "Subpath Deployment"
+    Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
+
+### Authentication
+
+| Setting                     | Description                                                                  | Default             | Options     |
+|-----------------------------|------------------------------------------------------------------------------|---------------------|-------------|
+| `BASIC_AUTH_USER`           | Username for HTTP Basic authentication (when enabled)                        | `admin`             | string      |
+| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme`          | string      |
+| `API_ALLOW_BASIC_AUTH`      | Enable Basic auth for API endpoints (disabled by default for security)       | `false`             | bool        |
+| `DOCS_ALLOW_BASIC_AUTH`     | Enable Basic auth for docs endpoints (disabled by default)                   | `false`             | bool        |
+| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
+| `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
+| `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
+| `JWT_SECRET_KEY`            | Secret key used to **sign JWT tokens** for API access                        | `my-test-key`       | string      |
+| `JWT_PUBLIC_KEY_PATH`       | If an asymmetric algorithm is used, a public key is required                 | (empty)             | path to pem |
+| `JWT_PRIVATE_KEY_PATH`      | If an asymmetric algorithm is used, a private key is required                | (empty)             | path to pem |
+| `JWT_AUDIENCE`              | JWT audience claim for token validation                                      | `mcpgateway-api`    | string      |
+| `JWT_AUDIENCE_VERIFICATION` | Disables jwt audience verification (useful for DCR)                          | `true`              | boolean     |
+| `JWT_ISSUER_VERIFICATION`   | Disables jwt issuer verification (useful for custom auth)                    | `true`              | boolean     |
+| `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
+| `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
+| `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `true`              | bool        |
+| `REQUIRE_JTI`               | Require JTI (JWT ID) claim in all tokens for revocation support              | `true`              | bool        |
+| `REQUIRE_USER_IN_DB`        | Require all authenticated users to exist in the database                     | `false`             | bool        |
+| `EMBED_ENVIRONMENT_IN_TOKENS` | Embed environment claim in gateway-issued JWTs                             | `false`             | bool        |
+| `VALIDATE_TOKEN_ENVIRONMENT` | Reject tokens with mismatched environment claim                             | `false`             | bool        |
+| `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
+| `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
+| `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
+| `OAUTH_DEFAULT_TIMEOUT`     | Default OAuth token timeout in seconds                                       | `3600`              | int > 0     |
+| `INSECURE_ALLOW_QUERYPARAM_AUTH` | Enable query parameter authentication for gateways (see security warning) | `false`             | bool        |
+| `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` | JSON array of hosts allowed to use query param auth               | `[]`                | JSON array  |
+
+!!! warning "Query Parameter Authentication (INSECURE)"
+    The `INSECURE_ALLOW_QUERYPARAM_AUTH` setting enables API key authentication via URL query parameters. This is inherently insecure (CWE-598) as API keys may appear in proxy logs, browser history, and server access logs. Only enable this when the upstream MCP server (e.g., Tavily) requires this authentication method. Always configure `INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS` to restrict which hosts can use this feature.
+
+!!! info "Basic Authentication"
+    **Basic Authentication is DISABLED by default** for security. `BASIC_AUTH_USER`/`PASSWORD` are only used when Basic auth is explicitly enabled:
+
+    - `API_ALLOW_BASIC_AUTH=true` - Enable for API endpoints (e.g., `/api/metrics/*`)
+    - `DOCS_ALLOW_BASIC_AUTH=true` - Enable for docs endpoints (`/docs`, `/redoc`)
+
+    **Recommended:** Use JWT tokens instead of Basic auth:
+    ```bash
+    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token ...)
+    curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/api/...
+    ```
+
+!!! tip "JWT Token Generation"
+    `JWT_SECRET_KEY` is used to sign JSON Web Tokens. Generate tokens via:
+    ```bash
+    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
+    ```
+
+### UI Features
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
+| `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
+| `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
+| `MCPGATEWAY_BULK_IMPORT_ENABLED` | Enable bulk import endpoint for tools | `true`  | bool    |
+| `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
+| `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT` | Rate limit for bulk import endpoint (requests per minute) | `10` | int |
+| `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
+
+!!! tip "Production Settings"
+    Set both UI and Admin API to `false` to disable management UI and APIs in production.
+
+### A2A (Agent-to-Agent) Features
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `MCPGATEWAY_A2A_ENABLED`       | Enable A2A agent features             | `true`  | bool    |
+| `MCPGATEWAY_A2A_MAX_AGENTS`    | Maximum number of A2A agents allowed  | `100`   | int     |
+| `MCPGATEWAY_A2A_DEFAULT_TIMEOUT` | Default timeout for A2A HTTP requests (seconds) | `30` | int |
+| `MCPGATEWAY_A2A_MAX_RETRIES`   | Maximum retry attempts for A2A calls  | `3`     | int     |
+| `MCPGATEWAY_A2A_METRICS_ENABLED` | Enable A2A agent metrics collection | `true`  | bool    |
+
+**Configuration Effects:**
+
+- `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
+- `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+
+### ToolOps
+
+ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `TOOLOPS_ENABLED`             | Enable ToolOps functionality          | `false` | bool    |
+
+### LLM Chat MCP Client
+
+The LLM Chat MCP Client allows you to interact with MCP servers using conversational AI from multiple LLM providers.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `LLMCHAT_ENABLED`             | Enable LLM Chat functionality          | `false` | bool    |
+| `LLM_PROVIDER`                | LLM provider selection                 | `azure_openai` | `azure_openai`, `openai`, `anthropic`, `aws_bedrock`, `ollama` |
+
+**Azure OpenAI Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `AZURE_OPENAI_ENDPOINT`       | Azure OpenAI endpoint URL              | (none)  | string  |
+| `AZURE_OPENAI_API_KEY`        | Azure OpenAI API key                   | (none)  | string  |
+| `AZURE_OPENAI_DEPLOYMENT`     | Azure OpenAI deployment name           | (none)  | string  |
+| `AZURE_OPENAI_API_VERSION`    | Azure OpenAI API version               | `2024-02-15-preview` | string |
+| `AZURE_OPENAI_TEMPERATURE`    | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+| `AZURE_OPENAI_MAX_TOKENS`     | Maximum tokens to generate             | (none)  | int     |
+
+**OpenAI Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `OPENAI_API_KEY`              | OpenAI API key                         | (none)  | string  |
+| `OPENAI_MODEL`                | OpenAI model name                      | `gpt-4o-mini` | string |
+| `OPENAI_BASE_URL`             | Base URL for OpenAI-compatible endpoints | (none) | string  |
+| `OPENAI_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+| `OPENAI_MAX_RETRIES`          | Maximum number of retries              | `2`     | int     |
+
+**Anthropic Claude Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `ANTHROPIC_API_KEY`           | Anthropic API key                      | (none)  | string  |
+| `ANTHROPIC_MODEL`             | Claude model name                      | `claude-3-5-sonnet-20241022` | string |
+| `ANTHROPIC_TEMPERATURE`       | Sampling temperature                   | `0.7`   | float (0.0-1.0) |
+| `ANTHROPIC_MAX_TOKENS`        | Maximum tokens to generate             | `4096`  | int     |
+| `ANTHROPIC_MAX_RETRIES`       | Maximum number of retries              | `2`     | int     |
+
+**AWS Bedrock Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `AWS_BEDROCK_MODEL_ID`        | Bedrock model ID                       | (none)  | string  |
+| `AWS_BEDROCK_REGION`          | AWS region name                        | `us-east-1` | string |
+| `AWS_BEDROCK_TEMPERATURE`     | Sampling temperature                   | `0.7`   | float (0.0-1.0) |
+| `AWS_BEDROCK_MAX_TOKENS`      | Maximum tokens to generate             | `4096`  | int     |
+| `AWS_ACCESS_KEY_ID`           | AWS access key ID (optional)           | (none)  | string  |
+| `AWS_SECRET_ACCESS_KEY`       | AWS secret access key (optional)       | (none)  | string  |
+| `AWS_SESSION_TOKEN`           | AWS session token (optional)           | (none)  | string  |
+
+**IBM WatsonX AI Configuration:**
+
+| Setting                 | Description                     | Default                        | Options         |
+| ----------------------- | --------------------------------| ------------------------------ | ----------------|
+| `WATSONX_URL`           | watsonx url                     | (none)                         | string          |
+| `WATSONX_APIKEY`        | API key                         | (none)                         | string          |
+| `WATSONX_PROJECT_ID`    | Project Id for WatsonX          | (none)                         | string          |
+| `WATSONX_MODEL_ID`      | Watsonx model id                | `ibm/granite-13b-chat-v2`      | string          |
+| `WATSONX_TEMPERATURE`   | temperature (optional)          | `0.7`                          | float (0.0-1.0) |
+
+**Ollama Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `OLLAMA_BASE_URL`             | Ollama base URL                        | `http://localhost:11434` | string |
+| `OLLAMA_MODEL`                | Ollama model name                      | `llama3.2` | string |
+| `OLLAMA_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+
+**Provider Requirements:**
+
+- **Azure OpenAI**: Requires `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_DEPLOYMENT`
+- **OpenAI**: Requires `OPENAI_API_KEY`
+- **Anthropic**: Requires `ANTHROPIC_API_KEY` and `pip install langchain-anthropic`
+- **AWS Bedrock**: Requires `AWS_BEDROCK_MODEL_ID` and `pip install langchain-aws boto3`. Uses AWS credential chain if explicit credentials not provided.
+- **IBM WatsonX AI**: Requires `WATSONX_URL`, `WATSONX_APIKEY`, `WATSONX_PROJECT_ID`, `WATSONX_MODEL_ID` and `pip install langchain-ibm`
+- **Ollama**: Requires local Ollama instance running (default: `http://localhost:11434`)
+
+**Redis Configurations for Chat Sessions:**
+
+| Setting                              | Description                                | Default | Options |
+| -------------------------------------| -------------------------------------------| ------- | ------- |
+| `LLMCHAT_SESSION_TTL`                | Seconds for active_session key TTL         | `300`   | int     |
+| `LLMCHAT_SESSION_LOCK_TTL`           | Seconds for lock expiry                    | `30`    | int     |
+| `LLMCHAT_SESSION_LOCK_RETRIES`       | How many times to poll while waiting       | `10`    | int     |
+| `LLMCHAT_SESSION_LOCK_WAIT`          | Seconds between polls                      | `0.2`   | float   |
+| `LLMCHAT_CHAT_HISTORY_TTL`           | Seconds for chat history expiry            | `3600`  | int     |
+| `LLMCHAT_CHAT_HISTORY_MAX_MESSAGES`  | Maximum message history to store per user  | `50`    | int     |
 
 ### LLM Settings (Internal API)
 
-MCP Gateway can act as a unified LLM provider with an OpenAI-compatible API. Configure multiple external LLM providers through the Admin UI and expose them through a single proxy endpoint.
+The LLM Settings feature enables MCP Gateway to act as a unified LLM provider with an OpenAI-compatible API.
 
-```bash
-# LLM API Configuration
-LLM_API_PREFIX=/v1                  # API prefix for internal LLM endpoints
-LLM_REQUEST_TIMEOUT=120             # Request timeout for LLM API calls (seconds)
-LLM_STREAMING_ENABLED=true          # Enable streaming responses
-LLM_HEALTH_CHECK_INTERVAL=300       # Provider health check interval (seconds)
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `LLM_API_PREFIX`              | API prefix for internal LLM endpoints  | `/v1`   | string  |
+| `LLM_REQUEST_TIMEOUT`         | Request timeout for LLM API calls (seconds) | `120` | int     |
+| `LLM_STREAMING_ENABLED`       | Enable streaming responses             | `true`  | bool    |
+| `LLM_HEALTH_CHECK_INTERVAL`   | Provider health check interval (seconds) | `300` | int     |
 
-# Gateway Provider Settings (for LLM Chat with provider=gateway)
-GATEWAY_MODEL=gpt-4o                # Default model to use
-GATEWAY_BASE_URL=                   # Base URL (defaults to internal API)
-GATEWAY_TEMPERATURE=0.7             # Sampling temperature
-```
+**Gateway Provider Settings:**
 
-!!! info "Provider Configuration"
-    LLM providers (OpenAI, Azure OpenAI, Anthropic, Ollama, Google, Mistral, Cohere, AWS Bedrock, Groq, etc.) are configured through the Admin UI under **LLM Settings > Providers**. The settings above control the gateway's internal LLM proxy behavior.
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `GATEWAY_MODEL`               | Default model to use                   | `gpt-4o` | string |
+| `GATEWAY_BASE_URL`            | Base URL for gateway LLM API           | (auto)  | string  |
+| `GATEWAY_TEMPERATURE`         | Sampling temperature                   | `0.7`   | float   |
 
-**OpenAI-Compatible API Endpoints:**
+**API Endpoints:**
 
 ```bash
 # List available models
@@ -748,113 +404,537 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   http://localhost:4444/v1/chat/completions
 ```
 
-**Admin UI Features:**
+### Email-Based Authentication & User Management
 
-- **Providers**: Add, edit, enable/disable, and delete LLM providers
-- **Models**: View, test, and manage models from configured providers
-- **Health Checks**: Monitor provider health with automatic status checks
-- **Model Discovery**: Fetch available models from providers and sync to database
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `EMAIL_AUTH_ENABLED`          | Enable email-based authentication system         | `true`                | bool    |
+| `PLATFORM_ADMIN_EMAIL`        | Email for bootstrap platform admin user          | `admin@example.com`   | string  |
+| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme`            | string  |
+| `PLATFORM_ADMIN_FULL_NAME`    | Full name for bootstrap platform admin user      | `Platform Administrator` | string |
+| `DEFAULT_USER_PASSWORD`       | Default password for newly created users         | `changeme`            | string  |
+| `ARGON2ID_TIME_COST`          | Argon2id time cost (iterations)                  | `3`                   | int > 0 |
+| `ARGON2ID_MEMORY_COST`        | Argon2id memory cost in KiB                      | `65536`               | int > 0 |
+| `ARGON2ID_PARALLELISM`        | Argon2id parallelism (threads)                   | `1`                   | int > 0 |
+| `PASSWORD_MIN_LENGTH`         | Minimum password length                           | `8`                   | int > 0 |
+| `PASSWORD_REQUIRE_UPPERCASE`  | Require uppercase letters in passwords           | `true`                | bool    |
+| `PASSWORD_REQUIRE_LOWERCASE`  | Require lowercase letters in passwords           | `true`                | bool    |
+| `PASSWORD_REQUIRE_NUMBERS`    | Require numbers in passwords                     | `false`               | bool    |
+| `PASSWORD_REQUIRE_SPECIAL`    | Require special characters in passwords          | `true`                | bool    |
+| `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `5`                   | int > 0 |
+| `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `30`                  | int > 0 |
 
----
+### MCP Client Authentication
 
-## 🔐 JWT Configuration Examples
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
+| `MCP_REQUIRE_AUTH`            | Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only | `false` | bool |
+| `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
+| `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
 
-MCP Gateway supports both symmetric (HMAC) and asymmetric (RSA/ECDSA) JWT algorithms for different deployment scenarios.
+!!! warning "MCP Access Control Dependencies"
+    Full MCP access control (visibility + team scoping + membership validation) requires `MCP_CLIENT_AUTH_ENABLED=true` with valid JWT tokens containing team claims. When `MCP_CLIENT_AUTH_ENABLED=false`, access control relies on `MCP_REQUIRE_AUTH` plus tool/resource visibility only—team membership validation is skipped since there's no JWT to extract teams from.
 
-### HMAC (Symmetric) - Simple Deployments
+### SSO (Single Sign-On) Configuration
 
-Best for single-service deployments where you control both token creation and verification.
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_ENABLED`                 | Master switch for Single Sign-On authentication  | `false`               | bool    |
+| `SSO_AUTO_CREATE_USERS`       | Automatically create users from SSO providers    | `true`                | bool    |
+| `SSO_TRUSTED_DOMAINS`         | Trusted email domains (JSON array)               | `[]`                  | JSON array |
+| `SSO_PRESERVE_ADMIN_AUTH`     | Preserve local admin authentication when SSO enabled | `true`            | bool    |
+| `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
+| `SSO_ISSUERS`                 | Optional JSON array of issuer URLs for SSO providers | (none)            | JSON array |
+| `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
+
+**GitHub OAuth:**
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_GITHUB_ENABLED`          | Enable GitHub OAuth authentication               | `false`               | bool    |
+| `SSO_GITHUB_CLIENT_ID`        | GitHub OAuth client ID                           | (none)                | string  |
+| `SSO_GITHUB_CLIENT_SECRET`    | GitHub OAuth client secret                       | (none)                | string  |
+| `SSO_GITHUB_ADMIN_ORGS`       | GitHub orgs granting admin privileges (JSON)     | `[]`                  | JSON array |
+
+**Google OAuth:**
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_GOOGLE_ENABLED`          | Enable Google OAuth authentication               | `false`               | bool    |
+| `SSO_GOOGLE_CLIENT_ID`        | Google OAuth client ID                           | (none)                | string  |
+| `SSO_GOOGLE_CLIENT_SECRET`    | Google OAuth client secret                       | (none)                | string  |
+| `SSO_GOOGLE_ADMIN_DOMAINS`    | Google admin domains (JSON)                      | `[]`                  | JSON array |
+
+**IBM Security Verify OIDC:**
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_IBM_VERIFY_ENABLED`      | Enable IBM Security Verify OIDC authentication   | `false`               | bool    |
+| `SSO_IBM_VERIFY_CLIENT_ID`    | IBM Security Verify client ID                    | (none)                | string  |
+| `SSO_IBM_VERIFY_CLIENT_SECRET` | IBM Security Verify client secret               | (none)                | string  |
+| `SSO_IBM_VERIFY_ISSUER`       | IBM Security Verify OIDC issuer URL             | (none)                | string  |
+
+**Keycloak OIDC:**
+
+| Setting                              | Description                                      | Default                    | Options |
+| ------------------------------------ | ------------------------------------------------ | -------------------------- | ------- |
+| `SSO_KEYCLOAK_ENABLED`              | Enable Keycloak OIDC authentication              | `false`                    | bool    |
+| `SSO_KEYCLOAK_BASE_URL`             | Keycloak base URL                                | (none)                     | string  |
+| `SSO_KEYCLOAK_REALM`                | Keycloak realm name                              | `master`                   | string  |
+| `SSO_KEYCLOAK_CLIENT_ID`            | Keycloak client ID                               | (none)                     | string  |
+| `SSO_KEYCLOAK_CLIENT_SECRET`        | Keycloak client secret                           | (none)                     | string  |
+| `SSO_KEYCLOAK_MAP_REALM_ROLES`      | Map Keycloak realm roles to gateway teams        | `true`                     | bool    |
+| `SSO_KEYCLOAK_MAP_CLIENT_ROLES`     | Map Keycloak client roles to gateway RBAC        | `false`                    | bool    |
+| `SSO_KEYCLOAK_USERNAME_CLAIM`       | JWT claim for username                           | `preferred_username`       | string  |
+| `SSO_KEYCLOAK_EMAIL_CLAIM`          | JWT claim for email                              | `email`                    | string  |
+| `SSO_KEYCLOAK_GROUPS_CLAIM`         | JWT claim for groups/roles                       | `groups`                   | string  |
+
+**Microsoft Entra ID OIDC:**
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_ENTRA_ENABLED`           | Enable Microsoft Entra ID OIDC authentication    | `false`               | bool    |
+| `SSO_ENTRA_CLIENT_ID`         | Microsoft Entra ID client ID                     | (none)                | string  |
+| `SSO_ENTRA_CLIENT_SECRET`     | Microsoft Entra ID client secret                 | (none)                | string  |
+| `SSO_ENTRA_TENANT_ID`         | Microsoft Entra ID tenant ID                     | (none)                | string  |
+
+**Generic OIDC Provider (Auth0, Authentik, etc.):**
+
+| Setting                              | Description                                      | Default                    | Options |
+| ------------------------------------ | ------------------------------------------------ | -------------------------- | ------- |
+| `SSO_GENERIC_ENABLED`               | Enable generic OIDC provider authentication      | `false`                    | bool    |
+| `SSO_GENERIC_PROVIDER_ID`           | Provider ID (e.g., keycloak, auth0, authentik)   | (none)                     | string  |
+| `SSO_GENERIC_DISPLAY_NAME`          | Display name shown on login page                 | (none)                     | string  |
+| `SSO_GENERIC_CLIENT_ID`             | Generic OIDC client ID                           | (none)                     | string  |
+| `SSO_GENERIC_CLIENT_SECRET`         | Generic OIDC client secret                       | (none)                     | string  |
+| `SSO_GENERIC_AUTHORIZATION_URL`     | Authorization endpoint URL                       | (none)                     | string  |
+| `SSO_GENERIC_TOKEN_URL`             | Token endpoint URL                               | (none)                     | string  |
+| `SSO_GENERIC_USERINFO_URL`          | Userinfo endpoint URL                            | (none)                     | string  |
+| `SSO_GENERIC_ISSUER`                | OIDC issuer URL                                  | (none)                     | string  |
+| `SSO_GENERIC_SCOPE`                 | OAuth scopes (space-separated)                   | `openid profile email`     | string  |
+
+**Okta OIDC:**
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_OKTA_ENABLED`            | Enable Okta OIDC authentication                  | `false`               | bool    |
+| `SSO_OKTA_CLIENT_ID`          | Okta client ID                                   | (none)                | string  |
+| `SSO_OKTA_CLIENT_SECRET`      | Okta client secret                               | (none)                | string  |
+| `SSO_OKTA_ISSUER`             | Okta issuer URL                                  | (none)                | string  |
+
+### OAuth 2.0 Dynamic Client Registration (DCR) & PKCE
+
+ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and **PKCE (RFC 7636)** for seamless integration with OAuth-protected MCP servers.
+
+| Setting                                     | Description                                                    | Default                        | Options       |
+|--------------------------------------------|----------------------------------------------------------------|--------------------------------|---------------|
+| `DCR_ENABLED`                              | Enable Dynamic Client Registration (RFC 7591)                  | `true`                         | bool          |
+| `DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | Auto-register when gateway has issuer but no client_id         | `true`                         | bool          |
+| `DCR_DEFAULT_SCOPES`                       | Default OAuth scopes to request during DCR                     | `["mcp:read"]`                 | JSON array    |
+| `DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
+| `DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
+| `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
+| `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
+| `DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED` | Request refresh_token when AS omits grant_types_supported    | `false`                        | bool          |
+| `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
+| `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
+
+### Personal Teams Configuration
+
+| Setting                                  | Description                                      | Default    | Options |
+| ---------------------------------------- | ------------------------------------------------ | ---------- | ------- |
+| `AUTO_CREATE_PERSONAL_TEAMS`             | Enable automatic personal team creation for new users | `true`   | bool    |
+| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix                      | `personal` | string  |
+| `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
+| `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |
+| `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
+| `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
+
+### MCP Server Catalog
+
+| Setting                              | Description                                      | Default            | Options |
+| ------------------------------------ | ------------------------------------------------ | ------------------ | ------- |
+| `MCPGATEWAY_CATALOG_ENABLED`        | Enable MCP server catalog feature                | `true`             | bool    |
+| `MCPGATEWAY_CATALOG_FILE`           | Path to catalog configuration file               | `mcp-catalog.yml`  | string  |
+| `MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK` | Automatically health check catalog servers    | `true`             | bool    |
+| `MCPGATEWAY_CATALOG_CACHE_TTL`      | Catalog cache TTL in seconds                     | `3600`             | int > 0 |
+| `MCPGATEWAY_CATALOG_PAGE_SIZE`      | Number of catalog servers per page               | `12`               | int > 0 |
+
+### Security
+
+| Setting                   | Description                    | Default                                        | Options    |
+| ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
+| `SKIP_SSL_VERIFY`         | Skip upstream TLS verification | `false`                                        | bool       |
+| `ENVIRONMENT`             | Deployment environment (affects security defaults) | `development`                              | `development`/`production` |
+| `APP_DOMAIN`              | Domain for production CORS origins | `http://localhost:4444`                     | string     |
+| `ALLOWED_ORIGINS`         | CORS allow-list                | Auto-configured by environment                 | JSON array |
+| `CORS_ENABLED`            | Enable CORS                    | `true`                                         | bool       |
+| `CORS_ALLOW_CREDENTIALS`  | Allow credentials in CORS      | `true`                                         | bool       |
+| `SECURE_COOKIES`          | Force secure cookie flags     | `true`                                         | bool       |
+| `COOKIE_SAMESITE`         | Cookie SameSite attribute      | `lax`                                          | `strict`/`lax`/`none` |
+| `SECURITY_HEADERS_ENABLED` | Enable security headers middleware | `true`                                     | bool       |
+| `X_FRAME_OPTIONS`         | X-Frame-Options header value   | `DENY`                                         | `DENY`/`SAMEORIGIN`/`""`/`null` |
+| `X_CONTENT_TYPE_OPTIONS_ENABLED` | Enable X-Content-Type-Options: nosniff header | `true`                           | bool       |
+| `X_XSS_PROTECTION_ENABLED` | Enable X-XSS-Protection header | `true`                                         | bool       |
+| `X_DOWNLOAD_OPTIONS_ENABLED` | Enable X-Download-Options: noopen header | `true`                              | bool       |
+| `HSTS_ENABLED`            | Enable HSTS header             | `true`                                         | bool       |
+| `HSTS_MAX_AGE`            | HSTS max age in seconds        | `31536000`                                     | int        |
+| `HSTS_INCLUDE_SUBDOMAINS` | Include subdomains in HSTS header | `true`                                      | bool       |
+| `REMOVE_SERVER_HEADERS`   | Remove server identification   | `true`                                         | bool       |
+| `MIN_SECRET_LENGTH`       | Minimum length for secret keys (JWT, encryption) | `32`                                | int        |
+| `MIN_PASSWORD_LENGTH`     | Minimum length for passwords   | `12`                                           | int        |
+| `REQUIRE_STRONG_SECRETS`  | Enforce strong secrets (fail startup on weak secrets) | `false`                        | bool       |
+
+!!! info "CORS Configuration"
+    When `ENVIRONMENT=development`, CORS origins are automatically configured for common development ports (3000, 8080, gateway port). In production, origins are constructed from `APP_DOMAIN`. Override with `ALLOWED_ORIGINS`.
+
+!!! info "iframe Embedding"
+    The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive:
+
+    - `X_FRAME_OPTIONS=DENY` (default): Blocks all iframe embedding
+    - `X_FRAME_OPTIONS=SAMEORIGIN`: Allows embedding from same domain only
+    - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
+    - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
+
+### Ed25519 Certificate Signing
+
+MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification.
+
+| Setting                     | Description                                      | Default | Options |
+| --------------------------- | ------------------------------------------------ | ------- | ------- |
+| `ENABLE_ED25519_SIGNING`    | Enable Ed25519 signing for certificates          | `false` | bool    |
+| `ED25519_PRIVATE_KEY`       | Ed25519 private key for signing (PEM format)     | (none)  | string  |
+| `PREV_ED25519_PRIVATE_KEY`  | Previous Ed25519 private key for key rotation    | (none)  | string  |
+
+**Key Generation:**
 
 ```bash
-# Standard HMAC configuration
-JWT_ALGORITHM=HS256
-JWT_SECRET_KEY=your-256-bit-secret-key-here
-JWT_AUDIENCE=mcpgateway-api
-JWT_ISSUER=mcpgateway
-JWT_AUDIENCE_VERIFICATION=true
-JWT_ISSUER_VERIFICATION=true
+# Generate a new Ed25519 key pair
+python mcpgateway/utils/generate_keys.py
 ```
 
-### RSA (Asymmetric) - Enterprise Deployments
+### Response Compression
 
-Ideal for distributed systems, microservices, and enterprise environments.
+MCP Gateway includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses.
 
-```bash
-# RSA configuration
-JWT_ALGORITHM=RS256
-JWT_PUBLIC_KEY_PATH=certs/jwt/public.pem      # Path to RSA public key
-JWT_PRIVATE_KEY_PATH=certs/jwt/private.pem    # Path to RSA private key
-JWT_AUDIENCE=mcpgateway-api
-JWT_ISSUER=mcpgateway
-JWT_AUDIENCE_VERIFICATION=true
-JWT_ISSUER_VERIFICATION=true
-```
+| Setting                       | Description                                       | Default | Options              |
+| ----------------------------- | ------------------------------------------------- | ------- | -------------------- |
+| `COMPRESSION_ENABLED`         | Enable response compression                       | `true`  | bool                 |
+| `COMPRESSION_MINIMUM_SIZE`    | Minimum response size in bytes to compress        | `500`   | int (0=compress all) |
+| `COMPRESSION_GZIP_LEVEL`      | GZip compression level (1=fast, 9=best)          | `6`     | int (1-9)            |
+| `COMPRESSION_BROTLI_QUALITY`  | Brotli quality (0-3=fast, 4-9=balanced, 10-11=max) | `4`   | int (0-11)           |
+| `COMPRESSION_ZSTD_LEVEL`      | Zstd level (1-3=fast, 4-9=balanced, 10+=slow)    | `3`     | int (1-22)           |
 
-#### Generate RSA Keys
+### Logging
 
-```bash
-# Option 1: Use Makefile (Recommended)
-make certs-jwt                   # Generates certs/jwt/{private,public}.pem with proper permissions
+| Setting                 | Description                        | Default           | Options                    |
+| ----------------------- | ---------------------------------- | ----------------- | -------------------------- |
+| `LOG_LEVEL`             | Minimum log level                  | `INFO`            | `DEBUG`...`CRITICAL`       |
+| `LOG_FORMAT`            | Console log format                 | `json`            | `json`, `text`             |
+| `LOG_REQUESTS`          | Enable detailed request logging    | `false`           | bool                       |
+| `LOG_DETAILED_MAX_BODY_SIZE` | Max request body size to log (bytes) | `16384`       | int                        |
+| `LOG_DETAILED_SKIP_ENDPOINTS` | Path prefixes to skip from detailed logging | `[]` | Comma-separated list       |
+| `LOG_DETAILED_SAMPLE_RATE` | Sampling rate for detailed logging | `1.0`            | float (0.0-1.0)            |
+| `LOG_RESOLVE_USER_IDENTITY` | Enable DB lookup for user identity | `false`         | bool                       |
+| `LOG_TO_FILE`           | Enable file logging                | `false`           | bool                       |
+| `LOG_FILE`              | Log filename (when enabled)        | `null`            | string                     |
+| `LOG_FOLDER`            | Directory for log files            | `null`            | path                       |
+| `LOG_FILEMODE`          | File write mode                    | `a+`              | `a+` (append), `w` (overwrite)|
+| `LOG_ROTATION_ENABLED`  | Enable log file rotation           | `false`           | bool                       |
+| `LOG_MAX_SIZE_MB`       | Max file size before rotation (MB) | `1`               | int                        |
+| `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | int                        |
+| `LOG_BUFFER_SIZE_MB`    | Size of in-memory log buffer (MB)  | `1.0`             | float > 0                  |
 
-# Option 2: Manual generation
-mkdir -p certs/jwt
-openssl genrsa -out certs/jwt/private.pem 4096
-openssl rsa -in certs/jwt/private.pem -pubout -out certs/jwt/public.pem
-chmod 600 certs/jwt/private.pem
-chmod 644 certs/jwt/public.pem
-```
+### Observability (OpenTelemetry)
 
-### ECDSA (Asymmetric) - High Performance
+MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed tracing. Works with Phoenix, Jaeger, Zipkin, Tempo, DataDog, New Relic, and any OTLP-compatible backend.
 
-Modern elliptic curve cryptography for performance-sensitive deployments.
+| Setting                         | Description                                    | Default               | Options                                    |
+| ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
+| `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
+| `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-BETA-2`               | string                                     |
+| `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
+| `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
+| `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
 
-```bash
-# ECDSA configuration
-JWT_ALGORITHM=ES256
-JWT_PUBLIC_KEY_PATH=certs/jwt/ec_public.pem
-JWT_PRIVATE_KEY_PATH=certs/jwt/ec_private.pem
-JWT_AUDIENCE=mcpgateway-api
-JWT_ISSUER=mcpgateway
-JWT_AUDIENCE_VERIFICATION=true
-```
+**OTLP Configuration:**
 
-#### Generate ECDSA Keys
+| Setting                         | Description                                    | Default               | Options                                    |
+| ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`   | OTLP collector endpoint                        | (none)                | `http://localhost:4317`                   |
+| `OTEL_EXPORTER_OTLP_PROTOCOL`   | OTLP protocol                                  | `grpc`                | `grpc`, `http/protobuf`                   |
+| `OTEL_EXPORTER_OTLP_HEADERS`    | Authentication headers                         | (empty)               | `api-key=secret,x-auth=token`             |
+| `OTEL_EXPORTER_OTLP_INSECURE`   | Skip TLS verification                          | `true`                | bool                                       |
 
-```bash
-# Option 1: Use Makefile (Recommended)
-make certs-jwt-ecdsa             # Generates certs/jwt/{ec_private,ec_public}.pem with proper permissions
+**Performance Tuning:**
 
-# Option 2: Manual generation
-mkdir -p certs/jwt
-openssl ecparam -genkey -name prime256v1 -noout -out certs/jwt/ec_private.pem
-openssl ec -in certs/jwt/ec_private.pem -pubout -out certs/jwt/ec_public.pem
-chmod 600 certs/jwt/ec_private.pem
-chmod 644 certs/jwt/ec_public.pem
-```
+| Setting                         | Description                                    | Default               | Options                                    |
+| ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
+| `OTEL_TRACES_SAMPLER`           | Sampling strategy                              | `parentbased_traceidratio` | `always_on`, `always_off`, `traceidratio` |
+| `OTEL_TRACES_SAMPLER_ARG`       | Sample rate (0.0-1.0)                         | `0.1`                 | float                                      |
+| `OTEL_BSP_MAX_QUEUE_SIZE`       | Max queued spans                              | `2048`                | int > 0                                    |
+| `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`| Max batch size for export                     | `512`                 | int > 0                                    |
+| `OTEL_BSP_SCHEDULE_DELAY`       | Export interval (ms)                          | `5000`                | int > 0                                    |
 
-### Dynamic Client Registration (DCR)
+### Internal Observability & Tracing
 
-For scenarios where JWT audience varies by client:
+The gateway includes built-in observability features for tracking HTTP requests, spans, and traces independent of OpenTelemetry.
 
-```bash
-JWT_ALGORITHM=RS256
-JWT_PUBLIC_KEY_PATH=certs/jwt/public.pem
-JWT_PRIVATE_KEY_PATH=certs/jwt/private.pem
-JWT_AUDIENCE_VERIFICATION=false         # Disable audience validation for DCR
-JWT_ISSUER_VERIFICATION=false           # Disable issuer validation for DCR
-JWT_ISSUER=your-identity-provider
-```
+| Setting                              | Description                                           | Default                                              | Options          |
+| ------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------- | ---------------- |
+| `OBSERVABILITY_ENABLED`              | Enable internal observability tracing and metrics     | `false`                                              | bool             |
+| `OBSERVABILITY_TRACE_HTTP_REQUESTS`  | Automatically trace HTTP requests                     | `true`                                               | bool             |
+| `OBSERVABILITY_TRACE_RETENTION_DAYS` | Number of days to retain trace data                   | `7`                                                  | int (≥ 1)        |
+| `OBSERVABILITY_MAX_TRACES`           | Maximum number of traces to retain                    | `100000`                                             | int (≥ 1000)     |
+| `OBSERVABILITY_SAMPLE_RATE`          | Trace sampling rate (0.0-1.0)                        | `1.0`                                                | float            |
+| `OBSERVABILITY_INCLUDE_PATHS`        | Regex patterns to include for tracing                | See defaults                                         | JSON array       |
+| `OBSERVABILITY_EXCLUDE_PATHS`        | Regex patterns to exclude (after include patterns)   | `["/health","/healthz","/ready","/metrics","/static/.*"]` | JSON array |
+| `OBSERVABILITY_METRICS_ENABLED`      | Enable metrics collection                             | `true`                                               | bool             |
+| `OBSERVABILITY_EVENTS_ENABLED`       | Enable event logging within spans                     | `true`                                               | bool             |
 
-### Security Considerations
+### Prometheus Metrics
 
-- **Key Storage**: Store private keys securely, never commit to version control
-- **Permissions**: Set restrictive file permissions (600) on private keys
-- **Key Rotation**: Implement regular key rotation procedures
-- **Path Security**: Use absolute paths or secure relative paths for key files
-- **Algorithm Choice**:
-  - Use RS256 for broad compatibility
-  - Use ES256 for better performance and smaller signatures
-  - Use HS256 only for simple, single-service deployments
+| Setting                      | Description                                              | Default   | Options          |
+| ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
+| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
+| `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
+| `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |
+| `METRICS_CUSTOM_LABELS`      | Static custom labels for app_info gauge                  | (empty)   | `key=value,...`  |
+
+### Metrics Cleanup & Rollup
+
+| Setting                              | Description                                      | Default  | Options     |
+| ------------------------------------ | ------------------------------------------------ | -------- | ----------- |
+| `DB_METRICS_RECORDING_ENABLED`       | Enable execution metrics recording               | `true`   | bool        |
+| `METRICS_CLEANUP_ENABLED`            | Enable automatic cleanup of old metrics          | `true`   | bool        |
+| `METRICS_RETENTION_DAYS`             | Days to retain raw metrics (fallback)            | `7`      | 1-365       |
+| `METRICS_CLEANUP_INTERVAL_HOURS`     | Hours between automatic cleanup runs             | `1`      | 1-168       |
+| `METRICS_CLEANUP_BATCH_SIZE`         | Batch size for deletion (prevents long locks)    | `10000`  | 100-100000  |
+| `METRICS_ROLLUP_ENABLED`             | Enable hourly metrics rollup                     | `true`   | bool        |
+| `METRICS_ROLLUP_INTERVAL_HOURS`      | Hours between rollup runs                        | `1`      | 1-24        |
+| `METRICS_ROLLUP_RETENTION_DAYS`      | Days to retain hourly rollup data                | `365`    | 30-3650     |
+| `METRICS_ROLLUP_LATE_DATA_HOURS`     | Hours to re-process for late-arriving data       | `1`      | 1-48        |
+| `METRICS_DELETE_RAW_AFTER_ROLLUP`    | Delete raw metrics after rollup exists           | `true`   | bool        |
+| `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` | Hours to retain raw when rollup exists        | `1`      | 1-8760      |
+| `USE_POSTGRESDB_PERCENTILES`         | Use PostgreSQL-native percentile_cont            | `true`   | bool        |
+| `YIELD_BATCH_SIZE`                   | Rows per batch when streaming rollup queries     | `1000`   | 100-10000   |
+
+### Transport
+
+| Setting                   | Description                        | Default | Options                         |
+| ------------------------- | ---------------------------------- | ------- | ------------------------------- |
+| `TRANSPORT_TYPE`          | Enabled transports                 | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
+| `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
+| `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
+| `SSE_KEEPALIVE_ENABLED`   | Enable SSE keepalive events        | `true`  | bool                            |
+| `SSE_KEEPALIVE_INTERVAL`  | SSE keepalive interval (secs)      | `30`    | int > 0                         |
+| `USE_STATEFUL_SESSIONS`   | streamable http config             | `false` | bool                            |
+| `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
+
+### Federation
+
+| Setting                    | Description            | Default | Options    |
+| -------------------------- | ---------------------- | ------- | ---------- |
+| `FEDERATION_TIMEOUT`       | Gateway timeout (secs) | `30`    | int > 0    |
+
+### Resources
+
+| Setting               | Description           | Default    | Options    |
+| --------------------- | --------------------- | ---------- | ---------- |
+| `RESOURCE_CACHE_SIZE` | LRU cache size        | `1000`     | int > 0    |
+| `RESOURCE_CACHE_TTL`  | Cache TTL (seconds)   | `3600`     | int > 0    |
+| `MAX_RESOURCE_SIZE`   | Max resource bytes    | `10485760` | int > 0    |
+| `ALLOWED_MIME_TYPES`  | Acceptable MIME types | see code   | JSON array |
+
+### Tools
+
+| Setting                 | Description                    | Default | Options |
+| ----------------------- | ------------------------------ | ------- | ------- |
+| `TOOL_TIMEOUT`          | Tool invocation timeout (secs) | `60`    | int > 0 |
+| `MAX_TOOL_RETRIES`      | Max retry attempts             | `3`     | int ≥ 0 |
+| `TOOL_RATE_LIMIT`       | Tool calls per minute          | `100`   | int > 0 |
+| `TOOL_CONCURRENT_LIMIT` | Concurrent tool invocations    | `10`    | int > 0 |
+| `GATEWAY_TOOL_NAME_SEPARATOR` | Tool name separator for gateway routing | `-`     | `-`, `--`, `_`, `.` |
+
+### Prompts
+
+| Setting                 | Description                      | Default  | Options |
+| ----------------------- | -------------------------------- | -------- | ------- |
+| `PROMPT_CACHE_SIZE`     | Cached prompt templates          | `100`    | int > 0 |
+| `MAX_PROMPT_SIZE`       | Max prompt template size (bytes) | `102400` | int > 0 |
+| `PROMPT_RENDER_TIMEOUT` | Jinja render timeout (secs)      | `10`     | int > 0 |
+
+### Health Checks
+
+| Setting                 | Description                               | Default | Options |
+| ----------------------- | ----------------------------------------- | ------- | ------- |
+| `HEALTH_CHECK_INTERVAL` | Health poll interval (secs)               | `60`    | int > 0 |
+| `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `5`     | int > 0 |
+| `GATEWAY_HEALTH_CHECK_TIMEOUT` | Per-check timeout for gateway health check (secs) | `5.0` | float > 0 |
+| `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation (-1 to disable) | `3`     | int     |
+| `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
+| `MAX_CONCURRENT_HEALTH_CHECKS` | Max concurrent health checks        | `20`    | int > 0 |
+| `AUTO_REFRESH_SERVERS` | Auto refresh tools/prompts/resources        | `false` | bool    |
+| `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
+| `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
+
+### Database Connection Pool
+
+| Setting                 | Description                     | Default | Options |
+| ----------------------- | ------------------------------- | ------- | ------- |
+| `DB_POOL_SIZE`          | SQLAlchemy connection pool size | `200`   | int > 0 |
+| `DB_MAX_OVERFLOW`       | Extra connections beyond pool   | `10`    | int ≥ 0 |
+| `DB_POOL_TIMEOUT`       | Wait for connection (secs)      | `30`    | int > 0 |
+| `DB_POOL_RECYCLE`       | Recycle connections (secs)      | `3600`  | int > 0 |
+| `DB_MAX_RETRIES`        | Max retry attempts at startup   | `30`    | int > 0 |
+| `DB_RETRY_INTERVAL_MS`  | Base retry interval (ms)        | `2000`  | int > 0 |
+| `DB_SQLITE_BUSY_TIMEOUT`| SQLite lock wait timeout (ms)   | `5000`  | 1000-60000 |
+| `DB_POOL_CLASS`         | Pool class selection            | `auto`  | `auto`, `null`, `queue` |
+| `DB_POOL_PRE_PING`      | Validate connections before use | `auto`  | `auto`, `true`, `false` |
+
+### Cache Backend
+
+| Setting                   | Description                | Default    | Options                  |
+| ------------------------- | -------------------------- | ---------- | ------------------------ |
+| `CACHE_TYPE`              | Backend type               | `database` | `none`, `memory`, `database`, `redis` |
+| `REDIS_URL`               | Redis connection URL       | (none)     | string                   |
+| `CACHE_PREFIX`            | Key prefix                 | `mcpgw:`   | string                   |
+| `SESSION_TTL`             | Session validity (secs)    | `3600`     | int > 0                  |
+| `MESSAGE_TTL`             | Message retention (secs)   | `600`      | int > 0                  |
+| `REDIS_MAX_RETRIES`       | Max retry attempts         | `30`       | int > 0                  |
+| `REDIS_RETRY_INTERVAL_MS` | Base retry interval (ms)   | `2000`     | int > 0                  |
+| `REDIS_MAX_CONNECTIONS`   | Connection pool size       | `50`       | int > 0                  |
+| `REDIS_SOCKET_TIMEOUT`    | Socket timeout (secs)      | `2.0`      | float > 0                |
+| `REDIS_SOCKET_CONNECT_TIMEOUT` | Connect timeout (secs) | `2.0`     | float > 0                |
+| `REDIS_RETRY_ON_TIMEOUT`  | Retry on timeout           | `true`     | bool                     |
+| `REDIS_HEALTH_CHECK_INTERVAL` | Health check (secs)    | `30`       | int >= 0                 |
+| `REDIS_DECODE_RESPONSES`  | Return strings vs bytes    | `true`     | bool                     |
+| `REDIS_LEADER_TTL`        | Leader election TTL (secs) | `15`       | int > 0                  |
+| `REDIS_LEADER_KEY`        | Leader key name            | `gateway_service_leader` | string |
+| `REDIS_LEADER_HEARTBEAT_INTERVAL` | Heartbeat (secs)   | `5`        | int > 0                  |
+
+!!! tip "Cache Backend Selection"
+    Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances. `none` disables caching entirely.
+
+### Tool Lookup Cache
+
+| Setting                               | Description                                                     | Default | Options          |
+| ------------------------------------- | --------------------------------------------------------------- | ------- | ---------------- |
+| `TOOL_LOOKUP_CACHE_ENABLED`           | Enable tool lookup cache for `invoke_tool` hot path             | `true`  | bool             |
+| `TOOL_LOOKUP_CACHE_TTL_SECONDS`       | Cache TTL (seconds) for tool lookup entries                     | `60`    | int (5-600)      |
+| `TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS` | Cache TTL (seconds) for missing/inactive/offline entries     | `10`    | int (1-60)       |
+| `TOOL_LOOKUP_CACHE_L1_MAXSIZE`        | Max entries in in-memory L1 cache                               | `10000` | int              |
+| `TOOL_LOOKUP_CACHE_L2_ENABLED`        | Enable Redis-backed L2 cache when `CACHE_TYPE=redis`            | `true`  | bool             |
+
+### Metrics Aggregation Cache
+
+| Setting                     | Description                           | Default | Options    |
+| --------------------------- | ------------------------------------- | ------- | ---------- |
+| `METRICS_CACHE_ENABLED`     | Enable metrics query caching          | `true`  | bool       |
+| `METRICS_CACHE_TTL_SECONDS` | Cache TTL (seconds)                   | `60`    | int (1-300)|
+
+### MCP Session Pool
+
+| Setting                                   | Description                                        | Default | Options     |
+| ----------------------------------------- | -------------------------------------------------- | ------- | ----------- |
+| `MCP_SESSION_POOL_ENABLED`                | Enable session pooling (10-20x latency improvement)| `false` | bool        |
+| `MCP_SESSION_POOL_MAX_PER_KEY`            | Max sessions per (URL, identity, transport)        | `10`    | int (1-100) |
+| `MCP_SESSION_POOL_TTL`                    | Session TTL before forced close (seconds)          | `300`   | float       |
+| `MCP_SESSION_POOL_TRANSPORT_TIMEOUT`      | Timeout for all HTTP operations (seconds)          | `30`    | float       |
+| `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL`  | Idle time before health check (seconds)            | `60`    | float       |
+| `MCP_SESSION_POOL_ACQUIRE_TIMEOUT`        | Timeout waiting for session slot (seconds)         | `30`    | float       |
+| `MCP_SESSION_POOL_CREATE_TIMEOUT`         | Timeout creating new session (seconds)             | `30`    | float       |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` | Failures before circuit opens                   | `5`     | int         |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET`  | Seconds before circuit resets                      | `60`    | float       |
+| `MCP_SESSION_POOL_IDLE_EVICTION`          | Evict idle pool keys after (seconds)               | `600`   | float       |
+| `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC`    | Force explicit RPC on health checks                | `false` | bool        |
+
+!!! tip "Session Pool Performance"
+    Session pooling reduces per-request overhead from ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant via identity hashing.
+
+### Development
+
+| Setting    | Description            | Default | Options |
+| ---------- | ---------------------- | ------- | ------- |
+| `DEV_MODE` | Enable dev mode        | `false` | bool    |
+| `RELOAD`   | Auto-reload on changes | `false` | bool    |
+| `DEBUG`    | Debug logging          | `false` | bool    |
+
+### Well-Known URI Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `WELL_KNOWN_ENABLED`          | Enable well-known URI endpoints (/.well-known/*) | `true`                | bool    |
+| `WELL_KNOWN_ROBOTS_TXT`       | robots.txt content                               | (blocks crawlers)     | string  |
+| `WELL_KNOWN_SECURITY_TXT`     | security.txt content (RFC 9116)                 | (empty)               | string  |
+| `WELL_KNOWN_SECURITY_TXT_ENABLED` | Enable security.txt endpoint                 | `false`               | bool    |
+| `WELL_KNOWN_CUSTOM_FILES`     | Additional custom well-known files (JSON)       | `{}`                  | JSON object |
+| `WELL_KNOWN_CACHE_MAX_AGE`    | Cache control for well-known files (seconds)    | `3600`                | int > 0 |
+
+### Header Passthrough Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `ENABLE_HEADER_PASSTHROUGH`   | Enable HTTP header passthrough feature           | `false`               | bool    |
+| `ENABLE_OVERWRITE_BASE_HEADERS` | Enable overwriting of base headers             | `false`               | bool    |
+| `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through (JSON array)    | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
+| `GLOBAL_CONFIG_CACHE_TTL`     | In-memory cache TTL for GlobalConfig (seconds)  | `60`                  | int     |
+
+!!! warning "Security Warning"
+    Header passthrough is disabled by default for security. Only enable if you understand the implications.
+
+### Plugin Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
+| `PLUGIN_CONFIG_FILE`          | Path to main plugin configuration file          | `plugins/config.yaml` | string  |
+| `PLUGINS_CLIENT_MTLS_CA_BUNDLE`      | Default CA bundle for external plugin mTLS | (empty)               | string  |
+| `PLUGINS_CLIENT_MTLS_CERTFILE`       | Gateway client certificate for plugin mTLS | (empty)               | string  |
+| `PLUGINS_CLIENT_MTLS_KEYFILE`        | Gateway client key for plugin mTLS         | (empty)               | string  |
+| `PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD` | Password for plugin client key           | (empty)               | string  |
+| `PLUGINS_CLIENT_MTLS_VERIFY`         | Verify remote plugin certificates          | `true`                | bool    |
+| `PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME` | Enforce hostname verification for plugins  | `true`                | bool    |
+| `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
+| `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
+
+### HTTP Retry Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `RETRY_MAX_ATTEMPTS`          | Maximum retry attempts for HTTP requests         | `3`                   | int > 0 |
+| `RETRY_BASE_DELAY`            | Base delay between retries (seconds)             | `1.0`                 | float > 0 |
+| `RETRY_MAX_DELAY`             | Maximum delay between retries (seconds)          | `60`                  | int > 0 |
+| `RETRY_JITTER_MAX`            | Maximum jitter fraction of base delay            | `0.5`                 | float 0-1 |
+
+### CPU Spin Loop Mitigation
+
+These settings mitigate CPU spin loops that can occur when SSE/MCP connections are cancelled.
+
+**Layer 1: SSE Connection Protection**
+
+| Setting                    | Description                                              | Default | Options     |
+| -------------------------- | -------------------------------------------------------- | ------- | ----------- |
+| `SSE_SEND_TIMEOUT`         | ASGI send() timeout - protects against hung connections | `30.0`  | float       |
+| `SSE_RAPID_YIELD_WINDOW_MS`| Time window for rapid yield detection (milliseconds)    | `1000`  | int > 0     |
+| `SSE_RAPID_YIELD_MAX`      | Max yields per window before assuming client dead       | `50`    | int         |
+
+**Layer 2: Cleanup Timeouts**
+
+| Setting                          | Description                                        | Default | Options |
+| -------------------------------- | -------------------------------------------------- | ------- | ------- |
+| `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | Session `__aexit__` timeout (seconds)            | `5.0`   | float > 0 |
+| `SSE_TASK_GROUP_CLEANUP_TIMEOUT`   | SSE task group cleanup timeout (seconds)         | `5.0`   | float > 0 |
+
+**Layer 3: EXPERIMENTAL - anyio Monkey-Patch**
+
+| Setting                                  | Description                                                   | Default | Options |
+| ---------------------------------------- | ------------------------------------------------------------- | ------- | ------- |
+| `ANYIO_CANCEL_DELIVERY_PATCH_ENABLED`    | Enable anyio `_deliver_cancellation` iteration limit          | `false` | bool    |
+| `ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS`   | Max iterations before forcing termination                     | `100`   | int > 0 |
 
 ---
 
@@ -886,10 +966,8 @@ services:
   gateway:
     image: ghcr.io/ibm/mcp-context-forge:latest
     ports:
-
       - "4444:4444"
     environment:
-
       - DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=my-secret-key
@@ -902,13 +980,11 @@ services:
   mysql:
     image: mysql:8
     environment:
-
       - MYSQL_ROOT_PASSWORD=mysecretpassword
       - MYSQL_DATABASE=mcp
       - MYSQL_USER=mysql
       - MYSQL_PASSWORD=changeme
     volumes:
-
       - mysql_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
@@ -919,7 +995,6 @@ services:
   redis:
     image: redis:7
     volumes:
-
       - redis_data:/data
 
 volumes:
@@ -967,28 +1042,21 @@ spec:
         app: mysql
     spec:
       containers:
-
         - name: mysql
           image: mysql:8
           env:
-
             - name: MYSQL_ROOT_PASSWORD
               value: "mysecretpassword"
-
             - name: MYSQL_DATABASE
               value: "mcp"
-
             - name: MYSQL_USER
               value: "mysql"
-
             - name: MYSQL_PASSWORD
               value: "changeme"
           volumeMounts:
-
             - name: mysql-storage
               mountPath: /var/lib/mysql
       volumes:
-
         - name: mysql-storage
           persistentVolumeClaim:
             claimName: mysql-pvc
@@ -1001,234 +1069,9 @@ spec:
   selector:
     app: mysql
   ports:
-
     - port: 3306
       targetPort: 3306
 ```
-
----
-
-## 🔧 Advanced Configuration
-
-### Performance Tuning
-
-```bash
-# Database connection pool
-DB_POOL_CLASS=auto               # auto, null (PgBouncer), or queue
-DB_POOL_SIZE=200                 # Pool size (QueuePool only)
-DB_MAX_OVERFLOW=5                # Overflow connections (QueuePool only)
-DB_POOL_TIMEOUT=60               # Connection wait timeout
-DB_POOL_RECYCLE=3600             # Recycle connections (seconds)
-DB_POOL_PRE_PING=auto            # Validate connections: auto, true, false
-
-# Tool execution
-TOOL_TIMEOUT=120
-MAX_TOOL_RETRIES=5
-TOOL_CONCURRENT_LIMIT=10
-```
-
-### Execution Metrics Recording
-
-Control whether execution metrics are recorded to the database:
-
-```bash
-DB_METRICS_RECORDING_ENABLED=true   # Record execution metrics (default)
-DB_METRICS_RECORDING_ENABLED=false  # Disable execution metrics database writes
-```
-
-**What are execution metrics?**
-
-Each MCP operation (tool call, resource read, prompt get, etc.) records one database row with:
-
-- Entity ID (tool_id, resource_id, etc.)
-- Timestamp
-- Response time (seconds)
-- Success/failure status
-- Error message (if failed)
-- Interaction type (A2A metrics only)
-
-**When disabled:**
-
-- No new rows written to `ToolMetric`, `ResourceMetric`, `PromptMetric`, `ServerMetric`, `A2AAgentMetric` tables
-- Existing metrics remain queryable until cleanup removes them
-- Cleanup and rollup services still run (they process existing data)
-- Admin UI metrics pages show no new data
-
-**Use cases for disabling:**
-
-- External observability platforms handle all metrics (ELK, Datadog, Splunk, Grafana)
-- Minimal database footprint deployments
-- High-throughput environments where per-operation DB writes are costly
-
-**Related settings (separate systems):**
-
-| Setting | What it controls |
-|---------|------------------|
-| `METRICS_AGGREGATION_ENABLED` | Log aggregation into `PerformanceMetric` table |
-| `ENABLE_METRICS` | Prometheus `/metrics` endpoint |
-| `OBSERVABILITY_METRICS_ENABLED` | Internal observability system |
-
-To fully minimize metrics database writes, disable both:
-
-```bash
-DB_METRICS_RECORDING_ENABLED=false   # Disable execution metrics
-METRICS_AGGREGATION_ENABLED=false    # Disable log aggregation
-```
-
-### Metrics Cleanup and Rollup
-
-!!! tip "Automatic Metrics Management"
-    MCP Gateway automatically manages metrics data to prevent unbounded table growth while preserving historical analytics through hourly rollups.
-
-#### Understanding Raw vs Rollup Metrics
-
-**Raw metrics** store individual execution events (timestamp, response time, success/failure, error message). **Hourly rollups** aggregate these into summary statistics (counts, averages, p50/p95/p99 percentiles).
-
-| Use Case | Raw Metrics Needed? |
-|----------|---------------------|
-| Dashboard charts (latency percentiles) | No - rollups have p50/p95/p99 |
-| Error rate monitoring | No - rollups have success/failure counts |
-| Debugging specific failures | Yes - need exact error messages |
-| Identifying slowest requests | Yes - need individual rows |
-
-#### External Observability Integration
-
-If you use external observability platforms (ELK Stack, Datadog, Splunk, Grafana/Loki, CloudWatch, OpenTelemetry), raw metrics in the gateway database are typically redundant. Your external platform handles:
-
-- Detailed request logs and traces
-- Error message search and filtering
-- Individual request debugging
-- Compliance audit trails
-
-With external observability, the gateway's hourly rollups provide efficient aggregated analytics, while raw metrics can be deleted quickly (1 hour default).
-
-#### Configuration Reference
-
-**Cleanup Settings:**
-
-```bash
-METRICS_CLEANUP_ENABLED=true           # Enable automatic cleanup (default: true)
-METRICS_CLEANUP_INTERVAL_HOURS=1       # Hours between cleanup runs (default: 1)
-METRICS_RETENTION_DAYS=7               # Fallback retention when rollup disabled (default: 7)
-METRICS_CLEANUP_BATCH_SIZE=10000       # Batch size for deletion (default: 10000)
-```
-
-**Rollup Settings:**
-
-```bash
-METRICS_ROLLUP_ENABLED=true            # Enable hourly rollup (default: true)
-METRICS_ROLLUP_INTERVAL_HOURS=1        # Hours between rollup runs (default: 1)
-METRICS_ROLLUP_RETENTION_DAYS=365      # Rollup data retention (default: 365)
-METRICS_ROLLUP_LATE_DATA_HOURS=1       # Hours to re-process for late data (default: 1)
-```
-
-**Raw Metrics Deletion (when rollups exist):**
-
-```bash
-METRICS_DELETE_RAW_AFTER_ROLLUP=true   # Delete raw after rollup (default: true)
-METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=1  # Hours before deletion (default: 1)
-```
-
-**Performance Optimization (PostgreSQL):**
-
-```bash
-USE_POSTGRESDB_PERCENTILES=true  # Use PostgreSQL-native percentile_cont (default: true)
-YIELD_BATCH_SIZE=1000            # Rows per batch for streaming queries (default: 1000)
-```
-
-When `USE_POSTGRESDB_PERCENTILES=true` (default), PostgreSQL uses native `percentile_cont()` for p50/p95/p99 calculations, which is 5-10x faster than Python-based percentile computation. For SQLite or when disabled, falls back to Python linear interpolation.
-
-`YIELD_BATCH_SIZE` controls memory usage by streaming query results in batches instead of loading all rows into RAM at once.
-
-#### Configuration Examples
-
-**Default (recommended for most deployments):**
-Raw metrics deleted after 1 hour, hourly rollups retained for 1 year.
-
-**Without external observability (need debugging from raw data):**
-```bash
-METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS=168  # Keep raw data 7 days for debugging
-```
-
-**Disable raw deletion (compliance/audit requirements):**
-```bash
-METRICS_DELETE_RAW_AFTER_ROLLUP=false   # Keep all raw metrics
-METRICS_RETENTION_DAYS=90               # Delete raw after 90 days via cleanup
-```
-
-**Admin API Endpoints:**
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/metrics/cleanup` | POST | Trigger manual cleanup |
-| `/api/metrics/rollup` | POST | Trigger manual rollup |
-| `/api/metrics/stats` | GET | Get cleanup/rollup statistics |
-| `/api/metrics/config` | GET | Get current configuration |
-
-**Deletion behavior:**
-- Deleted tools/resources/prompts/servers are removed from Top Performers by default, but historical rollups remain for reporting.
-- To permanently erase metrics for a deleted entity, use the Admin UI delete prompt and choose **Purge metrics**, or call the delete endpoints with `?purge_metrics=true`.
-- Purge deletes use batched deletes sized by `METRICS_CLEANUP_BATCH_SIZE` to reduce long table locks on large datasets.
-
-See [ADR-030: Metrics Cleanup and Rollup](../architecture/adr/030-metrics-cleanup-rollup.md) for architecture details.
-
-### Security Hardening
-
-```bash
-# Enable all security features
-SECURITY_HEADERS_ENABLED=true
-CORS_ALLOW_CREDENTIALS=false
-AUTH_REQUIRED=true
-REQUIRE_TOKEN_EXPIRATION=true
-TOKEN_EXPIRY=60
-```
-
-### OpenTelemetry Observability
-
-```bash
-# OpenTelemetry (Phoenix, Jaeger, etc.)
-OTEL_ENABLE_OBSERVABILITY=true
-OTEL_TRACES_EXPORTER=otlp
-OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:4317
-OTEL_EXPORTER_OTLP_PROTOCOL=grpc
-OTEL_SERVICE_NAME=mcp-gateway
-```
-
-### Internal Observability System
-
-MCP Gateway includes a built-in observability system that stores traces and metrics in the database, providing performance analytics and error tracking through the Admin UI.
-
-```bash
-# Enable internal observability (database-backed tracing)
-OBSERVABILITY_ENABLED=false
-
-# Automatically trace HTTP requests
-OBSERVABILITY_TRACE_HTTP_REQUESTS=true
-
-# Trace retention (days)
-OBSERVABILITY_TRACE_RETENTION_DAYS=7
-
-# Maximum traces to retain (prevents unbounded growth)
-OBSERVABILITY_MAX_TRACES=100000
-
-# Trace sampling rate (0.0-1.0)
-# 1.0 = trace everything, 0.1 = trace 10% of requests
-OBSERVABILITY_SAMPLE_RATE=1.0
-
-# Paths to include for tracing (JSON array of regex patterns)
-OBSERVABILITY_INCLUDE_PATHS=["^/rpc/?$","^/sse$","^/message$","^/mcp(?:/|$)","^/servers/[^/]+/mcp/?$","^/servers/[^/]+/sse$","^/servers/[^/]+/message$","^/a2a(?:/|$)"]
-
-# Paths to exclude from tracing (JSON array of regex patterns, applied after include patterns)
-OBSERVABILITY_EXCLUDE_PATHS=["/health","/healthz","/ready","/metrics","/static/.*"]
-
-# Enable metrics collection
-OBSERVABILITY_METRICS_ENABLED=true
-
-# Enable event logging within spans
-OBSERVABILITY_EVENTS_ENABLED=true
-```
-
-See the [Internal Observability Guide](observability/internal-observability.md) for detailed usage instructions including Admin UI dashboards, performance metrics, and trace analysis.
 
 ---
 
@@ -1239,3 +1082,6 @@ See the [Internal Observability Guide](observability/internal-observability.md) 
 - [Kubernetes Deployment](../deployment/kubernetes.md)
 - [Backup & Restore](backup.md)
 - [Logging Configuration](logging.md)
+- [SSO Configuration](sso.md)
+- [OAuth Configuration](oauth.md)
+- [MCP Server Catalog](catalog.md)

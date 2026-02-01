@@ -79,11 +79,11 @@ graph TB
 
 | Feature | URL/Command | Actions | Expected Result | Status | Notes |
 |---------|-------------|---------|-----------------|--------|-------|
-| Set Gateway URL | `export GW_URL=http://localhost:4444` | Set base URL (can be remote) | Variable exported | ☐ | Change to your gateway URL if remote |
+| Set Gateway URL | `export GW_URL=http://localhost:4444` | Set base URL (can be remote) | Variable exported | ☐ | Use 8080 for docker-compose, 4444 for make serve, 8000 for make dev |
 | Install Gateway Package | `pip install mcp-contextforge-gateway` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation and wrapper testing |
 | Generate JWT Token | `export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)` | Generate auth token using installed package | Token generated and exported | ☐ | Default expiry 10080 (7 days) |
-| Verify Health | `curl -s $GW_URL/health` | GET request (no auth required) | `{"status":"ok"}` | ☐ | Basic connectivity check |
-| Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"ready":true,"database":"ok","redis":"ok"}` | ☐ | All subsystems ready |
+| Verify Health | `curl -s $GW_URL/health` | GET request (no auth required) | `{"status":"healthy"}` | ☐ | Basic connectivity check |
+| Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"status":"ready"}` | ☐ | Returns 503 with `{"status":"not ready","error":"..."}` when not ready |
 | Test Auth Required | `curl -s $GW_URL/version` | GET without auth | `{"detail":"Not authenticated"}` | ☐ | Confirms auth is enforced |
 | Test Auth Works | `curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/version \| jq '.app.name'` | GET with auth | `"MCP_Gateway"` | ☐ | JWT authentication working |
 
@@ -344,7 +344,7 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
-| XSS in Tool Name | `curl -X POST $GW_URL/tools -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "<script>alert(1)</script>", "url": "https://example.com"}'` | Attempt XSS | 422 - `"Tool name must start with a letter and contain only letters, numbers, and underscore"` | ☐ | Input sanitization |
+| XSS in Tool Name | `curl -X POST $GW_URL/tools -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "<script>alert(1)</script>", "url": "https://example.com"}'` | Attempt XSS | 422 - `"Tool name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes"` | ☐ | Input sanitization |
 | SQL Injection Pattern | `curl -X POST $GW_URL/admin/tools -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/x-www-form-urlencoded" -d 'name=tool"; DROP TABLE tools; --&url=https://example.com&integrationType=REST&requestType=GET'` | SQL injection | 400/500 - Validation error | ☐ | Pattern blocked |
 | Invalid URL Scheme | `curl -X POST $GW_URL/tools -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "test_tool", "url": "javascript:alert(1)"}'` | JavaScript URL | 422 - `"Tool URL must start with one of: http://, https://, ws://, wss://"` | ☐ | URL validation |
 | Directory Traversal | `curl -X POST $GW_URL/admin/resources -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/x-www-form-urlencoded" -d 'uri=../../etc/passwd&name=test&content=data'` | Path traversal | 500 - `"Resource URI cannot contain directory traversal sequences"` | ☐ | Path validation |
@@ -440,45 +440,50 @@ Overall test completion: **___%** | Total Tests: **___** | Passed: **___** | Fai
 
 ### Issue Summary
 
+Use this section as a template. Replace each `TBD` item with actual findings from the acceptance run.
+
 #### 🔴 Critical Issues
-1.
-2.
-3.
+1. TBD
+2. TBD
+3. TBD
 
 #### 🟡 Major Issues
-1.
-2.
-3.
+1. TBD
+2. TBD
+3. TBD
 
 #### 🟢 Minor Issues
-1.
-2.
-3.
+1. TBD
+2. TBD
+3. TBD
 
 ### Recommendations
 
 1. **Immediate Actions**:
-   -
-   -
-   -
+
+   - TBD
+   - TBD
+   - TBD
 
 2. **Short-term**:
-   -
-   -
-   -
+
+   - TBD
+   - TBD
+   - TBD
 
 3. **Long-term**:
-   -
-   -
-   -
+
+   - TBD
+   - TBD
+   - TBD
 
 ### Test Environment Notes
 
-- **Performance**:
-- **Stability**:
-- **Federation**:
-- **Compatibility**:
+- **Performance**: TBD
+- **Stability**: TBD
+- **Federation**: TBD
+- **Compatibility**: TBD
 
 ---
 
-**Next Test Cycle**:
+**Next Test Cycle**: TBD

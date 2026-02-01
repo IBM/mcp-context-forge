@@ -24,7 +24,6 @@ class TestAPIEndpoints:
         data = response.json()
         assert data["status"] == "healthy"
 
-    @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
     def test_list_servers(self, api_request_context: APIRequestContext):
         """Test list servers endpoint."""
         response = api_request_context.get("/servers")
@@ -33,7 +32,6 @@ class TestAPIEndpoints:
         servers = response.json()
         assert isinstance(servers, list)
 
-    @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
     def test_list_tools(self, api_request_context: APIRequestContext):
         """Test list tools endpoint."""
         response = api_request_context.get("/tools")
@@ -42,7 +40,6 @@ class TestAPIEndpoints:
         tools = response.json()
         assert isinstance(tools, list)
 
-    @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
     def test_rpc_endpoint(self, api_request_context: APIRequestContext):
         """Test JSON-RPC endpoint."""
         payload = {"jsonrpc": "2.0", "id": 1, "method": "system.listMethods", "params": {}}
@@ -54,14 +51,14 @@ class TestAPIEndpoints:
         assert result.get("jsonrpc") == "2.0"
         assert "result" in result or "error" in result
 
-    @pytest.mark.skip(reason="Temporarily disabled for demonstration purposes")
-    def test_api_docs_accessible(self, page: Page, base_url: str):
+    def test_api_docs_accessible(self, admin_page: Page, base_url: str):
         """Test that API documentation is accessible."""
+        import re
         # Test Swagger UI
-        page.goto(f"{base_url}/docs")
-        expect(page).to_have_title("MCP Gateway - Swagger UI")
-        assert page.is_visible(".swagger-ui")
+        admin_page.goto(f"{base_url}/docs")
+        expect(admin_page).to_have_title(re.compile(r"MCP[ _]Gateway - Swagger UI"))
+        assert admin_page.is_visible(".swagger-ui")
 
         # Test ReDoc
-        page.goto(f"{base_url}/redoc")
-        assert page.is_visible("#redoc")
+        admin_page.goto(f"{base_url}/redoc")
+        expect(admin_page).to_have_title(re.compile(r"ReDoc", re.IGNORECASE))

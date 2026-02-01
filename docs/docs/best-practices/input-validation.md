@@ -86,6 +86,7 @@ uri = "/srv/data/../../secret.txt"
 ```
 
 **Implementation**:
+
 - Normalizes paths using `Path.resolve()`
 - Checks for `..` sequences
 - Validates against `ALLOWED_ROOTS`
@@ -104,6 +105,7 @@ filename = "bobbytables.jpg; cat /etc/passwd"
 ```
 
 **Protected Patterns**:
+
 - Shell metacharacters: `; & | \` $ ( ) { } [ ] < >`
 - Command chaining: `&&`, `||`, `;`
 - Pipe operators: `|`
@@ -122,6 +124,7 @@ param = "'; DROP TABLE users; --"
 ```
 
 **Protected Patterns**:
+
 - Quote characters: `'`, `"`
 - SQL comments: `--`, `/* */`
 - SQL keywords: `UNION`, `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `DROP`
@@ -141,6 +144,7 @@ clean = "Result: Error"
 ```
 
 **Sanitization Rules**:
+
 - Removes C0 control characters (0x00-0x1F) except newlines/tabs
 - Removes ANSI escape sequences
 - Removes C1 control characters (0x7F-0x9F)

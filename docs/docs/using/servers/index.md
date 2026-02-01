@@ -80,13 +80,21 @@ make build && make run
 
 All sample servers are designed to integrate seamlessly with the MCP Gateway:
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ### **Direct Registration**
 ```bash
+# Set the gateway base URL
+export BASE_URL="http://localhost:4444"
+# export BASE_URL="http://localhost:8080"  # docker-compose with nginx
+
 # Register any sample server with the gateway
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"name":"sample_server","url":"http://localhost:8080/sse"}' \
-     http://localhost:4444/gateways
+     $BASE_URL/gateways
 ```
 
 ### **Via Translate Bridge**
@@ -102,7 +110,7 @@ python3 -m mcpgateway.translate \
 ```bash
 # Test through mcpgateway.wrapper
 export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1'
+export MCP_SERVER_URL="$BASE_URL/servers/UUID_OF_SERVER_1"
 python3 -m mcpgateway.wrapper
 ```
 

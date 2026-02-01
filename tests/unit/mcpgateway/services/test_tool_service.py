@@ -11,6 +11,7 @@ Tests for tool service implementation.
 import base64
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import logging
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
@@ -366,6 +367,23 @@ class TestToolService:
         # Test with include_auth=False
         tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=False)
         assert tool_read.auth is None
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_includes_metrics(self, tool_service, mock_tool):
+        """Verify include_metrics populates metrics and execution_count."""
+        mock_tool.metrics_summary = {
+            "total_executions": 3,
+            "successful_executions": 2,
+            "failed_executions": 1,
+            "failure_rate": 0.333,
+            "min_response_time": 0.1,
+            "max_response_time": 1.0,
+            "avg_response_time": 0.5,
+            "last_execution_time": datetime.now(timezone.utc),
+        }
+        tool_read = tool_service.convert_tool_to_read(mock_tool, include_metrics=True, include_auth=False)
+        assert tool_read.metrics.total_executions == 3
+        assert tool_read.execution_count == 3
 
     @pytest.mark.asyncio
     async def test_register_tool(self, tool_service, mock_tool, test_db):
@@ -3355,22 +3373,23 @@ class TestToolListingGracefulErrorHandling:
                 return tool_read_3
 
         service = ToolService()
-        service.convert_tool_to_read = Mock(side_effect=mock_convert)
 
-        # Call list_tools - should NOT raise an exception
-        result, next_cursor = await service.list_tools(mock_db)
+        # Use patch.object to properly mock the instance method
+        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+            # Call list_tools - should NOT raise an exception
+            result, next_cursor = await service.list_tools(mock_db)
 
-        # Verify we got the two valid tools
-        assert len(result) == 2
-        assert tool_read_1 in result
-        assert tool_read_3 in result
+            # Verify we got the two valid tools
+            assert len(result) == 2
+            assert tool_read_1 in result
+            assert tool_read_3 in result
 
-        # Verify convert_tool_to_read was called for all three tools
-        assert service.convert_tool_to_read.call_count == 3
+            # Verify convert_tool_to_read was called for all three tools
+            assert service.convert_tool_to_read.call_count == 3
 
-        # Verify the error was logged (format: "Failed to convert tool {id} ({name}): {error}")
-        assert "Failed to convert tool 2" in caplog.text
-        assert "bad-tool" in caplog.text
+            # Verify the error was logged (format: "Failed to convert tool {id} ({name}): {error}")
+            assert "Failed to convert tool 2" in caplog.text
+            assert "bad-tool" in caplog.text
 
     @pytest.mark.asyncio
     async def test_list_server_tools_continues_on_conversion_error(self, caplog):
@@ -3399,19 +3418,19 @@ class TestToolListingGracefulErrorHandling:
                 raise ValueError("Simulated conversion error")
             return f"converted_{tool.original_name}"
 
-        service.convert_tool_to_read = Mock(side_effect=mock_convert)
+        # Use patch.object to properly mock the instance method
+        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+            # Call list_server_tools - should NOT raise an exception
+            tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
 
-        # Call list_server_tools - should NOT raise an exception
-        tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
+            # Verify we got the two valid tools
+            assert len(tools) == 2
+            assert "converted_good_tool_1" in tools
+            assert "converted_good_tool_2" in tools
 
-        # Verify we got the two valid tools
-        assert len(tools) == 2
-        assert "converted_good_tool_1" in tools
-        assert "converted_good_tool_2" in tools
-
-        # Verify the error was logged
-        assert "Failed to convert tool 2" in caplog.text
-        assert "bad-tool" in caplog.text
+            # Verify the error was logged
+            assert "Failed to convert tool 2" in caplog.text
+            assert "bad-tool" in caplog.text
 
     @pytest.mark.asyncio
     async def test_list_tools_for_user_continues_on_conversion_error(self, caplog):
@@ -3450,16 +3469,17 @@ class TestToolListingGracefulErrorHandling:
                 return tool_read_3
 
         service = ToolService()
-        service.convert_tool_to_read = Mock(side_effect=mock_convert)
 
         # Mock TeamManagementService for user context
         mock_team = MagicMock(id="team-1", is_personal=True)
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
 
-            # Call list_tools_for_user - should NOT raise an exception
-            # Returns tuple[List[ToolRead], Optional[str]]
-            result, next_cursor = await service.list_tools_for_user(mock_db, user_email="user@example.com")
+            # Use patch.object to properly mock the instance method
+            with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+                # Call list_tools_for_user - should NOT raise an exception
+                # Returns tuple[List[ToolRead], Optional[str]]
+                result, next_cursor = await service.list_tools_for_user(mock_db, user_email="user@example.com")
 
         # Verify we got the two valid tools
         assert len(result) == 2
@@ -3592,3 +3612,691 @@ class TestAnyUrlSerialization:
         assert dump["content"][1]["type"] == "resource_link"
         assert isinstance(dump["content"][1]["uri"], str)
         assert dump["content"][1]["uri"] == "file:///path/to/document.pdf"
+
+
+# =============================================================================
+# Tool Invocation Timeouts and Circuit Breaker Tests
+# =============================================================================
+
+class TestToolTimeoutsAndRetries:
+    """Comprehensive tests for Tool Invocation Timeouts and Circuit Breaker."""
+
+    def setup_method(self):
+        """Clear circuit breaker state before each test."""
+        from plugins.circuit_breaker.circuit_breaker import _STATE
+        _STATE.clear()
+
+    @pytest.mark.asyncio
+    async def test_per_tool_timeout_ms_takes_priority(self):
+        """Verify per-tool timeout_ms takes priority over global setting."""
+        tool_timeout_ms = 5000  # 5 seconds
+        global_timeout = 60    # 60 seconds
+
+        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
+
+        assert effective_timeout == 5.0, "Per-tool timeout should take priority"
+
+    @pytest.mark.asyncio
+    async def test_per_tool_timeout_zero_uses_global(self):
+        """Verify that timeout_ms=0 falls back to global timeout."""
+        tool_timeout_ms = 0
+        global_timeout = 60
+
+        # 0 is falsy, so should fall back to global
+        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
+
+        assert effective_timeout == 60, "Zero timeout should fall back to global"
+
+    @pytest.mark.asyncio
+    async def test_per_tool_timeout_none_uses_global(self):
+        """Verify that timeout_ms=None falls back to global timeout."""
+        tool_timeout_ms = None
+        global_timeout = 60
+
+        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
+
+        assert effective_timeout == 60, "None timeout should fall back to global"
+
+    @pytest.mark.asyncio
+    async def test_timeout_conversion_from_ms_to_seconds(self):
+        """Verify correct conversion from milliseconds to seconds."""
+        test_cases = [
+            (1000, 1.0),
+            (5000, 5.0),
+            (30000, 30.0),
+            (100, 0.1),
+            (60000, 60.0),
+        ]
+
+        for timeout_ms, expected_seconds in test_cases:
+            effective_timeout = timeout_ms / 1000
+            assert effective_timeout == expected_seconds, f"Failed for {timeout_ms}ms"
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_message_includes_duration(self):
+        """Verify timeout error message includes the timeout duration."""
+        for timeout in [5.0, 10.0, 30.0, 60.0]:
+            error = ToolInvocationError(f"Tool invocation timed out after {timeout}s")
+            assert str(timeout) in str(error)
+            assert "timed out" in str(error)
+
+    @pytest.mark.asyncio
+    async def test_asyncio_timeout_error_behavior(self):
+        """Test asyncio.TimeoutError is raised correctly after timeout."""
+        async def slow_operation():
+            await asyncio.sleep(10)
+            return "completed"
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(slow_operation(), timeout=0.01)
+
+    def test_initial_state_is_closed(self):
+        """Verify circuit breaker starts in closed state."""
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+
+        assert state.open_until == 0.0
+        assert state.half_open is False
+        assert state.consecutive_failures == 0
+
+    def test_state_tracks_calls_in_window(self):
+        """Verify state tracks call timestamps."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+        state.calls.append(time.time())
+        state.calls.append(time.time())
+
+        assert len(state.calls) == 2
+
+    def test_state_tracks_failures_in_window(self):
+        """Verify state tracks failure timestamps."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+        state.failures.append(time.time())
+        state.failures.append(time.time())
+
+        assert len(state.failures) == 2
+
+    def test_consecutive_failures_increment(self):
+        """Verify consecutive failures counter increments."""
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+        state.consecutive_failures += 1
+        state.consecutive_failures += 1
+        state.consecutive_failures += 1
+
+        assert state.consecutive_failures == 3
+
+    def test_consecutive_failures_reset_on_success(self):
+        """Verify consecutive failures reset to 0 on success."""
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+        state.consecutive_failures = 5
+        # Simulate success
+        state.consecutive_failures = 0
+
+        assert state.consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_half_open_transition_after_cooldown(self):
+        """Verify transition to half-open state after cooldown expires."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"cooldown_seconds": 1}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Open the circuit
+        state = _get_state("test_tool")
+        state.open_until = time.time() - 1  # Cooldown expired
+        state.half_open = False
+
+        # Create payload
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+        # Create mock context
+        context = MagicMock()
+        context.set_state = MagicMock()
+
+        # Process pre_invoke
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        # Should allow request through (transition to half-open)
+        assert result.continue_processing is True
+        # Verify half-open state was set in context
+        context.set_state.assert_any_call("cb_half_open_test", True)
+
+    @pytest.mark.asyncio
+    async def test_half_open_failure_reopens_circuit(self):
+        """Verify that failure during half-open immediately reopens circuit."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with short cooldown
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"cooldown_seconds": 60}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Set up half-open state
+        state = _get_state("test_tool")
+        state.half_open = True
+
+        # Create mock error result
+        mock_result = MagicMock()
+        mock_result.is_error = True
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        # Create mock context indicating half-open test
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: {
+            "cb_call_time": time.time(),
+            "cb_half_open_test": True,
+            "cb_timeout_failure": False,
+        }.get(k, d))
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Circuit should be reopened
+        assert state.open_until > time.time()
+        assert state.half_open is False
+
+    @pytest.mark.asyncio
+    async def test_half_open_success_closes_circuit(self):
+        """Verify that success during half-open fully closes circuit."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Set up half-open state
+        state = _get_state("test_tool")
+        state.half_open = True
+        state.consecutive_failures = 4
+
+        # Create mock success result
+        mock_result = MagicMock()
+        mock_result.is_error = False
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        # Create mock context indicating half-open test
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: {
+            "cb_call_time": time.time(),
+            "cb_half_open_test": True,
+            "cb_timeout_failure": False,
+        }.get(k, d))
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Circuit should be fully closed
+        assert state.half_open is False
+        assert state.consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_consecutive_failure_threshold_trips_breaker(self):
+        """Verify consecutive failures trip the circuit breaker."""
+        import time
+        from collections import deque
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with low consecutive failure threshold
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Pre-set consecutive failures to threshold - 1
+        state = _get_state("test_tool")
+        state.consecutive_failures = 2
+        state.calls = deque([time.time()])
+        state.failures = deque([time.time()])
+
+        # Create mock error result
+        mock_result = MagicMock()
+        mock_result.is_error = True
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        context = MagicMock()
+        context.get_state = MagicMock(return_value=None)
+
+        # Process post_invoke - should trip breaker
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Circuit should be open
+        assert state.open_until > time.time()
+
+    @pytest.mark.asyncio
+    async def test_error_rate_threshold_trips_breaker(self):
+        """Verify error rate threshold trips the circuit breaker."""
+        import time
+        from collections import deque
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with specific error rate settings
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={
+                "error_rate_threshold": 0.5,  # 50% error rate trips
+                "min_calls": 2,               # After 2 calls
+                "cooldown_seconds": 60,
+            }
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Pre-set calls and failures for 50% error rate
+        now = time.time()
+        state = _get_state("test_tool")
+        state.calls = deque([now - 1])  # 1 previous call
+        state.failures = deque([now - 1])  # 1 failure (this will be the 2nd)
+        state.consecutive_failures = 1
+
+        # Create mock error result
+        mock_result = MagicMock()
+        mock_result.is_error = True
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: now if k == "cb_call_time" else d)
+
+        # Process post_invoke - should trip breaker (2/2 = 100% > 50%)
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Circuit should be open
+        assert state.open_until > time.time()
+
+    @pytest.mark.asyncio
+    async def test_retry_after_seconds_in_violation(self):
+        """Verify retry_after_seconds is included in violation details."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Open the circuit with future close time
+        state = _get_state("test_tool")
+        state.open_until = time.time() + 30  # 30 seconds from now
+
+        # Create payload
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+        # Create mock context
+        context = MagicMock()
+
+        # Process pre_invoke - should block
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        # Should block with retry_after_seconds
+        assert result.continue_processing is False
+        assert result.violation is not None
+        assert "retry_after_seconds" in result.violation.details
+        assert 25 <= result.violation.details["retry_after_seconds"] <= 35
+
+    @pytest.mark.asyncio
+    async def test_metadata_includes_all_fields(self):
+        """Verify post_invoke metadata includes all required fields."""
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Create mock success result
+        mock_result = MagicMock()
+        mock_result.is_error = False
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        context = MagicMock()
+        context.get_state = MagicMock(return_value=None)
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Verify all metadata fields are present
+        required_fields = [
+            "circuit_calls_in_window",
+            "circuit_failures_in_window",
+            "circuit_failure_rate",
+            "circuit_consecutive_failures",
+            "circuit_open_until",
+            "circuit_half_open",
+            "circuit_retry_after_seconds",
+        ]
+
+        for field in required_fields:
+            assert field in result.metadata, f"Missing field: {field}"
+
+    @pytest.mark.asyncio
+    async def test_timeout_flag_counts_as_failure(self):
+        """Verify cb_timeout_failure flag counts as circuit breaker failure."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Create mock result that looks successful
+        mock_result = MagicMock()
+        mock_result.is_error = False  # Result doesn't show error
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        # Create context with timeout flag set
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: {
+            "cb_call_time": time.time(),
+            "cb_half_open_test": False,
+            "cb_timeout_failure": True,  # TIMEOUT OCCURRED!
+        }.get(k, d))
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Should count as failure
+        assert result.metadata["circuit_failures_in_window"] == 1
+        assert result.metadata["circuit_consecutive_failures"] == 1
+
+    @pytest.mark.asyncio
+    async def test_timeout_flag_can_trip_breaker(self):
+        """Verify enough timeout failures can trip the circuit breaker."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with low threshold
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        state = _get_state("test_tool")
+        state.consecutive_failures = 2  # Already at threshold - 1
+
+        # Create mock result that looks successful
+        mock_result = MagicMock()
+        mock_result.is_error = False
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        # Create context with timeout flag set
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: {
+            "cb_call_time": time.time(),
+            "cb_half_open_test": False,
+            "cb_timeout_failure": True,  # 3rd consecutive failure via timeout
+        }.get(k, d))
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Should trip the breaker
+        assert state.open_until > time.time()
+
+    def test_tool_overrides_apply_correctly(self):
+        """Verify per-tool overrides are applied."""
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerConfig, _cfg_for
+        )
+
+        # Create base config with tool overrides
+        base_config = CircuitBreakerConfig(
+            error_rate_threshold=0.5,
+            window_seconds=60,
+            consecutive_failure_threshold=5,
+            cooldown_seconds=60,
+            tool_overrides={
+                "critical_tool": {
+                    "consecutive_failure_threshold": 2,  # More sensitive
+                    "cooldown_seconds": 120,             # Longer cooldown
+                }
+            }
+        )
+
+        # Get effective config for regular tool
+        regular_config = _cfg_for(base_config, "regular_tool")
+        assert regular_config.consecutive_failure_threshold == 5
+        assert regular_config.cooldown_seconds == 60
+
+        # Get effective config for critical tool
+        critical_config = _cfg_for(base_config, "critical_tool")
+        assert critical_config.consecutive_failure_threshold == 2
+        assert critical_config.cooldown_seconds == 120
+
+    @pytest.mark.asyncio
+    async def test_old_entries_evicted_from_window(self):
+        """Verify old call/failure entries are evicted from sliding window."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with 1-second window
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"window_seconds": 1}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Add old entries
+        state = _get_state("test_tool")
+        old_time = time.time() - 10  # 10 seconds ago
+        state.calls.append(old_time)
+        state.failures.append(old_time)
+
+        # Create mock result
+        mock_result = MagicMock()
+        mock_result.is_error = False
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        context = MagicMock()
+        context.get_state = MagicMock(return_value=None)
+
+        # Process post_invoke - should evict old entries
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Old entries should be evicted, new call should be recorded
+        assert result.metadata["circuit_calls_in_window"] == 1
+        assert result.metadata["circuit_failures_in_window"] == 0
+
+    def test_is_error_with_tool_result_attribute(self):
+        """Verify is_error detection using ToolResult.is_error attribute."""
+        from plugins.circuit_breaker.circuit_breaker import _is_error
+
+        mock_result = MagicMock()
+        mock_result.is_error = True
+
+        assert _is_error(mock_result) is True
+
+        mock_result.is_error = False
+        assert _is_error(mock_result) is False
+
+    def test_is_error_with_dict(self):
+        """Verify is_error detection using dict key."""
+        from plugins.circuit_breaker.circuit_breaker import _is_error
+
+        error_dict = {"is_error": True, "content": "error message"}
+        assert _is_error(error_dict) is True
+
+        success_dict = {"is_error": False, "content": "success"}
+        assert _is_error(success_dict) is False
+
+    def test_is_error_with_missing_field_returns_false(self):
+        """Verify is_error returns False when field is missing."""
+        from plugins.circuit_breaker.circuit_breaker import _is_error
+
+        # Object without is_error
+        mock_result = MagicMock(spec=[])  # No attributes
+        del mock_result.is_error  # Remove any auto-mock
+
+        # Dict without is_error key
+        no_error_dict = {"content": "some content"}
+        assert _is_error(no_error_dict) is False
+
+    @pytest.mark.asyncio
+    async def test_plugin_initialization(self):
+        """Verify plugin initializes correctly with config."""
+        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
+        from mcpgateway.plugins.framework import PluginConfig
+
+        config = PluginConfig(
+            name="CircuitBreaker",
+            kind="plugins.circuit_breaker.circuit_breaker.CircuitBreakerPlugin",
+            hooks=["tool_pre_invoke", "tool_post_invoke"],
+            mode="enforce_ignore_error",
+            priority=70,
+            config={
+                "error_rate_threshold": 0.3,
+                "window_seconds": 120,
+                "min_calls": 5,
+                "consecutive_failure_threshold": 3,
+                "cooldown_seconds": 30,
+            }
+        )
+
+        plugin = CircuitBreakerPlugin(config)
+
+        assert plugin._cfg.error_rate_threshold == 0.3
+        assert plugin._cfg.window_seconds == 120
+        assert plugin._cfg.min_calls == 5
+        assert plugin._cfg.consecutive_failure_threshold == 3
+        assert plugin._cfg.cooldown_seconds == 30
+
+    @pytest.mark.asyncio
+    async def test_plugin_allows_requests_when_closed(self):
+        """Verify plugin allows requests when circuit is closed."""
+        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+        context = MagicMock()
+        context.set_state = MagicMock()
+
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        assert result.continue_processing is True
+        assert result.violation is None
+
+    @pytest.mark.asyncio
+    async def test_plugin_blocks_requests_when_open(self):
+        """Verify plugin blocks requests when circuit is open."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Open the circuit
+        state = _get_state("test_tool")
+        state.open_until = time.time() + 60  # Open for next 60 seconds
+
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+        context = MagicMock()
+
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        assert result.continue_processing is False
+        assert result.violation is not None

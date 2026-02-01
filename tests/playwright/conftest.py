@@ -11,18 +11,22 @@ This assumes environment variables are loaded by the Makefile.
 # Standard
 import os
 import re
-from typing import Generator, Optional
+from typing import Dict, Generator, Optional
 
 # Third-Party
-from playwright.sync_api import APIRequestContext, Page, Playwright, expect
+from playwright.sync_api import APIRequestContext, BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError, expect
 import pytest
 
 # First-Party
 from mcpgateway.config import Settings
+from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
 # Get configuration from environment
-BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
+BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 API_TOKEN = os.getenv("MCP_AUTH", "")
+DISABLE_JWT_FALLBACK = os.getenv("PLAYWRIGHT_DISABLE_JWT_FALLBACK", "").lower() in ("1", "true", "yes")
+PLAYWRIGHT_VIDEO_SIZE = os.getenv("PLAYWRIGHT_VIDEO_SIZE", "1920x1080")
+PLAYWRIGHT_VIEWPORT_SIZE = os.getenv("PLAYWRIGHT_VIEWPORT_SIZE", PLAYWRIGHT_VIDEO_SIZE)
 
 # Email login credentials (admin user)
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
@@ -50,9 +54,26 @@ def _format_auth_header(token: str) -> Optional[str]:
     return f"Bearer {token}"
 
 
+def _parse_video_size(size: str) -> Optional[Dict[str, int]]:
+    """Parse WIDTHxHEIGHT size from env string."""
+    if not size:
+        return None
+    match = re.match(r"^\s*(\d+)x(\d+)\s*$", size)
+    if not match:
+        raise ValueError("PLAYWRIGHT_VIDEO_SIZE must be in the format WIDTHxHEIGHT (e.g., 1280x720).")
+    return {"width": int(match.group(1)), "height": int(match.group(2))}
+
+
+VIDEO_SIZE = _parse_video_size(PLAYWRIGHT_VIDEO_SIZE)
+VIEWPORT_SIZE = _parse_video_size(PLAYWRIGHT_VIEWPORT_SIZE)
+
+
 def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -> None:
     """Wait for admin-related navigation after login actions."""
-    page.wait_for_load_state("domcontentloaded")
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=5000)
+    except PlaywrightTimeoutError:
+        page.wait_for_timeout(500)
     if previous_url and page.url == previous_url:
         page.wait_for_timeout(500)
 
@@ -66,11 +87,42 @@ def _wait_for_login_response(page: Page) -> Optional[int]:
     return response.status
 
 
+def _set_admin_jwt_cookie(page: Page, email: str) -> None:
+    """Seed an admin JWT cookie to bypass UI login when credentials are unknown."""
+    try:
+        token = _create_jwt_token({"sub": email})
+    except Exception as exc:  # pragma: no cover - should only fail on misconfig
+        raise AssertionError(f"Failed to create admin JWT token: {exc}") from exc
+
+    cookie_url = f"{BASE_URL.rstrip('/')}/"
+    page.context.set_extra_http_headers({"Authorization": f"Bearer {token}"})
+    page.context.add_cookies(
+        [
+            {
+                "name": "jwt_token",
+                "value": token,
+                "url": cookie_url,
+                "httpOnly": True,
+                "sameSite": "Lax",
+            }
+        ]
+    )
+
+
 @pytest.fixture(scope="session")
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Create API request context with optional bearer token."""
     headers = {"Accept": "application/json"}
-    auth_header = _format_auth_header(API_TOKEN)
+    
+    token = API_TOKEN
+    if not token and not DISABLE_JWT_FALLBACK:
+        # Generate a fallback token for testing if none provided
+        try:
+            token = _create_jwt_token({"sub": ADMIN_EMAIL})
+        except Exception:
+            pass # Use empty if generation fails
+
+    auth_header = _format_auth_header(token)
     if auth_header:
         headers["Authorization"] = auth_header
 
@@ -82,13 +134,38 @@ def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, 
     request_context.dispose()
 
 
+@pytest.fixture(scope="session")
+def browser_context_args(
+    pytestconfig,
+    playwright: Playwright,
+    device: Optional[str],
+    base_url: Optional[str],
+    _pw_artifacts_folder,
+) -> Dict:
+    """Customize Playwright browser context for artifacts + video quality."""
+    context_args: Dict = {}
+    if device:
+        context_args.update(playwright.devices[device])
+    if base_url:
+        context_args["base_url"] = base_url
+
+    video_option = pytestconfig.getoption("--video")
+    capture_video = video_option in ["on", "retain-on-failure"]
+    if capture_video:
+        context_args["record_video_dir"] = _pw_artifacts_folder.name
+        if VIDEO_SIZE:
+            context_args["record_video_size"] = VIDEO_SIZE
+
+    if VIEWPORT_SIZE and not device:
+        context_args["viewport"] = VIEWPORT_SIZE
+
+    return context_args
+
+
 @pytest.fixture
-def page(browser) -> Generator[Page, None, None]:
-    """Create page for UI tests."""
-    context = browser.new_context(base_url=BASE_URL, ignore_https_errors=True)
-    page = context.new_page()
-    yield page
-    context.close()
+def context(new_context) -> BrowserContext:
+    """Create a browser context using pytest-playwright hooks for artifacts."""
+    return new_context(ignore_https_errors=True)
 
 
 # Fixture if you need the default page fixture name
@@ -145,8 +222,24 @@ def admin_page(page: Page):
                 raise AssertionError(f"Login failed with status {status}")
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page, previous_url)
+    # If login still failed, fallback to JWT cookie unless disabled
+        if re.search(r"/admin/login", page.url):
+            if DISABLE_JWT_FALLBACK:
+                raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
+            _set_admin_jwt_cookie(page, admin_email)
+            page.goto("/admin/")
+            _wait_for_admin_transition(page)
     # Verify we're on the admin page
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+    # Wait for the application shell to load to ensure we aren't looking at a 500 error page
+    try:
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=10000)
+    except Exception:
+        # If tab is missing, check if we have an error message on page to report
+        content = page.content()
+        if "Internal Server Error" in content:
+            raise AssertionError("Admin page failed to load: Internal Server Error (500)")
+        raise
     return page
 
 
@@ -171,6 +264,7 @@ def test_tool_data():
 @pytest.fixture(autouse=True)
 def setup_test_environment(page: Page):
     """Set viewport and default timeout for consistent UI tests."""
-    page.set_viewport_size({"width": 1280, "height": 720})
+    if VIEWPORT_SIZE:
+        page.set_viewport_size(VIEWPORT_SIZE)
     page.set_default_timeout(30000)
     # Optionally, add request logging or interception here

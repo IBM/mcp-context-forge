@@ -102,7 +102,7 @@ flowchart TB
     end
 
     subgraph "External Services"
-        AI["AI Safety Services<br>(LlamaGuard, OpenAI)"]
+        AI["AI Safety Services<br>(LLM Guard, OpenAI Moderation)"]
         Security["Security Services<br>(Vault, OPA, Cedar)"]
     end
 
@@ -140,7 +140,7 @@ The framework supports two distinct plugin deployment patterns:
 #### **External Plugins** (Remote MCP Servers)
 - Standalone MCP servers implementing plugin logic
 - Can be written in any language (Python, TypeScript, Go, Rust, etc.)
-- Communicate via MCP protocol (Streamable HTTP, STDIO, SSE)
+- Communicate via MCP protocol (Streamable HTTP over TCP or UDS, STDIO, SSE)
 - Examples: OPA filter, Cedar Policy Plugin (RBAC), LlamaGuard, OpenAI Moderation, custom AI services
 
 ### Plugin Configuration Schema
@@ -230,7 +230,7 @@ Available hook values for the `hooks` field:
 | `"http_auth_check_permission"` | Custom permission checking logic | Before RBAC checks |
 | `"http_post_request"` | Process responses and add audit headers | After request completion |
 
-See the [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md) for detailed implementation examples.
+See the [HTTP Authentication Hooks Guide](../using/plugins/http-auth-hooks.md) for detailed implementation examples.
 
 #### Plugin Modes
 
@@ -265,7 +265,11 @@ For external plugins (`kind: "external"`), the `mcp` object configures the MCP s
 |-------|------|----------|-------------|---------|
 | `proto` | `string` | Yes | MCP transport protocol | `"stdio"`, `"sse"`, `"streamablehttp"`, `"websocket"` |
 | `url` | `string` |  | Service URL for HTTP-based transports | `"http://openai-plugin:3000/mcp"` |
+| `uds` | `string` |  | Unix domain socket path for Streamable HTTP | `"/var/run/mcp-plugin.sock"` |
 | `script` | `string` |  | Script path for STDIO transport | `"/opt/plugins/custom-filter.py"` |
+| `cmd` | `string[]` |  | Command + args for STDIO transport | `["/opt/plugins/custom-filter"]` |
+| `env` | `object` |  | Environment overrides for STDIO transport | `{"PLUGINS_CONFIG_PATH": "/opt/plugins/config.yaml"}` |
+| `cwd` | `string` |  | Working directory for STDIO transport (used to resolve relative script paths) | `"/opt/plugins"` |
 
 #### Global Plugin Settings
 
@@ -544,7 +548,7 @@ class MyPlugin(Plugin):
         pass
 ```
 
-See [Plugin Development Guide](../../using/plugins/) for detailed examples and best practices
+See [Plugin Development Guide](../using/plugins/index.md) for detailed examples and best practices
 
 ### Plugin Manager
 
@@ -740,7 +744,11 @@ class MCPConfig(BaseModel):
     """MCP configuration for external plugins"""
     proto: TransportType                     # STDIO, SSE, or STREAMABLEHTTP
     url: Optional[str] = None                # Service URL (for HTTP transports)
+    uds: Optional[str] = None                # Unix domain socket path (Streamable HTTP)
     script: Optional[str] = None             # Script path (for STDIO transport)
+    cmd: Optional[list[str]] = None          # Command + args (for STDIO transport)
+    env: Optional[dict[str, str]] = None     # Environment overrides (for STDIO)
+    cwd: Optional[str] = None                # Working directory (for STDIO)
 
 class PluginMode(str, Enum):
     """Plugin execution modes"""
@@ -855,7 +863,7 @@ sequenceDiagram
     participant Core as Core Logic
 
     Client->>Gateway: MCP Request
-    Gateway->>PM: Execute Hook (e.g., tool_pre_invoke)
+    Gateway->>PM: Execute Hook (pre hook, e.g., tool_pre_invoke)
 
     PM->>P1: Execute (higher priority)
     P1-->>PM: Result (continue=true, modified_payload)
@@ -904,9 +912,12 @@ sequenceDiagram
 **Phase 5**: Request Resolution
 
 - Continue Path: If all plugins allow processing, request continues to core gateway logic
+
   - Core logic executes the actual MCP operation (tool invocation, prompt rendering, resource fetching)
   - Success response is returned to client
+
 - Block Path: If any plugin blocks the request with a violation
+
   - Request processing stops immediately
   - Violation details are returned to client as an error response
 
@@ -940,6 +951,7 @@ Original Payload → Plugin 1 → Modified Payload → Plugin 2 → Final Payloa
 
 - Plugin execution errors don't crash other plugins or the gateway
 - Failed plugins are logged and handled based on their execution mode:
+
   - **Enforce Mode**: Plugin errors block the request
   - **Permissive Mode**: Plugin errors are logged but request continues
   - **Enforce Ignore Error Mode**: Plugin violations block, but technical errors are ignored
@@ -962,6 +974,7 @@ This execution model ensures **predictable behavior**, **comprehensive security 
 
 - Plugins execute in **ascending priority order** (lower number = higher priority)
 - **Priority Ranges** (recommended):
+
   - `1-50`: Critical security plugins (authentication, PII filtering)
   - `51-100`: Content filtering and validation
   - `101-200`: Transformations and enhancements
@@ -1021,14 +1034,15 @@ The plugin framework provides comprehensive lifecycle management for both native
 
 #### Development Workflow
 
-The plugin development process follows a streamlined four-phase approach that gets developers from concept to running plugin quickly:
+The plugin development process follows a streamlined workflow that covers both native and external plugins:
 
 ```mermaid
 graph LR
     A["Template"]
     B(["Bootstrap"])
-    C(["Build"])
-    D(["Serve"])
+    N["Native Plugin<br>(in-process)"]
+    C(["Build (external)"])
+    D(["Serve (external)"])
 
     subgraph dev["Development Phase"]
         A -.-> B
@@ -1038,10 +1052,12 @@ graph LR
         C --> D
     end
 
+    B --> N
     B --> C
 
     subgraph CF["Context Forge Gateway"]
         E["Gateway"]
+        N --> E
         D o--"MCP<br>&nbsp;&nbsp;<small>tools/hooks</small>&nbsp;&nbsp;"--o E
     end
 
@@ -1051,9 +1067,10 @@ graph LR
 **Phase Breakdown:**
 
 1. **Bootstrap Phase**: Initialize project structure from templates with metadata and configuration
-2. **Build Phase**: Compile, package, and validate plugin code with dependencies
-3. **Serve Phase**: Launch development server for testing and integration validation
-4. **Integration Phase**: Connect to Context Forge gateway via MCP protocol for end-to-end testing
+2. **Native Track**: Configure the plugin in `plugins/config.yaml` and load it in-process
+3. **Build Phase (external)**: Compile, package, and validate plugin code with dependencies
+4. **Serve Phase (external)**: Launch the MCP server for testing and integration validation
+5. **Integration Phase (external)**: Connect to Context Forge gateway via MCP protocol for end-to-end testing
 
 #### Plugin Types and Templates
 
@@ -1125,7 +1142,7 @@ plugins:
     kind: "external"
     mcp:
       proto: "STDIO"
-      script: "/opt/plugins/go-filter"
+      cmd: ["/opt/plugins/go-filter"]
 
   # Rust plugin
   - name: "CryptoValidator"
@@ -1171,7 +1188,7 @@ sequenceDiagram
 
     Note over Gateway,Service: Plugin Initialization
     Gateway->>Client: Initialize External Plugin
-    Client->>Server: MCP Connection (HTTP/WS/STDIO)
+    Client->>Server: MCP Connection (Streamable HTTP / STDIO)
     Server-->>Client: Connection Established
     Client->>Server: get_plugin_config(plugin_name)
     Server-->>Client: Plugin Configuration
@@ -1184,7 +1201,7 @@ sequenceDiagram
     alt Self-Processing
         Server->>Server: Process Internally
     else External Service Call
-        Server->>Service: API Call (OpenAI, LlamaGuard, etc.)
+        Server->>Service: API Call (OpenAI Moderation, LLM Guard, etc.)
         Service-->>Server: Service Response
     end
 
@@ -1593,8 +1610,8 @@ The plugin framework is designed as a **reusable, standalone ecosystem** that ca
 flowchart TD
     subgraph "Core Framework (Portable)"
         Framework["Plugin Framework\\n(Python Package)"]
-        Interface["Plugin Interface\\n(Language Agnostic)"]
-        Protocol["MCP Protocol\\n(Cross-Platform)"]
+        Interface["Plugin Interface\\n(Python)"]
+        Protocol["MCP Protocol\\n(External Plugins)"]
     end
 
     subgraph "Host Applications"
@@ -1677,7 +1694,7 @@ plugins:
     kind: "external"
     mcp:
       proto: "STDIO"
-      script: "/opt/plugins/go-filter"
+      cmd: ["/opt/plugins/go-filter"]
 
   # Rust plugin
   - name: "CryptoValidator"
@@ -1702,7 +1719,7 @@ class HttpHookType(str, Enum):
     HTTP_POST_REQUEST = "http_post_request"            # Response processing and audit logging
 ```
 
-See the [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md) for implementation details and the [Simple Token Auth Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth) for a complete example.
+See the [HTTP Authentication Hooks Guide](../using/plugins/http-auth-hooks.md) for implementation details and the [Simple Token Auth Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth) for a complete example.
 
 ### Planned Hook Points
 

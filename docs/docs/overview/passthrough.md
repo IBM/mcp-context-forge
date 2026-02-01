@@ -340,15 +340,12 @@ graph LR
     I --> J["Test Connection"]
     J --> K["Successful Authentication"]
     E --> L["Create Virtual Server with Stored Credentials"]
-
-    %% Define styling for steps (Dark mode colors)
-    classDef step fill:#1e1e1e,stroke:#ffffff,stroke-width:2px,color:#f5f5f5;
-    class A,B,C,D,E,F,G,H,I,J,K,L step;
 ```
 
 ### Step 1: Register Gateway with One-Time Authentication
 
 Register an MCP server with authentication details and enable one-time auth. The gateway will:
+
 - Use the provided credentials **once** to connect to the MCP server
 - Discover and retrieve all available tools and metadata
 - **Discard the authentication details** without storing them in the database

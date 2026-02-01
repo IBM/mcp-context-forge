@@ -15,6 +15,7 @@ It handles:
 """
 
 # Standard
+import asyncio
 import base64
 import binascii
 from datetime import datetime, timezone
@@ -384,6 +385,15 @@ class ToolInvocationError(ToolError):
         True
         >>> isinstance(err, ToolError)
         True
+    """
+
+
+class ToolTimeoutError(ToolInvocationError):
+    """Raised when tool invocation times out.
+
+    This subclass is used to distinguish timeout errors from other invocation errors.
+    Timeout handlers call tool_post_invoke before raising this, so the generic exception
+    handler should skip calling post_invoke again to avoid double-counting failures.
     """
 
 
@@ -2497,6 +2507,7 @@ class ToolService:
         Raises:
             ToolNotFoundError: If tool not found or access denied.
             ToolInvocationError: If invocation fails.
+            ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin
 
@@ -2612,6 +2623,11 @@ class ToolService:
         tool_output_schema = tool_payload.get("output_schema")
         tool_oauth_config = tool_payload.get("oauth_config")
         tool_gateway_id = tool_payload.get("gateway_id")
+
+        # Get effective timeout: per-tool timeout_ms (in seconds) or global fallback
+        # timeout_ms is stored in milliseconds, convert to seconds
+        tool_timeout_ms = tool_payload.get("timeout_ms")
+        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
 
         # Save gateway existence as local boolean BEFORE db.close()
         # to avoid checking ORM object truthiness after session is closed
@@ -2851,10 +2867,53 @@ class ToolService:
 
                     # Use the tool's request_type rather than defaulting to POST (using local variable)
                     method = tool_request_type.upper() if tool_request_type else "POST"
-                    if method == "GET":
-                        response = await self._http_client.get(final_url, params=payload, headers=headers)
-                    else:
-                        response = await self._http_client.request(method, final_url, json=payload, headers=headers)
+                    rest_start_time = time.time()
+                    try:
+                        if method == "GET":
+                            response = await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=headers), timeout=effective_timeout)
+                        else:
+                            response = await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=headers), timeout=effective_timeout)
+                    except (asyncio.TimeoutError, httpx.TimeoutException):
+                        rest_elapsed_ms = (time.time() - rest_start_time) * 1000
+                        structured_logger.log(
+                            level="WARNING",
+                            message=f"REST tool invocation timed out: {tool_name_computed}",
+                            component="tool_service",
+                            correlation_id=get_correlation_id(),
+                            duration_ms=rest_elapsed_ms,
+                            metadata={"event": "tool_timeout", "tool_name": tool_name_computed, "timeout_seconds": effective_timeout},
+                        )
+
+                        # Manually trigger circuit breaker (or other plugins) on timeout
+                        try:
+                            # First-Party
+                            from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
+
+                            tool_timeout_counter.labels(tool_name=name).inc()
+                        except Exception as exc:
+                            logger.debug(
+                                "Failed to increment tool_timeout_counter for %s: %s",
+                                name,
+                                exc,
+                                exc_info=True,
+                            )
+
+                        if self._plugin_manager:
+                            if context_table:
+                                for ctx in context_table.values():
+                                    ctx.set_state("cb_timeout_failure", True)
+
+                            if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+                                timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
+                                await self._plugin_manager.invoke_hook(
+                                    ToolHookType.TOOL_POST_INVOKE,
+                                    payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
+                                    global_context=global_context,
+                                    local_contexts=context_table,
+                                    violations_as_exceptions=False,
+                                )
+
+                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                     response.raise_for_status()
 
                     # Handle 204 No Content responses that have no body
@@ -2979,11 +3038,16 @@ class ToolService:
                             ctx = create_ssl_context(gateway_ca_cert)
                         else:
                             ctx = None
+
+                        # Use effective_timeout for read operations if not explicitly overridden by caller
+                        # This ensures the underlying client waits at least as long as the tool configuration requires
+                        factory_timeout = timeout if timeout else get_http_timeout(read_timeout=effective_timeout)
+
                         return httpx.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
                             follow_redirects=True,
                             headers=headers,
-                            timeout=timeout if timeout else get_http_timeout(),
+                            timeout=factory_timeout,
                             auth=auth,
                             limits=httpx.Limits(
                                 max_connections=settings.httpx_max_connections,
@@ -3003,7 +3067,10 @@ class ToolService:
                             ToolResult: Result of tool call
 
                         Raises:
+                            ToolInvocationError: If the tool invocation fails during execution.
+                            ToolTimeoutError: If the tool invocation times out.
                             BaseException: On connection or communication errors
+
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
@@ -3048,7 +3115,7 @@ class ToolService:
                                     user_identity=app_user_email,
                                     gateway_id=gateway_id_str,
                                 ) as pooled:
-                                    tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                    tool_call_result = await asyncio.wait_for(pooled.session.call_tool(tool_name_original, arguments, meta=meta_data), timeout=effective_timeout)
                             else:
                                 # Non-pooled path: safe to add per-request headers
                                 if correlation_id and headers:
@@ -3057,7 +3124,7 @@ class ToolService:
                                 async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
                                     async with ClientSession(*streams) as session:
                                         await session.initialize()
-                                        tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await asyncio.wait_for(session.call_tool(tool_name_original, arguments, meta=meta_data), timeout=effective_timeout)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -3071,6 +3138,48 @@ class ToolService:
                             )
 
                             return tool_call_result
+                        except (asyncio.TimeoutError, httpx.TimeoutException):
+                            # Handle timeout specifically - log and raise ToolInvocationError
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="WARNING",
+                                message=f"MCP SSE tool invocation timed out: {tool_name_original}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                metadata={"event": "tool_timeout", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse", "timeout_seconds": effective_timeout},
+                            )
+
+                            # Manually trigger circuit breaker (or other plugins) on timeout
+                            try:
+                                # First-Party
+                                from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
+
+                                tool_timeout_counter.labels(tool_name=name).inc()
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to increment tool_timeout_counter for %s: %s",
+                                    name,
+                                    exc,
+                                    exc_info=True,
+                                )
+
+                            if self._plugin_manager:
+                                if context_table:
+                                    for ctx in context_table.values():
+                                        ctx.set_state("cb_timeout_failure", True)
+
+                                if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+                                    timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
+                                    await self._plugin_manager.invoke_hook(
+                                        ToolHookType.TOOL_POST_INVOKE,
+                                        payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
+                                        global_context=global_context,
+                                        local_contexts=context_table,
+                                        violations_as_exceptions=False,
+                                    )
+
+                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -3104,6 +3213,8 @@ class ToolService:
                             ToolResult: Result of tool call
 
                         Raises:
+                            ToolInvocationError: If the tool invocation fails during execution.
+                            ToolTimeoutError: If the tool invocation times out.
                             BaseException: On connection or communication errors
                         """
                         # Get correlation ID for distributed tracing
@@ -3149,7 +3260,7 @@ class ToolService:
                                     user_identity=app_user_email,
                                     gateway_id=gateway_id_str,
                                 ) as pooled:
-                                    tool_call_result = await pooled.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                    tool_call_result = await asyncio.wait_for(pooled.session.call_tool(tool_name_original, arguments, meta=meta_data), timeout=effective_timeout)
                             else:
                                 # Non-pooled path: safe to add per-request headers
                                 if correlation_id and headers:
@@ -3158,7 +3269,7 @@ class ToolService:
                                 async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
                                     async with ClientSession(read_stream, write_stream) as session:
                                         await session.initialize()
-                                        tool_call_result = await session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await asyncio.wait_for(session.call_tool(tool_name_original, arguments, meta=meta_data), timeout=effective_timeout)
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -3172,6 +3283,48 @@ class ToolService:
                             )
 
                             return tool_call_result
+                        except (asyncio.TimeoutError, httpx.TimeoutException):
+                            # Handle timeout specifically - log and raise ToolInvocationError
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="WARNING",
+                                message=f"MCP StreamableHTTP tool invocation timed out: {tool_name_original}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                metadata={"event": "tool_timeout", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp", "timeout_seconds": effective_timeout},
+                            )
+
+                            # Manually trigger circuit breaker (or other plugins) on timeout
+                            try:
+                                # First-Party
+                                from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
+
+                                tool_timeout_counter.labels(tool_name=name).inc()
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to increment tool_timeout_counter for %s: %s",
+                                    name,
+                                    exc,
+                                    exc_info=True,
+                                )
+
+                            if self._plugin_manager:
+                                if context_table:
+                                    for ctx in context_table.values():
+                                        ctx.set_state("cb_timeout_failure", True)
+
+                                if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+                                    timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
+                                    await self._plugin_manager.invoke_hook(
+                                        ToolHookType.TOOL_POST_INVOKE,
+                                        payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
+                                        global_context=global_context,
+                                        local_contexts=context_table,
+                                        violations_as_exceptions=False,
+                                    )
+
+                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -3292,9 +3445,48 @@ class ToolService:
                         if auth_query_params_decrypted:
                             endpoint_url = apply_query_param_auth(endpoint_url, auth_query_params_decrypted)
 
-                    # Make HTTP request
+                    # Make HTTP request with timeout enforcement
                     logger.info(f"Calling A2A agent '{a2a_agent_name}' at {endpoint_url}")
-                    http_response = await self._http_client.post(endpoint_url, json=request_data, headers=headers)
+                    a2a_start_time = time.time()
+                    try:
+                        http_response = await asyncio.wait_for(self._http_client.post(endpoint_url, json=request_data, headers=headers), timeout=effective_timeout)
+                    except (asyncio.TimeoutError, httpx.TimeoutException):
+                        a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
+                        structured_logger.log(
+                            level="WARNING",
+                            message=f"A2A tool invocation timed out: {name}",
+                            component="tool_service",
+                            correlation_id=get_correlation_id(),
+                            duration_ms=a2a_elapsed_ms,
+                            metadata={"event": "tool_timeout", "tool_name": name, "a2a_agent": a2a_agent_name, "timeout_seconds": effective_timeout},
+                        )
+
+                        # Increment timeout counter
+                        try:
+                            # First-Party
+                            from mcpgateway.services.metrics import tool_timeout_counter  # pylint: disable=import-outside-toplevel
+
+                            tool_timeout_counter.labels(tool_name=name).inc()
+                        except Exception as exc:
+                            logger.debug("Failed to increment tool_timeout_counter for %s: %s", name, exc, exc_info=True)
+
+                        # Trigger circuit breaker on timeout
+                        if self._plugin_manager:
+                            if context_table:
+                                for ctx in context_table.values():
+                                    ctx.set_state("cb_timeout_failure", True)
+
+                            if self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+                                timeout_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation timed out after {effective_timeout}s")], is_error=True)
+                                await self._plugin_manager.invoke_hook(
+                                    ToolHookType.TOOL_POST_INVOKE,
+                                    payload=ToolPostInvokePayload(name=name, result=timeout_error_result.model_dump(by_alias=True)),
+                                    global_context=global_context,
+                                    local_contexts=context_table,
+                                    violations_as_exceptions=False,
+                                )
+
+                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
 
                     if http_response.status_code == 200:
                         response_data = http_response.json()
@@ -3337,6 +3529,15 @@ class ToolService:
                 return tool_result
             except (PluginError, PluginViolationError):
                 raise
+            except ToolTimeoutError as e:
+                # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke
+                # Re-raise without calling post_invoke again to avoid double-counting failures
+                # But DO set error_message and span attributes for observability
+                error_message = str(e)
+                if span:
+                    span.set_attribute("error", True)
+                    span.set_attribute("error.message", error_message)
+                raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)
                 # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -3349,6 +3550,22 @@ class ToolService:
                 if span:
                     span.set_attribute("error", True)
                     span.set_attribute("error.message", error_message)
+
+                # Notify plugins of the failure so circuit breaker can track it
+                # This ensures HTTP 4xx/5xx errors and MCP failures are counted
+                if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
+                    try:
+                        exception_error_result = ToolResult(content=[TextContent(type="text", text=f"Tool invocation failed: {error_message}")], is_error=True)
+                        await self._plugin_manager.invoke_hook(
+                            ToolHookType.TOOL_POST_INVOKE,
+                            payload=ToolPostInvokePayload(name=name, result=exception_error_result.model_dump(by_alias=True)),
+                            global_context=global_context,
+                            local_contexts=context_table,
+                            violations_as_exceptions=False,  # Don't let plugin errors mask the original exception
+                        )
+                    except Exception as plugin_exc:
+                        logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
+
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
             finally:
                 # Calculate duration
@@ -4326,3 +4543,28 @@ class ToolService:
             return http_response.json()
 
         raise Exception(f"HTTP {http_response.status_code}: {http_response.text}")
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_tool_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The tool_service singleton instance if name is "tool_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "tool_service".
+    """
+    global _tool_service_instance  # pylint: disable=global-statement
+    if name == "tool_service":
+        if _tool_service_instance is None:
+            _tool_service_instance = ToolService()
+        return _tool_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

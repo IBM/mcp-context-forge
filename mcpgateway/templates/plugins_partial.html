@@ -80,7 +80,7 @@
       <div class="space-y-2">
         <div
           class="flex justify-between items-center p-2 bg-indigo-50 rounded dark:bg-indigo-900/20 cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors border border-indigo-200 dark:border-indigo-800"
-          onclick="filterByHook('')"
+          onclick="filterByHook('')" onkeydown="handleKeydown(event, () => filterByHook(''))" role="button" tabindex="0"
         >
           <span
             class="text-sm font-medium text-indigo-700 dark:text-indigo-300"
@@ -95,7 +95,7 @@
         {% for hook, count in stats.plugins_by_hook.items() %}
         <div
           class="flex justify-between items-center p-2 bg-gray-50 rounded dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
-          onclick="filterByHook('{{ hook }}')"
+          onclick="filterByHook('{{ hook }}')" onkeydown="handleKeydown(event, () => filterByHook('{{ hook }}'))" role="button" tabindex="0"
         >
           <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
             >{{ hook.replace('_', ' ').title() }}</span
@@ -131,7 +131,7 @@
       <div class="flex flex-wrap gap-2">
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors border border-indigo-300 dark:border-indigo-700"
-          onclick="filterByTag('')"
+          onclick="filterByTag('')" onkeydown="handleKeydown(event, () => filterByTag(''))" role="button" tabindex="0"
         >
           All Tags
           <span class="ml-1 text-xs text-indigo-600 dark:text-indigo-300"
@@ -141,7 +141,7 @@
         {% for tag, count in stats.plugins_by_tag.items() %}
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-          onclick="filterByTag('{{ tag }}')"
+          onclick="filterByTag('{{ tag }}')" onkeydown="handleKeydown(event, () => filterByTag('{{ tag }}'))" role="button" tabindex="0"
         >
           {{ tag }}
           <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
@@ -173,7 +173,7 @@
       <div class="flex flex-wrap gap-2">
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200 cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors border border-indigo-300 dark:border-indigo-700"
-          onclick="filterByAuthor('')"
+          onclick="filterByAuthor('')" onkeydown="handleKeydown(event, () => filterByAuthor(''))" role="button" tabindex="0"
         >
           All Authors
           <span class="ml-1 text-xs text-indigo-600 dark:text-indigo-300"
@@ -183,7 +183,7 @@
         {% for author, count in stats.plugins_by_author.items() %}
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-          onclick="filterByAuthor('{{ author }}')"
+          onclick="filterByAuthor('{{ author }}')" onkeydown="handleKeydown(event, () => filterByAuthor('{{ author }}'))" role="button" tabindex="0"
         >
           {{ author }}
           <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"

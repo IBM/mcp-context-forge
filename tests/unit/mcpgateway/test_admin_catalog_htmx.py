@@ -25,9 +25,14 @@ def client():
     # Import here to avoid module-level import issues
     from mcpgateway.main import app
     from mcpgateway.auth import get_current_user
+    from mcpgateway.config import settings
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
     from mcpgateway.services.permission_service import PermissionService
     from mcpgateway.db import EmailUser
+
+    # Disable auth_required so AdminAuthMiddleware skips its check
+    original_auth_required = settings.auth_required
+    settings.auth_required = False
 
     # Mock user object
     mock_user = EmailUser(
@@ -71,6 +76,7 @@ def client():
     sec_patcher.stop()
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
+    settings.auth_required = original_auth_required
 
 
 def test_register_catalog_server_htmx_success(client):

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=wrong-import-position, import-outside-toplevel, no-name-in-module
 """Location: ./mcpgateway/main.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -28,8 +29,9 @@ Structure:
 # Standard
 import asyncio
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
+import hashlib
 import os as _os  # local alias to avoid collisions
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -62,7 +64,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import get_current_user
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -121,20 +123,20 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
-from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
-from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
+from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
+from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
+from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
@@ -183,15 +185,18 @@ _config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
 plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
 
 
-# Initialize services
-tool_service = ToolService()
-resource_service = ResourceService()
-prompt_service = PromptService()
-gateway_service = GatewayService()
-root_service = RootService()
+# First-Party
+# First-Party - import module-level service singletons
+from mcpgateway.services.gateway_service import gateway_service  # noqa: E402
+from mcpgateway.services.prompt_service import prompt_service  # noqa: E402
+from mcpgateway.services.resource_service import resource_service  # noqa: E402
+from mcpgateway.services.root_service import root_service  # noqa: E402
+from mcpgateway.services.server_service import server_service  # noqa: E402
+from mcpgateway.services.tool_service import tool_service  # noqa: E402
+
+# Services that do not expose module-level singletons are instantiated here
 completion_service = CompletionService()
 sampling_handler = SamplingHandler()
-server_service = ServerService()
 tag_service = TagService()
 export_service = ExportService()
 import_service = ImportService()
@@ -1352,6 +1357,8 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             >>> middleware = DocsAuthMiddleware(None)
             >>> request = Mock()
             >>> request.url.path = "/api/tools"
+            >>> request.scope = {"path": "/api/tools", "root_path": ""}
+            >>> request.method = "GET"
             >>> request.headers.get.return_value = None
             >>> call_next = AsyncMock(return_value="response")
             >>>
@@ -1370,7 +1377,17 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        if any(request.url.path.startswith(p) for p in protected_paths):
+        # Get path from scope to handle root_path correctly
+        # request.scope["path"] is the path after stripping root_path
+        # This handles deployments under sub-paths (e.g., /gateway/docs)
+        scope_path = request.scope.get("path", request.url.path)
+        root_path = request.scope.get("root_path", "")
+
+        # Check both the scope path and the full URL path to be safe
+        # This covers both direct access and sub-path deployments
+        is_protected = any(scope_path.startswith(p) for p in protected_paths) or any(request.url.path.startswith(f"{root_path}{p}") for p in protected_paths if root_path)
+
+        if is_protected:
             try:
                 token = request.headers.get("Authorization")
                 cookie_token = request.cookies.get("jwt_token")
@@ -1379,6 +1396,183 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
                 await require_docs_auth_override(token, cookie_token)
             except HTTPException as e:
                 return ORJSONResponse(status_code=e.status_code, content={"detail": e.detail}, headers=e.headers if e.headers else None)
+
+        # Proceed to next middleware or route
+        return await call_next(request)
+
+
+class AdminAuthMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware to protect Admin UI routes (/admin/*) requiring admin privileges.
+
+    Exempts login-related paths and static assets:
+    - /admin/login - login page
+    - /admin/logout - logout action
+    - /admin/static/* - static assets
+
+    All other /admin/* routes require the user to be authenticated AND be an admin.
+    Non-admin authenticated users receive a 403 Forbidden response.
+
+    Note: This middleware respects the auth_required setting. When auth_required=False
+    (typically in test environments), the middleware allows requests to pass through
+    and relies on endpoint-level authentication which can be mocked in tests.
+    """
+
+    # Paths under /admin that don't require admin privileges
+    EXEMPT_PATHS = ["/admin/login", "/admin/logout", "/admin/static"]
+
+    @staticmethod
+    def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
+        """Return appropriate error response based on request Accept header.
+
+        Args:
+            request: The incoming HTTP request.
+            root_path: The root path prefix for the application.
+            status_code: HTTP status code for JSON responses.
+            detail: Error message detail.
+            error_param: Optional error parameter for login redirect URL.
+
+        Returns:
+            RedirectResponse for HTML/HTMX requests, ORJSONResponse for API requests.
+        """
+        accept_header = request.headers.get("accept", "")
+        is_htmx = request.headers.get("hx-request") == "true"
+        if "text/html" in accept_header or is_htmx:
+            login_url = f"{root_path}/admin/login" if root_path else "/admin/login"
+            if error_param:
+                login_url = f"{login_url}?error={error_param}"
+            return RedirectResponse(url=login_url, status_code=302)
+        return ORJSONResponse(status_code=status_code, content={"detail": detail})
+
+    async def dispatch(self, request: Request, call_next):  # pylint: disable=too-many-return-statements
+        """
+        Check admin privileges for admin routes.
+
+        Args:
+            request (Request): The incoming HTTP request.
+            call_next (Callable): The function to call the next middleware or endpoint.
+
+        Returns:
+            Response: Either the standard route response or a 401/403 error response.
+        """
+        # Skip admin auth check if auth is not required (e.g., test environments)
+        # This allows tests to mock authentication at the dependency level
+        if not settings.auth_required:
+            return await call_next(request)
+
+        # Get path from scope to handle root_path correctly
+        scope_path = request.scope.get("path", request.url.path)
+        root_path = request.scope.get("root_path", "")
+
+        # Allow OPTIONS requests for CORS preflight (RFC 7231)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        # Check if this is an admin route
+        is_admin_route = scope_path.startswith("/admin") or (root_path and request.url.path.startswith(f"{root_path}/admin"))
+
+        if not is_admin_route:
+            return await call_next(request)
+
+        # Check if path is exempt (login, logout, static)
+        is_exempt = any(scope_path.startswith(p) for p in self.EXEMPT_PATHS)
+        if is_exempt:
+            return await call_next(request)
+
+        # For protected admin routes, verify admin status
+        try:
+            token = request.headers.get("Authorization")
+            cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+
+            # Extract token from header or cookie
+            jwt_token = None
+            if cookie_token:
+                jwt_token = cookie_token
+            elif token and token.startswith("Bearer "):
+                jwt_token = token.split(" ", 1)[1]
+
+            username = None
+
+            if jwt_token:
+                # Try JWT authentication first
+                try:
+                    payload = await verify_jwt_token(jwt_token)
+                    username = payload.get("sub") or payload.get("email")
+
+                    if not username:
+                        return ORJSONResponse(status_code=401, content={"detail": "Invalid token"})
+
+                    # Check if token is revoked (if JTI exists)
+                    jti = payload.get("jti")
+                    if jti:
+                        try:
+                            is_revoked = await asyncio.to_thread(_check_token_revoked_sync, jti)
+                            if is_revoked:
+                                logger.warning(f"Admin access denied for revoked token: {username}")
+                                return self._error_response(request, root_path, 401, "Token has been revoked", "token_revoked")
+                        except Exception as revoke_error:
+                            logger.warning(f"Token revocation check failed: {revoke_error}")
+                            # Continue - don't fail auth if revocation check fails
+                except Exception:
+                    # JWT validation failed, try API token
+                    token_hash = hashlib.sha256(jwt_token.encode()).hexdigest()
+                    api_token_info = await asyncio.to_thread(_lookup_api_token_sync, token_hash)
+
+                    if api_token_info:
+                        if api_token_info.get("expired"):
+                            return ORJSONResponse(status_code=401, content={"detail": "API token expired"})
+                        if api_token_info.get("revoked"):
+                            return ORJSONResponse(status_code=401, content={"detail": "API token has been revoked"})
+                        username = api_token_info["user_email"]
+                        logger.debug(f"Admin auth via API token: {username}")
+
+            # NOTE: Basic auth is NOT supported for admin UI endpoints.
+            # While AdminAuthMiddleware could validate Basic credentials, the admin
+            # endpoints use get_current_user_with_permissions which requires JWT tokens.
+            # Supporting Basic auth would require passing auth context to routes,
+            # which increases complexity and attack surface. Use JWT or API tokens instead.
+
+            if not username and settings.trust_proxy_auth and not settings.mcp_client_auth_enabled:
+                # Proxy authentication path (when MCP client auth is disabled and proxy auth is trusted)
+                proxy_user = request.headers.get(settings.proxy_user_header)
+                if proxy_user:
+                    username = proxy_user
+                    logger.debug(f"Admin auth via proxy header: {username}")
+
+            if not username:
+                # No authentication method succeeded - redirect to login or return 401
+                return self._error_response(request, root_path, 401, "Authentication required")
+
+            # Check if user exists, is active, and is admin
+            db = next(get_db())
+            try:
+                auth_service = EmailAuthService(db)
+                user = await auth_service.get_user_by_email(username)
+
+                if not user:
+                    # Platform admin bootstrap (when REQUIRE_USER_IN_DB=false)
+                    platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+                    if not settings.require_user_in_db and username == platform_admin_email:
+                        logger.info(f"Platform admin bootstrap authentication for {username}")
+                        # Allow platform admin through - they have implicit admin privileges
+                    else:
+                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
+                else:
+                    # User exists in DB - check active and admin status
+                    if not user.is_active:
+                        logger.warning(f"Admin access denied for disabled user: {username}")
+                        return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
+                    if not user.is_admin:
+                        logger.warning(f"Admin access denied for non-admin user: {username}")
+                        return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
+            finally:
+                db.close()
+
+        except HTTPException as e:
+            return self._error_response(request, root_path, e.status_code, e.detail)
+        except Exception as e:
+            logger.error(f"Admin auth middleware error: {e}")
+            return ORJSONResponse(status_code=500, content={"detail": "Authentication error"})
 
         # Proceed to next middleware or route
         return await call_next(request)
@@ -1607,6 +1801,10 @@ app.add_middleware(
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
+
+# Add AdminAuthMiddleware to protect admin routes (requires admin privileges)
+# This ensures all /admin/* routes (except login/logout) require admin status
+app.add_middleware(AdminAuthMiddleware)
 
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
@@ -6061,7 +6259,7 @@ async def security_health(request: Request):
             "ui_protected": security_status["ui_protected"],
         },
         "warning_count": len(security_status["warnings"]),
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     # Include warnings only if authenticated or in dev mode
@@ -6677,6 +6875,17 @@ if UI_ENABLED:
         root_path = settings.app_root_path
         return RedirectResponse(f"{root_path}/admin/", status_code=303)
         # return RedirectResponse(request.url_for("admin_home"))
+
+    # Redirect /favicon.ico to /static/favicon.ico for browser compatibility
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon_redirect() -> RedirectResponse:
+        """Redirect /favicon.ico to /static/favicon.ico for browser compatibility.
+
+        Returns:
+            RedirectResponse: 301 redirect to /static/favicon.ico.
+        """
+        root_path = settings.app_root_path
+        return RedirectResponse(f"{root_path}/static/favicon.ico", status_code=301)
 
 else:
     # If UI is disabled, provide API info at root

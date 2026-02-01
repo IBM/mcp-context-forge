@@ -21,9 +21,12 @@
 
 ???+ example "🗂️ What URLs are available for the admin interface and API docs?"
 
-    - Admin UI → <http://localhost:4444/admin>
-    - Swagger → <http://localhost:4444/docs>
-    - ReDoc → <http://localhost:4444/redoc>
+    - Admin UI → `http://localhost:4444/admin` (or `http://localhost:8080/admin` with Compose)
+    - Swagger → `http://localhost:4444/docs` (JWT-protected by default)
+    - ReDoc → `http://localhost:4444/redoc` (JWT-protected by default)
+
+    !!! tip
+        Log in to the Admin UI to get a session cookie, or enable `DOCS_ALLOW_BASIC_AUTH=true` for Basic auth access to `/docs` and `/redoc`.
 
 ---
 
@@ -60,10 +63,16 @@
     Then edit:
 
     ```env
-    BASIC_AUTH_USER=admin
-    BASIC_AUTH_PASSWORD=changeme
+    # JWT authentication (required)
     JWT_SECRET_KEY=my-test-key
+
+    # Admin UI login credentials
+    PLATFORM_ADMIN_EMAIL=admin@example.com
+    PLATFORM_ADMIN_PASSWORD=changeme
     ```
+
+    !!! info "Authentication"
+        The Admin UI uses email/password authentication. Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
 
 ???+ example "🪛 What are some advanced environment variables I can configure?"
 
@@ -308,7 +317,7 @@
     Upgrading from earlier releases? Follow [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
 
 ???+ info "🔁 Does basic auth still work?"
-    Yes. Email auth is recommended for multi‑tenancy; basic auth remains available. Use `AUTH_REQUIRED` to enforce authentication.
+    Basic auth for API endpoints is **disabled by default** for security. To enable it, set `API_ALLOW_BASIC_AUTH=true`. Email/password authentication is recommended for the Admin UI. For programmatic API access, use JWT tokens.
 
 ???+ info "🧩 How do teams and visibility work?"
     Users belong to teams. Resources (servers, tools, prompts, resources) can be `private`, `team`, or `public`. Assign via API or Admin UI. Use SSO mappings to auto‑assign teams.
