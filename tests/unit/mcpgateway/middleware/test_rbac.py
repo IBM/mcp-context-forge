@@ -36,15 +36,11 @@ async def test_get_current_user_with_permissions_cookie_token_success():
     mock_request.state = MagicMock(auth_method="jwt", request_id="req123")
 
     mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=True)
-    mock_db = MagicMock()
     with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
-        result = await rbac.get_current_user_with_permissions(mock_request, db=mock_db)
+        result = await rbac.get_current_user_with_permissions(mock_request)
         assert result["email"] == "user@example.com"
         assert result["auth_method"] == "jwt"
         assert result["request_id"] == "req123"
-        # Verify db.commit() and db.close() were called for session cleanup
-        mock_db.commit.assert_called_once()
-        mock_db.close.assert_called_once()
 
 
 @pytest.mark.asyncio
