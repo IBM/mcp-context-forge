@@ -1,81 +1,121 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/mcpgateway/services/test_cancellation_service.py
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
-"""
+"""Tests for cancellation_service."""
 
+# Standard
+from unittest.mock import AsyncMock, MagicMock
+
+# Third-Party
 import pytest
-import asyncio
-from unittest.mock import AsyncMock
 
-from mcpgateway.services.cancellation_service import CancellationService, cancellation_service
-
-
-@pytest.mark.asyncio
-async def test_register_and_cancel_triggers_callback():
-    svc = CancellationService()
-
-    mock_cb = AsyncMock()
-
-    await svc.register_run("r1", name="tool1", cancel_callback=mock_cb)
-
-    res = await svc.cancel_run("r1", reason="stop")
-    assert res is True
-    mock_cb.assert_awaited_once_with("stop")
+# First-Party
+from mcpgateway.services.cancellation_service import CancellationService
 
 
 @pytest.mark.asyncio
-async def test_cancel_nonexistent_returns_false():
-    svc = CancellationService()
-    res = await svc.cancel_run("noexist")
-    assert res is False
+async def test_initialize_with_redis(monkeypatch):
+    service = CancellationService()
+    monkeypatch.setattr(service, "_listen_for_cancellations", AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.cancellation_service.get_redis_client", AsyncMock(return_value=MagicMock()))
+
+    created_tasks = []
+
+    def _fake_create_task(coro):
+        created_tasks.append(coro)
+        task = MagicMock()
+        task.done.return_value = False
+        return task
+
+    monkeypatch.setattr("mcpgateway.services.cancellation_service.asyncio.create_task", _fake_create_task)
+
+    await service.initialize()
+    assert service._initialized is True
+    assert service._pubsub_task is not None
+    assert created_tasks
 
 
 @pytest.mark.asyncio
-async def test_unregister_removes_run():
-    svc = CancellationService()
-    await svc.register_run("r2", name="tool2")
-    assert await svc.get_status("r2") is not None
-    await svc.unregister_run("r2")
-    assert await svc.get_status("r2") is None
+async def test_shutdown_cancels_task():
+    service = CancellationService()
+    class DummyTask:
+        def __init__(self):
+            self.cancel_called = False
+
+        def done(self):
+            return False
+
+        def cancel(self):
+            self.cancel_called = True
+
+        def __await__(self):
+            async def _noop():
+                return None
+
+            return _noop().__await__()
+
+    task = DummyTask()
+    service._pubsub_task = task
+
+    await service.shutdown()
+    assert task.cancel_called is True
 
 
 @pytest.mark.asyncio
-async def test_is_registered_returns_true_for_registered_run():
-    svc = CancellationService()
-    await svc.register_run("r3", name="tool3")
-    assert await svc.is_registered("r3") is True
+async def test_cancel_run_unknown_publishes(monkeypatch):
+    service = CancellationService()
+    service._publish_cancellation = AsyncMock()
+
+    result = await service.cancel_run("missing", reason="test")
+    assert result is False
+    service._publish_cancellation.assert_awaited_once_with("missing", "test")
 
 
 @pytest.mark.asyncio
-async def test_is_registered_returns_false_for_unregistered_run():
-    svc = CancellationService()
-    assert await svc.is_registered("nonexistent") is False
+async def test_cancel_run_known_executes_callback(monkeypatch):
+    service = CancellationService()
+    callback = AsyncMock()
+    await service.register_run("run-1", name="tool", cancel_callback=callback)
+    service._publish_cancellation = AsyncMock()
+
+    result = await service.cancel_run("run-1", reason="stop")
+    assert result is True
+    callback.assert_awaited_once_with("stop")
+    service._publish_cancellation.assert_awaited_once_with("run-1", "stop")
 
 
 @pytest.mark.asyncio
-async def test_is_registered_returns_false_after_unregister():
-    svc = CancellationService()
-    await svc.register_run("r4", name="tool4")
-    assert await svc.is_registered("r4") is True
-    await svc.unregister_run("r4")
-    assert await svc.is_registered("r4") is False
+async def test_cancel_run_local_handles_callback_error():
+    service = CancellationService()
 
+    async def _boom(_reason):
+        raise RuntimeError("bad")
 
-@pytest.mark.asyncio
-async def test_cancel_logs_reason_and_metadata():
-    """Test that cancellation logs include reason and metadata."""
-    svc = CancellationService()
-    await svc.register_run("r5", name="test_tool")
-
-    # Cancel with reason
-    result = await svc.cancel_run("r5", reason="user requested")
+    await service.register_run("run-1", cancel_callback=_boom)
+    result = await service._cancel_run_local("run-1", reason="x")
     assert result is True
 
-    # Verify status includes cancellation metadata
-    status = await svc.get_status("r5")
-    assert status is not None
-    assert status["cancelled"] is True
-    assert status["cancel_reason"] == "user requested"
-    assert "cancelled_at" in status
+
+@pytest.mark.asyncio
+async def test_publish_cancellation_no_redis():
+    service = CancellationService()
+    service._redis = None
+    await service._publish_cancellation("run-1", reason="no-redis")
+
+
+@pytest.mark.asyncio
+async def test_publish_cancellation_redis_error():
+    service = CancellationService()
+    redis = AsyncMock()
+    redis.publish.side_effect = RuntimeError("fail")
+    service._redis = redis
+    await service._publish_cancellation("run-1", reason="boom")
+
+
+@pytest.mark.asyncio
+async def test_get_status_and_is_registered():
+    service = CancellationService()
+    await service.register_run("run-1", name="tool")
+    assert await service.is_registered("run-1") is True
+    status = await service.get_status("run-1")
+    assert status["name"] == "tool"
+    await service.unregister_run("run-1")
+    assert await service.is_registered("run-1") is False

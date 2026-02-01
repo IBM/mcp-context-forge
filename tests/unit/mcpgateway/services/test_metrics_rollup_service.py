@@ -7,11 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Standard
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
 
 # Third-Party
 import pytest
 
 # First-Party
+from mcpgateway.services import metrics_rollup_service
 from mcpgateway.services.metrics_rollup_service import (
     get_metrics_rollup_service,
     HourlyAggregation,
@@ -57,6 +59,39 @@ class TestMetricsRollupService:
         assert stats["rollup_interval_hours"] == 4
         assert stats["total_rollups"] == 0
         assert stats["rollup_runs"] == 0
+
+    def test_pause_and_resume(self):
+        service = MetricsRollupService()
+        service.pause(reason="maintenance")
+        assert service._pause_event.is_set()
+        assert service._pause_reason == "maintenance"
+        assert service._pause_count == 1
+
+        service.pause()
+        assert service._pause_count == 2
+
+        service.resume()
+        assert service._pause_event.is_set()
+        assert service._pause_count == 1
+
+        service.resume()
+        assert service._pause_count == 0
+        assert service._pause_reason is None
+        assert not service._pause_event.is_set()
+
+    def test_pause_during_context(self):
+        service = MetricsRollupService()
+        with service.pause_during("upgrade"):
+            assert service._pause_event.is_set()
+            assert service._pause_reason == "upgrade"
+        assert service._pause_reason is None
+        assert not service._pause_event.is_set()
+
+    @pytest.mark.asyncio
+    async def test_start_disabled(self):
+        service = MetricsRollupService(enabled=False)
+        await service.start()
+        assert service._rollup_task is None
 
 
 class TestHourlyAggregation:
@@ -207,6 +242,106 @@ class TestPercentileCalculation:
 
         p99 = service._percentile(data, 99)
         assert p99 >= 9.5
+
+
+class TestBackfillDetection:
+    """Tests for backfill detection logic."""
+
+    def test_detect_backfill_no_metrics(self, monkeypatch):
+        service = MetricsRollupService()
+
+        class _Result:
+            def scalar(self):
+                return None
+
+        db = type("DB", (), {"execute": lambda _self, _stmt: _Result()})()
+
+        @contextmanager
+        def fake_session():
+            yield db
+
+        monkeypatch.setattr(metrics_rollup_service, "fresh_db_session", fake_session)
+        assert service._detect_backfill_hours() == 24
+
+    def test_detect_backfill_clamped_to_retention(self, monkeypatch):
+        service = MetricsRollupService()
+        now = datetime.now(timezone.utc)
+        earliest = now - timedelta(hours=200)
+
+        def _result(value):
+            class _Result:
+                def scalar(self):
+                    return value
+
+            return _Result()
+
+        db = type("DB", (), {"execute": lambda _self, _stmt: _result(earliest)})()
+
+        @contextmanager
+        def fake_session():
+            yield db
+
+        monkeypatch.setattr(metrics_rollup_service, "fresh_db_session", fake_session)
+        monkeypatch.setattr(metrics_rollup_service.settings, "metrics_retention_days", 2)
+        assert service._detect_backfill_hours() == 48
+
+    def test_detect_backfill_error_returns_default(self, monkeypatch):
+        service = MetricsRollupService()
+
+        @contextmanager
+        def fake_session():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(metrics_rollup_service, "fresh_db_session", fake_session)
+        assert service._detect_backfill_hours() == 24
+
+
+class TestRollupLoop:
+    """Tests for rollup loop behavior."""
+
+    @pytest.mark.asyncio
+    async def test_rollup_loop_runs_once(self, monkeypatch):
+        service = MetricsRollupService()
+        summary = RollupSummary(
+            total_hours_processed=1,
+            total_records_aggregated=1,
+            total_rollups_created=1,
+            total_rollups_updated=0,
+            tables={},
+            duration_seconds=0.1,
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+        )
+
+        async def fake_rollup_all(hours_back, force_reprocess=False):
+            return summary
+
+        async def fake_wait_for(awaitable, timeout):
+            service._shutdown_event.set()
+            return await awaitable
+
+        monkeypatch.setattr(service, "rollup_all", fake_rollup_all)
+        monkeypatch.setattr(service, "_detect_backfill_hours", lambda: 1)
+        monkeypatch.setattr(metrics_rollup_service.asyncio, "wait_for", fake_wait_for)
+
+        await service._rollup_loop()
+        assert service._rollup_runs == 1
+        assert service._total_rollups == 1
+
+    @pytest.mark.asyncio
+    async def test_rollup_loop_paused(self, monkeypatch):
+        service = MetricsRollupService()
+        service._pause_event.set()
+        service._pause_reason = "maintenance"
+
+        async def fake_wait_for(awaitable, timeout):
+            service._shutdown_event.set()
+            return await awaitable
+
+        monkeypatch.setattr(metrics_rollup_service.asyncio, "wait_for", fake_wait_for)
+
+        await service._rollup_loop()
+        assert service._rollup_runs == 0
 
 
 class TestGetMetricsRollupService:

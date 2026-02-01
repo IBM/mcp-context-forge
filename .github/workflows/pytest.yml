@@ -3,7 +3,7 @@
 # ===============================================================
 #
 #   - runs the full test-suite across three Python versions
-#   - measures branch + line coverage (fails < 60% main, < 35% doctest)
+#   - measures branch + line coverage (fails < 75% main, < 35% doctest)
 #   - uploads the XML/HTML coverage reports as build artifacts
 #   - (optionally) generates / commits an SVG badge - kept disabled
 #   - posts a concise per-file coverage table to the job summary
@@ -67,7 +67,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       # -----------------------------------------------------------
-      # 3️⃣  Run the tests with coverage (fail under 60% coverage)
+      # 3️⃣  Run the tests with coverage (fail under 75% coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
@@ -78,7 +78,7 @@ jobs:
             --cov-report=html \
             --cov-report=term \
             --cov-branch \
-            --cov-fail-under=60
+            --cov-fail-under=75
 
       # -----------------------------------------------------------
       # 4️⃣  Run doctests (fail under 35% coverage)
