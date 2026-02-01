@@ -25,13 +25,16 @@ classifiers = [
 requires-python = ">=3.9"
 dependencies = [
     "aiofiles>=25.1.0",
-    "cachetools>=6.2.4",
+    "aiohttp>=3.13.3",
+    "cachetools>=6.2.6",
     "diskcache>=5.6.3",
     "httpx>=0.28.1",
-    "mcp>=1.25.0",
-    "numpy>=2.4.1",
-    "openai>=2.15.0",
-    "orjson>=3.11.5",
+    "jinja2>=3.1.6",
+    "mcp>=1.26.0",
+    "numpy>=2.4.2",
+    "openai>=2.16.0",
+    "orjson>=3.11.6",
+    "psutil>=7.2.2",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.2.1",
@@ -57,43 +60,42 @@ dev = [
 docs = [
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.1",
-    "mkdocstrings[python]>=1.0.1",
+    "mkdocstrings[python]>=1.0.2",
 ]
 benchmark = [
     "locust>=2.43.1",
     "memory-profiler>=0.61.0",
-    "psutil>=7.2.1",
+    # psutil moved to core dependencies (used by performance_tools.py)
 ]
 anthropic = [
-    "anthropic>=0.76.0",
+    "anthropic>=0.77.0",
 ]
 aws = [
-    "boto3>=1.42.34",
-    "botocore>=1.42.34",
+    "boto3>=1.42.39",
+    "botocore>=1.42.39",
 ]
 ollama = [
-    "aiohttp>=3.13.3",
+    # aiohttp moved to core dependencies (used by health.py)
 ]
 gemini = [
     "google-generativeai>=0.8.6",
 ]
 watsonx = [
-    "ibm-watsonx-ai>=1.5.0",
+    "ibm-watsonx-ai>=1.5.1",
 ]
 rest = [
     "fastapi>=0.128.0",
-    "python-multipart>=0.0.21",
+    "python-multipart>=0.0.22",
     "uvicorn[standard]>=0.40.0",
 ]
 all = [
-    "aiohttp>=3.13.3",
-    "anthropic>=0.76.0",
-    "boto3>=1.42.34",
-    "botocore>=1.42.34",
+    "anthropic>=0.77.0",
+    "boto3>=1.42.39",
+    "botocore>=1.42.39",
     "fastapi>=0.128.0",
     "google-generativeai>=0.8.6",
-    "ibm-watsonx-ai>=1.5.0",
-    "python-multipart>=0.0.21",
+    "ibm-watsonx-ai>=1.5.1",
+    "python-multipart>=0.0.22",
     "uvicorn[standard]>=0.40.0",
 ]
 

@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=2.14.4",
-    "orjson>=3.11.5",
+    "orjson>=3.11.6",
     "pydantic>=2.12.5",
     "typing-extensions>=4.15.0",
 ]
@@ -26,13 +26,13 @@ dev = [
 ]
 plotly = [
     "kaleido>=1.2.0",
-    "numpy>=2.4.1",
+    "numpy>=2.4.2",
     "pandas>=3.0.0",
     "plotly>=6.5.2",
 ]
 full = [
     "kaleido>=1.2.0",
-    "numpy>=2.4.1",
+    "numpy>=2.4.2",
     "pandas>=3.0.0",
     "plotly>=6.5.2",
 ]
