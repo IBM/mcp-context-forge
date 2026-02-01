@@ -3373,7 +3373,7 @@ class TestToolListingGracefulErrorHandling:
                 return tool_read_3
 
         service = ToolService()
-        
+
         # Use patch.object to properly mock the instance method
         with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
             # Call list_tools - should NOT raise an exception
