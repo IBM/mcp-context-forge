@@ -5339,21 +5339,24 @@ db-fix-head: ## Fix multiple heads issue
 # help: test-ui              - Run Playwright UI tests with visible browser
 # help: test-ui-headless     - Run Playwright UI tests in headless mode
 # help: test-ui-debug        - Run Playwright UI tests with Playwright Inspector
-# help: test-ui-smoke        - Run UI smoke tests only (fast subset)
-# help: test-ui-parallel     - Run UI tests in parallel using pytest-xdist
-# help: test-ui-report       - Run UI tests and generate HTML report
-# help: test-ui-coverage     - Run UI tests with coverage for admin endpoints
-# help: test-ui-record       - Run UI tests and record videos (headless)
-# help: test-ui-update-snapshots - Update visual regression snapshots
+# help: test-ui-smoke        - Run Playwright UI smoke tests only (fast subset)
+# help: test-ui-parallel     - Run Playwright UI tests in parallel using pytest-xdist
+# help: test-ui-report       - Run Playwright UI tests and generate HTML report
+# help: test-ui-coverage     - Run Playwright UI tests with coverage for admin endpoints
+# help: test-ui-screenshots  - Run Playwright UI tests with always-on screenshots (headless)
+# help: test-ui-record       - Run Playwright UI tests and record videos + screenshots (headless)
+# help: test-ui-update-snapshots - Update Playwright visual regression snapshots
 # help: test-ui-clean        - Clean up Playwright test artifacts
 
-.PHONY: playwright-install playwright-install-all test-ui test-ui-headless test-ui-debug test-ui-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-record test-ui-update-snapshots test-ui-clean
+.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-debug test-ui-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
 
 # Playwright test variables
 PLAYWRIGHT_DIR := tests/playwright
 PLAYWRIGHT_REPORTS := $(PLAYWRIGHT_DIR)/reports
 PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
+PLAYWRIGHT_SLOWMO ?= 750
+TEST_BASE_URL ?= http://localhost:8080
 
 ## --- Playwright Setup -------------------------------------------------------
 playwright-install:
@@ -5372,102 +5375,122 @@ playwright-install-all:
 		playwright install"
 	@echo "✅ All Playwright browsers installed!"
 
-## --- UI Test Execution ------------------------------------------------------
-test-ui: playwright-install
-	@echo "🎭 Running UI tests with visible browser..."
-	@echo "💡 Make sure the dev server is running: make dev"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
-	@if ! curl -s http://localhost:8000/health >/dev/null 2>&1; then \
-		echo "❌ Dev server not running on http://localhost:8000"; \
-		echo "💡 Start it with: make dev"; \
+playwright-preflight:
+	@echo "🌐 Playwright base URL: $(TEST_BASE_URL)"
+	@echo "💡 Default target is docker-compose.yml nginx on http://localhost:8080"
+	@echo "   Start it with: make testing-up"
+	@if ! curl -s "$(TEST_BASE_URL)/health" >/dev/null 2>&1; then \
+		echo "❌ Gateway not responding at $(TEST_BASE_URL)"; \
+		echo "💡 Start it with: make testing-up"; \
+		echo "💡 Or override with: TEST_BASE_URL=http://localhost:8000 make test-ui"; \
 		exit 1; \
 	fi
+
+## --- UI Test Execution ------------------------------------------------------
+test-ui: playwright-install
+	@echo "🎭 Running Playwright UI tests with visible browser..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export TEST_BASE_URL=http://localhost:8000 && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
 		python -m pytest tests/playwright/ -v --headed --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
 test-ui-headless: playwright-install
-	@echo "🎭 Running UI tests in headless mode..."
-	@echo "💡 Make sure the dev server is running: make dev"
+	@echo "🎭 Running Playwright UI tests in headless mode..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
-	@if ! curl -s http://localhost:8000/health >/dev/null 2>&1; then \
-		echo "❌ Dev server not running on http://localhost:8000"; \
-		echo "💡 Start it with: make dev"; \
-		exit 1; \
-	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export TEST_BASE_URL=http://localhost:8000 && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
 		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
 test-ui-debug: playwright-install
-	@echo "🎭 Running UI tests with Playwright Inspector..."
+	@echo "🎭 Running Playwright UI tests with Playwright Inspector..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		PWDEBUG=1 pytest $(PLAYWRIGHT_DIR)/ -v -s --headed \
+		PWDEBUG=1 TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -s --headed \
 		--browser chromium"
 
 test-ui-smoke: playwright-install
-	@echo "🎭 Running UI smoke tests..."
+	@echo "🎭 Running Playwright UI smoke tests..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v -m smoke --headed \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -m smoke --headed \
 		--browser chromium || { echo '❌ UI smoke tests failed!'; exit 1; }"
 	@echo "✅ UI smoke tests passed!"
 
 test-ui-parallel: playwright-install
-	@echo "🎭 Running UI tests in parallel..."
+	@echo "🎭 Running Playwright UI tests in parallel..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -q pytest-xdist && \
-		pytest $(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI parallel tests completed!"
 
 ## --- UI Test Reporting ------------------------------------------------------
 test-ui-report: playwright-install
-	@echo "🎭 Running UI tests with HTML report..."
+	@echo "🎭 Running Playwright UI tests with HTML report..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -q pytest-html && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
 		--html=$(PLAYWRIGHT_REPORTS)/report.html --self-contained-html \
 		--browser chromium || true"
 	@echo "✅ UI test report generated: $(PLAYWRIGHT_REPORTS)/report.html"
 	@echo "   Open with: open $(PLAYWRIGHT_REPORTS)/report.html"
 
 test-ui-coverage: playwright-install
-	@echo "🎭 Running UI tests with coverage..."
+	@echo "🎭 Running Playwright UI tests with coverage..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin \
 		--cov-report=html:$(PLAYWRIGHT_REPORTS)/coverage \
 		--cov-report=term --browser chromium || true"
 	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage/index.html"
 
+test-ui-screenshots: playwright-install
+	@echo "🎭 Running Playwright UI tests with always-on screenshots..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=on \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ Playwright screenshots captured"
+	@echo "📁 Artifacts saved to: test-results/"
+
 test-ui-record: playwright-install
-	@echo "🎭 Running UI tests with video recording..."
+	@echo "🎭 Running Playwright UI tests with video recording + screenshots..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_VIDEOS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --video=on \
-		--browser chromium || true"
-	@echo "✅ Test videos saved in: $(PLAYWRIGHT_VIDEOS)/"
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --video=on --screenshot=on --slowmo $(PLAYWRIGHT_SLOWMO) \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ Playwright videos + screenshots saved"
+	@echo "📁 Artifacts saved to: test-results/"
 
 ## --- UI Test Utilities ------------------------------------------------------
 test-ui-update-snapshots: playwright-install
-	@echo "🎭 Updating visual regression snapshots..."
+	@echo "🎭 Updating Playwright visual regression snapshots..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --update-snapshots \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --update-snapshots \
 		--browser chromium"
 	@echo "✅ Snapshots updated!"
 

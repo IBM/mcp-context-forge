@@ -33,6 +33,47 @@ class TestHTMXInteractions:
         page.wait_for_selector("#tools-panel:not(.hidden)")
         page.wait_for_selector("#tools-table-body")
 
+    TAB_PANEL_CHECKS = [
+        ("overview", "overview-panel", None),
+        ("logs", "logs-panel", "#log-level-filter"),
+        ("export-import", "export-import-panel", "#export-tools"),
+        ("version-info", "version-info-panel", None),
+        ("maintenance", "maintenance-panel", None),
+        ("plugins", "plugins-panel", None),
+        ("performance", "performance-panel", None),
+        ("observability", "observability-panel", None),
+        ("llm-chat", "llm-chat-panel", "#llm-connect-btn"),
+        ("llm-settings", "llm-settings-panel", "#llm-settings-tab-providers"),
+        ("mcp-registry", "mcp-registry-panel", "#mcp-registry-servers"),
+        ("catalog", "catalog-panel", '[data-testid="server-list"]'),
+        ("tools", "tools-panel", "#add-tool-form"),
+        ("tool-ops", "tool-ops-panel", "#searchBox"),
+        ("resources", "resources-panel", "#resources-search-input"),
+        ("prompts", "prompts-panel", "#add-prompt-form"),
+        ("gateways", "gateways-panel", "#gateways-search-input"),
+        ("teams", "teams-panel", "#create-team-btn"),
+        ("users", "users-panel", "#create-user-form"),
+        ("tokens", "tokens-panel", "#create-token-form"),
+        ("a2a-agents", "a2a-agents-panel", "#a2a-agents-search-input"),
+        ("grpc-services", "grpc-services-panel", "#add-grpc-service-form"),
+        ("roots", "roots-panel", "table"),
+        ("metrics", "metrics-panel", "#top-performers-panel-tools"),
+    ]
+
+    @staticmethod
+    def _find_tool(page: Page, tool_name: str, retries: int = 5):
+        """Find a tool by name via the admin JSON endpoint."""
+        for _ in range(retries):
+            response = page.request.get("/admin/tools?per_page=500")
+            if response.ok:
+                payload = response.json()
+                data = payload.get("data", [])
+                for tool in data:
+                    if tool.get("name") == tool_name:
+                        return tool
+            page.wait_for_timeout(200)
+        return None
+
     @pytest.fixture(autouse=True)
     def setup(self, admin_page):
         """Login and setup before each test."""
@@ -100,6 +141,14 @@ class TestHTMXInteractions:
             form.locator('button[type="submit"]').click()
         response = response_info.value
         assert response.status < 400
+
+        created_tool = self._find_tool(page, test_tool_data["name"])
+        if created_tool:
+            page.request.post(
+                f"/admin/tools/{created_tool['id']}/delete",
+                data="is_inactive_checked=false",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
 
     def test_tool_modal_interactions(self, page: Page):
         """Test tool detail and edit modal functionality."""
@@ -175,6 +224,8 @@ class TestHTMXInteractions:
 
         # Get initial server count
         initial_rows = page.locator('[data-testid="server-item"]').count()
+        if initial_rows == 0:
+            pytest.skip("No servers available to validate search filtering.")
 
         # Type a search term that likely won't match
         search_input.fill("xyznonexistentserver123")
@@ -185,8 +236,8 @@ class TestHTMXInteractions:
         # Check if the table has been filtered (this depends on implementation)
         # If search is implemented client-side, rows should be hidden
         # If server-side, a request would be made
-        # Check that filtering actually works (unused for now but validates functionality)
-        page.locator('[data-testid="server-item"]:visible').count()
+        filtered_visible = page.locator('[data-testid="server-item"]:visible').count()
+        assert filtered_visible < initial_rows
 
         # Clear search
         search_input.fill("")
@@ -327,6 +378,14 @@ class TestHTMXInteractions:
         page.click("#tab-tools")
         page.wait_for_selector("#tools-panel:not(.hidden)")
 
+        failed_requests = []
+
+        def handle_request_failed(request):
+            if "/admin/tools" in request.url and request.method == "POST":
+                failed_requests.append(request.url)
+
+        page.on("requestfailed", handle_request_failed)
+
         # Intercept network requests to simulate failure
         def handle_route(route):
             if "/admin/tools" in route.request.url and route.request.method == "POST":
@@ -354,15 +413,18 @@ class TestHTMXInteractions:
         # Submit and expect error handling
         form.locator('button[type="submit"]').click()
 
-        # Check for error message (depends on implementation)
-        # The admin.js shows error handling with showErrorMessage function
+        # Ensure the failed request is observed
         page.wait_for_timeout(1000)
+        assert failed_requests, "Expected tool creation request to fail, but no failed request was captured."
 
         # Clean up route
         page.unroute("**/*")
 
     def test_version_info_tab(self, page: Page):
         """Test version info tab functionality."""
+        if page.locator("#tab-version-info").count() == 0:
+            pytest.skip("Version info tab not available in this UI configuration.")
+
         # Click version info tab
         page.click("#tab-version-info")
 
@@ -374,25 +436,26 @@ class TestHTMXInteractions:
         expect(page.locator("#version-info-panel")).to_be_visible()
 
     @pytest.mark.parametrize(
-        "tab_name,panel_id",
-        [
-            ("catalog", "catalog-panel"),
-            ("tools", "tools-panel"),
-            ("resources", "resources-panel"),
-            ("prompts", "prompts-panel"),
-            ("gateways", "gateways-panel"),
-            ("roots", "roots-panel"),
-            ("metrics", "metrics-panel"),
-        ],
+        "tab_name,panel_id,selector",
+        TAB_PANEL_CHECKS,
     )
-    def test_all_tabs_navigation(self, page: Page, tab_name: str, panel_id: str):
-        """Test navigation to all available tabs."""
+    def test_all_tabs_navigation(self, page: Page, tab_name: str, panel_id: str, selector: str | None):
+        """Test navigation to all available tabs and key controls."""
+        tab_selector = f"#tab-{tab_name}"
+        panel_selector = f"#{panel_id}"
+        if page.locator(tab_selector).count() == 0:
+            pytest.skip(f"Tab {tab_name} not available in this UI configuration.")
+
         # Click the tab
-        page.click(f"#tab-{tab_name}")
+        page.click(tab_selector)
 
         # Wait for panel to become visible
-        page.wait_for_selector(f"#{panel_id}:not(.hidden)", state="visible")
+        page.wait_for_selector(f"{panel_selector}:not(.hidden)", state="visible")
 
         # Verify panel is visible and others are hidden
-        expect(page.locator(f"#{panel_id}")).to_be_visible()
-        expect(page.locator(f"#{panel_id}")).not_to_have_class(re.compile(r"hidden"))
+        expect(page.locator(panel_selector)).to_be_visible()
+        expect(page.locator(panel_selector)).not_to_have_class(re.compile(r"hidden"))
+
+        if selector:
+            target = page.locator(panel_selector).locator(selector)
+            expect(target.first).to_be_visible()
