@@ -186,10 +186,21 @@ class TestApplicationStartupPaths:
     @patch("mcpgateway.main.logging_service")
     @patch("mcpgateway.config.settings.require_strong_secrets", False)
     @patch("mcpgateway.config.settings.dev_mode", True)
-    async def test_startup_without_plugin_manager(self, mock_logging_service):
+    async def test_startup_without_plugin_manager(self, mock_logging_service, monkeypatch):
         """Test startup path when plugin_manager is None."""
         mock_logging_service.initialize = AsyncMock()
+        mock_logging_service.shutdown = AsyncMock()
         mock_logging_service.configure_uvicorn_after_startup = MagicMock()
+
+        # Disable background services to avoid real threads/event loops in unit tests.
+        monkeypatch.setattr(settings, "metrics_cleanup_enabled", False)
+        monkeypatch.setattr(settings, "metrics_rollup_enabled", False)
+        monkeypatch.setattr(settings, "metrics_buffer_enabled", False)
+        monkeypatch.setattr(settings, "metrics_aggregation_enabled", False)
+        monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
+        monkeypatch.setattr(settings, "mcpgateway_tool_cancellation_enabled", False)
+        monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", False)
+        monkeypatch.setattr(settings, "sso_enabled", False)
 
         # Mock all required services
         with (
@@ -205,21 +216,28 @@ class TestApplicationStartupPaths:
             patch("mcpgateway.main.session_registry") as mock_session_registry,
             patch("mcpgateway.main.export_service") as mock_export,
             patch("mcpgateway.main.import_service") as mock_import,
+            patch("mcpgateway.main.a2a_service") as mock_a2a,
             patch("mcpgateway.main.refresh_slugs_on_startup") as mock_refresh,
             patch("mcpgateway.main.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
             patch("mcpgateway.main.close_redis_client", new_callable=AsyncMock) as mock_close_redis,
             patch("mcpgateway.routers.llmchat_router.init_redis", new_callable=AsyncMock) as mock_init_llmchat,
+            patch("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", new_callable=AsyncMock) as mock_shared_http,
+            patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new_callable=AsyncMock) as mock_shared_http_shutdown,
         ):
             # Setup all mocks
             services = [mock_tool, mock_resource, mock_prompt, mock_gateway, mock_root, mock_completion, mock_sampling, mock_cache, mock_session, mock_session_registry, mock_export, mock_import]
             for service in services:
                 service.initialize = AsyncMock()
                 service.shutdown = AsyncMock()
+            mock_a2a.initialize = AsyncMock()
+            mock_a2a.shutdown = AsyncMock()
 
             # Setup Redis mocks
             mock_get_redis.return_value = None
             mock_close_redis.return_value = None
             mock_init_llmchat.return_value = None
+            mock_shared_http.return_value = None
+            mock_shared_http_shutdown.return_value = None
 
             # Test lifespan without plugin manager
             # First-Party
