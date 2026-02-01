@@ -514,16 +514,15 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["reliability", "sre"]
-    #mode: "enforce_ignore_error"
-    mode: "disabled"
+    mode: "enforce_ignore_error"
     priority: 70
     conditions: []
     config:
-      error_rate_threshold: 0.5
-      window_seconds: 60
-      min_calls: 10
-      consecutive_failure_threshold: 5
-      cooldown_seconds: 60
+      error_rate_threshold: 0.7      # 70% failure rate before tripping (more forgiving)
+      window_seconds: 120            # 2-minute sliding window
+      min_calls: 10                  # Need 10 calls before evaluating error rate
+      consecutive_failure_threshold: 8  # 8 consecutive failures to trip
+      cooldown_seconds: 15           # Quick 15s recovery for faster testing
       tool_overrides: {}
 
   # Watchdog - enforce per-tool execution SLOs
