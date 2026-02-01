@@ -28,23 +28,27 @@ Introduce a two-tier tool lookup cache keyed by tool name, with:
 ## Changes Made
 
 1. **New module: `mcpgateway/cache/tool_lookup_cache.py`**
+
    - L1 LRU + TTL cache with size limit
    - Redis L2 cache with shared keyspace when `CACHE_TYPE=redis`
    - Negative cache entries (`missing`, `inactive`, `offline`)
    - Gateway-scoped invalidation using a Redis set of tool names
 
 2. **Invoke path integration**
+
    - `ToolService.invoke_tool()` now checks cache before querying the DB
    - Cache payload includes tool + gateway fields needed for invocation
    - Negative cache entries short-circuit missing/inactive/offline tool calls
 
 3. **Cache invalidation**
+
    - Tool create/update/delete/state invalidates tool lookup cache
    - Gateway update/state/delete invalidates all tools for that gateway
 
 4. **Configuration**
 
    Tool Lookup Cache:
+
    - `TOOL_LOOKUP_CACHE_ENABLED` (default: true)
    - `TOOL_LOOKUP_CACHE_TTL_SECONDS` (default: 60)
    - `TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS` (default: 10)

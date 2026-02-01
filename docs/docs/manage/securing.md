@@ -4,7 +4,7 @@ This guide provides essential security configurations and best practices for dep
 
 ## ⚠️ Critical Security Notice
 
-**MCP Gateway is currently in beta (v0.9.0)** and requires careful security configuration for production use:
+**MCP Gateway is currently in beta (v1.0.0-BETA-2)** and requires careful security configuration for production use:
 
 - The **Admin UI is development-only** and must be disabled in production
 - Expect **breaking changes** between versions until 1.0 release
@@ -252,7 +252,8 @@ python3 -m mcpgateway.utils.create_jwt_token \
 **Security Features:**
 
 - Server-scoped tokens **cannot access `/admin`** endpoints (security hardening)
-- Only truly public endpoints (`/health`, `/metrics`, `/docs`) bypass server restrictions
+- Only truly public endpoints (`/health`, `/metrics`) bypass server restrictions
+- Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are exempt from server scoping but still require auth by default
 - RBAC permission checks still apply to all endpoints
 
 #### Permission-Scoped Tokens
@@ -540,6 +541,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
    ```
 
 2. **Validate Configuration**
+
    - Review all environment variables
    - Confirm admin features disabled
    - Verify authentication enabled
@@ -549,6 +551,7 @@ LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
    - Confirm `PUBLIC_REGISTRATION_ENABLED=false`
 
 3. **Test Security Controls**
+
    - Attempt unauthorized access
    - Verify rate limiting works
    - Test input validation

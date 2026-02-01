@@ -585,7 +585,6 @@ psql -c "DELETE FROM oauth_states WHERE expires_at < NOW() OR used = true;"
 After applying fixes, verify OAuth works:
 
 1. **Clear any stale states** (see Fix 4 above)
-
 2. **Restart the gateway**:
 
     ```bash

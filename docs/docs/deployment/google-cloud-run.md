@@ -429,11 +429,8 @@ gcloud iam service-accounts keys create restricted-key.json \
 ## 📘 Notes and Tips
 
 * **HTTPS by Default:** Cloud Run services are accessible over HTTPS without additional configuration.
-
 * **Custom Domains:** You can map custom domains via the Cloud Run settings.
-
 * **Secret Management:** Consider using [Secret Manager](https://cloud.google.com/secret-manager) for managing sensitive environment variables.
-
 * **Cold Starts:** To reduce cold start latency, set a minimum number of instances:
 
   ```bash

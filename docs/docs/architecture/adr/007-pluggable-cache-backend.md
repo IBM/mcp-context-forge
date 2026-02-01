@@ -31,6 +31,7 @@ Abstract the caching system via a `CacheBackend` interface and support the follo
 Selection is driven by the `CACHE_TYPE` environment variable. Code paths use a consistent interface regardless of backend.
 
 For multi-regional deployments, we support **Redis Cluster** for distributed caching across geographic regions. This enables:
+
 - Cross-region cache replication
 - Automatic sharding and failover
 - High availability with Sentinel mode

@@ -349,6 +349,7 @@ graph LR
 ### Step 1: Register Gateway with One-Time Authentication
 
 Register an MCP server with authentication details and enable one-time auth. The gateway will:
+
 - Use the provided credentials **once** to connect to the MCP server
 - Discover and retrieve all available tools and metadata
 - **Discard the authentication details** without storing them in the database

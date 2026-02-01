@@ -9,7 +9,6 @@ The Terraform MCP Server is a [Model Context Protocol (MCP)](https://modelcontex
 ➡️ **Supports two transport mechanisms:**
 
 * **Stdio**: Standard input/output streams for direct process communication between local processes on the same machine, providing optimal performance with no network overhead.
-
 * **Streamable HTTP**: Uses HTTP POST for client-to-server messages with optional Server-Sent Events (SSE) for streaming capabilities. This is the recommended transport for remote/distributed setups.
 
 ➡️ **Terraform Provider Discovery**: Query and explore Terraform providers and their documentation

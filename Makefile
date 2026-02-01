@@ -1985,7 +1985,8 @@ docs: images sbom
 		         -o $(DOCS_DIR)/docs \
 		         -n app --name '$(PROJECT_NAME)' --cleanup"
 
-	@cp README.md $(DOCS_DIR)/docs/index.md
+	# FIXME - need some changes to index before just copying it from root
+	# @cp README.md $(DOCS_DIR)/docs/index.md
 	@echo "✅  Docs ready in $(DOCS_DIR)/docs"
 
 .PHONY: images

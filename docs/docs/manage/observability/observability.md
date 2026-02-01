@@ -121,7 +121,7 @@ export OTEL_ENABLE_OBSERVABILITY=true
 
 # Service identification
 export OTEL_SERVICE_NAME=mcp-gateway
-export OTEL_SERVICE_VERSION=0.9.0
+export OTEL_SERVICE_VERSION=1.0.0-BETA-2
 export OTEL_DEPLOYMENT_ENVIRONMENT=development
 
 # Choose your backend (otlp, jaeger, zipkin, console, none)
@@ -246,7 +246,7 @@ docker run -e OTEL_ENABLE_OBSERVABILITY=true \
 |----------|-------------|---------|---------|
 | `OTEL_ENABLE_OBSERVABILITY` | Master switch | `false` | `true`, `false` |
 | `OTEL_SERVICE_NAME` | Service identifier | `mcp-gateway` | Any string |
-| `OTEL_SERVICE_VERSION` | Service version | `0.9.0` | Any string |
+| `OTEL_SERVICE_VERSION` | Service version | `1.0.0-BETA-2` | Any string |
 | `OTEL_DEPLOYMENT_ENVIRONMENT` | Environment tag | `development` | `development`, `staging`, `production` |
 | `OTEL_TRACES_EXPORTER` | Export backend | `otlp` | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES` | Custom attributes | - | `key=value,key2=value2` |

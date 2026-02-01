@@ -332,6 +332,7 @@ docker logs -f openwebui
 2. Create an admin account on first login
 3. Navigate to **Settings** → **Connections**
 4. Verify the OpenAI connection is configured:
+
    - **API Base URL**: `http://litellm:4000/v1`
    - **API Key**: `sk-1234567890`
 
@@ -432,6 +433,7 @@ OpenWebUI supports custom functions for extending capabilities:
 1. Go to **Settings** → **Functions**
 2. Enable built-in functions or import custom ones
 3. Functions can:
+
    - Act as custom models (Pipe Functions)
    - Modify inputs/outputs (Filter Functions)
    - Add action buttons (Action Functions)

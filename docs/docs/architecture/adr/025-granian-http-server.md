@@ -15,6 +15,7 @@ MCP Gateway uses Gunicorn with Uvicorn workers as its production HTTP server sta
 - Simpler process model
 
 Granian is a Rust-based HTTP server for Python applications that implements ASGI, RSGI, and WSGI interfaces. It's built on:
+
 - **Hyper**: Rust's HTTP library
 - **Tokio**: Async runtime
 - **PyO3**: Python bindings
@@ -24,6 +25,7 @@ Granian is a Rust-based HTTP server for Python applications that implements ASGI
 We will add **Granian** as an alternative HTTP server option while keeping **Gunicorn + Uvicorn as the default**.
 
 **Key points:**
+
 - Gunicorn + Uvicorn remains the **default** server (stability, maturity)
 - Granian is available as an **alternative** for users who need its features
 - Both servers are production-ready and fully supported
@@ -85,6 +87,7 @@ Profiling under load test with 2500 concurrent users against PostgreSQL backend:
 - **Granian** uses more memory but provides native backpressure—under extreme load it rejects excess requests with immediate 503, protecting system stability.
 
 **Why Granian Uses More Memory:**
+
 - Multi-threaded Rust runtime (Tokio) overhead
 - Larger HTTP buffers (512KB per connection default)
 - Backpressure queues holding pending requests
@@ -212,12 +215,14 @@ To switch from Gunicorn to Granian:
 ## When to Use Each Server
 
 ### Use Gunicorn + Uvicorn when:
+
 - You need maximum stability and battle-tested components
 - Your team is familiar with Gunicorn configuration
 - You're running behind a reverse proxy that handles HTTP/2
 - You need gevent/eventlet worker classes
 
 ### Use Granian when:
+
 - You want native HTTP/2 without a reverse proxy
 - You're optimizing for memory efficiency
 - You want the simplest possible deployment
@@ -231,6 +236,7 @@ To switch from Gunicorn to Granian:
 Gunicorn + Uvicorn is battle-tested, well-documented, and provides excellent performance for most workloads. The `uvicorn[standard]` extras (ADR-0024) already provide significant optimizations.
 
 **Consider Granian when:**
+
 - You need native HTTP/2 without a reverse proxy
 - Memory usage is a primary concern
 - Your benchmarks show measurable improvement
@@ -241,6 +247,7 @@ Gunicorn + Uvicorn is battle-tested, well-documented, and provides excellent per
 ## Status
 
 This decision has been implemented. Both servers are available:
+
 - Gunicorn + Uvicorn: **Default** (`make serve`)
 - Granian: **Alternative** (`make serve-granian` or `HTTP_SERVER=granian`)
 

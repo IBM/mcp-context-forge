@@ -30,6 +30,7 @@ sequenceDiagram
 ```
 
 **Key Characteristics:**
+
 - **Newly introduced:** First appeared in MCP 2025-06-18, design may evolve
 - **Optional capability:** Clients must advertise `{"elicitation": {}}` during initialization
 - **Nested execution:** Elicitation can occur inside tool/resource/prompt operations
@@ -39,10 +40,12 @@ sequenceDiagram
 ### Gateway Architectural Challenge
 
 The MCP Gateway operates as both:
+
 1. **Server to downstream clients** (Claude Desktop, API consumers)
 2. **Client to upstream servers** (MCP servers, federated gateways)
 
 This dual role creates complexity for elicitation:
+
 - Upstream servers initiate elicitation requests
 - Gateway must forward to appropriate downstream clients
 - Responses must be routed back to the original requester
@@ -85,6 +88,7 @@ ElicitationService tracks:
 - Validate schemas per MCP spec
 
 **Updated Components:**
+
 - `mcpgateway/cache/session_registry.py` - Track client elicitation capability
 - `mcpgateway/models.py` - Add Pydantic models for elicitation types
 - `mcpgateway/main.py` - Implement `elicitation/create` handler
@@ -112,6 +116,7 @@ MCPGATEWAY_ELICITATION_MAX_CONCURRENT=100     # Max concurrent requests
 ### 5. **Security Considerations**
 
 Per MCP spec security requirements:
+
 - **No sensitive data:** Validate schemas don't request passwords, API keys, etc.
 - **Rate limiting:** Enforce max concurrent elicitations per session
 - **Timeout enforcement:** Prevent indefinite blocking
@@ -128,12 +133,14 @@ Per MCP spec security requirements:
    ```
 
 2. **Create ElicitationService** (`mcpgateway/services/elicitation_service.py`)
+
    - Request tracking data structure
    - Timeout management
    - Response routing logic
    - Schema validation (primitive types only)
 
 3. **Update SessionRegistry** (`mcpgateway/cache/session_registry.py`)
+
    - Track client `elicitation` capability from initialization
    - Store capability per session
    - Provide lookup for capable clients
@@ -151,24 +158,28 @@ Per MCP spec security requirements:
    ```
 
 5. **Add Configuration** (`.env.example`, `config.py`)
+
    - Feature flags
    - Timeout settings
    - Concurrency limits
 
 ### Phase 3: Testing & Documentation (Priority: Medium)
 6. **Unit Tests**
+
    - ElicitationService request tracking
    - Schema validation (primitive types only)
    - Timeout handling
    - Error scenarios
 
 7. **Integration Tests**
+
    - End-to-end elicitation flow
    - Multiple concurrent requests
    - Client capability negotiation
    - Response routing
 
 8. **Update Documentation**
+
    - `spec/status.md` - Mark item #27 as completed
    - `README.md` - Document elicitation configuration
    - API docs - Document elicitation endpoints
@@ -189,6 +200,7 @@ elif method == "elicitation/create":
 ```
 
 **Rationale:**
+
 - ✅ **Pro:** Simplest implementation (5 lines of code)
 - ✅ **Pro:** Honest about lack of support
 - ❌ **Con:** Breaks MCP spec compliance (feature is in 2025-06-18 spec)
@@ -201,6 +213,7 @@ elif method == "elicitation/create":
 Implement elicitation for gateway's own use (e.g., configuration wizards) but not passthrough.
 
 **Rationale:**
+
 - ✅ **Pro:** Simpler than passthrough (no session tracking)
 - ✅ **Pro:** Useful for gateway admin UI workflows
 - ❌ **Con:** Doesn't solve spec compliance for upstream servers
@@ -213,6 +226,7 @@ Implement elicitation for gateway's own use (e.g., configuration wizards) but no
 Use message queue (Redis, RabbitMQ) for elicitation request routing.
 
 **Rationale:**
+
 - ✅ **Pro:** Better scalability for high-volume scenarios
 - ✅ **Pro:** Natural timeout/retry handling
 - ❌ **Con:** Adds external dependency complexity
@@ -251,6 +265,7 @@ Use message queue (Redis, RabbitMQ) for elicitation request routing.
 **Risk:** MCP spec notes elicitation design "may evolve in future versions"
 
 **Mitigation:**
+
 - ✅ Implement behind feature flag for easy disabling
 - ✅ Comprehensive unit tests allow rapid updates
 - ✅ Schema validation centralizes spec-dependent logic
@@ -260,6 +275,7 @@ Use message queue (Redis, RabbitMQ) for elicitation request routing.
 **Risk:** Request/response routing errors could cause hangs or wrong responses
 
 **Mitigation:**
+
 - ✅ Aggressive timeouts (60s default, configurable)
 - ✅ Comprehensive error handling and logging
 - ✅ Request ID validation prevents mis-routing
@@ -269,6 +285,7 @@ Use message queue (Redis, RabbitMQ) for elicitation request routing.
 **Risk:** Incorrectly routing to non-capable clients
 
 **Mitigation:**
+
 - ✅ Validate client capabilities during initialization
 - ✅ Store capability per session
 - ✅ Return clear error if no capable clients available
@@ -277,16 +294,19 @@ Use message queue (Redis, RabbitMQ) for elicitation request routing.
 ## Success Metrics
 
 1. **Functional:**
+
    - ✅ All elicitation spec requirements implemented
    - ✅ 100% test coverage for ElicitationService
    - ✅ Integration tests pass for all scenarios
 
 2. **Performance:**
+
    - ✅ Elicitation overhead <10ms (excluding human response time)
    - ✅ No memory leaks from pending requests
    - ✅ Graceful handling of 100+ concurrent elicitations
 
 3. **Operations:**
+
    - ✅ Clear error messages for all failure modes
    - ✅ Comprehensive logging for debugging
    - ✅ Configuration validation on startup

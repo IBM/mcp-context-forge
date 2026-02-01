@@ -24,13 +24,13 @@ docker push YOUR_ECR_URI/mcpgateway
 
 2. **Create an ECS Task Definition:**
 
-* Use port `4444`
-* Mount a secret or config for your `.env` (or set environment variables manually)
+   - Use port `4444`
+   - Mount a secret or config for your `.env` (or set environment variables manually)
 
 3. **Create a Service:**
 
-* Use a Load Balancer (Application LB)
-* Map `/` or `/admin` to port `4444`
+   - Use a Load Balancer (Application LB)
+   - Map `/` or `/admin` to port `4444`
 
 ---
 

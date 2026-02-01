@@ -7,6 +7,7 @@
 ## Context
 
 Modern distributed applications often use service mesh infrastructure (Envoy, Istio, Linkerd) to handle cross-cutting concerns:
+
 - Load balancing and traffic routing
 - mTLS and authentication
 - Observability (metrics, tracing, logging)
@@ -15,6 +16,7 @@ Modern distributed applications often use service mesh infrastructure (Envoy, Is
 - Compression and caching
 
 ContextForge must support diverse deployment scenarios:
+
 - **Standalone execution**: Single Python module (`python -m mcpgateway`)
 - **Serverless platforms**: AWS Lambda, Google Cloud Run, IBM Cloud Code Engine
 - **Container orchestration**: Kubernetes, OpenShift
@@ -22,6 +24,7 @@ ContextForge must support diverse deployment scenarios:
 - **Edge deployments**: Minimal resource footprint
 
 We needed to decide whether to:
+
 1. Require external service mesh (Envoy/Istio) for all deployments
 2. Build proxy capabilities directly into the application
 3. Support both approaches with optional composition
@@ -31,6 +34,7 @@ We needed to decide whether to:
 We will **embed proxy and gateway capabilities directly into the ContextForge application** with support for optional service mesh composition when needed.
 
 **Built-in capabilities:**
+
 - **MCP-aware routing** - Protocol-specific routing for tools, resources, prompts, servers
 - **Response compression** - Brotli, Zstd, GZip middleware (30-70% bandwidth reduction)
 - **Caching** - Pluggable cache backend (memory, Redis, database)
@@ -41,6 +45,7 @@ We will **embed proxy and gateway capabilities directly into the ContextForge ap
 - **Federation** - mDNS auto-discovery, peer gateway federation
 
 **Service mesh optional:**
+
 - ContextForge works standalone without Envoy/Istio
 - Each of the 14 independent modules can integrate with service mesh when needed
 - Example: ContextForge translate utility behind Envoy for mTLS
@@ -137,6 +142,7 @@ Application-level intelligence (MCP protocol routing, tool invocation, resource 
 ```
 
 **Trade-offs:**
+
 - ✅ Infrastructure-level mTLS, observability, traffic management
 - ❌ Additional network hop (sidecar latency)
 - ❌ Resource overhead (Envoy sidecar per pod: ~50-100MB memory)
@@ -164,6 +170,7 @@ Application-level intelligence (MCP protocol routing, tool invocation, resource 
 ```
 
 **Trade-offs:**
+
 - ✅ Zero infrastructure dependency
 - ✅ Works standalone, serverless, containers, Kubernetes
 - ✅ MCP-aware routing (not just HTTP)
@@ -195,6 +202,7 @@ Application-level intelligence (MCP protocol routing, tool invocation, resource 
 ```
 
 **Trade-offs:**
+
 - ✅ Best of both worlds: MCP intelligence + infrastructure mTLS
 - ✅ ContextForge handles application concerns
 - ✅ Istio handles infrastructure concerns
@@ -223,6 +231,7 @@ spec:
 ```
 
 The `translate` utility has **zero gateway dependencies** and can run:
+
 - Standalone: `python -m mcptranslate --stdio "uvx mcp-server-git" --port 9000`
 - Behind Envoy: Envoy terminates mTLS, forwards to ContextForge translate
 - In Kubernetes: With or without Istio sidecar
@@ -230,11 +239,13 @@ The `translate` utility has **zero gateway dependencies** and can run:
 ## Why This Decision Matters
 
 **Problem:** Service mesh architectures assume:
+
 - Container infrastructure (no standalone mode)
 - Kubernetes control plane (overhead for simple deployments)
 - Polyglot microservices (need HTTP-level abstraction)
 
 **Solution:** ContextForge needs to work everywhere:
+
 - **Development:** `python -m mcpgateway` with zero dependencies
 - **Serverless:** AWS Lambda without sidecar infrastructure
 - **Edge:** Raspberry Pi running standalone utilities
@@ -243,6 +254,7 @@ The `translate` utility has **zero gateway dependencies** and can run:
 ## Implementation Details
 
 **Built-in proxy capabilities implemented in:**
+
 - Response compression: `mcpgateway/main.py:888-907`
 - Caching: `mcpgateway/services/cache_service.py`
 - Observability: `mcpgateway/observability/` (OpenTelemetry)
@@ -251,6 +263,7 @@ The `translate` utility has **zero gateway dependencies** and can run:
 - Health checks: `GET /health`, `GET /ready`
 
 **Service mesh integration points:**
+
 - Helm chart supports Istio annotations
 - Network policies compatible with service mesh
 - Prometheus metrics compatible with Istio telemetry
