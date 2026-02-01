@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from mcpgateway import admin
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.server_service import ServerNotFoundError
+from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 
 
 def _make_request(root_path: str = "/admin") -> MagicMock:
@@ -190,6 +191,60 @@ def test_serialize_datetime_and_password_strength(monkeypatch):
 
     ok, msg = admin.validate_password_strength("abcdef1!")
     assert ok is False and "uppercase" in msg
+
+
+@pytest.mark.asyncio
+async def test_global_passthrough_headers_endpoints(monkeypatch):
+    _allow_permissions(monkeypatch)
+    db = MagicMock()
+
+    monkeypatch.setattr(admin.settings, "default_passthrough_headers", ["X-Default"])
+    monkeypatch.setattr(admin.global_config_cache, "get_passthrough_headers", lambda *_args: ["X-Test"])
+
+    get_func = admin.get_global_passthrough_headers.__wrapped__.__wrapped__
+    result = await get_func(db, _user={"email": "user@example.com"})
+    assert result.passthrough_headers == ["X-Test"]
+
+    invalidate_called = []
+    monkeypatch.setattr(admin.global_config_cache, "invalidate", lambda: invalidate_called.append(True))
+
+    config_update = admin.GlobalConfigUpdate(passthrough_headers=["X-New"])
+    update_func = admin.update_global_passthrough_headers.__wrapped__.__wrapped__
+    db.query.return_value.first.return_value = None
+    update_func = admin.update_global_passthrough_headers.__wrapped__.__wrapped__
+    update_result = await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+    assert update_result.passthrough_headers == ["X-New"]
+    assert invalidate_called
+
+    stats = {"hits": 1}
+    monkeypatch.setattr(admin.global_config_cache, "stats", lambda: stats)
+    invalidate_func = admin.invalidate_passthrough_headers_cache.__wrapped__.__wrapped__
+    cache_result = await invalidate_func(_user={"email": "user@example.com"})
+    assert cache_result["status"] == "invalidated"
+    assert cache_result["cache_stats"] == stats
+
+
+@pytest.mark.asyncio
+async def test_update_global_passthrough_headers_errors(monkeypatch):
+    _allow_permissions(monkeypatch)
+    db = MagicMock()
+    db.query.return_value.first.return_value = MagicMock()
+
+    config_update = admin.GlobalConfigUpdate(passthrough_headers=["X-New"])
+    update_func = admin.update_global_passthrough_headers.__wrapped__.__wrapped__
+
+    from sqlalchemy.exc import IntegrityError
+
+    db.commit.side_effect = IntegrityError("stmt", {}, None)
+    with pytest.raises(admin.HTTPException) as excinfo:
+        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+    assert excinfo.value.status_code == 409
+    db.rollback.assert_called()
+
+    db.commit.side_effect = PassthroughHeadersError("boom")
+    with pytest.raises(admin.HTTPException) as excinfo:
+        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+    assert excinfo.value.status_code == 500
 
 
 @pytest.mark.asyncio

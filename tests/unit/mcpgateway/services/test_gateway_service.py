@@ -1677,6 +1677,61 @@ class TestGatewayService:
             assert len(prompts) == 0  # Should be empty due to failure
 
     @pytest.mark.asyncio
+    async def test_initialize_gateway_oauth_auth_code_returns_empty(self, gateway_service):
+        """OAuth auth_code should short-circuit and skip connection unless flag set."""
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({"tools": {}}, [], [], []))
+
+        oauth_config = {"grant_type": "authorization_code"}
+        capabilities, tools, resources, prompts = await gateway_service._initialize_gateway(
+            "http://test.example.com",
+            authentication=None,
+            transport="SSE",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+            oauth_auto_fetch_tool_flag=False,
+        )
+
+        assert capabilities == {}
+        assert tools == []
+        assert resources == []
+        assert prompts == []
+        gateway_service.connect_to_sse_server.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_oauth_client_credentials(self, gateway_service):
+        """OAuth client_credentials should fetch token and connect."""
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({"tools": {}}, [], [], []))
+        gateway_service.oauth_manager.get_access_token = AsyncMock(return_value="token123")
+
+        oauth_config = {"grant_type": "client_credentials"}
+        await gateway_service._initialize_gateway(
+            "http://test.example.com",
+            authentication=None,
+            transport="SSE",
+            auth_type="oauth",
+            oauth_config=oauth_config,
+        )
+
+        gateway_service.oauth_manager.get_access_token.assert_awaited_once_with(oauth_config)
+        _, auth_headers, *_ = gateway_service.connect_to_sse_server.call_args.args
+        assert auth_headers == {"Authorization": "Bearer token123"}
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_oauth_client_credentials_error(self, gateway_service):
+        """OAuth token fetch errors should raise GatewayConnectionError."""
+        gateway_service.oauth_manager.get_access_token = AsyncMock(side_effect=Exception("oauth fail"))
+
+        oauth_config = {"grant_type": "client_credentials"}
+        with pytest.raises(GatewayConnectionError):
+            await gateway_service._initialize_gateway(
+                "http://test.example.com",
+                authentication=None,
+                transport="SSE",
+                auth_type="oauth",
+                oauth_config=oauth_config,
+            )
+
+    @pytest.mark.asyncio
     async def test_list_gateway_with_tags(self, gateway_service, mock_gateway):
         """Test listing gateways with tag filtering."""
         # Third-Party

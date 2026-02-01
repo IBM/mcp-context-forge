@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import logging
 import orjson
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
 # Third-Party
 import jsonschema
@@ -4534,3 +4534,463 @@ class TestToolServiceHelpers:
             with patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic value"}):
                 result = service.convert_tool_to_read(unknown_tool, include_metrics=False, include_auth=True)
                 assert result["auth"] is None
+
+
+def _make_bulk_tool_create(name: str, integration_type: str = "REST", **overrides) -> ToolCreate:
+    request_type = "POST" if integration_type == "REST" else "SSE"
+    payload = {
+        "name": name,
+        "url": "https://example.com/api",
+        "description": "Bulk tool",
+        "integration_type": integration_type,
+        "request_type": request_type,
+        "headers": {"X-Test": "1"},
+        "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}},
+        "output_schema": {"type": "object"},
+        "tags": ["alpha"],
+    }
+    payload.update(overrides)
+    return ToolCreate(**payload)
+
+
+class TestToolServiceBulkImport:
+    def test_create_tool_object_rest_and_mcp_fields(self):
+        service = ToolService()
+
+        tool_rest = _make_bulk_tool_create(
+            name="bulk_tool_rest",
+            base_url="https://api.example.com",
+            path_template="/items/{id}",
+            query_mapping={"q": "query"},
+            header_mapping={"X-Request-Id": "header"},
+            timeout_ms=5000,
+            expose_passthrough=None,
+            allowlist=["example.com"],
+            plugin_chain_pre=["rate_limit"],
+            plugin_chain_post=["response_shape"],
+        )
+
+        db_tool = service._create_tool_object(
+            tool_rest,
+            name=tool_rest.name,
+            auth_type=None,
+            auth_value=None,
+            tool_team_id=None,
+            tool_owner_email="owner@example.com",
+            tool_visibility="public",
+            created_by="creator@example.com",
+            created_from_ip="127.0.0.1",
+            created_via="api",
+            created_user_agent="pytest",
+            import_batch_id="batch-1",
+            federation_source="fed-1",
+        )
+
+        assert db_tool.base_url == "https://api.example.com"
+        assert db_tool.path_template == "/items/{id}"
+        assert db_tool.query_mapping == {"q": "query"}
+        assert db_tool.header_mapping == {"X-Request-Id": "header"}
+        assert db_tool.timeout_ms == 5000
+        assert db_tool.expose_passthrough is True
+        assert db_tool.allowlist == ["example.com"]
+        assert db_tool.plugin_chain_pre == ["rate_limit"]
+        assert db_tool.plugin_chain_post == ["response_shape"]
+        assert db_tool.custom_name_slug == "bulk-tool-rest"
+
+        tool_mcp = ToolCreate.model_construct(
+            name="bulk_tool_mcp",
+            displayName=None,
+            url="https://example.com/api",
+            description="Bulk tool",
+            integration_type="MCP",
+            request_type="SSE",
+            headers={"X-Test": "1"},
+            input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+            output_schema={"type": "object"},
+            annotations={},
+            jsonpath_filter="",
+            auth=None,
+            gateway_id=None,
+            tags=["alpha"],
+        )
+        db_tool_mcp = service._create_tool_object(
+            tool_mcp,
+            name=tool_mcp.name,
+            auth_type="bearer",
+            auth_value="token",
+            tool_team_id="team-1",
+            tool_owner_email="owner@example.com",
+            tool_visibility="team",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+
+        assert db_tool_mcp.base_url is None
+        assert db_tool_mcp.header_mapping is None
+        assert db_tool_mcp.timeout_ms is None
+        assert db_tool_mcp.expose_passthrough is None
+        assert db_tool_mcp.team_id == "team-1"
+
+    def test_process_single_tool_for_bulk_update_rest_fields(self):
+        service = ToolService()
+
+        tool = _make_bulk_tool_create(
+            name="bulk_tool_update",
+            displayName="Bulk Update",
+            annotations={"title": "Bulk"},
+            jsonpath_filter="$.data",
+            base_url="https://api.new",
+            path_template="/new/{id}",
+            query_mapping={"new": "query"},
+            header_mapping={"X-New": "header"},
+            timeout_ms=9000,
+            expose_passthrough=False,
+            allowlist=["example.com"],
+            plugin_chain_pre=["rate_limit"],
+            plugin_chain_post=["response_shape"],
+            auth=AuthenticationValues(auth_type="bearer", auth_value="token"),
+            tags=["updated"],
+        )
+
+        existing_tool = SimpleNamespace(
+            name=tool.name,
+            display_name="Old",
+            url="https://old",
+            description="old",
+            integration_type="REST",
+            request_type="GET",
+            headers={"Old": "1"},
+            input_schema={"type": "object"},
+            output_schema=None,
+            annotations={"old": True},
+            jsonpath_filter="",
+            auth_type=None,
+            auth_value=None,
+            tags=["old"],
+            modified_by=None,
+            modified_from_ip=None,
+            modified_via=None,
+            modified_user_agent=None,
+            updated_at=None,
+            version=2,
+            base_url="https://old",
+            path_template="/old",
+            query_mapping={"old": "query"},
+            header_mapping={"X-Old": "header"},
+            timeout_ms=1000,
+            expose_passthrough=True,
+            allowlist=["https://old"],
+            plugin_chain_pre=["old-pre"],
+            plugin_chain_post=["old-post"],
+        )
+
+        result = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={tool.name: existing_tool},
+            conflict_strategy="update",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip="127.0.0.1",
+            created_via="api",
+            created_user_agent="pytest",
+            import_batch_id="batch-1",
+            federation_source="fed-1",
+        )
+
+        assert result["status"] == "update"
+        assert existing_tool.display_name == "Bulk Update"
+        assert existing_tool.url == "https://example.com/api"
+        assert existing_tool.description == "Bulk tool"
+        assert existing_tool.integration_type == "REST"
+        assert existing_tool.request_type == "POST"
+        assert existing_tool.headers == {"X-Test": "1"}
+        assert existing_tool.input_schema["properties"]["q"]["type"] == "string"
+        assert existing_tool.annotations == {"title": "Bulk"}
+        assert existing_tool.jsonpath_filter == "$.data"
+        assert existing_tool.auth_type == "bearer"
+        assert existing_tool.auth_value == "token"
+        assert existing_tool.tags == [{"id": "updated", "label": "updated"}]
+        assert existing_tool.base_url == "https://api.new"
+        assert existing_tool.path_template == "/new/{id}"
+        assert existing_tool.query_mapping == {"new": "query"}
+        assert existing_tool.header_mapping == {"X-New": "header"}
+        assert existing_tool.timeout_ms == 9000
+        assert existing_tool.expose_passthrough is False
+        assert existing_tool.allowlist == ["example.com"]
+        assert existing_tool.plugin_chain_pre == ["rate_limit"]
+        assert existing_tool.plugin_chain_post == ["response_shape"]
+        assert existing_tool.version == 3
+
+    def test_process_single_tool_for_bulk_conflict_variants(self):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_conflict")
+        existing_tool = SimpleNamespace(name=tool.name)
+
+        result_skip = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={tool.name: existing_tool},
+            conflict_strategy="skip",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+        assert result_skip == {"status": "skip"}
+
+        with patch("mcpgateway.services.tool_service.datetime") as mock_datetime, patch.object(service, "_create_tool_object") as mock_create:
+            mock_datetime.now.return_value = datetime(2024, 1, 1, tzinfo=timezone.utc)
+            sentinel_tool = object()
+            mock_create.return_value = sentinel_tool
+
+            result_rename = service._process_single_tool_for_bulk(
+                tool=tool,
+                existing_tools_map={tool.name: existing_tool},
+                conflict_strategy="rename",
+                visibility="public",
+                team_id=None,
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id="batch-1",
+                federation_source=None,
+            )
+
+        assert result_rename["status"] == "add"
+        assert result_rename["tool"] is sentinel_tool
+        mock_create.assert_called_once()
+        assert mock_create.call_args[0][1] == "bulk_tool_conflict_imported_1704067200"
+
+        result_fail = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={tool.name: existing_tool},
+            conflict_strategy="fail",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+        assert result_fail["status"] == "fail"
+        assert "Tool name conflict" in result_fail["error"]
+
+    def test_process_single_tool_for_bulk_add_and_fail(self):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_add", integration_type="REST")
+
+        result_add = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={},
+            conflict_strategy="skip",
+            visibility="private",
+            team_id="team-1",
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+        assert result_add["status"] == "add"
+        assert result_add["tool"].original_name == tool.name
+
+        with patch.object(service, "_create_tool_object", side_effect=ValueError("boom")):
+            result_fail = service._process_single_tool_for_bulk(
+                tool=tool,
+                existing_tools_map={},
+                conflict_strategy="skip",
+                visibility="public",
+                team_id=None,
+                owner_email=None,
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id=None,
+                federation_source=None,
+            )
+        assert result_fail["status"] == "fail"
+        assert "Failed to process tool" in result_fail["error"]
+
+    def test_process_tool_chunk_public_adds_and_audits(self, mock_logging_services):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_chunk")
+        db_tool = SimpleNamespace(id="tool-1")
+
+        db = MagicMock()
+        mock_scalars = Mock()
+        mock_scalars.all.return_value = []
+        mock_result = Mock()
+        mock_result.scalars.return_value = mock_scalars
+        db.execute.return_value = mock_result
+
+        with patch.object(service, "_process_single_tool_for_bulk") as mock_process:
+            mock_process.side_effect = [
+                {"status": "add", "tool": db_tool},
+                {"status": "skip"},
+            ]
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[tool, tool],
+                conflict_strategy="skip",
+                visibility="public",
+                team_id=None,
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip="127.0.0.1",
+                created_via="api",
+                created_user_agent="pytest",
+                import_batch_id="batch-1",
+                federation_source=None,
+            )
+
+        assert stats["created"] == 1
+        assert stats["skipped"] == 1
+        db.add_all.assert_called_once_with([db_tool])
+        db.commit.assert_called_once()
+        db.refresh.assert_called_once_with(db_tool)
+        mock_logging_services["audit_trail"].log_action.assert_called_once()
+
+    def test_process_tool_chunk_team_updates_only(self, mock_logging_services):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_update_only")
+        db_tool = SimpleNamespace(id="tool-2")
+
+        db = MagicMock()
+        mock_scalars = Mock()
+        mock_scalars.all.return_value = []
+        mock_result = Mock()
+        mock_result.scalars.return_value = mock_scalars
+        db.execute.return_value = mock_result
+
+        with patch.object(service, "_process_single_tool_for_bulk", return_value={"status": "update", "tool": db_tool}):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[tool],
+                conflict_strategy="update",
+                visibility="team",
+                team_id="team-1",
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id=None,
+                federation_source=None,
+            )
+
+        assert stats["updated"] == 1
+        db.add_all.assert_not_called()
+        db.commit.assert_called_once()
+        mock_logging_services["audit_trail"].log_action.assert_called_once()
+        assert mock_logging_services["audit_trail"].log_action.call_args.kwargs["action"] == "bulk_update_tools"
+
+    def test_process_tool_chunk_private_exception_rolls_back(self):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_fail")
+
+        db = MagicMock()
+        db.execute.side_effect = RuntimeError("boom")
+
+        stats = service._process_tool_chunk(
+            db=db,
+            chunk=[tool],
+            conflict_strategy="skip",
+            visibility="private",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+
+        assert stats["failed"] == 1
+        assert "Chunk processing failed" in stats["errors"][0]
+        db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_invalidate_caches(self):
+        service = ToolService()
+        tools = [
+            _make_bulk_tool_create(name="bulk_tool_a", gateway_id="gw-1"),
+            _make_bulk_tool_create(name="bulk_tool_b", gateway_id=None),
+        ]
+
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+
+        with patch.object(service, "_process_tool_chunk", return_value={"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}), \
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache), \
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache), \
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+            mock_admin_cache.invalidate_tags = AsyncMock()
+
+            result = await service.register_tools_bulk(
+                db=MagicMock(),
+                tools=tools,
+                created_by="creator@example.com",
+                visibility="public",
+            )
+
+        assert result["created"] == 1
+        registry_cache.invalidate_tools.assert_awaited_once()
+        lookup_cache.invalidate.assert_has_awaits(
+            [
+                call("bulk_tool_a", gateway_id="gw-1"),
+                call("bulk_tool_b", gateway_id=None),
+            ]
+        )
+        mock_admin_cache.invalidate_tags.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_no_changes_skips_invalidation(self):
+        service = ToolService()
+        tools = [_make_bulk_tool_create(name="bulk_tool_none")]
+
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+
+        with patch.object(service, "_process_tool_chunk", return_value={"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}), \
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache), \
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache), \
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+            mock_admin_cache.invalidate_tags = AsyncMock()
+
+            result = await service.register_tools_bulk(
+                db=MagicMock(),
+                tools=tools,
+                created_by="creator@example.com",
+                visibility="public",
+            )
+
+        assert result["skipped"] == 1
+        registry_cache.invalidate_tools.assert_not_called()
+        lookup_cache.invalidate.assert_not_called()
+        mock_admin_cache.invalidate_tags.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_empty_list(self):
+        service = ToolService()
+        result = await service.register_tools_bulk(db=MagicMock(), tools=[])
+
+        assert result == {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
