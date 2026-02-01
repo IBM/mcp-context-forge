@@ -13,7 +13,9 @@ This tutorial walks you through setting up IBM Security Verify (formerly IBM Clo
 ### 1.1 Access IBM Security Verify Admin Console
 
 1. Navigate to your IBM Security Verify admin console
+
    - URL format: `https://[tenant-name].verify.ibm.com`
+
 2. Log in with your administrator credentials
 3. Go to **Applications** in the left sidebar
 
@@ -30,6 +32,7 @@ This tutorial walks you through setting up IBM Security Verify (formerly IBM Clo
 - **Application name**: `MCP Gateway`
 - **Description**: `Model Context Protocol Gateway SSO Authentication`
 - **Application URL**: Your gateway's public URL
+
   - Example: `https://gateway.yourcompany.com`
 
 **Sign-on Settings**:
@@ -37,6 +40,7 @@ This tutorial walks you through setting up IBM Security Verify (formerly IBM Clo
 - **Application type**: `Web`
 - **Grant types**: Select `Authorization Code`
 - **Redirect URIs**: **Critical - must be exact**
+
   - Production: `https://gateway.yourcompany.com/auth/sso/callback/ibm_verify`
   - Development: `http://localhost:8000/auth/sso/callback/ibm_verify`
 
@@ -157,6 +161,7 @@ IBM_VERIFY_GROUP_MAPPING={"CN=Developers,OU=Groups": "dev-team-uuid", "CN=Admini
 3. Go to **Access** tab
 4. Click **Assign access**
 5. Choose assignment method:
+
    - **Users**: Assign specific users
    - **Groups**: Assign entire groups (recommended)
    - **Everyone**: Allow all users (not recommended for production)
@@ -165,8 +170,10 @@ IBM_VERIFY_GROUP_MAPPING={"CN=Developers,OU=Groups": "dev-team-uuid", "CN=Admini
 
 1. Create or use existing groups in IBM Security Verify
 2. Assign the application to appropriate groups:
+
    - `MCP_Gateway_Users` - Regular users
    - `MCP_Gateway_Admins` - Administrative users
+
 3. Add users to these groups as needed
 
 ## Step 4: Restart and Verify Gateway
@@ -207,6 +214,7 @@ curl -X GET http://localhost:8000/auth/sso/providers
 ### 5.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development: `http://localhost:8000/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
 
@@ -252,6 +260,7 @@ Configure access policies based on conditions:
 1. In IBM Security Verify, go to **Security** → **Access policies**
 2. Create policies for your MCP Gateway application
 3. Configure conditions:
+
    - Device compliance
    - Location-based access
    - Risk-based authentication
@@ -271,6 +280,7 @@ Enable comprehensive audit logging:
 
 1. In IBM Security Verify, configure audit settings
 2. Enable logging for:
+
    - Authentication events
    - Authorization decisions
    - User provisioning actions

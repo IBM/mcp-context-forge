@@ -5,6 +5,10 @@ Code.
 Because it speaks the **Model Context Protocol (MCP)**, Continue can discover and call the
 tools you publish through **MCP Gateway** - no plug-in code required.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 🧰 Key Features

@@ -21,9 +21,12 @@
 
 ???+ example "🗂️ What URLs are available for the admin interface and API docs?"
 
-    - Admin UI → <http://localhost:4444/admin>
-    - Swagger → <http://localhost:4444/docs>
-    - ReDoc → <http://localhost:4444/redoc>
+    - Admin UI → `http://localhost:4444/admin` (or `http://localhost:8080/admin` with Compose)
+    - Swagger → `http://localhost:4444/docs` (JWT-protected by default)
+    - ReDoc → `http://localhost:4444/redoc` (JWT-protected by default)
+
+    !!! tip
+        Log in to the Admin UI to get a session cookie, or enable `DOCS_ALLOW_BASIC_AUTH=true` for Basic auth access to `/docs` and `/redoc`.
 
 ---
 

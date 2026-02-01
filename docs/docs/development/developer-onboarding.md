@@ -26,6 +26,7 @@ The fastest way to get started is using the VS Code Dev Container, which provide
        (or manually: ++ctrl+shift+p++ → **Dev Containers: Reopen in Container**)
 
     3. First-time build automatically:
+
         - Installs system packages & Python 3.11
         - Runs `make install-dev` to pull all dependencies
         - Executes tests to verify the toolchain
@@ -87,6 +88,7 @@ If not using Dev Containers, set up manually:
 
     - [ ] Copy `.env.example` to `.env`
     - [ ] Set various env variables, such as:
+
         - `JWT_SECRET_KEY`
         - `BASIC_AUTH_PASSWORD`
 ---
@@ -189,8 +191,10 @@ If not using Dev Containers, set up manually:
 
     - [ ] Run: `python3 -m mcpgateway.wrapper` (stdio support)
     - [ ] Test transports:
+
         - Streamable HTTP
         - Server-Sent Events (SSE)
+
     - [ ] Optional: Integrate with Claude, Copilot, Continue ([usage guide](../using/index.md))
 
 ---
@@ -212,6 +216,7 @@ If not using Dev Containers, set up manually:
 ???+ check "Endpoint coverage"
 
     - [ ] Confirm key routes:
+
         - `/version`
         - `/health`
         - `/tools`
@@ -219,6 +224,7 @@ If not using Dev Containers, set up manually:
         - `/resources`
         - `/prompts`
         - `/gateways`
+
     - [ ] Browse [Redoc docs](http://localhost:4444/redoc)
 
 ---
@@ -234,11 +240,13 @@ If not using Dev Containers, set up manually:
 ???+ check "CRUD verification"
 
     - [ ] Create / edit / delete:
+
         - Servers
         - Tools
         - Resources
         - Prompts
         - Gateways
+
     - [ ] Toggle active/inactive switches
     - [ ] JWT stored in `HttpOnly` cookie, no errors in DevTools Console
 
@@ -255,6 +263,7 @@ If not using Dev Containers, set up manually:
     - [ ] `cd docs && make venv serve`
     - [ ] Open http://localhost:8000
     - [ ] Confirm:
+
         - `.pages` ordering
         - nav structure
         - working images

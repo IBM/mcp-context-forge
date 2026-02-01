@@ -9,6 +9,7 @@
 The MCP Gateway handles large volumes of JSON-RPC requests and responses, tool invocations, resource payloads, and API endpoints. JSON serialization and deserialization is a critical performance bottleneck in high-throughput scenarios.
 
 Python's standard library `json` module is implemented in pure Python with some C optimizations, but still represents a significant CPU overhead for:
+
 - Large endpoint responses (GET /tools, GET /servers)
 - JSON-RPC message processing
 - Bulk export operations
@@ -21,6 +22,7 @@ We needed a drop-in replacement that provides substantial performance improvemen
 We will adopt **orjson** as the default JSON serialization library for all FastAPI responses and internal JSON operations.
 
 **orjson** is a Rust-based JSON library that provides:
+
 - **5-6x faster serialization** compared to Python's standard library
 - **1.5-2x faster deserialization**
 - **7% smaller output size** (more compact JSON)
@@ -29,6 +31,7 @@ We will adopt **orjson** as the default JSON serialization library for all FastA
 - Zero configuration (drop-in replacement)
 
 Implementation:
+
 - FastAPI default_response_class: `ORJSONResponse` (mcpgateway/main.py:408)
 - Response class: `mcpgateway/utils/orjson_response.py`
 - Options: `OPT_NON_STR_KEYS` (allows int keys), `OPT_SERIALIZE_NUMPY` (numpy support)
@@ -68,6 +71,7 @@ Based on benchmarks (scripts/benchmark_json_serialization.py):
 | Output size | 100KB | 93KB | 7% smaller |
 
 **Real-world impact:**
+
 - Large endpoints (GET /tools, GET /servers): 20-40% faster response time
 - Bulk exports: 50-60% faster serialization
 - API throughput: 15-30% higher requests/second

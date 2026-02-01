@@ -70,7 +70,7 @@ argocd login localhost:8083 \
   --username admin --password "$PASS" --insecure
 ```
 
-Open the web UI → [http://localhost:8083](http://localhost:8083) (credentials above).
+Open the web UI → [https://localhost:8083](https://localhost:8083) (credentials above).
 
 ---
 
@@ -84,7 +84,7 @@ REPO=https://github.com/IBM/mcp-context-forge.git
 
 argocd app create "$APP" \
   --repo "$REPO" \
-  --path k8s \
+  --path deployment/k8s \
   --dest-server https://kubernetes.default.svc \
   --dest-namespace default \
   --sync-policy automated \
@@ -149,7 +149,7 @@ argocd app rollback mcp-gateway <REVISION>
 
 ```bash
 # Pause auto-sync
-a rgocd app set mcp-gateway --sync-policy none
+argocd app set mcp-gateway --sync-policy none
 # Re-enable
 argocd app set mcp-gateway --sync-policy automated
 ```
@@ -162,7 +162,8 @@ argocd app set mcp-gateway --sync-policy automated
 # Delete the application (leaves cluster objects intact)
 argocd app delete mcp-gateway --yes
 
-# Remove Argo CD completely\ nkubectl delete ns argocd
+# Remove Argo CD completely
+kubectl delete ns argocd
 ```
 
 ---

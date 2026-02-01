@@ -24,7 +24,7 @@ MCP Gateway supports multiple deployment strategies:
 | ------------------------------------- | ----------------------------------------------------------------------------------------- |
 | [Local](local.md)                     | Run directly on your dev machine using `make`, `uvicorn`, or a virtual-env                |
 | [Container](container.md)             | Package and run as a single container image using Podman or Docker                        |
-| [Compose Stack](compose.md)           | Bring up Gateway + Postgres + Redis (and optional MPC servers) with Podman/Docker Compose |
+| [Compose Stack](compose.md)           | Bring up Gateway + Postgres + Redis (and optional MCP servers) with Podman/Docker Compose |
 | [Minikube](minikube.md)               | Launch a local single-node Kubernetes cluster and deploy the Gateway stack                |
 | [Kubernetes](kubernetes.md)           | Generic manifests or Helm chart for any K8s-compliant platform                            |
 | [OpenShift](openshift.md)             | OpenShift-specific deployment using Routes, SCCs, and Operator-managed back-ends          |
@@ -44,7 +44,7 @@ MCP Gateway loads configuration from:
 - Environment variables (overrides `.env`)
 - CLI flags (e.g., via `run.sh`)
 
-⚠️ **Security Note**: Never store sensitive credentials directly in environment variables. Use a secrets management system in production. See the [Security Guide](../manage/securing.md#5-secrets-management) for details.
+⚠️ **Security Note**: Never store sensitive credentials directly in environment variables. Use a secrets management system in production. See the [Security Guide](../manage/securing.md#10-secrets-management) for details.
 
 ---
 
@@ -56,7 +56,7 @@ All deployments should expose:
 GET /health
 ```
 
-This returns basic system latency metrics and can be used with cloud provider readiness probes.
+This returns a basic health status (`{"status":"healthy"}`) and can be used with cloud provider readiness probes.
 
 ---
 
@@ -71,4 +71,4 @@ The default container image:
 
 > For Kubernetes, you can mount a ConfigMap or Secret as `.env`.
 
-**Important**: For production deployments, ensure you follow the container hardening guidelines in our [Security Guide](../manage/securing.md#4-container-security).
+**Important**: For production deployments, ensure you follow the container hardening guidelines in our [Security Guide](../manage/securing.md#9-container-security).

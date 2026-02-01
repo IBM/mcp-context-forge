@@ -122,6 +122,7 @@ Issuer:        https://keycloak.company.com/auth/realms/master
 
 1. Go to **Client scopes** tab
 2. Ensure these scopes are in **Assigned default client scopes**:
+
    - `openid` (required)
    - `profile` (recommended)
    - `email` (recommended)
@@ -133,6 +134,7 @@ To ensure proper user info:
 1. Go to **Clients** → Your client → **Client scopes**
 2. Click on **profile** scope
 3. Verify these mappers exist:
+
    - `email` → User attribute `email`
    - `given_name` → User attribute `firstName`
    - `family_name` → User attribute `lastName`
@@ -417,6 +419,7 @@ tail -f logs/gateway.log | grep -i sso
 ### 6.1 Access Login Page
 
 1. Navigate to your gateway's login page:
+
    - Development: `http://localhost:8000/admin/login`
    - Production: `https://gateway.yourcompany.com/admin/login`
 

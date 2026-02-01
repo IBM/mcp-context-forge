@@ -17,12 +17,14 @@ HTTP authentication hooks enable plugins to customize how MCP Gateway authentica
 ## Why HTTP Authentication Hooks?
 
 Traditional authentication in MCP Gateway supports:
+
 - JWT bearer tokens
 - API tokens (database-backed)
 - Email/password login
 - SSO (OAuth/OIDC providers)
 
 However, enterprises often need:
+
 - **Custom token formats**: Proprietary authentication schemes or legacy systems
 - **LDAP/Active Directory**: Authenticate against corporate directories
 - **mTLS certificates**: Client certificate validation from reverse proxies
@@ -41,6 +43,7 @@ The authentication hook system has three layers that work together:
 Runs **before** authentication logic in middleware. Transforms custom headers to standard formats.
 
 **Use Cases**:
+
 - Convert `X-API-Key` → `Authorization: Bearer <token>`
 - Transform proprietary auth headers
 - Add correlation/tracing headers
@@ -52,6 +55,7 @@ Runs **before** authentication logic in middleware. Transforms custom headers to
 Runs **inside** `get_current_user()` before standard JWT validation. Implements custom authentication.
 
 **Use Cases**:
+
 - LDAP/Active Directory lookup
 - mTLS certificate validation
 - External OAuth token verification
@@ -64,6 +68,7 @@ Runs **inside** `get_current_user()` before standard JWT validation. Implements 
 Runs **before** RBAC permission checks in route decorators. Allows plugins to grant/deny permissions based on custom logic.
 
 **Use Cases**:
+
 - Bypass RBAC for token-authenticated users
 - Implement time-based access control
 - IP-based permission restrictions
@@ -128,6 +133,7 @@ class HttpPostRequestPayload(HttpPreRequestPayload):
 **Returns**: `PluginResult[HttpHeaderPayload]` - Modified response headers
 
 **Use Cases**:
+
 - Audit logging of authentication attempts
 - Metrics collection
 - Response inspection
@@ -295,6 +301,7 @@ async def http_auth_check_permission(
 ```
 
 **Use Cases**:
+
 - Bypass RBAC for service accounts authenticated via tokens
 - Implement time-based access control (deny access outside business hours)
 - IP-based restrictions (deny access from certain IP ranges)
@@ -622,6 +629,7 @@ Response to Client
 ```
 
 **Key Data Flow**:
+
 1. **request_id**: Generated once in middleware, propagated through all hooks via `GlobalContext` and `request.state`
 2. **auth_method**: Set by authentication plugin in `metadata`, stored in `request.state`, read by permission plugin
 3. **user_context**: Contains email, is_admin, auth_method, request_id, ip_address, user_agent
@@ -724,15 +732,10 @@ async def http_post_request(
 ## Security Considerations
 
 1. **Fallback Behavior**: If custom auth fails or returns `continue_processing=True`, the gateway falls back to standard JWT/API token validation. This ensures robustness.
-
 2. **Error Handling**: Plugin errors are logged but don't fail requests. Standard authentication continues if plugin fails.
-
 3. **Priority**: Auth plugins should run early (low priority numbers, e.g., 10-20) to ensure they execute before other plugins.
-
 4. **Credential Storage**: Never log or expose credentials. Use secure storage for API key mappings.
-
 5. **Rate Limiting**: Combine with rate_limiter plugin to prevent brute force attacks on custom auth endpoints.
-
 6. **Audit Logging**: Use HTTP_POST_REQUEST for comprehensive audit logging of authentication attempts.
 
 ## Testing

@@ -239,6 +239,6 @@ For programmatic certificate management, see the API documentation:
 
 ## Related Documentation
 
--   [Gateway Management](gateways.md)
--   [Security Configuration](../configure/security.md)
--   [TLS/SSL Setup](../configure/tls.md)
+-   [Gateway Management](api-usage.md#gateway-management)
+-   [Security Configuration](securing.md)
+-   [TLS/SSL Setup](../deployment/tls-configuration.md)

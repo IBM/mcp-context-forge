@@ -13,7 +13,11 @@ OpenWebUI supports integration with external tools via OpenAPI specifications. M
 ## 🛠️ Prerequisites
 
 - **OpenWebUI**: Ensure you have OpenWebUI installed and running. Refer to the [OpenWebUI documentation](https://docs.openwebui.com/) for installation instructions.
-- **MCP Gateway**: Set up and run the MCP Gateway. Detailed setup instructions can be found in the [MCP Gateway documentation](https://modelcontextprotocol.io/).
+- **MCP Gateway**: Set up and run the MCP Gateway. Detailed setup instructions can be found in the [MCP Gateway documentation](https://ibm.github.io/mcp-context-forge/).
+
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
 
 ---
 
@@ -27,7 +31,7 @@ Start the MCP Gateway to expose its tools via OpenAPI endpoints. For example:
 uv run mcpgateway
 ```
 
-Ensure that the MCP Gateway is accessible at a known URL, such as `http://localhost:4444`.
+Ensure that the MCP Gateway is accessible at a known URL, such as `http://localhost:4444` (or `http://localhost:8080` with Compose).
 
 ### 2. Identify MCP Tool Endpoints
 
@@ -50,7 +54,7 @@ Replace `<tool-name>` with the actual name of the tool you wish to integrate.
 
 * In the **Settings** menu, locate the **Tools** section.
 * Click on the ➕ **Add Tool Server** button.
-* Enter the URL of the MCP tool endpoint (e.g., `http://localhost:4444/tools/<tool-name>`).
+* Enter the URL of the MCP tool endpoint (e.g., `http://localhost:4444/tools/<tool-name>` or `http://localhost:8080/tools/<tool-name>` with Compose).
 * Click **Save** to register the tool.
 
 Repeat this process for each MCP tool you wish to integrate.
