@@ -44,11 +44,25 @@ import re
 
 # Third-Party
 from fastapi import Response, status
-from prometheus_client import Gauge, REGISTRY
+from prometheus_client import Counter, Gauge, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # First-Party
 from mcpgateway.config import settings
+
+# Global Metrics
+# Exposed for import by services/plugins to increment counters
+tool_timeout_counter = Counter(
+    "tool_timeout_total",
+    "Total number of tool invocation timeouts",
+    ["tool_name"],
+)
+
+circuit_breaker_open_counter = Counter(
+    "circuit_breaker_open_total",
+    "Total number of times circuit breaker opened",
+    ["tool_name"],
+)
 
 
 def setup_metrics(app):
