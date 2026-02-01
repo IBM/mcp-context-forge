@@ -146,6 +146,26 @@ class TestComputeStatsPython:
             assert 49.0 <= result["p50"] <= 51.0  # Approximate median
             assert result["error_count"] == 2
 
+    def test_compute_stats_python_empty_durations(self):
+        """Return None when durations list is empty."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+            mock_db = MagicMock()
+
+            entry = MagicMock()
+            entry.duration_ms = None
+            mock_db.execute.return_value.scalars.return_value.all.return_value = [entry]
+
+            result = aggregator._compute_stats_python(
+                db=mock_db,
+                component="test",
+                operation_type="test_op",
+                window_start=datetime.now(timezone.utc) - timedelta(hours=1),
+                window_end=datetime.now(timezone.utc),
+            )
+
+            assert result is None
+
 
 class TestComputeStatsPostgresql:
     """Tests for PostgreSQL-based statistics computation."""
@@ -204,6 +224,25 @@ class TestComputeStatsPostgresql:
             assert result["p99"] == 99.0
             assert result["error_count"] == 5
 
+    def test_compute_stats_postgresql_returns_none_when_stats_missing(self):
+        """Return None when stats query yields no rows despite count > 0."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=True):
+            aggregator = LogAggregator()
+            mock_db = MagicMock()
+
+            mock_db.execute.return_value.scalar.return_value = 3
+            mock_db.execute.return_value.fetchone.return_value = None
+
+            result = aggregator._compute_stats_postgresql(
+                db=mock_db,
+                component="test",
+                operation_type="test_op",
+                window_start=datetime.now(timezone.utc) - timedelta(hours=1),
+                window_end=datetime.now(timezone.utc),
+            )
+
+            assert result is None
+
 
 class TestAggregatePerformanceMetrics:
     """Tests for aggregate_performance_metrics method."""
@@ -256,6 +295,46 @@ class TestAggregatePerformanceMetrics:
 
                         mock_pg.assert_called_once()
                         mock_python.assert_not_called()
+
+    def test_aggregate_commits_when_session_created(self):
+        """Aggregation commits when it owns the DB session."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+            aggregator.enabled = True
+            mock_db = MagicMock()
+
+            stats = {
+                "count": 1,
+                "avg_duration": 1.0,
+                "min_duration": 1.0,
+                "max_duration": 1.0,
+                "p50": 1.0,
+                "p95": 1.0,
+                "p99": 1.0,
+                "error_count": 0,
+            }
+
+            with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+                with patch.object(aggregator, "_compute_stats_python", return_value=stats):
+                    with patch.object(aggregator, "_upsert_metric", return_value=MagicMock()):
+                        result = aggregator.aggregate_performance_metrics(component="test", operation_type="op")
+
+            assert result is not None
+            mock_db.commit.assert_called_once()
+
+    def test_aggregate_rolls_back_on_error(self):
+        """Aggregation rolls back on exceptions."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+            aggregator.enabled = True
+            mock_db = MagicMock()
+
+            with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+                with patch.object(aggregator, "_compute_stats_python", side_effect=RuntimeError("boom")):
+                    result = aggregator.aggregate_performance_metrics(component="test", operation_type="op")
+
+            assert result is None
+            mock_db.rollback.assert_called_once()
 
 
 class TestCalculateErrorCount:
@@ -343,6 +422,15 @@ class TestResolveWindowBounds:
         resolved_start, resolved_end = aggregator._resolve_window_bounds(None, window_end)
 
         assert resolved_end == window_end.replace(second=0, microsecond=0)
+        assert resolved_start < resolved_end
+
+    def test_resolve_window_bounds_start_only_future(self):
+        aggregator = LogAggregator()
+        future_start = datetime.now(timezone.utc) + timedelta(minutes=30)
+
+        resolved_start, resolved_end = aggregator._resolve_window_bounds(future_start, None)
+
+        assert resolved_end < future_start
         assert resolved_start < resolved_end
 
 
@@ -489,6 +577,77 @@ class TestAggregateAllComponentsBatch:
                 assert upsert_called, "Expected _upsert_metric to be called"
                 assert len(result) == 1
                 assert result[0] == mock_metric
+
+    def test_batch_python_fallback_branches(self):
+        """Cover branch paths for missing component, empty entries, and empty durations."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+            aggregator.enabled = True
+
+            start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+            window_starts = [start, start + timedelta(minutes=5), start + timedelta(minutes=10)]
+
+            class Entry:
+                def __init__(self, ts, duration, level="INFO", error_details=None):
+                    self.timestamp = ts
+                    self.duration_ms = duration
+                    self.level = level
+                    self.error_details = error_details
+
+            entries_empty = []
+            entries_no_duration = [Entry(start + timedelta(minutes=1), None)]
+            entries_good = [
+                Entry(start + timedelta(minutes=1), 5.0, level="ERROR"),
+                Entry(start + timedelta(minutes=6), 7.0, level="INFO"),
+            ]
+
+            pairs = [
+                (None, "op"),
+                ("comp_empty", "op"),
+                ("comp_nodur", "op"),
+                ("comp_good", "op"),
+            ]
+
+            def _result_all(value):
+                result = MagicMock()
+                result.all.return_value = value
+                return result
+
+            def _result_scalars_all(value):
+                result = MagicMock()
+                result.scalars.return_value.all.return_value = value
+                return result
+
+            mock_db = MagicMock()
+            mock_db.execute.side_effect = [
+                _result_all(pairs),
+                _result_scalars_all(entries_empty),
+                _result_scalars_all(entries_no_duration),
+                _result_scalars_all(entries_good),
+            ]
+
+            metric_obj = MagicMock()
+            aggregator._upsert_metric = MagicMock(side_effect=[metric_obj, RuntimeError("boom")])
+
+            created = aggregator.aggregate_all_components_batch(window_starts=window_starts, window_minutes=5, db=mock_db)
+
+            assert created == [metric_obj]
+            assert aggregator._upsert_metric.call_count == 2
+
+    def test_batch_python_fallback_rolls_back_on_error(self):
+        """Ensure rollback/close when batch aggregation raises with owned session."""
+        with patch("mcpgateway.services.log_aggregator._is_postgresql", return_value=False):
+            aggregator = LogAggregator()
+            aggregator.enabled = True
+            mock_db = MagicMock()
+            mock_db.execute.side_effect = RuntimeError("boom")
+
+            with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+                with pytest.raises(RuntimeError):
+                    aggregator.aggregate_all_components_batch(window_starts=[datetime.now(timezone.utc)], window_minutes=5)
+
+            mock_db.rollback.assert_called_once()
+            mock_db.close.assert_called_once()
 
     def test_batch_error_count_consistency_with_duration_filter(self):
         """Test that error_count only includes entries with duration_ms (consistency with per-window path)."""
@@ -703,6 +862,30 @@ class TestAggregatePerformanceMetrics:
         assert len(metrics) == 1
         mock_db.commit.assert_called()
 
+    def test_aggregate_all_components_skips_incomplete_pairs(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_db.execute.return_value.all.return_value = [(None, "op"), ("comp", None), ("comp", "op")]
+
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with patch.object(aggregator, "aggregate_performance_metrics", return_value=MagicMock()):
+                metrics = aggregator.aggregate_all_components(db=None)
+
+        assert len(metrics) == 1
+        mock_db.commit.assert_called()
+
+    def test_aggregate_all_components_rolls_back_on_error(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = RuntimeError("boom")
+
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with pytest.raises(RuntimeError):
+                aggregator.aggregate_all_components(db=None)
+
+        mock_db.rollback.assert_called()
+        mock_db.close.assert_called()
+
     def test_get_recent_metrics_filters(self):
         aggregator = LogAggregator()
         mock_db = MagicMock()
@@ -715,6 +898,18 @@ class TestAggregatePerformanceMetrics:
 
         assert len(results) == 1
         mock_db.commit.assert_called()
+
+    def test_get_recent_metrics_rolls_back_on_error(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = RuntimeError("boom")
+
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            with pytest.raises(RuntimeError):
+                aggregator.get_recent_metrics(db=None)
+
+        mock_db.rollback.assert_called()
+        mock_db.close.assert_called()
 
     def test_get_degradation_alerts_detects_slowdown(self):
         aggregator = LogAggregator()
@@ -743,6 +938,65 @@ class TestAggregatePerformanceMetrics:
 
         assert len(alerts) == 1
         assert alerts[0]["component"] == "comp"
+
+    def test_get_degradation_alerts_commits_with_owned_session(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+
+        def _all_result(values):
+            result = MagicMock()
+            result.all.return_value = values
+            return result
+
+        def _scalars_result(values):
+            result = MagicMock()
+            result.scalars.return_value.all.return_value = values
+            return result
+
+        mock_db.execute.side_effect = [
+            _all_result([("comp", "op")]),
+            _scalars_result([]),
+            _scalars_result([]),
+        ]
+
+        with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+            alerts = aggregator.get_degradation_alerts(threshold_multiplier=2.0, db=None)
+
+        assert alerts == []
+        mock_db.commit.assert_called_once()
+
+
+class TestBackfillAndSingleton:
+    """Tests for backfill and singleton creation."""
+
+    def test_backfill_returns_zero_when_disabled_or_invalid(self):
+        aggregator = LogAggregator()
+        aggregator.enabled = False
+        assert aggregator.backfill(1.0) == 0
+        aggregator.enabled = True
+        assert aggregator.backfill(0.0) == 0
+
+    def test_backfill_processes_windows(self):
+        aggregator = LogAggregator()
+        mock_db = MagicMock()
+        start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        end = start + timedelta(minutes=10)
+
+        with patch.object(aggregator, "_resolve_window_bounds", return_value=(start, end)):
+            with patch.object(aggregator, "aggregate_all_components", return_value=[MagicMock()]):
+                with patch("mcpgateway.services.log_aggregator.SessionLocal", return_value=mock_db):
+                    processed = aggregator.backfill(0.2)
+
+        assert processed >= 1
+        mock_db.commit.assert_called_once()
+
+    def test_get_log_aggregator_singleton(self):
+        from mcpgateway.services import log_aggregator as module
+
+        module._log_aggregator = None
+        first = module.get_log_aggregator()
+        second = module.get_log_aggregator()
+        assert first is second
 
 
 class TestUpsertMetric:

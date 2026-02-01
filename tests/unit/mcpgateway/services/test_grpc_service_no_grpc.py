@@ -34,6 +34,12 @@ def _mock_execute_scalar(value):
     return result
 
 
+def test_grpc_service_name_conflict_error_message():
+    err = GrpcServiceNameConflictError(name="svc", is_active=False, service_id="svc-1")
+    assert "inactive" in str(err)
+    assert "svc-1" in str(err)
+
+
 @pytest.mark.asyncio
 async def test_register_service_no_conflict(service, db):
     db.execute.return_value = _mock_execute_scalar(None)
@@ -247,6 +253,64 @@ async def test_set_service_state_and_delete(service, db):
 
 
 @pytest.mark.asyncio
+async def test_list_services_team_filter(service, db):
+    db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+
+    with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team:
+        mock_team.return_value.build_team_filter_clause = AsyncMock(return_value=DbGrpcService.id == "svc-1")
+        with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
+            result = await service.list_services(db, include_inactive=False, user_email="user@example.com", team_id="team-1")
+
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_services_team_id_only(service, db):
+    db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+
+    with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
+        result = await service.list_services(db, include_inactive=True, user_email=None, team_id="team-1")
+
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_service_with_team_filter(service, db):
+    db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
+
+    with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team:
+        mock_team.return_value.build_team_filter_clause = AsyncMock(return_value=DbGrpcService.id == "svc-1")
+        with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
+            result = await service.get_service(db, "svc-1", user_email="user@example.com")
+
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_service_not_found(service, db):
+    db.execute.return_value.scalar_one_or_none.return_value = None
+
+    with pytest.raises(GrpcServiceNotFoundError):
+        await service.delete_service(db, "missing")
+
+
+@pytest.mark.asyncio
+async def test_reflect_service_not_found(service, db):
+    db.execute.return_value.scalar_one_or_none.return_value = None
+
+    with pytest.raises(GrpcServiceNotFoundError):
+        await service.reflect_service(db, "missing")
+
+
+@pytest.mark.asyncio
+async def test_get_service_methods_not_found(service, db):
+    db.execute.return_value.scalar_one_or_none.return_value = None
+
+    with pytest.raises(GrpcServiceNotFoundError):
+        await service.get_service_methods(db, "missing")
+
+
+@pytest.mark.asyncio
 async def test_reflect_service_success(service, db):
     db_service = DbGrpcService(
         id="svc-1",
@@ -404,6 +468,14 @@ async def test_invoke_method_disabled_service(service, db):
 
 
 @pytest.mark.asyncio
+async def test_invoke_method_service_not_found(service, db):
+    db.execute.return_value = _mock_execute_scalar(None)
+
+    with pytest.raises(GrpcServiceNotFoundError):
+        await service.invoke_method(db, "missing", "pkg.Service.Ping", {})
+
+
+@pytest.mark.asyncio
 async def test_invoke_method_success(service, db):
     db_service = DbGrpcService(
         id="svc-1",
@@ -446,6 +518,49 @@ async def test_invoke_method_success(service, db):
 
     assert result["service"] == "pkg.Service"
     assert result["method"] == "Ping"
+
+
+@pytest.mark.asyncio
+async def test_invoke_method_error_path(service, db):
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=False,
+        tls_enabled=False,
+        grpc_metadata={},
+        enabled=True,
+        reachable=True,
+        service_count=0,
+        method_count=0,
+        discovered_services={"pkg.Service": {"methods": []}},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+    db.execute.return_value = _mock_execute_scalar(db_service)
+
+    class FakeEndpoint:
+        def __init__(self, **_kwargs):
+            self._services = None
+
+        async def start(self):
+            return None
+
+        async def invoke(self, _service_name, _method, _request_data):
+            raise RuntimeError("boom")
+
+        async def close(self):
+            return None
+
+    with patch("mcpgateway.translate_grpc.GrpcEndpoint", FakeEndpoint):
+        with pytest.raises(GrpcServiceError):
+            await service.invoke_method(db, "svc-1", "pkg.Service.Ping", {"a": 1})
 
 
 @pytest.mark.asyncio
@@ -553,6 +668,98 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
     assert "BadService" in db_service.discovered_services
     assert db_service.service_count == 2
     assert db_service.method_count == 1
+    assert db_service.reachable is True
+
+
+@pytest.mark.asyncio
+async def test_perform_reflection_tls_cert_missing(monkeypatch, service, db):
+    from mcpgateway.services import grpc_service as module
+
+    module.grpc = SimpleNamespace(ssl_channel_credentials=lambda **_kwargs: "creds", secure_channel=lambda _t, _c: MagicMock())
+
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=True,
+        tls_enabled=True,
+        tls_cert_path="/missing.crt",
+        tls_key_path="/missing.key",
+        grpc_metadata={},
+        enabled=True,
+        reachable=False,
+        service_count=0,
+        method_count=0,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+
+    with patch("pathlib.Path.read_bytes", side_effect=FileNotFoundError("missing")):
+        with pytest.raises(GrpcServiceError):
+            await service._perform_reflection(db, db_service)
+
+
+@pytest.mark.asyncio
+async def test_perform_reflection_tls_default_creds(monkeypatch, service, db):
+    from mcpgateway.services import grpc_service as module
+
+    class FakeChannel:
+        def close(self):
+            return None
+
+    module.grpc = SimpleNamespace(
+        insecure_channel=lambda _target: FakeChannel(),
+        secure_channel=lambda _target, _creds: FakeChannel(),
+        ssl_channel_credentials=lambda **_kwargs: "creds",
+    )
+
+    class FakeRequest:
+        def __init__(self, list_services=None, file_containing_symbol=None):
+            self.list_services = list_services
+            self.file_containing_symbol = file_containing_symbol
+
+    class FakeStub:
+        def __init__(self, _channel):
+            return None
+
+        def ServerReflectionInfo(self, _requests):
+            return iter([])
+
+    monkeypatch.setattr(module, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=FakeRequest))
+    monkeypatch.setattr(module, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=FakeStub))
+
+    db_service = DbGrpcService(
+        id="svc-1",
+        name="svc",
+        slug="svc",
+        target="localhost:50051",
+        description="desc",
+        reflection_enabled=True,
+        tls_enabled=True,
+        tls_cert_path=None,
+        tls_key_path=None,
+        grpc_metadata={},
+        enabled=True,
+        reachable=False,
+        service_count=0,
+        method_count=0,
+        discovered_services={},
+        last_reflection=None,
+        tags=[],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        version=1,
+        visibility="public",
+    )
+
+    await service._perform_reflection(db, db_service)
     assert db_service.reachable is True
 
 

@@ -8,10 +8,12 @@ SPDX-License-Identifier: Apache-2.0
 # Standard
 from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 # First-Party
 from mcpgateway.services import metrics_rollup_service
@@ -604,3 +606,382 @@ class TestRollupInternals:
 
         assert (created, updated) == (0, 1)
         mock_db.execute.assert_called()
+
+    def test_aggregate_hour_postgresql_a2a(self, monkeypatch):
+        service = MetricsRollupService()
+        service._is_postgresql = True
+        monkeypatch.setattr(metrics_rollup_service.settings, "use_postgresdb_percentiles", True, raising=False)
+        monkeypatch.setattr(metrics_rollup_service.settings, "yield_batch_size", 1, raising=False)
+
+        class FakeExpr:
+            def within_group(self, *_args, **_kwargs):
+                return self
+
+            def label(self, _name):
+                return self
+
+        class FakeFunc:
+            def __getattr__(self, _name):
+                def _fn(*_args, **_kwargs):
+                    return FakeExpr()
+
+                return _fn
+
+        class DummyCol:
+            def label(self, _name):
+                return self
+
+            def is_(self, _other):
+                return MagicMock()
+
+            def __ge__(self, _other):
+                return MagicMock()
+
+            def __lt__(self, _other):
+                return MagicMock()
+
+            def __eq__(self, _other):
+                return MagicMock()
+
+        class RawModel:
+            __name__ = "RawModel"
+            timestamp = DummyCol()
+            id = DummyCol()
+            is_success = DummyCol()
+            response_time = DummyCol()
+            interaction_type = DummyCol()
+            a2a_agent_id = DummyCol()
+
+        class EntityModel:
+            __name__ = "EntityModel"
+            id = DummyCol()
+            name = DummyCol()
+
+        class _Select:
+            def select_from(self, *_args, **_kwargs):
+                return self
+
+            def join(self, *_args, **_kwargs):
+                return self
+
+            def where(self, *_args, **_kwargs):
+                return self
+
+            def group_by(self, *_args, **_kwargs):
+                return self
+
+        monkeypatch.setattr(metrics_rollup_service, "select", lambda *_args, **_kwargs: _Select())
+        monkeypatch.setattr(metrics_rollup_service, "and_", lambda *_args, **_kwargs: MagicMock())
+        monkeypatch.setattr(metrics_rollup_service, "case", lambda *_args, **_kwargs: MagicMock())
+        monkeypatch.setattr(metrics_rollup_service, "func", FakeFunc())
+
+        hour_start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        hour_end = hour_start + timedelta(hours=1)
+
+        row = MagicMock()
+        row.entity_id = "agent-1"
+        row.entity_name = "Agent"
+        row.total_count = 2
+        row.success_count = 1
+        row.min_rt = 1.0
+        row.max_rt = 2.0
+        row.avg_rt = 1.5
+        row.p50_rt = 1.5
+        row.p95_rt = 2.0
+        row.p99_rt = 2.0
+        row.interaction_type = "invoke"
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.yield_per.return_value = [row]
+
+        aggregations = service._aggregate_hour(
+            db=mock_db,
+            raw_model=RawModel,
+            entity_model=EntityModel,
+            entity_id_col="a2a_agent_id",
+            entity_name_col="name",
+            hour_start=hour_start,
+            hour_end=hour_end,
+            is_a2a=True,
+        )
+
+        assert len(aggregations) == 1
+        assert aggregations[0].interaction_type == "invoke"
+
+    def test_aggregate_hour_python_path_empty_response_times(self, monkeypatch):
+        service = MetricsRollupService()
+        service._is_postgresql = False
+        monkeypatch.setattr(metrics_rollup_service.settings, "use_postgresdb_percentiles", False, raising=False)
+        monkeypatch.setattr(metrics_rollup_service.settings, "yield_batch_size", 1, raising=False)
+
+        class DummyCol:
+            def label(self, _name):
+                return self
+
+            def is_(self, _other):
+                return MagicMock()
+
+            def __ge__(self, _other):
+                return MagicMock()
+
+            def __lt__(self, _other):
+                return MagicMock()
+
+            def __eq__(self, _other):
+                return MagicMock()
+
+            def in_(self, _other):
+                return MagicMock()
+
+        class RawModel:
+            __name__ = "RawModel"
+            timestamp = DummyCol()
+            id = DummyCol()
+            is_success = DummyCol()
+            response_time = DummyCol()
+            tool_id = DummyCol()
+
+        class EntityModel:
+            __name__ = "EntityModel"
+            id = DummyCol()
+            name = DummyCol()
+
+        class _Select:
+            def where(self, *_args, **_kwargs):
+                return self
+
+            def group_by(self, *_args, **_kwargs):
+                return self
+
+            def order_by(self, *_args, **_kwargs):
+                return self
+
+        monkeypatch.setattr(metrics_rollup_service, "select", lambda *_args, **_kwargs: _Select())
+        monkeypatch.setattr(metrics_rollup_service, "and_", lambda *_args, **_kwargs: MagicMock())
+
+        hour_start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        hour_end = hour_start + timedelta(hours=1)
+
+        class AggRow:
+            total_count = 2
+            success_count = 1
+            min_rt = 1.0
+            max_rt = 2.0
+            avg_rt = 1.5
+
+            def __getitem__(self, idx):
+                return "tool-1" if idx == 0 else None
+
+        class RtRow:
+            def __init__(self, entity_id, response_time):
+                self._entity_id = entity_id
+                self.response_time = response_time
+
+            def __getitem__(self, idx):
+                return self._entity_id if idx == 0 else None
+
+        agg_result = MagicMock()
+        agg_result.yield_per.return_value = [AggRow()]
+
+        entity_result = [("tool-1", "Tool")]
+
+        rt_result = MagicMock()
+        rt_result.yield_per.return_value = []
+
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = [agg_result, entity_result, rt_result]
+
+        aggregations = service._aggregate_hour(
+            db=mock_db,
+            raw_model=RawModel,
+            entity_model=EntityModel,
+            entity_id_col="tool_id",
+            entity_name_col="name",
+            hour_start=hour_start,
+            hour_end=hour_end,
+            is_a2a=False,
+        )
+
+        assert len(aggregations) == 1
+        assert aggregations[0].p50_response_time is None
+
+    def test_aggregate_hour_logs_and_raises(self, monkeypatch):
+        service = MetricsRollupService()
+        service._is_postgresql = False
+        monkeypatch.setattr(metrics_rollup_service.settings, "use_postgresdb_percentiles", False, raising=False)
+
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = RuntimeError("boom")
+
+        class DummyTime:
+            def __ge__(self, _other):
+                return MagicMock()
+
+            def __lt__(self, _other):
+                return MagicMock()
+
+        raw_model = SimpleNamespace(
+            __name__="Raw",
+            timestamp=DummyTime(),
+            tool_id=MagicMock(),
+            response_time=MagicMock(),
+            is_success=MagicMock(),
+            id=MagicMock(),
+        )
+        entity_model = SimpleNamespace(__name__="Entity", name=MagicMock())
+
+        monkeypatch.setattr(metrics_rollup_service, "and_", lambda *_args, **_kwargs: MagicMock())
+        monkeypatch.setattr(metrics_rollup_service, "select", lambda *_args, **_kwargs: SimpleNamespace(where=lambda *_a, **_k: SimpleNamespace(group_by=lambda *_b, **_k2: SimpleNamespace(order_by=lambda *_c, **_k3: SimpleNamespace()))))
+        monkeypatch.setattr(metrics_rollup_service, "func", SimpleNamespace(count=lambda *_a, **_k: MagicMock(), sum=lambda *_a, **_k: MagicMock(), min=lambda *_a, **_k: MagicMock(), max=lambda *_a, **_k: MagicMock(), avg=lambda *_a, **_k: MagicMock()))
+        monkeypatch.setattr(metrics_rollup_service, "case", lambda *_a, **_k: MagicMock())
+
+        with patch.object(metrics_rollup_service.logger, "exception") as mock_logger:
+            with pytest.raises(RuntimeError):
+                service._aggregate_hour(
+                    db=mock_db,
+                    raw_model=raw_model,
+                    entity_model=entity_model,
+                    entity_id_col="tool_id",
+                    entity_name_col="name",
+                    hour_start=datetime.now(timezone.utc),
+                    hour_end=datetime.now(timezone.utc) + timedelta(hours=1),
+                    is_a2a=False,
+                )
+
+            mock_logger.assert_called_once()
+
+    def test_upsert_rollup_postgresql_path(self, monkeypatch):
+        service = MetricsRollupService()
+
+        class DummyHourly:
+            hour_start = MagicMock()
+            interaction_type = MagicMock()
+            a2a_agent_id = MagicMock()
+            agent_name = MagicMock()
+
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        class FakeInsert:
+            def __init__(self):
+                self.excluded = {}
+
+            def values(self, **kwargs):
+                self.excluded = {key: f"excluded-{key}" for key in kwargs}
+                return self
+
+            def on_conflict_do_update(self, index_elements, set_):
+                return self
+
+        monkeypatch.setattr(metrics_rollup_service, "pg_insert", lambda _model: FakeInsert())
+
+        mock_db = MagicMock()
+        mock_db.bind.dialect.name = "postgresql"
+
+        agg = HourlyAggregation(
+            entity_id="agent-1",
+            entity_name="Agent",
+            hour_start=datetime.now(timezone.utc),
+            total_count=1,
+            success_count=1,
+            failure_count=0,
+            min_response_time=0.1,
+            max_response_time=0.1,
+            avg_response_time=0.1,
+            p50_response_time=0.1,
+            p95_response_time=0.1,
+            p99_response_time=0.1,
+            interaction_type="invoke",
+        )
+
+        created, updated = service._upsert_rollup(mock_db, DummyHourly, "a2a_agent_id", agg, is_a2a=True)
+
+        assert (created, updated) == (0, 1)
+        mock_db.execute.assert_called()
+
+    def test_upsert_rollup_fallback_paths(self):
+        service = MetricsRollupService()
+
+        class DummyHourly:
+            hour_start = MagicMock()
+            interaction_type = MagicMock()
+            tool_id = MagicMock()
+            tool_name = MagicMock()
+
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        agg = HourlyAggregation(
+            entity_id="tool-1",
+            entity_name="Tool",
+            hour_start=datetime.now(timezone.utc),
+            total_count=1,
+            success_count=1,
+            failure_count=0,
+            min_response_time=0.1,
+            max_response_time=0.1,
+            avg_response_time=0.1,
+            p50_response_time=0.1,
+            p95_response_time=0.1,
+            p99_response_time=0.1,
+        )
+
+        mock_db = MagicMock()
+        mock_db.bind.dialect.name = "oracle"
+
+        savepoint = MagicMock()
+        mock_db.begin_nested.return_value = savepoint
+
+        class _Select:
+            def where(self, *_args, **_kwargs):
+                return self
+
+        with patch.object(metrics_rollup_service, "select", lambda *_args, **_kwargs: _Select()):
+            with patch.object(metrics_rollup_service, "and_", lambda *_args, **_kwargs: MagicMock()):
+                created, updated = service._upsert_rollup(mock_db, DummyHourly, "tool_id", agg, is_a2a=False)
+                assert (created, updated) == (1, 0)
+
+                mock_db.add.side_effect = IntegrityError("statement", {}, Exception("integrity"))
+                existing = MagicMock()
+                mock_db.execute.return_value.scalar_one.return_value = existing
+
+                created, updated = service._upsert_rollup(mock_db, DummyHourly, "tool_id", agg, is_a2a=False)
+                assert (created, updated) == (0, 1)
+                assert existing.total_count == 1
+
+    def test_upsert_rollup_sqlalchemy_error(self):
+        service = MetricsRollupService()
+
+        class DummyHourly:
+            hour_start = MagicMock()
+            interaction_type = MagicMock()
+            tool_id = MagicMock()
+            tool_name = MagicMock()
+
+            def __init__(self, **kwargs):
+                for key, value in kwargs.items():
+                    setattr(self, key, value)
+
+        agg = HourlyAggregation(
+            entity_id="tool-1",
+            entity_name="Tool",
+            hour_start=datetime.now(timezone.utc),
+            total_count=1,
+            success_count=1,
+            failure_count=0,
+            min_response_time=0.1,
+            max_response_time=0.1,
+            avg_response_time=0.1,
+            p50_response_time=0.1,
+            p95_response_time=0.1,
+            p99_response_time=0.1,
+        )
+
+        mock_db = MagicMock()
+        mock_db.bind.dialect.name = "oracle"
+        mock_db.add.side_effect = SQLAlchemyError("boom")
+
+        with pytest.raises(SQLAlchemyError):
+            service._upsert_rollup(mock_db, DummyHourly, "tool_id", agg, is_a2a=False)
