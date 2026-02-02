@@ -236,8 +236,6 @@ services:
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
-      - USE_STATEFUL_SESSIONS=true
-      - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
       # ═══════════════════════════════════════════════════════════════════════════
       # SSRF Protection (Server-Side Request Forgery)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -252,6 +250,13 @@ services:
       # - SSRF_ALLOW_LOCALHOST=false
       # - SSRF_ALLOW_PRIVATE_NETWORKS=false
       # - SSRF_DNS_FAIL_CLOSED=true
+
+      # Uncomment to enable stateful sessions for Streamable HTTP transport
+      # - USE_STATEFUL_SESSIONS=true
+
+      # Uncomment to enable session affinity between downstream (from client) and upstrean (to MCP server) sessions
+      # - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
+
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
@@ -520,14 +525,14 @@ services:
 
     deploy:
       mode: replicated
-      replicas: 2
+      replicas: 3
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '8'
+          memory: 8G
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '4'
+          memory: 4G
 
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
