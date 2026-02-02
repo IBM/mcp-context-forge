@@ -486,7 +486,9 @@ class ServerService:
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
                 team_id=getattr(server_in, "team_id", None) or team_id,
                 owner_email=getattr(server_in, "owner_email", None) or owner_email or created_by,
-                visibility=getattr(server_in, "visibility", None) or visibility,
+                # IMPORTANT: Prefer function parameter over schema default
+                # The API has visibility as a separate Body param that should override schema default
+                visibility=visibility or getattr(server_in, "visibility", None) or "public",
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=getattr(server_in, "oauth_config", None),
@@ -754,10 +756,16 @@ class ServerService:
             >>> isinstance(servers, list) and cursor is None
             True
         """
-        # Check cache for first page only - skip when user_email provided, token_teams provided, or page-based pagination
-        # SECURITY: Never cache filtered results (token_teams not None means we're filtering by token scope)
+        # Check cache for first page only
+        # SECURITY: Only cache public-only results (token_teams=[])
+        # - token_teams=None (admin bypass): Don't cache - admin sees all, should be fresh
+        # - token_teams=[] (public-only): Cache - same result for all public-only users
+        # - token_teams=[...] (team-scoped): Don't cache - results vary by team
+        # - user_email set: Don't cache - results vary by user ownership
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and token_teams is None and page is None:
+        is_public_only = token_teams is not None and len(token_teams) == 0
+        use_cache = cursor is None and user_email is None and page is None and is_public_only
+        if use_cache:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
@@ -782,9 +790,9 @@ class ServerService:
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
-        # SECURITY: Apply token-based access control when token_teams is specified
-        # - token_teams is None: unrestricted access (admin or legacy token)
-        # - token_teams is []: public-only access
+        # SECURITY: Apply token-based access control based on normalized token_teams
+        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
+        # - token_teams is []: public-only access (missing teams or explicit empty)
         # - token_teams is [...]: access to specified teams + public + user's own
         if token_teams is not None:
             if len(token_teams) == 0:
@@ -879,9 +887,9 @@ class ServerService:
 
         # Cursor-based format
 
-        # Cache first page results - only for non-user-specific, non-token-scoped queries
-        # SECURITY: Never cache filtered results (token_teams not None means we're filtering by token scope)
-        if cursor is None and user_email is None and token_teams is None:
+        # Cache first page results - only for public-only queries (no user/team filtering)
+        # SECURITY: Only cache public-only results (token_teams=[]), never admin bypass or team-scoped
+        if cursor is None and user_email is None and is_public_only:
             try:
                 cache_data = {"servers": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("servers", cache_data, filters_hash)

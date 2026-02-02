@@ -21,6 +21,7 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer
 
 # First-Party
+from mcpgateway.auth import normalize_token_teams
 from mcpgateway.db import Permissions
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -854,24 +855,20 @@ class TokenScopingMiddleware:
             # TEAM VALIDATION: Use single DB session for both team checks
             # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
             user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
-            is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
 
-            # Determine token_teams based on whether "teams" key exists and is not None
-            # - Key absent OR null + admin = None (unrestricted bypass)
-            # - Key absent OR null + non-admin = [] (public-only, secure default)
-            # - Key present with non-None value = normalize the value
-            teams_value = payload.get("teams") if "teams" in payload else None
-            if teams_value is not None:
-                token_teams = self._normalize_teams(teams_value)
-            elif is_admin:
-                # Admin without teams key (or teams: null) = unrestricted (skip team checks)
-                token_teams = None
-            else:
-                # Non-admin without teams key (or teams: null) = public-only (secure default)
-                token_teams = []
+            # SECURITY: Use normalize_token_teams for consistent secure-first semantics
+            # - teams key missing → [] (public-only, secure default)
+            # - teams key null + is_admin=true → None (admin bypass)
+            # - teams key null + is_admin=false → [] (public-only)
+            # - teams key [] → [] (explicit public-only)
+            # - teams key [...] → normalized list of string IDs
+            token_teams = normalize_token_teams(payload)
 
-            # Admin with no team restrictions bypasses team validation entirely
-            if is_admin and token_teams is None:
+            # Check if admin bypass is active (token_teams is None means admin with explicit null teams)
+            is_admin_bypass = token_teams is None
+
+            # Admin with explicit null teams bypasses team validation entirely
+            if is_admin_bypass:
                 logger.debug(f"Admin bypass: skipping team validation for {user_email}")
                 # Skip to other checks (server_id, IP, etc.)
             elif token_teams:

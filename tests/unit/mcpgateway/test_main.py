@@ -2887,25 +2887,25 @@ class TestGetTokenTeamsFromRequest:
         result = _get_token_teams_from_request(mock_request)
         assert result == ["t1"]
 
-    def test_get_token_teams_no_cached_payload_returns_none(self):
-        """Test that missing cached payload returns None (triggers DB lookup)."""
+    def test_get_token_teams_no_cached_payload_returns_empty_list(self):
+        """Test that missing cached payload returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = None
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None  # None triggers DB team lookup in services
+        assert result == []  # SECURITY: No JWT = public-only (secure default)
 
-    def test_get_token_teams_no_teams_in_payload_returns_none(self):
-        """Test that payload without teams key returns None (unrestricted access)."""
+    def test_get_token_teams_no_teams_in_payload_returns_empty_list(self):
+        """Test that payload without teams key returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None  # None = JWT exists but no teams key (unrestricted)
+        assert result == []  # SECURITY: Missing teams = public-only (secure default)
 
     def test_get_token_teams_empty_teams_returns_empty_list(self):
         """Test that payload with empty teams returns empty list (not None)."""
@@ -2917,45 +2917,55 @@ class TestGetTokenTeamsFromRequest:
         result = _get_token_teams_from_request(mock_request)
         assert result == []  # Empty list = JWT exists but no teams
 
-    def test_get_token_teams_null_teams_returns_none(self):
-        """Test that payload with teams: null returns None (same as missing teams)."""
+    def test_get_token_teams_null_teams_non_admin_returns_empty_list(self):
+        """Test that payload with teams: null (non-admin) returns [] (public-only)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "teams": None})
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None  # None = teams is null, treated same as missing (unrestricted)
+        assert result == []  # SECURITY: Null teams + non-admin = public-only
 
-    def test_get_token_teams_invalid_tuple_format_returns_none(self):
-        """Test that non-tuple cached payload returns None."""
+    def test_get_token_teams_null_teams_admin_returns_none(self):
+        """Test that payload with teams: null + is_admin=true returns None (admin bypass)."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com", "teams": None, "is_admin": True})
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None  # Admin with explicit null teams = admin bypass
+
+    def test_get_token_teams_invalid_tuple_format_returns_empty_list(self):
+        """Test that non-tuple cached payload returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = "not_a_tuple"
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None
+        assert result == []  # SECURITY: Invalid format = public-only (secure default)
 
-    def test_get_token_teams_short_tuple_returns_none(self):
-        """Test that tuple with wrong length returns None."""
+    def test_get_token_teams_short_tuple_returns_empty_list(self):
+        """Test that tuple with wrong length returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("only_one_element",)
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None
+        assert result == []  # SECURITY: Invalid format = public-only (secure default)
 
-    def test_get_token_teams_none_payload_in_tuple_returns_none(self):
-        """Test that None payload in tuple returns None."""
+    def test_get_token_teams_none_payload_in_tuple_returns_empty_list(self):
+        """Test that None payload in tuple returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", None)
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None
+        assert result == []  # SECURITY: No payload = public-only (secure default)
 
 
 class TestGetRpcFilterContext:
@@ -3076,8 +3086,8 @@ class TestGetRpcFilterContext:
         assert email == "user@example.com"
         assert is_admin is False
 
-    def test_get_rpc_filter_context_no_jwt_returns_none_teams(self):
-        """Test that missing JWT payload returns None for teams (triggers DB lookup)."""
+    def test_get_rpc_filter_context_no_jwt_returns_empty_teams(self):
+        """Test that missing JWT payload returns [] for teams (public-only, secure default)."""
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3087,5 +3097,5 @@ class TestGetRpcFilterContext:
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
         assert email == "plugin_user@example.com"
-        assert teams is None  # None triggers DB team lookup in services
+        assert teams == []  # SECURITY: No JWT = public-only (secure default)
         assert is_admin is False

@@ -64,7 +64,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, normalize_token_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -334,57 +334,52 @@ def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     """
     Extract and normalize teams from verified JWT token.
 
-    Uses cached verified payload from request.state to avoid re-decoding.
+    SECURITY: Uses normalize_token_teams for consistent secure-first semantics:
+        - teams key missing → [] (public-only, secure default)
+        - teams key null + is_admin=true → None (admin bypass)
+        - teams key null + is_admin=false → [] (public-only)
+        - teams key [] → [] (explicit public-only)
+        - teams key [...] → normalized list of string IDs
 
-    Semantics:
-        - teams key with non-None value -> normalized list (even if empty [])
-        - teams key absent OR teams: null -> None (unrestricted for admin, public-only for non-admin)
-        - No JWT payload -> None
+    First checks request.state.token_teams (set by auth.py), then falls back
+    to calling normalize_token_teams on the JWT payload.
 
     Args:
         request: FastAPI request object
 
     Returns:
-        List of normalized team IDs if teams key exists with non-None value,
-        or None if no JWT payload, teams key absent, or teams is null.
-        Callers use None to determine access: admin gets unrestricted, non-admin gets public-only.
+        None for admin bypass, [] for public-only, or list of normalized team ID strings.
 
     Examples:
         >>> from mcpgateway import main
         >>> from unittest.mock import MagicMock
         >>> req = MagicMock()
         >>> req.state = MagicMock()
-        >>> req.state._jwt_verified_payload = ("token", {"teams": ["team_a"]})
+        >>> req.state.token_teams = ["team_a"]  # Already normalized by auth.py
         >>> main._get_token_teams_from_request(req)
         ['team_a']
-        >>> req.state._jwt_verified_payload = ("token", {"teams": []})
+        >>> req.state.token_teams = []  # Public-only
         >>> main._get_token_teams_from_request(req)
         []
-        >>> req.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
-        >>> main._get_token_teams_from_request(req) is None  # No teams key
-        True
-        >>> req.state._jwt_verified_payload = ("token", {"teams": None})
-        >>> main._get_token_teams_from_request(req) is None  # teams: null
-        True
-        >>> req.state._jwt_verified_payload = None
-        >>> main._get_token_teams_from_request(req) is None  # No JWT
-        True
     """
-    # Use cached verified payload (set by verify_jwt_token_cached)
+    # SECURITY: First check request.state.token_teams (already normalized by auth.py)
+    # This is the preferred path as auth.py has already applied normalize_token_teams
+    # Use getattr with a sentinel to distinguish "not set" from "set to None"
+    _not_set = object()
+    token_teams = getattr(request.state, "token_teams", _not_set)
+    if token_teams is not _not_set and (token_teams is None or isinstance(token_teams, list)):
+        return token_teams
+
+    # Fallback: Use cached verified payload and call normalize_token_teams
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
         if payload:
-            # Check if "teams" key exists and is not None
-            # - Key exists with non-None value (even empty []) -> return normalized list
-            # - Key absent OR key is None -> return None (unrestricted for admin, public-only for non-admin)
-            if "teams" in payload and payload.get("teams") is not None:
-                return _normalize_token_teams(payload.get("teams"))
-            # No "teams" key or teams is null - treat as unrestricted (None)
-            return None
+            # Use normalize_token_teams for consistent secure-first semantics
+            return normalize_token_teams(payload)
 
-    # No JWT payload - return None to trigger DB team lookup
-    return None
+    # No JWT payload - return [] for public-only (secure default)
+    return []
 
 
 def _get_rpc_filter_context(request: Request, user) -> tuple:
@@ -2386,14 +2381,15 @@ async def list_servers(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # SECURITY: Determine if we need access filtering
-    # - token_teams is None: admin gets unrestricted, non-admin gets their accessible resources
-    # - token_teams is []: public-only token, must filter to public resources
-    # - token_teams is [...]: team-scoped, filter to those teams + public
-    # We ALWAYS pass user_email now to ensure proper access control
+    # SECURITY: token_teams is normalized in auth.py:
+    # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
+    # - []: public-only (missing teams or explicit empty) - sees only public
+    # - [...]: team-scoped - sees public + teams + user's private
+    is_admin_bypass = token_teams is None
     is_public_only_token = token_teams is not None and len(token_teams) == 0
 
     # Use consolidated server listing with optional team filtering
+    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
     logger.debug(f"User: {user_email} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await server_service.list_servers(
         db=db,
@@ -2401,10 +2397,10 @@ async def list_servers(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
-        user_email=user_email,
+        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
         team_id=team_id,
         visibility="public" if is_public_only_token and not visibility else visibility,
-        token_teams=token_teams,
+        token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
     )
 
     if include_pagination:
@@ -2446,7 +2442,7 @@ async def create_server(
     server: ServerCreate,
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign server to"),
-    visibility: Optional[str] = Body("public", description="Server visibility: private, team, public"),
+    visibility: Optional[str] = Body(None, description="Server visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
@@ -4960,23 +4956,25 @@ async def list_gateways(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # SECURITY: Determine if we need access filtering
-    # - token_teams is None: admin gets unrestricted, non-admin gets their accessible gateways
-    # - token_teams is []: public-only token, must filter to public gateways
-    # - token_teams is [...]: team-scoped, filter to those teams + public
+    # SECURITY: token_teams is normalized in auth.py:
+    # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
+    # - []: public-only (missing teams or explicit empty) - sees only public
+    # - [...]: team-scoped - sees public + teams + user's private
+    is_admin_bypass = token_teams is None
     is_public_only_token = token_teams is not None and len(token_teams) == 0
 
     # Use consolidated gateway listing with optional team filtering
+    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
     logger.debug(f"User: {user_email} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await gateway_service.list_gateways(
         db=db,
         cursor=cursor,
         limit=limit,
         include_inactive=include_inactive,
-        user_email=user_email,
+        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
         team_id=team_id,
         visibility="public" if is_public_only_token and not visibility else visibility,
-        token_teams=token_teams,
+        token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
     )
 
     if include_pagination:

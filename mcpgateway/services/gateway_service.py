@@ -1512,10 +1512,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     empty_result == [] and cursor is None
             True
         """
-        # Check cache for first page only - skip when user_email provided, token_teams provided, or page based pagination
-        # SECURITY: Never cache filtered results (token_teams not None means we're filtering by token scope)
+        # Check cache for first page only - only for public-only queries (no user/team filtering)
+        # SECURITY: Only cache public-only results (token_teams=[]), never admin bypass or team-scoped
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and token_teams is None and page is None:
+        is_public_only = token_teams is not None and len(token_teams) == 0
+        use_cache = cursor is None and user_email is None and page is None and is_public_only
+        if use_cache:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("gateways", filters_hash)
             if cached is not None:
@@ -1531,9 +1533,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if not include_inactive:
             query = query.where(DbGateway.enabled)
 
-        # SECURITY: Apply token-based access control when token_teams is specified
-        # - token_teams is None: unrestricted access (admin or legacy token)
-        # - token_teams is []: public-only access
+        # SECURITY: Apply token-based access control based on normalized token_teams
+        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
+        # - token_teams is []: public-only access (missing teams or explicit empty)
         # - token_teams is [...]: access to specified teams + public + user's own
         if token_teams is not None:
             if len(token_teams) == 0:
@@ -1626,9 +1628,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         # Cursor-based format
 
-        # Cache first page results - only for non-user-specific, non-token-scoped queries
-        # SECURITY: Never cache filtered results (token_teams not None means we're filtering by token scope)
-        if cursor is None and user_email is None and token_teams is None:
+        # Cache first page results - only for public-only queries (no user/team filtering)
+        # SECURITY: Only cache public-only results (token_teams=[]), never admin bypass or team-scoped
+        if cursor is None and user_email is None and is_public_only:
             try:
                 cache_data = {"gateways": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("gateways", cache_data, filters_hash)
@@ -3148,8 +3150,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # ═══════════════════════════════════════════════════════════════════════════
 
         # SECURITY: Apply team-based access control to gateway selection
-        # - token_teams is None: unrestricted access (legacy/admin tokens)
-        # - token_teams is []: public-only access
+        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
+        # - token_teams is []: public-only access (missing teams or explicit empty)
         # - token_teams is [...]: access to public + specified teams
         query = select(DbGateway).where(DbGateway.enabled.is_(True))
 
