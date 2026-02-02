@@ -65,7 +65,14 @@ _DEFAULTS: Dict[str, Any] = {
 
 
 def _merge(user: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge user-provided settings with defaults."""
+    """Merge user-provided settings with default Cedar configuration.
+
+    Args:
+        user: User-provided settings dictionary (may be empty).
+
+    Returns:
+        Combined settings with user values overriding defaults.
+    """
     return {**_DEFAULTS, **user}
 
 
@@ -79,9 +86,29 @@ _RESOURCE_TYPE_MAP = {
 
 
 class CedarEngineAdapter(PolicyEngineAdapter):
-    """Adapter that delegates to a cedar-agent sidecar."""
+    """Adapter that delegates policy evaluation to a cedar-agent sidecar.
+
+    Communicates with Cedar via HTTP POST to /v1/authorize, with automatic
+    retry on 5xx errors and network failures using exponential backoff.
+
+    Args:
+        settings: Configuration dictionary with cedar_url, timeout_ms, max_retries.
+
+    Attributes:
+        _settings: Merged configuration with defaults.
+        _base_url: Cedar agent base URL.
+        _timeout: Request timeout in seconds.
+        _max_retries: Maximum retry attempts on failure.
+        _client: Lazy-initialized async HTTP client.
+    """
 
     def __init__(self, settings: Dict[str, Any] | None = None):
+        """Initialize the Cedar engine adapter.
+
+        Args:
+            settings: Optional configuration overrides for cedar_url (default
+                localhost:8700), timeout_ms (default 5000), max_retries (default 3).
+        """
         self._settings = _merge(settings or {})
         self._base_url: str = self._settings["cedar_url"].rstrip("/")
         self._timeout: float = self._settings["timeout_ms"] / 1000.0
@@ -94,7 +121,11 @@ class CedarEngineAdapter(PolicyEngineAdapter):
 
     @property
     def engine_type(self) -> EngineType:
-        """Return the engine type identifier."""
+        """Return the engine type identifier for Cedar.
+
+        Returns:
+            EngineType.CEDAR enum value.
+        """
         return EngineType.CEDAR
 
     # ------------------------------------------------------------------
@@ -102,7 +133,14 @@ class CedarEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:
-        """Return the shared httpx client, creating it lazily if needed."""
+        """Return the shared httpx client, creating it lazily if needed.
+
+        Creates the client on first call to avoid needing an event loop at
+        initialization time.
+
+        Returns:
+            Configured AsyncClient for Cedar agent communication.
+        """
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
@@ -119,8 +157,14 @@ class CedarEngineAdapter(PolicyEngineAdapter):
     def _build_entities(subject: Subject) -> List[Dict[str, Any]]:
         """Build Cedar's entity graph from the subject's roles.
 
-        Each role becomes a ``Role`` entity.  The ``User`` entity lists all
-        roles as parents so Cedar can traverse the hierarchy.
+        Each role becomes a Role entity. The User entity lists all roles as
+        parents so Cedar can traverse the hierarchy for role-based policies.
+
+        Args:
+            subject: The authenticated user with roles to convert to entities.
+
+        Returns:
+            List of Cedar entity dictionaries (Role entities + User entity).
         """
         entities: List[Dict[str, Any]] = []
 
@@ -147,7 +191,18 @@ class CedarEngineAdapter(PolicyEngineAdapter):
 
     @staticmethod
     def _build_request(subject: Subject, action: str, resource: Resource, context: Context) -> Dict[str, Any]:
-        """Build the Cedar authorization request payload."""
+        """Build the Cedar authorization request payload for POST /v1/authorize.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed (becomes Action entity).
+            resource: The resource being accessed (becomes typed Resource entity).
+            context: Request context (IP, timestamp, session, etc.).
+
+        Returns:
+            Dictionary matching Cedar's authorization request schema with
+            principal, action, resource, context, and entities.
+        """
         cedar_resource_type = _RESOURCE_TYPE_MAP.get(resource.type, "Resource")
 
         return {
@@ -183,7 +238,24 @@ class CedarEngineAdapter(PolicyEngineAdapter):
         resource: Resource,
         context: Context,
     ) -> EngineDecision:
-        """Evaluate a policy decision against the Cedar agent with retries."""
+        """Evaluate a policy decision against the Cedar agent with retries.
+
+        POSTs to /v1/authorize with exponential backoff on 5xx/network errors.
+        Retries up to max_retries times before raising an error.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context.
+
+        Returns:
+            EngineDecision with ALLOW/DENY verdict, reasons, and timing.
+
+        Raises:
+            PolicyEvaluationError: On 4xx client errors (no retry).
+            PolicyEngineUnavailableError: After all retries exhausted.
+        """
         payload = self._build_request(subject, action, resource, context)
         start = time.perf_counter()
         last_error: Exception | None = None
@@ -221,9 +293,14 @@ class CedarEngineAdapter(PolicyEngineAdapter):
     def _parse_response(body: Dict[str, Any], duration_ms: float) -> EngineDecision:
         """Interpret cedar-agent's authorization response.
 
-        Expected::
+        Expected format: { "decision": "Allow" | "Deny", "reasons": ["..."] }
 
-            { "decision": "Allow" | "Deny", "reasons": ["…"] }
+        Args:
+            body: JSON response body from Cedar agent.
+            duration_ms: Request duration in milliseconds for timing info.
+
+        Returns:
+            EngineDecision with parsed verdict, reasons, and metadata.
         """
         raw_decision = body.get("decision", "Deny")
         reasons: List[str] = body.get("reasons", [])
@@ -243,7 +320,12 @@ class CedarEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> EngineHealthReport:
-        """Check Cedar agent health via /health endpoint."""
+        """Check Cedar agent health via GET /health endpoint.
+
+        Returns:
+            EngineHealthReport with HEALTHY status on 200 response,
+            UNHEALTHY with detail message on any error or non-200 status.
+        """
         start = time.perf_counter()
         try:
             resp = await self._get_client().get("/health")
@@ -270,7 +352,11 @@ class CedarEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def close(self) -> None:
-        """Close the HTTP client and release resources."""
+        """Close the HTTP client and release network resources.
+
+        Should be called during shutdown to cleanly close connections.
+        Safe to call multiple times (idempotent).
+        """
         if self._client:
             await self._client.aclose()
             self._client = None

@@ -108,7 +108,11 @@ class UnifiedPDPPlugin(Plugin):
     # ------------------------------------------------------------------
 
     async def shutdown(self) -> None:
-        """Cleanup PDP resources including HTTP clients for external engines."""
+        """Cleanup PDP resources during application shutdown.
+
+        Closes HTTP clients for external engines (OPA, Cedar) and releases
+        any other resources held by the PolicyDecisionPoint.
+        """
         await self._pdp.close()
 
     # ------------------------------------------------------------------

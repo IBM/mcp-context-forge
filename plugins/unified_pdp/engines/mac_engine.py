@@ -66,7 +66,18 @@ _READ_KEYWORDS = {"read", "get", "list", "fetch", "invoke", "call", "describe", 
 
 
 def _is_read(action: str, context: Context) -> bool:
-    """Determine whether the action is a read or write."""
+    """Determine whether the action is a read or write operation.
+
+    Uses explicit override from context.extra["operation"] if present,
+    otherwise infers from action string keywords (read, get, list, etc.).
+
+    Args:
+        action: The action string to analyze.
+        context: Request context, may contain explicit operation override.
+
+    Returns:
+        True if this is a read operation, False for write operations.
+    """
     # Allow explicit override via context
     explicit = context.extra.get("operation")
     if explicit in ("read", "write"):
@@ -78,17 +89,29 @@ def _is_read(action: str, context: Context) -> bool:
 
 
 class MACEngineAdapter(PolicyEngineAdapter):
-    """Bell–LaPadula mandatory access control engine.
+    """Bell-LaPadula mandatory access control engine.
 
-    Parameters
-    ----------
-    settings : dict, optional
-        ``relaxed_star`` (bool, default False) – when True, the star property
-        allows writes at *any* level ≥ the resource's classification (standard
-        BLP requires equality).
+    Implements the two core BLP invariants:
+    - Simple Security Property (no read-up): clearance >= classification
+    - Star Property (no write-down): clearance == classification (strict)
+      or clearance >= classification (relaxed)
+
+    Args:
+        settings: Configuration with optional relaxed_star boolean.
+
+    Attributes:
+        _settings: Configuration dictionary.
+        _relaxed_star: If True, allows writes at any level >= classification.
     """
 
     def __init__(self, settings: Dict[str, Any] | None = None):
+        """Initialize the MAC engine adapter.
+
+        Args:
+            settings: Optional configuration. Use relaxed_star=True to allow
+                writes when clearance >= classification (default False requires
+                clearance == classification per standard BLP).
+        """
         self._settings = settings or {}
         self._relaxed_star: bool = self._settings.get("relaxed_star", False)
 
@@ -98,7 +121,11 @@ class MACEngineAdapter(PolicyEngineAdapter):
 
     @property
     def engine_type(self) -> EngineType:
-        """Return the engine type identifier."""
+        """Return the engine type identifier for MAC.
+
+        Returns:
+            EngineType.MAC enum value.
+        """
         return EngineType.MAC
 
     # ------------------------------------------------------------------
@@ -112,7 +139,21 @@ class MACEngineAdapter(PolicyEngineAdapter):
         resource: Resource,
         context: Context,
     ) -> EngineDecision:
-        """Evaluate access using Bell-LaPadula mandatory access control."""
+        """Evaluate access using Bell-LaPadula mandatory access control.
+
+        Applies Simple Security Property for reads (no read-up) and
+        Star Property for writes (no write-down). Both subject.clearance_level
+        and resource.classification_level must be set; otherwise DENY.
+
+        Args:
+            subject: User with clearance_level set.
+            action: Action string used to infer read/write operation.
+            resource: Resource with classification_level set.
+            context: May contain operation override in extra["operation"].
+
+        Returns:
+            EngineDecision with ALLOW/DENY, BLP policy matched, and levels.
+        """
         start = time.perf_counter()
 
         # --- Guard: both levels must be present ---
@@ -200,7 +241,11 @@ class MACEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> EngineHealthReport:
-        """Return healthy status (no external dependencies)."""
+        """Return healthy status (pure in-process, no external dependencies).
+
+        Returns:
+            EngineHealthReport with HEALTHY status and relaxed_star config detail.
+        """
         return EngineHealthReport(
             engine=EngineType.MAC,
             status=EngineStatus.HEALTHY,

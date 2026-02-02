@@ -32,7 +32,17 @@ from .pdp_models import (
 
 
 class PolicyEvaluationError(Exception):
-    """Raised when an engine fails to evaluate a request (network, timeout, …)."""
+    """Raised when an engine fails to evaluate a request (network, timeout, etc.).
+
+    Args:
+        engine: The engine type that raised the error.
+        message: Human-readable error description.
+        cause: Optional underlying exception that caused this error.
+
+    Attributes:
+        engine: The engine type that raised the error.
+        cause: The underlying exception, if any.
+    """
 
     def __init__(self, engine: EngineType, message: str, cause: Exception | None = None):
         self.engine = engine
@@ -67,7 +77,11 @@ class PolicyEngineAdapter(ABC):
     @property
     @abstractmethod
     def engine_type(self) -> EngineType:
-        """Which engine this adapter represents."""
+        """Return the engine type identifier for this adapter.
+
+        Returns:
+            EngineType enum value identifying which policy engine this adapter wraps.
+        """
 
     # ------------------------------------------------------------------
     # Core evaluation
@@ -81,18 +95,20 @@ class PolicyEngineAdapter(ABC):
         resource: Resource,
         context: Context,
     ) -> EngineDecision:
-        """Evaluate a single access request.
+        """Evaluate a single access request against this policy engine.
 
-        Returns
-        -------
-        EngineDecision
-            The engine's verdict.  ``duration_ms`` should be populated by the
-            concrete implementation (wrap the inner call with a timer).
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed (e.g., "tools.invoke.db-query").
+            resource: The resource being accessed (tool, prompt, server, etc.).
+            context: Request context including IP, timestamp, session info.
 
-        Raises
-        ------
-        PolicyEvaluationError
-            On any failure – the PDP catches this and records it.
+        Returns:
+            EngineDecision containing the verdict (ALLOW/DENY), reason,
+            matching policies, and timing information.
+
+        Raises:
+            PolicyEvaluationError: On any failure (network, timeout, invalid response).
         """
 
     # ------------------------------------------------------------------
@@ -102,8 +118,16 @@ class PolicyEngineAdapter(ABC):
     async def get_permissions(self, subject: Subject, context: Context) -> List[Permission]:
         """Return all permissions the subject holds according to this engine.
 
-        The default implementation returns an empty list.  Engines that can
-        enumerate permissions (e.g. Native RBAC) should override.
+        The default implementation returns an empty list. Engines that can
+        enumerate permissions (e.g., Native RBAC) should override this method.
+
+        Args:
+            subject: The authenticated user/principal to enumerate permissions for.
+            context: Request context for conditional permission evaluation.
+
+        Returns:
+            List of Permission objects representing all granted permissions.
+            Empty list if the engine does not support enumeration.
         """
         return []
 
@@ -114,9 +138,13 @@ class PolicyEngineAdapter(ABC):
     async def health_check(self) -> EngineHealthReport:
         """Probe the engine and return its health status.
 
-        The default implementation issues a trivial ``evaluate`` call with
-        dummy data and times it.  Subclasses that have a cheaper probe
-        (e.g. OPA's ``/health`` endpoint) should override.
+        The default implementation issues a trivial evaluate() call with
+        dummy data and times it. Subclasses that have a cheaper probe
+        (e.g., OPA's /health endpoint) should override this method.
+
+        Returns:
+            EngineHealthReport containing status (HEALTHY/UNHEALTHY),
+            latency in milliseconds, and optional detail message on failure.
         """
         import time
         from .pdp_models import EngineStatus

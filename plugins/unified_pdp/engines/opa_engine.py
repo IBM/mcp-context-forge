@@ -58,14 +58,43 @@ _DEFAULTS: Dict[str, Any] = {
 
 
 def _merge_settings(user: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge user-provided settings with defaults."""
+    """Merge user-provided settings with default OPA configuration.
+
+    Args:
+        user: User-provided settings dictionary (may be empty).
+
+    Returns:
+        Combined settings with user values overriding defaults.
+    """
     return {**_DEFAULTS, **user}
 
 
 class OPAEngineAdapter(PolicyEngineAdapter):
-    """Adapter that delegates policy evaluation to an OPA sidecar."""
+    """Adapter that delegates policy evaluation to an OPA sidecar via HTTP.
+
+    Communicates with OPA via POST to /v1/data/{policy_path}, with automatic
+    retry on 5xx errors and network failures using exponential backoff.
+
+    Args:
+        settings: Configuration with opa_url, policy_path, timeout_ms, max_retries.
+
+    Attributes:
+        _settings: Merged configuration with defaults.
+        _base_url: OPA sidecar base URL.
+        _policy_path: Rego policy path for evaluation.
+        _timeout: Request timeout in seconds.
+        _max_retries: Maximum retry attempts on failure.
+        _client: Lazy-initialized async HTTP client.
+    """
 
     def __init__(self, settings: Dict[str, Any] | None = None):
+        """Initialize the OPA engine adapter.
+
+        Args:
+            settings: Optional configuration overrides for opa_url (default
+                localhost:8181), policy_path (default "mcpgateway"),
+                timeout_ms (default 5000), max_retries (default 3).
+        """
         self._settings = _merge_settings(settings or {})
         self._base_url: str = self._settings["opa_url"].rstrip("/")
         self._policy_path: str = self._settings["policy_path"]
@@ -80,7 +109,11 @@ class OPAEngineAdapter(PolicyEngineAdapter):
 
     @property
     def engine_type(self) -> EngineType:
-        """Return the engine type identifier."""
+        """Return the engine type identifier for OPA.
+
+        Returns:
+            EngineType.OPA enum value.
+        """
         return EngineType.OPA
 
     # ------------------------------------------------------------------
@@ -88,7 +121,14 @@ class OPAEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:
-        """Return the shared httpx client, creating it lazily if needed."""
+        """Return the shared httpx client, creating it lazily if needed.
+
+        Creates the client on first call to avoid needing an event loop at
+        initialization time.
+
+        Returns:
+            Configured AsyncClient for OPA sidecar communication.
+        """
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
@@ -103,7 +143,18 @@ class OPAEngineAdapter(PolicyEngineAdapter):
 
     @staticmethod
     def _build_input(subject: Subject, action: str, resource: Resource, context: Context) -> Dict[str, Any]:
-        """Translate PDP request types into the flat dict OPA expects as ``input``."""
+        """Translate PDP request types into the flat dict OPA expects as input.
+
+        Args:
+            subject: The authenticated user/principal.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context.
+
+        Returns:
+            Dictionary with subject, action, resource, context keys matching
+            OPA's expected input document structure.
+        """
         return {
             "subject": {
                 "email": subject.email,
@@ -137,7 +188,24 @@ class OPAEngineAdapter(PolicyEngineAdapter):
         resource: Resource,
         context: Context,
     ) -> EngineDecision:
-        """POST to OPA's data API and interpret the response."""
+        """POST to OPA's data API and interpret the response.
+
+        Sends request to /v1/data/{policy_path} with exponential backoff on
+        5xx/network errors. Retries up to max_retries times.
+
+        Args:
+            subject: The authenticated user/principal.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context.
+
+        Returns:
+            EngineDecision with ALLOW/DENY verdict, reasons, and timing.
+
+        Raises:
+            PolicyEvaluationError: On 4xx client errors (no retry).
+            PolicyEngineUnavailableError: After all retries exhausted.
+        """
         input_doc = self._build_input(subject, action, resource, context)
         url = f"/v1/data/{self._policy_path}"
         payload = {"input": input_doc}
@@ -181,19 +249,17 @@ class OPAEngineAdapter(PolicyEngineAdapter):
     def _parse_response(body: Dict[str, Any], duration_ms: float) -> EngineDecision:
         """Interpret OPA's response document.
 
-        Expected shapes
-        ---------------
-        Allowed::
+        Expected shapes:
+        - Allowed: { "result": { "allow": true } }
+        - Denied: { "result": { "allow": false, "deny": ["reason1", ...] } }
+        - Undefined: { "result": {} } or {} (fail-closed to DENY)
 
-            { "result": { "allow": true } }
+        Args:
+            body: JSON response body from OPA.
+            duration_ms: Request duration in milliseconds for timing info.
 
-        Denied with reasons::
-
-            { "result": { "allow": false, "deny": ["reason1", …] } }
-
-        Undefined (no matching rule)::
-
-            { "result": {} }   or   {}   (no "result" key at all)
+        Returns:
+            EngineDecision with parsed verdict, reasons, and metadata.
         """
         result = body.get("result", {})
 
@@ -223,7 +289,12 @@ class OPAEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> EngineHealthReport:
-        """Check OPA health via /health endpoint."""
+        """Check OPA health via GET /health endpoint.
+
+        Returns:
+            EngineHealthReport with HEALTHY status on 200 response,
+            UNHEALTHY with detail message on any error or non-200 status.
+        """
         start = time.perf_counter()
         try:
             resp = await self._get_client().get("/health")
@@ -252,7 +323,11 @@ class OPAEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def close(self) -> None:
-        """Close the shared httpx client."""
+        """Close the shared httpx client and release network resources.
+
+        Should be called during shutdown to cleanly close connections.
+        Safe to call multiple times (idempotent).
+        """
         if self._client:
             await self._client.aclose()
             self._client = None

@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def _build_cache_key(subject: Subject, action: str, resource: Resource, context: Context) -> str:
-    """Produce a stable, collision-resistant cache key.
+    """Produce a stable, collision-resistant cache key via SHA-256 hash.
 
     Includes all context fields that could affect policy decisions:
     - ip, session_id, user_agent for request identification
@@ -42,6 +42,15 @@ def _build_cache_key(subject: Subject, action: str, resource: Resource, context:
 
     Excludes only the timestamp so requests within the same TTL window
     can hit the cache.
+
+    Args:
+        subject: The authenticated user/principal requesting access.
+        action: The action being performed (e.g., "tools.invoke.db-query").
+        resource: The resource being accessed.
+        context: Request context (IP, user_agent, session, extra metadata).
+
+    Returns:
+        A 64-character hex string (SHA-256 hash) suitable as a cache key.
     """
     payload = json.dumps(
         {
@@ -60,24 +69,61 @@ def _build_cache_key(subject: Subject, action: str, resource: Resource, context:
 
 
 class _CacheEntry:
-    """Thin wrapper that pairs a value with its expiry epoch."""
+    """Thin wrapper that pairs a cached decision with its expiry epoch.
+
+    Attributes:
+        value: The cached AccessDecision object.
+        expires_at: Monotonic timestamp when this entry expires.
+    """
 
     __slots__ = ("value", "expires_at")
 
     def __init__(self, value: AccessDecision, ttl_seconds: int):
+        """Initialize a cache entry with TTL-based expiration.
+
+        Args:
+            value: The AccessDecision to cache.
+            ttl_seconds: Time-to-live in seconds from now.
+        """
         self.value = value
         self.expires_at = time.monotonic() + ttl_seconds
 
     @property
     def expired(self) -> bool:
-        """Return True if this cache entry has exceeded its TTL."""
+        """Check if this cache entry has exceeded its TTL.
+
+        Returns:
+            True if current time exceeds expires_at, False otherwise.
+        """
         return time.monotonic() > self.expires_at
 
 
 class DecisionCache:
-    """Two-tier cache: in-memory LRU + optional async Redis."""
+    """Two-tier decision cache: in-memory LRU + optional async Redis.
+
+    The in-memory layer uses an OrderedDict for LRU eviction. When Redis is
+    configured, it acts as a write-through second tier for multi-node sharing.
+
+    Args:
+        config: Cache configuration (enabled, ttl_seconds, max_entries).
+        redis_url: Optional Redis connection URL for distributed caching.
+
+    Attributes:
+        _config: The cache configuration.
+        _store: In-memory LRU cache as OrderedDict.
+        _redis_url: Redis connection URL or None.
+        _redis: Lazy-initialized async Redis client.
+        _hits: Counter for cache hits.
+        _misses: Counter for cache misses.
+    """
 
     def __init__(self, config: CacheConfig, redis_url: Optional[str] = None):
+        """Initialize the decision cache.
+
+        Args:
+            config: Cache configuration specifying TTL, max entries, and enabled state.
+            redis_url: Optional Redis URL for distributed caching across nodes.
+        """
         self._config = config
         self._store: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._redis_url = redis_url
@@ -91,7 +137,15 @@ class DecisionCache:
     # ------------------------------------------------------------------
 
     async def _get_redis(self):  # pragma: no cover – integration test only
-        """Lazily initialize and return the Redis client, or None if unavailable."""
+        """Lazily initialize and return the async Redis client.
+
+        Creates the Redis connection on first call if redis_url is configured.
+        Falls back to memory-only caching if the redis package is not installed.
+
+        Returns:
+            Async Redis client instance, or None if Redis is not configured
+            or the redis package is unavailable.
+        """
         if self._redis is None and self._redis_url:
             try:
                 import redis.asyncio as aioredis
@@ -114,7 +168,20 @@ class DecisionCache:
         resource: Resource,
         context: Context,
     ) -> Optional[AccessDecision]:
-        """Look up a cached decision.  Returns ``None`` on miss or expiry."""
+        """Look up a cached decision by request parameters.
+
+        Checks in-memory cache first, then falls through to Redis if configured.
+        Expired entries are lazily evicted on access. Cache hits update LRU order.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context (IP, user_agent, session, extra).
+
+        Returns:
+            Cached AccessDecision if found and not expired, None otherwise.
+        """
         if not self._config.enabled:
             return None
 
@@ -155,7 +222,18 @@ class DecisionCache:
         context: Context,
         decision: AccessDecision,
     ) -> None:
-        """Store a decision.  Evicts LRU entries when the cap is reached."""
+        """Store a decision in both memory and Redis (if configured).
+
+        Evicts least-recently-used entries when max_entries is reached.
+        Writes to Redis with TTL for distributed cache sharing.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context (IP, user_agent, session, extra).
+            decision: The AccessDecision to cache.
+        """
         if not self._config.enabled:
             return
 
@@ -184,9 +262,19 @@ class DecisionCache:
         action: Optional[str] = None,
         resource: Optional[Resource] = None,
     ) -> int:
-        """Invalidate matching entries.  Pass ``None`` for any field to match all.
+        """Invalidate cached entries matching the given filters.
 
-        Returns the number of entries removed.
+        Pass None for any field to match all entries. Currently flushes the
+        entire cache when any filter is provided (targeted invalidation is
+        planned for a future release).
+
+        Args:
+            subject: Filter by subject, or None to match all subjects.
+            action: Filter by action, or None to match all actions.
+            resource: Filter by resource, or None to match all resources.
+
+        Returns:
+            Number of entries removed from the in-memory cache.
         """
         removed = 0
         keys_to_delete = []
@@ -226,7 +314,18 @@ class DecisionCache:
     # ------------------------------------------------------------------
 
     def stats(self) -> Dict[str, Any]:
-        """Return hit/miss counters and current size."""
+        """Return cache statistics for monitoring and debugging.
+
+        Returns:
+            Dictionary containing:
+            - hits: Number of cache hits.
+            - misses: Number of cache misses.
+            - hit_rate: Ratio of hits to total requests (0.0-1.0).
+            - size: Current number of entries in memory.
+            - max_entries: Maximum allowed entries.
+            - ttl_seconds: Time-to-live for cached entries.
+            - redis_enabled: Whether Redis backing is configured.
+        """
         total = self._hits + self._misses
         return {
             "hits": self._hits,

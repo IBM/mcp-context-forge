@@ -57,17 +57,29 @@ Rule = Dict[str, Any]
 
 
 class NativeRBACAdapter(PolicyEngineAdapter):
-    """Pure-Python RBAC/ABAC engine.
+    """Pure-Python RBAC/ABAC engine with no external dependencies.
 
-    Parameters
-    ----------
-    settings : dict, optional
-        May contain ``rules`` (list of Rule dicts) or ``rules_file`` (path
-        to a JSON file).  If neither is supplied the engine starts
-        with an empty rule-set (everything denied by default).
+    The fastest engine (sub-millisecond) and the only one supporting
+    permission enumeration via get_permissions(). Rules can be loaded
+    from inline config or a JSON file.
+
+    Args:
+        settings: May contain "rules" (list of Rule dicts) or "rules_file"
+            (path to JSON file). Empty rule-set denies everything by default.
+
+    Attributes:
+        _settings: Configuration dictionary.
+        _rules: List of loaded rule dictionaries.
     """
 
     def __init__(self, settings: Dict[str, Any] | None = None):
+        """Initialize the Native RBAC engine.
+
+        Args:
+            settings: Configuration with either "rules" (inline rule list)
+                or "rules_file" (path to JSON file). If neither provided,
+                starts with empty rule-set (deny-all).
+        """
         self._settings = settings or {}
         self._rules: List[Rule] = []
         self._load_rules()
@@ -78,7 +90,11 @@ class NativeRBACAdapter(PolicyEngineAdapter):
 
     @property
     def engine_type(self) -> EngineType:
-        """Return the engine type identifier."""
+        """Return the engine type identifier for Native RBAC.
+
+        Returns:
+            EngineType.NATIVE enum value.
+        """
         return EngineType.NATIVE
 
     # ------------------------------------------------------------------
@@ -86,7 +102,11 @@ class NativeRBACAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     def _load_rules(self) -> None:
-        """Populate ``self._rules`` from settings."""
+        """Populate self._rules from settings (inline or file).
+
+        Checks for inline "rules" first, then "rules_file" path. Logs
+        a warning if rules_file cannot be loaded. Empty rules = deny-all.
+        """
         # Inline rules take precedence
         if "rules" in self._settings:
             self._rules = list(self._settings["rules"])
@@ -111,11 +131,22 @@ class NativeRBACAdapter(PolicyEngineAdapter):
         logger.info("NativeRBAC: no rules configured – all requests will be denied")
 
     def add_rule(self, rule: Rule) -> None:
-        """Programmatically add a rule at runtime."""
+        """Programmatically add a rule at runtime.
+
+        Args:
+            rule: Rule dictionary to append to the rule list.
+        """
         self._rules.append(rule)
 
     def remove_rule(self, rule_id: str) -> bool:
-        """Remove a rule by ID.  Returns True if found and removed."""
+        """Remove a rule by ID.
+
+        Args:
+            rule_id: The ID of the rule to remove.
+
+        Returns:
+            True if rule was found and removed, False if not found.
+        """
         before = len(self._rules)
         self._rules = [r for r in self._rules if r.get("id") != rule_id]
         return len(self._rules) < before
@@ -126,7 +157,15 @@ class NativeRBACAdapter(PolicyEngineAdapter):
 
     @staticmethod
     def _role_matches(rule: Rule, subject: Subject) -> bool:
-        """Check if subject holds any of the roles required by the rule."""
+        """Check if subject holds any of the roles required by the rule.
+
+        Args:
+            rule: Rule dictionary with optional "roles" list.
+            subject: Subject with roles to check.
+
+        Returns:
+            True if subject has at least one matching role, or rule allows "*".
+        """
         rule_roles = rule.get("roles", ["*"])
         if "*" in rule_roles:
             return True
@@ -134,13 +173,29 @@ class NativeRBACAdapter(PolicyEngineAdapter):
 
     @staticmethod
     def _action_matches(rule: Rule, action: str) -> bool:
-        """Glob-match the action against rule's action patterns."""
+        """Glob-match the action against rule's action patterns.
+
+        Args:
+            rule: Rule dictionary with optional "actions" list of glob patterns.
+            action: Action string to match.
+
+        Returns:
+            True if action matches any pattern in the rule (fnmatch-style).
+        """
         patterns = rule.get("actions", ["*"])
         return any(fnmatch.fnmatch(action, p) for p in patterns)
 
     @staticmethod
     def _resource_matches(rule: Rule, resource: Resource) -> bool:
-        """Check resource type and ID against the rule."""
+        """Check resource type and ID against the rule.
+
+        Args:
+            rule: Rule with optional "resource_types" and "resource_ids" lists.
+            resource: Resource to check type and ID.
+
+        Returns:
+            True if both type and ID match (supports "*" wildcards).
+        """
         type_patterns = rule.get("resource_types", ["*"])
         id_patterns = rule.get("resource_ids", ["*"])
 
@@ -150,12 +205,20 @@ class NativeRBACAdapter(PolicyEngineAdapter):
 
     @staticmethod
     def _conditions_match(rule: Rule, subject: Subject, context: Context) -> bool:
-        """Evaluate the ``conditions`` block against subject and context.
+        """Evaluate the conditions block against subject and context attributes.
 
-        Supports:
-        * Exact equality:   ``"subject.mfa_verified": true``
-        * Startswith:        ``"context.ip_prefix": "10.0.0."``
-        * Set membership:    ``"subject.roles_contains": "admin"``
+        Supports three condition types:
+        - Exact equality: "subject.mfa_verified": true
+        - Prefix matching: "context.ip_prefix": "10.0.0." (key ends with _prefix)
+        - Set membership: "subject.roles_contains": "admin" (key ends with _contains)
+
+        Args:
+            rule: Rule with optional "conditions" dictionary.
+            subject: Subject providing email, mfa_verified, team_id, clearance, roles.
+            context: Context providing ip, session_id, user_agent.
+
+        Returns:
+            True if all conditions pass (empty conditions = always True).
         """
         conditions = rule.get("conditions", {})
         if not conditions:
@@ -209,7 +272,21 @@ class NativeRBACAdapter(PolicyEngineAdapter):
         resource: Resource,
         context: Context,
     ) -> EngineDecision:
-        """Evaluate access request against RBAC rules."""
+        """Evaluate access request against RBAC rules (deny rules first).
+
+        Processing order: deny rules (ID starts with "deny:") are checked first
+        for fail-closed security. Then allow rules are checked. No matching
+        allow rule = DENY.
+
+        Args:
+            subject: User with roles and attributes.
+            action: Action to match against rule patterns.
+            resource: Resource type and ID to match.
+            context: Context for condition evaluation.
+
+        Returns:
+            EngineDecision with ALLOW/DENY, matched rule IDs, and timing.
+        """
         start = time.perf_counter()
 
         # --- Phase 1: deny rules (checked first – fail closed) ---
@@ -270,7 +347,19 @@ class NativeRBACAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def get_permissions(self, subject: Subject, context: Context) -> List[Permission]:
-        """Return every permission the subject holds according to current rules."""
+        """Return every permission the subject holds according to current rules.
+
+        Enumerates all allow rules that match the subject's roles and conditions,
+        expanding action/resource_type/resource_id combinations into Permission objects.
+        Deny rules are skipped (they don't grant permissions).
+
+        Args:
+            subject: User with roles to match against rules.
+            context: Context for condition evaluation.
+
+        Returns:
+            List of Permission objects representing all granted permissions.
+        """
         perms: List[Permission] = []
 
         for rule in self._rules:
@@ -308,7 +397,11 @@ class NativeRBACAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> EngineHealthReport:
-        """Return healthy status (no external dependencies)."""
+        """Return healthy status (pure in-process, no external dependencies).
+
+        Returns:
+            EngineHealthReport with HEALTHY status and rule count detail.
+        """
         return EngineHealthReport(
             engine=EngineType.NATIVE,
             status=EngineStatus.HEALTHY,

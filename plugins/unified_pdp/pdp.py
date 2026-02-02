@@ -63,13 +63,27 @@ _ENGINE_FACTORY: Dict[EngineType, type] = {
 class PolicyDecisionPoint:
     """Unified PDP – single entry-point for all access decisions.
 
-    Parameters
-    ----------
-    config : PDPConfig
-        Full configuration (engines, combination mode, cache, perf).
+    This is the main orchestrator that gateway code uses to evaluate access
+    requests. It manages multiple policy engines, caching, and combination logic.
+
+    Args:
+        config: Full PDP configuration including engines, combination mode,
+            cache settings, and performance tuning.
+
+    Attributes:
+        _config: The PDP configuration.
+        _engines: Map of engine type to initialized adapter instance.
+        _engine_priorities: Map of engine type to priority (lower = higher priority).
+        _cache: Decision cache for hot-path performance.
     """
 
     def __init__(self, config: PDPConfig):
+        """Initialize the Policy Decision Point with the given configuration.
+
+        Args:
+            config: PDPConfig containing engine definitions, combination mode,
+                default decision, cache settings, and performance options.
+        """
         self._config = config
         self._engines: Dict[EngineType, PolicyEngineAdapter] = {}
         self._engine_priorities: Dict[EngineType, int] = {}
@@ -84,7 +98,12 @@ class PolicyDecisionPoint:
     # ------------------------------------------------------------------
 
     def _initialize_engines(self) -> None:
-        """Instantiate adapters for every enabled engine in the config."""
+        """Instantiate adapters for every enabled engine in the configuration.
+
+        Iterates through engine configs, skips disabled engines, creates adapter
+        instances using the factory map, and stores them with their priorities.
+        Logs warnings for unknown engine types and errors during initialization.
+        """
         for eng_cfg in self._config.engines:
             if not eng_cfg.enabled:
                 logger.info("PDP: skipping disabled engine %s", eng_cfg.name.value)
@@ -116,12 +135,24 @@ class PolicyDecisionPoint:
     ) -> AccessDecision:
         """Evaluate an access request against all configured engines.
 
-        This is the primary hot-path method.  It:
-        1. Checks the cache.
-        2. Launches engine evaluations (in parallel if configured).
-        3. Applies combination logic.
-        4. Stores the result in the cache.
-        5. Returns the unified ``AccessDecision``.
+        This is the primary hot-path method designed for <10ms p95 with caching.
+
+        Processing steps:
+        1. Check the cache for a prior decision.
+        2. Launch engine evaluations (parallel or sequential per config).
+        3. Apply combination logic (all_must_allow, any_allow, first_match).
+        4. Store the result in the cache.
+        5. Return the unified AccessDecision.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed (e.g., "tools.invoke.db-query").
+            resource: The resource being accessed (tool, prompt, server, etc.).
+            context: Request context including IP, timestamp, session info.
+
+        Returns:
+            AccessDecision containing the combined verdict, reason, matching
+            policies, per-engine decisions, timing, and cache status.
         """
         overall_start = time.perf_counter()
 
@@ -174,7 +205,19 @@ class PolicyDecisionPoint:
         resource: Resource,
         context: Context,
     ) -> List[EngineDecision]:
-        """Run all enabled engines, respecting the timeout setting."""
+        """Run all enabled engines with the configured timeout.
+
+        Delegates to parallel or sequential evaluation based on config.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context.
+
+        Returns:
+            List of EngineDecision objects from all evaluated engines.
+        """
         timeout_s = self._config.performance.timeout_ms / 1000.0
 
         if self._config.performance.parallel_evaluation:
@@ -189,10 +232,32 @@ class PolicyDecisionPoint:
         context: Context,
         timeout_s: float,
     ) -> List[EngineDecision]:
-        """Launch all engines concurrently via asyncio.gather."""
+        """Launch all engines concurrently via asyncio.gather.
+
+        All engines run simultaneously with individual timeouts. Failed engines
+        return default_decision rather than failing the entire request.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context.
+            timeout_s: Per-engine timeout in seconds.
+
+        Returns:
+            List of EngineDecision objects from all engines.
+        """
 
         async def _single(eng_type: EngineType, adapter: PolicyEngineAdapter) -> EngineDecision:
-            """Evaluate a single engine with timeout and error handling."""
+            """Evaluate a single engine with timeout and comprehensive error handling.
+
+            Args:
+                eng_type: The engine type identifier.
+                adapter: The policy engine adapter to evaluate.
+
+            Returns:
+                EngineDecision from the engine, or default_decision on any error.
+            """
             try:
                 return await asyncio.wait_for(
                     adapter.evaluate(subject, action, resource, context),
@@ -231,7 +296,21 @@ class PolicyDecisionPoint:
         context: Context,
         timeout_s: float,
     ) -> List[EngineDecision]:
-        """Run engines one at a time, sorted by priority."""
+        """Run engines sequentially, sorted by priority (lowest first).
+
+        In FIRST_MATCH mode, stops after the first successful decision.
+        Failed engines return default_decision and continue to next engine.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context.
+            timeout_s: Per-engine timeout in seconds.
+
+        Returns:
+            List of EngineDecision objects from evaluated engines.
+        """
         results: List[EngineDecision] = []
         sorted_engines = sorted(self._engines.items(), key=lambda item: self._engine_priorities.get(item[0], 99))
 
@@ -276,11 +355,16 @@ class PolicyDecisionPoint:
         self,
         decisions: List[EngineDecision],
     ) -> tuple[Decision, str, List[str]]:
-        """Merge per-engine decisions into a single verdict.
+        """Merge per-engine decisions into a single unified verdict.
 
-        Returns
-        -------
-        (decision, reason, matched_policies)
+        Applies the configured combination mode (ALL_MUST_ALLOW, ANY_ALLOW,
+        or FIRST_MATCH) to produce the final decision.
+
+        Args:
+            decisions: List of EngineDecision objects from all evaluated engines.
+
+        Returns:
+            Tuple of (Decision enum, reason string, list of matching policy IDs).
         """
         if not decisions:
             return (
@@ -303,7 +387,14 @@ class PolicyDecisionPoint:
     def _combine_all_must_allow(
         self, decisions: List[EngineDecision]
     ) -> tuple[Decision, str, List[str]]:
-        """AND logic – all engines must allow."""
+        """Apply AND logic: all engines must allow for access to be granted.
+
+        Args:
+            decisions: List of EngineDecision objects from all engines.
+
+        Returns:
+            Tuple of (DENY if any denied else ALLOW, combined reason, policy IDs).
+        """
         denied = [d for d in decisions if d.decision == Decision.DENY]
         if denied:
             all_reasons = "; ".join(d.reason for d in denied)
@@ -316,7 +407,14 @@ class PolicyDecisionPoint:
     def _combine_any_allow(
         self, decisions: List[EngineDecision]
     ) -> tuple[Decision, str, List[str]]:
-        """OR logic – at least one engine must allow."""
+        """Apply OR logic: at least one engine must allow for access.
+
+        Args:
+            decisions: List of EngineDecision objects from all engines.
+
+        Returns:
+            Tuple of (ALLOW if any allowed else DENY, reason, policy IDs).
+        """
         allowed = [d for d in decisions if d.decision == Decision.ALLOW]
         if allowed:
             first_allow = allowed[0]
@@ -331,7 +429,14 @@ class PolicyDecisionPoint:
     def _combine_first_match(
         self, decisions: List[EngineDecision]
     ) -> tuple[Decision, str, List[str]]:
-        """First non-error decision by priority wins."""
+        """Use the first decision by priority (lowest priority number wins).
+
+        Args:
+            decisions: List of EngineDecision objects, sorted or unsorted.
+
+        Returns:
+            Tuple of (decision, reason, policy IDs) from highest-priority engine.
+        """
         # decisions are already ordered by priority (sequential) or we sort here
         sorted_decisions = sorted(
             decisions,
@@ -353,8 +458,18 @@ class PolicyDecisionPoint:
     ) -> DecisionExplanation:
         """Run evaluation and return a verbose human-readable explanation.
 
-        This intentionally **bypasses the cache** – it is meant for
-        debugging and audit, not the hot path.
+        This intentionally bypasses the cache for accurate debugging and audit.
+        Not intended for hot-path use due to lack of caching.
+
+        Args:
+            subject: The authenticated user/principal requesting access.
+            action: The action being performed.
+            resource: The resource being accessed.
+            context: Request context.
+
+        Returns:
+            DecisionExplanation with detailed per-engine breakdown, combination
+            mode used, which engines were evaluated vs skipped, and timing.
         """
         engine_decisions = await self._evaluate_engines(subject, action, resource, context)
         decision, reason, _ = self._combine(engine_decisions)
@@ -393,7 +508,18 @@ class PolicyDecisionPoint:
         subject: Subject,
         context: Context,
     ) -> List[Permission]:
-        """Aggregate permissions from all engines that support enumeration."""
+        """Aggregate permissions from all engines that support enumeration.
+
+        Calls get_permissions() on each engine and combines results. Engines
+        that don't support enumeration (raise NotImplementedError) are skipped.
+
+        Args:
+            subject: The authenticated user/principal to enumerate permissions for.
+            context: Request context for conditional permission evaluation.
+
+        Returns:
+            Combined list of Permission objects from all supporting engines.
+        """
         all_perms: List[Permission] = []
         for eng_type, adapter in self._engines.items():
             try:
@@ -411,7 +537,15 @@ class PolicyDecisionPoint:
     # ------------------------------------------------------------------
 
     async def health(self) -> PDPHealthReport:
-        """Check all engines and return an aggregate health report."""
+        """Check all engines and return an aggregate health report.
+
+        Runs health_check() on each initialized engine and marks disabled
+        engines appropriately. The overall healthy status is True only if
+        no engine reports UNHEALTHY.
+
+        Returns:
+            PDPHealthReport with overall healthy flag and per-engine reports.
+        """
         reports = []
         for _, adapter in self._engines.items():
             reports.append(await adapter.health_check())
@@ -434,7 +568,12 @@ class PolicyDecisionPoint:
     # ------------------------------------------------------------------
 
     def cache_stats(self) -> dict:
-        """Return cache statistics including hits, misses, and current size."""
+        """Return cache statistics for monitoring and admin UI.
+
+        Returns:
+            Dictionary with hits, misses, hit_rate, size, max_entries,
+            ttl_seconds, and redis_enabled status.
+        """
         return self._cache.stats()
 
     # ------------------------------------------------------------------
@@ -442,7 +581,11 @@ class PolicyDecisionPoint:
     # ------------------------------------------------------------------
 
     async def close(self) -> None:
-        """Gracefully close all engine adapters."""
+        """Gracefully close all engine adapters and release resources.
+
+        Calls close() on each adapter that supports it (e.g., to close HTTP
+        clients for OPA/Cedar engines). Should be called during shutdown.
+        """
         for adapter in self._engines.values():
             if hasattr(adapter, "close"):
                 await adapter.close()
