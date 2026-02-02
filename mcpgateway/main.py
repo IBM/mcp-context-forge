@@ -5907,34 +5907,37 @@ async def websocket_endpoint(websocket: WebSocket):
     Args:
         websocket: The WebSocket connection instance.
     """
+    # Track auth credentials to forward to /rpc
+    auth_token: Optional[str] = None
+    proxy_user: Optional[str] = None
+
     try:
         # Authenticate WebSocket connection
         if settings.mcp_client_auth_enabled or settings.auth_required:
             # Extract auth from query params or headers
-            token = None
             # Try to get token from query parameter
             if "token" in websocket.query_params:
-                token = websocket.query_params["token"]
+                auth_token = websocket.query_params["token"]
             # Try to get token from Authorization header
             elif "authorization" in websocket.headers:
                 auth_header = websocket.headers["authorization"]
                 if auth_header.startswith("Bearer "):
-                    token = auth_header[7:]
+                    auth_token = auth_header[7:]
 
             # Check for proxy auth if MCP client auth is disabled
             if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
                 proxy_user = websocket.headers.get(settings.proxy_user_header)
-                if not proxy_user and not token:
+                if not proxy_user and not auth_token:
                     await websocket.close(code=1008, reason="Authentication required")
                     return
-            elif settings.auth_required and not token:
+            elif settings.auth_required and not auth_token:
                 await websocket.close(code=1008, reason="Authentication required")
                 return
 
             # Verify JWT token if provided and MCP client auth is enabled
-            if token and settings.mcp_client_auth_enabled:
+            if auth_token and settings.mcp_client_auth_enabled:
                 try:
-                    await verify_jwt_token(token)
+                    await verify_jwt_token(auth_token)
                 except Exception:
                     await websocket.close(code=1008, reason="Invalid authentication")
                     return
@@ -5944,11 +5947,19 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 data = await websocket.receive_text()
                 client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
+
+                # Build headers for /rpc request - forward auth credentials
+                rpc_headers: Dict[str, str] = {"Content-Type": "application/json"}
+                if auth_token:
+                    rpc_headers["Authorization"] = f"Bearer {auth_token}"
+                if proxy_user:
+                    rpc_headers[settings.proxy_user_header] = proxy_user
+
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
                         f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
                         json=orjson.loads(data),
-                        headers={"Content-Type": "application/json"},
+                        headers=rpc_headers,
                     )
                     await websocket.send_text(response.text)
             except JSONRPCError as e:

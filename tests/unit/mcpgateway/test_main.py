@@ -2057,6 +2057,113 @@ class TestRealtimeEndpoints:
         assert response.status_code == 400
 
     @pytest.mark.asyncio
+    async def test_websocket_forwards_auth_token_to_rpc(self, monkeypatch):
+        """Test that WebSocket forwards JWT token to /rpc endpoint.
+
+        This ensures auth credentials are propagated so /rpc doesn't reject
+        with 401 when AUTH_REQUIRED=true.
+        """
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+
+        # Track headers passed to the RPC call
+        captured_headers = {}
+
+        class MockResponse:
+            text = '{"jsonrpc":"2.0","id":1,"result":{}}'
+
+        class MockClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json, headers):
+                captured_headers.update(headers)
+                return MockResponse()
+
+        monkeypatch.setattr(mcpgateway_main.settings, "auth_required", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "mcp_client_auth_enabled", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "federation_timeout", 30)
+        monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
+        monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
+        monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
+        monkeypatch.setattr(mcpgateway_main, "verify_jwt_token", AsyncMock(return_value=None))
+
+        # Create mock websocket with token in query params
+        websocket = AsyncMock()
+        websocket.query_params = {"token": "test-jwt-token"}
+        websocket.headers = {}
+
+        # Track messages
+        messages_received = []
+        websocket.receive_text = AsyncMock(side_effect=[
+            '{"jsonrpc":"2.0","method":"test","id":1}',
+            WebSocketDisconnect(),
+        ])
+        websocket.send_text = AsyncMock(side_effect=lambda msg: messages_received.append(msg))
+
+        await mcpgateway_main.websocket_endpoint(websocket)
+
+        # Verify auth token was forwarded to /rpc
+        assert "Authorization" in captured_headers, "Authorization header should be forwarded to /rpc"
+        assert captured_headers["Authorization"] == "Bearer test-jwt-token"
+
+    @pytest.mark.asyncio
+    async def test_websocket_forwards_proxy_user_to_rpc(self, monkeypatch):
+        """Test that WebSocket forwards proxy user header to /rpc endpoint."""
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+
+        # Track headers passed to the RPC call
+        captured_headers = {}
+
+        class MockResponse:
+            text = '{"jsonrpc":"2.0","id":1,"result":{}}'
+
+        class MockClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json, headers):
+                captured_headers.update(headers)
+                return MockResponse()
+
+        monkeypatch.setattr(mcpgateway_main.settings, "auth_required", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "mcp_client_auth_enabled", False)
+        monkeypatch.setattr(mcpgateway_main.settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "proxy_user_header", "X-Forwarded-User")
+        monkeypatch.setattr(mcpgateway_main.settings, "federation_timeout", 30)
+        monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
+        monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
+        monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
+
+        # Create mock websocket with proxy user header
+        # Note: Use exact case matching settings.proxy_user_header since we're using a plain dict
+        websocket = AsyncMock()
+        websocket.query_params = {}
+        websocket.headers = {"X-Forwarded-User": "proxy-user@example.com"}
+
+        # Track messages
+        websocket.receive_text = AsyncMock(side_effect=[
+            '{"jsonrpc":"2.0","method":"test","id":1}',
+            WebSocketDisconnect(),
+        ])
+        websocket.send_text = AsyncMock()
+
+        await mcpgateway_main.websocket_endpoint(websocket)
+
+        # Verify proxy user header was forwarded to /rpc
+        assert "X-Forwarded-User" in captured_headers, "Proxy user header should be forwarded to /rpc"
+        assert captured_headers["X-Forwarded-User"] == "proxy-user@example.com"
+
+    @pytest.mark.asyncio
     async def test_websocket_disconnect_on_accept(self, monkeypatch):
         """Test WebSocket disconnect handling."""
         # First-Party
