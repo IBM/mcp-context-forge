@@ -63,7 +63,7 @@ class NativeRBACAdapter(PolicyEngineAdapter):
     ----------
     settings : dict, optional
         May contain ``rules`` (list of Rule dicts) or ``rules_file`` (path
-        to a JSON/YAML file).  If neither is supplied the engine starts
+        to a JSON file).  If neither is supplied the engine starts
         with an empty rule-set (everything denied by default).
     """
 

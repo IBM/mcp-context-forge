@@ -251,12 +251,17 @@ class UnifiedPDPPlugin(Plugin):
         # Extract HTTP metadata from headers for IP and user_agent
         http_meta = self._extract_http_metadata(payload.headers)
 
+        # Extract classification_level from tool args if provided (for MAC engine)
+        tool_args = payload.args or {}
+        classification_level = tool_args.get("classification_level")
+
         resource = Resource(
             type="tool",
             id=payload.name,
             server=context.global_context.server_id,
+            classification_level=classification_level,
             # Pass tool annotations for fine-grained policy checks
-            annotations={"args_keys": list((payload.args or {}).keys())},
+            annotations={"args_keys": list(tool_args.keys())},
         )
 
         pdp_context = Context(
@@ -326,12 +331,17 @@ class UnifiedPDPPlugin(Plugin):
         """
         subject = self._extract_subject(context)
 
+        # Extract classification_level from metadata if provided (for MAC engine)
+        metadata = payload.metadata or {}
+        classification_level = metadata.get("classification_level")
+
         resource = Resource(
             type="resource",
             id=payload.uri,
             server=context.global_context.server_id,
+            classification_level=classification_level,
             # Pass resource metadata for fine-grained policy checks
-            annotations=payload.metadata or {},
+            annotations=metadata,
         )
 
         pdp_context = Context(
