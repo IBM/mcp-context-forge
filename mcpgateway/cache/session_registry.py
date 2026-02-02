@@ -1008,6 +1008,73 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error during broadcast: {e}")
 
+    async def _register_session_mapping(self, session_id: str, message: Dict[str, Any], user_email: Optional[str] = None) -> None:
+        """Register session mapping for session affinity when tools are called.
+
+        This method is called during broadcast() to pre-register the mapping between
+        a downstream SSE session and the upstream MCP server session. This enables
+        session affinity in multi-worker deployments.
+
+        Only registers mappings for tools/call methods - list operations and other
+        methods don't need session affinity since they don't maintain state.
+
+        Args:
+            session_id: The downstream SSE session ID.
+            message: The MCP protocol message being broadcast.
+            user_email: Optional user email for session isolation.
+        """
+        # Skip if session affinity is disabled
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        # Only register for tools/call - other methods don't need session affinity
+        method = message.get("method")
+        if method != "tools/call":
+            return
+
+        # Extract tool name from params
+        params = message.get("params", {})
+        tool_name = params.get("name")
+        if not tool_name:
+            return
+
+        try:
+            # Look up tool in cache to get gateway info
+            from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+            tool_info = await tool_lookup_cache.get(tool_name)
+            if not tool_info:
+                logger.debug(f"Tool {tool_name} not found in cache, skipping session mapping registration")
+                return
+
+            # Extract gateway information
+            gateway = tool_info.get("gateway", {})
+            gateway_url = gateway.get("url")
+            gateway_id = gateway.get("id")
+            transport = gateway.get("transport")
+
+            if not gateway_url or not gateway_id or not transport:
+                logger.debug(f"Incomplete gateway info for tool {tool_name}, skipping session mapping registration")
+                return
+
+            # Register the session mapping with the pool
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            pool = get_mcp_session_pool()
+            await pool.register_session_mapping(
+                session_id,
+                gateway_url,
+                gateway_id,
+                transport,
+                user_email,
+            )
+
+            logger.debug(f"Registered session mapping for session {session_id[:8]}... -> {gateway_url} (tool: {tool_name})")
+
+        except Exception as e:
+            # Don't fail the broadcast if session mapping registration fails
+            logger.warning(f"Failed to register session mapping for {session_id[:8]}...: {e}")
+
     async def get_all_session_ids(self) -> list[str]:
         """Return a snapshot list of all known local session IDs.
 
