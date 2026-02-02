@@ -18115,11 +18115,13 @@ function toggleInputMask(inputOrId, button) {
     // SECURITY: Check if this is a stored secret (isMasked=true but no realValue)
     // Stored secrets cannot be revealed - they are write-only
     const hasStoredSecret = input.dataset.isMasked === "true";
-    const hasRevealableValue = input.dataset.realValue && input.dataset.realValue.trim() !== "";
+    const hasRevealableValue =
+        input.dataset.realValue && input.dataset.realValue.trim() !== "";
 
     if (hasStoredSecret && !hasRevealableValue) {
         // Stored secret with no revealable value - show tooltip/message
-        button.title = "Stored secrets cannot be revealed. Enter a new value to replace.";
+        button.title =
+            "Stored secrets cannot be revealed. Enter a new value to replace.";
         button.classList.add("cursor-not-allowed", "opacity-50");
         return;
     }

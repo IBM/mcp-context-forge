@@ -348,6 +348,21 @@ mcpContextForge:
     INSECURE_ALLOW_QUERYPARAM_AUTH: "false"  # enable query param auth (default: disabled)
     INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS: "[]"  # JSON array of allowed hosts, e.g. '["mcp.tavily.com"]'
 
+    # ─ SSRF Protection (Server-Side Request Forgery) ─
+    # Prevents gateway from accessing internal resources or cloud metadata services.
+    # Default: enabled with safe settings for internal/dev deployments.
+    # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
+    SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
+    SSRF_ALLOW_LOCALHOST: "true"               # allow localhost/127.x (set false for stricter security)
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"        # allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)
+    SSRF_DNS_FAIL_CLOSED: "false"              # reject on DNS failure (set true for stricter security)
+    # SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
+    # SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
+    # For strict production mode (external endpoints only):
+    # SSRF_ALLOW_LOCALHOST: "false"
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    # SSRF_DNS_FAIL_CLOSED: "true"
+
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_FORMAT: json                 # json or text format

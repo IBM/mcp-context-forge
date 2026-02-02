@@ -597,6 +597,61 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
     - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
     - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
 
+### SSRF Protection
+
+MCP Gateway includes **Server-Side Request Forgery (SSRF) protection** to prevent the gateway from being used to access internal resources or cloud metadata services.
+
+| Setting                     | Description                                                      | Default | Options |
+| --------------------------- | ---------------------------------------------------------------- | ------- | ------- |
+| `SSRF_PROTECTION_ENABLED`   | Master switch for SSRF protection                                | `true`  | bool    |
+| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `true`  | bool    |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `true`  | bool    |
+| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `false` | bool    |
+| `SSRF_BLOCKED_NETWORKS`     | CIDR ranges always blocked (cloud metadata by default)          | See below | JSON array |
+| `SSRF_BLOCKED_HOSTS`        | Hostnames always blocked (case-insensitive)                     | See below | JSON array |
+
+**Default Blocked Networks** (always blocked regardless of other settings):
+```json
+["169.254.169.254/32", "169.254.169.123/32", "fd00::1/128", "169.254.0.0/16", "fe80::/10"]
+```
+
+**Default Blocked Hosts**:
+```json
+["metadata.google.internal", "metadata.internal"]
+```
+
+!!! warning "Cloud Metadata Protection"
+    Cloud metadata endpoints (169.254.169.254) are **always blocked by default** to prevent credential exposure in cloud environments (AWS, GCP, Azure). This protects against SSRF attacks that attempt to steal instance credentials.
+
+!!! note "DNS Resolution Behavior"
+    The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA records) and validates each one. If ANY resolved IP is blocked, the request is rejected.
+
+    - **DNS fail-open** (default): Unresolvable hostnames are allowed (hostname blocklist still applies)
+    - **DNS fail-closed** (`SSRF_DNS_FAIL_CLOSED=true`): Unresolvable hostnames are rejected
+
+    For maximum security, enable `SSRF_DNS_FAIL_CLOSED=true` in production. Note that DNS rebinding attacks (where DNS changes between validation and connection) require additional mitigations like a dedicated SSRF proxy.
+
+!!! tip "Configuration Modes"
+    **Development/Internal Mode** (default): Localhost and private networks allowed, only cloud metadata blocked.
+    ```bash
+    SSRF_PROTECTION_ENABLED=true
+    SSRF_ALLOW_LOCALHOST=true
+    SSRF_ALLOW_PRIVATE_NETWORKS=true
+    ```
+
+    **Strict Production Mode** (external endpoints only):
+    ```bash
+    SSRF_PROTECTION_ENABLED=true
+    SSRF_ALLOW_LOCALHOST=false
+    SSRF_ALLOW_PRIVATE_NETWORKS=false
+    ```
+
+    **Custom Blocked Networks** (add additional ranges):
+    ```bash
+    SSRF_BLOCKED_NETWORKS='["169.254.169.254/32","169.254.0.0/16","100.64.0.0/10"]'
+    ```
+    The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
+
 ### Ed25519 Certificate Signing
 
 MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification.

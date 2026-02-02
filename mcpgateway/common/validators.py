@@ -49,10 +49,12 @@ Examples:
 
 # Standard
 import html
+import ipaddress
 import logging
 from pathlib import Path
 import re
 import shlex
+import socket
 from typing import Any, Iterable, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
@@ -952,10 +954,10 @@ class SecurityValidator:
             Traceback (most recent call last):
                 ...
             ValueError: URL contains invalid IP address (0.0.0.0)
-            >>> SecurityValidator.validate_url('https://169.254.169.254/')
+            >>> SecurityValidator.validate_url('https://169.254.169.254/')  # doctest: +ELLIPSIS
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains restricted IP address
+            ValueError: URL contains IP address blocked by SSRF protection ...
 
             Invalid port numbers:
 
@@ -1034,20 +1036,16 @@ class SecurityValidator:
             if "[" in result.netloc or "]" in result.netloc:
                 raise ValueError(f"{field_name} contains IPv6 address which is not supported")
 
-            # Block dangerous IP addresses
+            # SSRF Protection: Block dangerous IP addresses and hostnames
             hostname = result.hostname
             if hostname:
-                # Block 0.0.0.0 (all interfaces)
+                # Always block 0.0.0.0 (all interfaces) regardless of SSRF settings
                 if hostname == "0.0.0.0":  # nosec B104 - we're blocking this for security
                     raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
 
-                # Block AWS metadata service
-                if hostname == "169.254.169.254":
-                    raise ValueError(f"{field_name} contains restricted IP address")
-
-                # Optional: Block localhost/loopback (uncomment if needed)
-                # if hostname in ["127.0.0.1", "localhost"]:
-                #     raise ValueError(f"{field_name} contains localhost address")
+                # Apply SSRF protection if enabled
+                if settings.ssrf_protection_enabled:
+                    cls._validate_ssrf(hostname, field_name)
 
             # Validate port number
             if result.port is not None:
@@ -1072,6 +1070,123 @@ class SecurityValidator:
             raise ValueError(f"{field_name} is not a valid URL")
 
         return value
+
+    @classmethod
+    def _validate_ssrf(cls, hostname: str, field_name: str) -> None:
+        """Validate hostname/IP against SSRF protection rules.
+
+        This method implements configurable SSRF (Server-Side Request Forgery) protection
+        to prevent the gateway from being used to access internal resources or cloud
+        metadata services.
+
+        Args:
+            hostname (str): The hostname or IP address to validate.
+            field_name (str): Name of field being validated (for error messages).
+
+        Raises:
+            ValueError: If the hostname/IP is blocked by SSRF protection rules.
+
+        Configuration (via settings):
+            - ssrf_protection_enabled: Master switch (must be True for this to be called)
+            - ssrf_blocked_networks: CIDR ranges always blocked (e.g., cloud metadata)
+            - ssrf_blocked_hosts: Hostnames always blocked
+            - ssrf_allow_localhost: If False, blocks 127.0.0.0/8 and localhost
+            - ssrf_allow_private_networks: If False, blocks RFC 1918 private ranges
+
+        Examples:
+            Cloud metadata (always blocked):
+
+            >>> from unittest.mock import patch, MagicMock
+            >>> mock_settings = MagicMock()
+            >>> mock_settings.ssrf_protection_enabled = True
+            >>> mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
+            >>> mock_settings.ssrf_blocked_hosts = ["metadata.google.internal"]
+            >>> mock_settings.ssrf_allow_localhost = True
+            >>> mock_settings.ssrf_allow_private_networks = True
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     try:
+            ...         SecurityValidator._validate_ssrf('169.254.169.254', 'URL')
+            ...     except ValueError as e:
+            ...         'blocked by SSRF protection' in str(e)
+            True
+
+            Localhost (configurable):
+
+            >>> mock_settings.ssrf_allow_localhost = False
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     try:
+            ...         SecurityValidator._validate_ssrf('127.0.0.1', 'URL')
+            ...     except ValueError as e:
+            ...         'localhost' in str(e).lower()
+            True
+
+            Public IPs (always allowed):
+
+            >>> mock_settings.ssrf_allow_localhost = True
+            >>> mock_settings.ssrf_allow_private_networks = True
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     SecurityValidator._validate_ssrf('8.8.8.8', 'URL')  # Should not raise
+        """
+        # Normalize hostname: lowercase, strip trailing dots (DNS FQDN notation)
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        # Check blocked hostnames (case-insensitive, normalized)
+        for blocked_host in settings.ssrf_blocked_hosts:
+            blocked_normalized = blocked_host.lower().rstrip(".")
+            if hostname_normalized == blocked_normalized:
+                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+
+        # Resolve hostname to IP for network-based checks
+        # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
+        ip_addresses: list = []
+        try:
+            # Try to parse as IP address directly
+            ip_addresses = [ipaddress.ip_address(hostname)]
+        except ValueError:
+            # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
+            try:
+                # getaddrinfo returns all A/AAAA records
+                addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                for family, _, _, _, sockaddr in addr_info:
+                    try:
+                        ip_addresses.append(ipaddress.ip_address(sockaddr[0]))
+                    except ValueError:
+                        continue
+            except (socket.gaierror, socket.herror):
+                # DNS resolution failed
+                if settings.ssrf_dns_fail_closed:
+                    raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled")
+                # Fail open: allow through (hostname blocking above catches known dangerous hostnames)
+                return
+
+        if not ip_addresses:
+            if settings.ssrf_dns_fail_closed:
+                raise ValueError(f"{field_name} DNS resolution returned no addresses and SSRF_DNS_FAIL_CLOSED is enabled")
+            return
+
+        # Check ALL resolved addresses - if ANY is blocked, reject the request
+        for ip_addr in ip_addresses:
+            # Check against blocked networks (always blocked regardless of other settings)
+            for network_str in settings.ssrf_blocked_networks:
+                try:
+                    network = ipaddress.ip_network(network_str, strict=False)
+                except ValueError:
+                    # Invalid network in config - log and skip
+                    logger.warning(f"Invalid CIDR in ssrf_blocked_networks: {network_str}")
+                    continue
+
+                if ip_addr in network:
+                    raise ValueError(f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
+
+            # Check localhost/loopback (if not allowed)
+            if not settings.ssrf_allow_localhost:
+                if ip_addr.is_loopback or hostname_normalized in ("localhost", "localhost.localdomain"):
+                    raise ValueError(f"{field_name} contains localhost address which is blocked by SSRF protection")
+
+            # Check private networks (if not allowed)
+            if not settings.ssrf_allow_private_networks:
+                if ip_addr.is_private and not ip_addr.is_loopback:
+                    raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:
