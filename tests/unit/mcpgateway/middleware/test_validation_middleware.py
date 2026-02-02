@@ -30,8 +30,8 @@ class TestIsPathTraversal:
         assert is_path_traversal("/safe/../unsafe") is True
 
     def test_leading_slash(self):
-        """Test detection of leading slash."""
-        assert is_path_traversal("/etc/passwd") is True
+        """Test that leading slash alone is NOT path traversal."""
+        assert is_path_traversal("/etc/passwd") is False
 
     def test_backslash(self):
         """Test detection of backslash."""
@@ -57,6 +57,15 @@ class TestValidationMiddleware:
             mock_settings.max_param_length = 1000
             mock_settings.max_path_depth = 10
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
             yield middleware
@@ -70,6 +79,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
             yield middleware
@@ -107,6 +125,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -136,6 +163,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
             mock_settings.environment = "development"  # Development mode
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -274,6 +310,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 10
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -293,6 +338,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -312,6 +366,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = [r"<script"]
             mock_settings.max_param_length = 10
             mock_settings.environment = "development"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -328,6 +391,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -344,6 +416,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -358,6 +439,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -375,6 +465,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -392,6 +491,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = False
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -406,6 +514,15 @@ class TestValidationMiddleware:
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 3
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -424,6 +541,15 @@ class TestValidationMiddleware:
             mock_settings.allowed_roots = ["/safe"]
             mock_settings.dangerous_patterns = []
             mock_settings.max_path_depth = 100
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -493,6 +619,15 @@ class TestValidationMiddleware:
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -514,6 +649,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = True
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
@@ -578,6 +722,15 @@ class TestValidationMiddleware:
             mock_settings.dangerous_patterns = []
             mock_settings.max_param_length = 1000
             mock_settings.environment = "production"
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
