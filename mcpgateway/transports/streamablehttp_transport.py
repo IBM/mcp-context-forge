@@ -542,8 +542,8 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     if settings.mcpgateway_session_affinity_enabled and mcp_session_id:
         try:
             # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
             from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
             pool = get_mcp_session_pool()
 
@@ -558,9 +558,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                         gateway_id = gateway_info.get("id", "")
                         transport_type = gateway_info.get("transport", "streamablehttp")
                         if url:
-                            await pool.register_session_mapping(
-                                mcp_session_id, url, gateway_id, transport_type, user_email
-                            )
+                            await pool.register_session_mapping(mcp_session_id, url, gateway_id, transport_type, user_email)
             except Exception as e:
                 print(f"Failed to pre-register session mapping for Streamable HTTP: {e}")
 
@@ -1359,7 +1357,9 @@ class SessionManagerWrapper:
                     return
 
                 # Parse JSON-RPC
+                # Third-Party
                 import orjson
+
                 json_body = orjson.loads(body)
                 rpc_method = json_body.get("method", "")
                 print(f"[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: {rpc_method}")
@@ -1372,7 +1372,9 @@ class SessionManagerWrapper:
                     return
 
                 # Call /rpc internally
+                # Third-Party
                 import httpx
+
                 async with httpx.AsyncClient() as client:
                     rpc_headers = {
                         "content-type": "application/json",
@@ -1398,29 +1400,29 @@ class SessionManagerWrapper:
                     if mcp_session_id != "not-provided":
                         response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
 
-                    await send({
-                        "type": "http.response.start",
-                        "status": response.status_code,
-                        "headers": response_headers,
-                    })
-                    await send({
-                        "type": "http.response.body",
-                        "body": response.content,
-                    })
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": response.status_code,
+                            "headers": response_headers,
+                        }
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": response.content,
+                        }
+                    )
                     print(f"[HTTP_AFFINITY_FORWARDED] Response sent | Status: {response.status_code}")
                     return
             except Exception as e:
                 logger.error(f"[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: {e}")
                 # Fall through to SDK handling as fallback
 
-        if (
-            settings.mcpgateway_session_affinity_enabled
-            and settings.use_stateful_sessions
-            and mcp_session_id != "not-provided"
-            and not is_internally_forwarded
-        ):
+        if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions and mcp_session_id != "not-provided" and not is_internally_forwarded:
             try:
                 # First-Party - lazy import to avoid circular dependencies
+                # First-Party
                 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                 pool = get_mcp_session_pool()
@@ -1456,22 +1458,22 @@ class SessionManagerWrapper:
 
                     if response:
                         # Send forwarded response back to client
-                        response_headers = [
-                            (k.encode(), v.encode())
-                            for k, v in response["headers"].items()
-                            if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")
-                        ]
+                        response_headers = [(k.encode(), v.encode()) for k, v in response["headers"].items() if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")]
                         response_headers.append((b"content-length", str(len(response["body"])).encode()))
 
-                        await send({
-                            "type": "http.response.start",
-                            "status": response["status"],
-                            "headers": response_headers,
-                        })
-                        await send({
-                            "type": "http.response.body",
-                            "body": response["body"],
-                        })
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": response["status"],
+                                "headers": response_headers,
+                            }
+                        )
+                        await send(
+                            {
+                                "type": "http.response.body",
+                                "body": response["body"],
+                            }
+                        )
                         print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
                         return
                     else:
@@ -1504,7 +1506,9 @@ class SessionManagerWrapper:
 
                     # Parse JSON-RPC and route to /rpc
                     try:
+                        # Third-Party
                         import orjson
+
                         json_body = orjson.loads(body)
                         rpc_method = json_body.get("method", "")
                         print(f"[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: {rpc_method}")
@@ -1517,7 +1521,9 @@ class SessionManagerWrapper:
                             return
 
                         # Call /rpc internally
+                        # Third-Party
                         import httpx
+
                         async with httpx.AsyncClient() as client:
                             rpc_headers = {
                                 "content-type": "application/json",
@@ -1540,15 +1546,19 @@ class SessionManagerWrapper:
                                 (b"mcp-session-id", mcp_session_id.encode()),
                             ]
 
-                            await send({
-                                "type": "http.response.start",
-                                "status": response.status_code,
-                                "headers": response_headers,
-                            })
-                            await send({
-                                "type": "http.response.body",
-                                "body": response.content,
-                            })
+                            await send(
+                                {
+                                    "type": "http.response.start",
+                                    "status": response.status_code,
+                                    "headers": response_headers,
+                                }
+                            )
+                            await send(
+                                {
+                                    "type": "http.response.body",
+                                    "body": response.content,
+                                }
+                            )
                             print(f"[HTTP_AFFINITY_LOCAL] Response sent | Status: {response.status_code}")
                             return
                     except Exception as e:
@@ -1597,13 +1607,16 @@ class SessionManagerWrapper:
             # Register ownership for the session we just handled
             # This captures both existing sessions (mcp_session_id from request)
             # and new sessions (captured_session_id from response)
-            print(f"[HTTP_AFFINITY_DEBUG] affinity_enabled={settings.mcpgateway_session_affinity_enabled} stateful={settings.use_stateful_sessions} captured={captured_session_id} mcp_session_id={mcp_session_id}")
+            print(
+                f"[HTTP_AFFINITY_DEBUG] affinity_enabled={settings.mcpgateway_session_affinity_enabled} stateful={settings.use_stateful_sessions} captured={captured_session_id} mcp_session_id={mcp_session_id}"
+            )
             if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
                 session_to_register = captured_session_id or (mcp_session_id if mcp_session_id != "not-provided" else None)
                 print(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
                 if session_to_register:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
+                        # First-Party
                         from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                         pool = get_mcp_session_pool()

@@ -1949,7 +1949,9 @@ class SessionRegistry(SessionBackend):
                 if settings.mcpgateway_session_affinity_enabled:
                     await self._register_session_mapping(session_id, message, user_email)
 
+                # Standard
                 import os  # pylint: disable=import-outside-toplevel
+
                 worker_id = str(os.getpid())
                 session_short = session_id[:8] if len(session_id) >= 8 else session_id
                 print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Method: {method} | SSE session making internal /rpc call to {rpc_url}")

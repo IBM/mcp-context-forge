@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Integration tests for multi-worker Streamable HTTP with RedisEventStore.
 

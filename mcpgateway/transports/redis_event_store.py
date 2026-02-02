@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Redis-backed event store for Streamable HTTP stateful sessions.
 
