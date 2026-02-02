@@ -1456,7 +1456,7 @@ class TestRpcHandling:
             assert result["result"]["resources"][0]["id"] == "res-1"
             assert result["result"]["nextCursor"] == "next-cursor"
 
-    async def test_handle_rpc_resources_read_success_and_forward(self):
+    async def test_handle_rpc_resources_read_success_and_error(self):
         payload = {"jsonrpc": "2.0", "id": "3", "method": "resources/read", "params": {"uri": "resource://one"}}
         request = self._make_request(payload)
         request.state = MagicMock()
@@ -1471,13 +1471,14 @@ class TestRpcHandling:
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["contents"][0]["uri"] == "resource://one"
 
+        # Gateway forwarding is removed, so missing resource returns error
         with (
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=ValueError("no local"))),
-            patch("mcpgateway.main.gateway_service.forward_request", new=AsyncMock(return_value={"ok": True})),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
-            assert result["result"]["ok"] is True
+            assert "error" in result
+            assert result["error"]["code"] == -32002
 
     async def test_handle_rpc_resources_subscribe_unsubscribe(self):
         payload = {"jsonrpc": "2.0", "id": "4", "method": "resources/subscribe", "params": {"uri": "resource://two"}}
@@ -1628,7 +1629,7 @@ class TestRpcHandling:
             result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"] == {}
 
-    async def test_handle_rpc_fallback_tool_and_gateway(self):
+    async def test_handle_rpc_fallback_tool_error(self):
         payload = {"jsonrpc": "2.0", "id": "17", "method": "custom/tool", "params": {"a": 1}}
         request = self._make_request(payload)
         request.state = MagicMock()
@@ -1639,17 +1640,8 @@ class TestRpcHandling:
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["ok"] is True
 
-        with (
-            patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))),
-            patch("mcpgateway.main.gateway_service.forward_request", new=AsyncMock(return_value={"via": "gateway"})),
-        ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
-            assert result["result"]["via"] == "gateway"
-
-        with (
-            patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))),
-            patch("mcpgateway.main.gateway_service.forward_request", new=AsyncMock(side_effect=Exception("fail"))),
-        ):
+        # Gateway forwarding is removed, so missing tool returns error
+        with patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32000
 
@@ -1712,21 +1704,19 @@ class TestRpcHandling:
         result = await handle_rpc(request_missing_unsub, db=MagicMock(), user="user")
         assert result["error"]["code"] == -32602
 
-    async def test_handle_rpc_resources_read_admin_gateway_model_dump(self):
+    async def test_handle_rpc_resources_read_admin_error_on_missing(self):
         payload = {"jsonrpc": "2.0", "id": "23", "method": "resources/read", "params": {"uri": "resource://admin"}}
         request = self._make_request(payload)
         request.state = MagicMock()
 
-        gateway_result = MagicMock()
-        gateway_result.model_dump.return_value = {"forwarded": True}
-
+        # Gateway forwarding is removed, so missing resource returns error
         with (
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=ValueError("no local"))),
-            patch("mcpgateway.main.gateway_service.forward_request", new=AsyncMock(return_value=gateway_result)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
-            assert result["result"]["forwarded"] is True
+            assert "error" in result
+            assert result["error"]["code"] == -32002
 
     async def test_handle_rpc_prompts_admin_bypass_and_missing_name(self):
         payload_list = {"jsonrpc": "2.0", "id": "24", "method": "prompts/list", "params": {}}

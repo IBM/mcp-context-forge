@@ -5408,10 +5408,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 else:
                     result = {"contents": [result]}
             except ValueError:
-                # Resource has no local content, forward to upstream MCP server
-                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
+                # Resource not found in the gateway
+                logger.error(f"Resource not found: {uri}")
+                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
         elif method == "resources/subscribe":
             # MCP spec-compliant resource subscription endpoint
             uri = params.get("uri")
@@ -5556,8 +5555,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                             meta_data=meta_data,
                         )
                     except ValueError:
-                        # Fallback to gateway forwarding
-                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                        # Tool not found log error and re-raise
+                        logger.error(f"Tool not found: {name}")
+                        raise
 
                 tool_task = asyncio.create_task(execute_tool())
 
@@ -5780,14 +5780,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             except (PluginError, PluginViolationError):
                 raise
             except (ValueError, Exception):
-                # If not a tool, try forwarding to gateway
-                try:
-                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
-                    if hasattr(result, "model_dump"):
-                        result = result.model_dump(by_alias=True, exclude_none=True)
-                except Exception:
-                    # If all else fails, return invalid method error
-                    raise JSONRPCError(-32000, "Invalid method", params)
+                # Log error and return invalid method
+                logger.error(f"Method not found: {method}")
+                raise JSONRPCError(-32000, "Invalid method", params)
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
