@@ -493,7 +493,7 @@ class LLMProxyService:
                 async for line in response.aiter_lines():
                     if not line:
                         continue
-                    
+
                     # Handle SSE format
                     if line.startswith("data:"):
                         data_str = line[5:]
@@ -764,4 +764,3 @@ class LLMProxyService:
             }
 
         return orjson.dumps(chunk).decode()
-

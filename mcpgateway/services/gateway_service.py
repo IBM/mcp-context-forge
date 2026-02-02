@@ -2920,8 +2920,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
-
-
     async def _handle_gateway_failure(self, gateway: DbGateway) -> None:
         """Tracks and handles gateway failures during health checks.
         If the failure count exceeds the threshold, the gateway is deactivated.
