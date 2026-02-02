@@ -150,7 +150,7 @@ To ensure commit integrity and comply with the DCO, sign your commits with a `Si
 # ~/.gitconfig
 [user]
     name = Your Name
-    email = your-exail@example.com
+    email = your-email@example.com
 
 [init]
     defaultBranch = main  # Use 'main' instead of 'master' when creating new repos
@@ -168,6 +168,6 @@ To ensure commit integrity and comply with the DCO, sign your commits with a `Si
     template = ~/.git-commit-template
 ```
 
--   **Setup**: Replace Your Name and your-exail@example.com with your details.
+-   **Setup**: Replace Your Name and your-email@example.com with your details.
 -   **Signing**: Use git cm "Your message" to create signed commits automatically with the configured alias.
 -   **Sign-off**: Use git commit -s -m "Your message" for manual signed commits without the alias.

@@ -102,7 +102,18 @@ The `teams` claim in JWT tokens determines resource visibility:
    - Admin session tokens (from UI login) omit the teams claim entirely
    - This grants unrestricted access for administrative operations
 
-### Token Scoping Flow
+### Tool Name Separator
+
+The gateway uses a separator to combine the gateway name and tool name (e.g., `gateway-tool`).
+
+- **Default**: `-` (dash)
+- **Configurable**: Yes, via `GATEWAY_TOOL_NAME_SEPARATOR` env var
+- **Supported values**: `-`, `--`, `_`, `.`
+
+```bash
+# Example: Use double underscore (legacy behavior)
+GATEWAY_TOOL_NAME_SEPARATOR=__
+```
 
 ```
                                  ┌──────────────────┐
