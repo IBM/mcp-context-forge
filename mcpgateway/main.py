@@ -62,6 +62,7 @@ from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
+from mcpgateway.sandbox.router import router as sandbox_router
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user
@@ -6642,6 +6643,7 @@ app.include_router(server_well_known_router, prefix="/servers")
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+app.include_router(sandbox_router)
 
 # Include log search router if structured logging is enabled
 if getattr(settings, "structured_logging_enabled", True):
