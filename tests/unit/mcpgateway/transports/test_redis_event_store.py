@@ -32,6 +32,11 @@ async def redis_event_store(monkeypatch):
     settings.cache_type = "redis"
     settings.redis_url = "redis://localhost:6379"
 
+    # Check if Redis is available
+    redis = await get_redis_client()
+    if redis is None:
+        pytest.skip("Redis not available - skipping Redis event store tests")
+
     store = RedisEventStore(max_events_per_stream=10, ttl=60)
     yield store
 

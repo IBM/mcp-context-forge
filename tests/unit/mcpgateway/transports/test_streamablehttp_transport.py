@@ -1273,9 +1273,12 @@ async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
         captured_config.update(kwargs)
         return DummySessionManager(**kwargs)
 
-    # Mock settings to enable stateful sessions
+    # Mock settings to enable stateful sessions with InMemoryEventStore
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", False)
+    # Ensure InMemoryEventStore is used (not Redis) by clearing Redis settings
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.redis_url", "")
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
 
     wrapper = SessionManagerWrapper()
