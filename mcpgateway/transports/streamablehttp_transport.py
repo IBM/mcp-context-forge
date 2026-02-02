@@ -43,11 +43,13 @@ from uuid import uuid4
 # Third-Party
 import anyio
 from fastapi.security.utils import get_authorization_scheme_param
+import httpx
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage
+import orjson
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
@@ -62,6 +64,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_credentials
 
@@ -1219,9 +1222,6 @@ class SessionManagerWrapper:
         if settings.use_stateful_sessions:
             # Use Redis event store for single-worker stateful deployments
             if settings.cache_type == "redis" and settings.redis_url:
-                # First-Party
-                from mcpgateway.transports.redis_event_store import RedisEventStore
-
                 event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
                 logger.debug("Using RedisEventStore for stateful sessions (single-worker)")
             else:
@@ -1321,8 +1321,8 @@ class SessionManagerWrapper:
         # This must happen BEFORE the SDK's session manager handles the request
         is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
 
-        # Always log session manager ID and sessions for debugging
-        logger.debug(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)} | Sessions: {list(self.session_manager._server_instances.keys())}")
+        # Log session manager ID for debugging
+        logger.debug(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)}")
 
         if is_internally_forwarded:
             logger.debug(f"[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: {method} | Session: {mcp_session_id}")
@@ -1356,10 +1356,6 @@ class SessionManagerWrapper:
                     await send({"type": "http.response.body", "body": b""})
                     return
 
-                # Parse JSON-RPC
-                # Third-Party
-                import orjson
-
                 json_body = orjson.loads(body)
                 rpc_method = json_body.get("method", "")
                 logger.debug(f"[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: {rpc_method}")
@@ -1370,10 +1366,6 @@ class SessionManagerWrapper:
                     await send({"type": "http.response.start", "status": 202, "headers": []})
                     await send({"type": "http.response.body", "body": b""})
                     return
-
-                # Call /rpc internally
-                # Third-Party
-                import httpx
 
                 async with httpx.AsyncClient() as client:
                     rpc_headers = {
@@ -1476,10 +1468,10 @@ class SessionManagerWrapper:
                         )
                         logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
                         return
-                    else:
-                        # Forwarding failed - fall through to local handling
-                        # This may result in "session not found" but it's better than no response
-                        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
+
+                    # Forwarding failed - fall through to local handling
+                    # This may result in "session not found" but it's better than no response
+                    logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
 
                 elif owner == WORKER_ID and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
@@ -1506,9 +1498,6 @@ class SessionManagerWrapper:
 
                     # Parse JSON-RPC and route to /rpc
                     try:
-                        # Third-Party
-                        import orjson
-
                         json_body = orjson.loads(body)
                         rpc_method = json_body.get("method", "")
                         logger.debug(f"[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: {rpc_method}")
@@ -1519,10 +1508,6 @@ class SessionManagerWrapper:
                             await send({"type": "http.response.start", "status": 202, "headers": []})
                             await send({"type": "http.response.body", "body": b""})
                             return
-
-                        # Call /rpc internally
-                        # Third-Party
-                        import httpx
 
                         async with httpx.AsyncClient() as client:
                             rpc_headers = {
@@ -1602,7 +1587,6 @@ class SessionManagerWrapper:
         try:
             await self.session_manager.handle_request(scope, receive, send_with_capture)
             logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
-            logger.debug(f"[SESSION_MGR_AFTER] Sessions after handling: {list(self.session_manager._server_instances.keys())}")
 
             # Register ownership for the session we just handled
             # This captures both existing sessions (mcp_session_id from request)
@@ -1620,7 +1604,7 @@ class SessionManagerWrapper:
                         from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                         pool = get_mcp_session_pool()
-                        await pool._register_pool_session_owner(session_to_register)
+                        await pool._register_pool_session_owner(session_to_register)  # pylint: disable=protected-access
                         logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after successful handling")
                     except Exception as e:
                         logger.debug(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")

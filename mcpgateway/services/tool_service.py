@@ -2828,8 +2828,6 @@ class ToolService:
                         mcp_session_id = request_headers_lower.get("mcp-session-id") or request_headers_lower.get("x-mcp-session-id")
                         if mcp_session_id:
                             headers["x-mcp-session-id"] = mcp_session_id
-                            # Standard
-                            import os  # pylint: disable=import-outside-toplevel
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
@@ -3013,8 +3011,6 @@ class ToolService:
                         mcp_session_id = request_headers_lower.get("mcp-session-id") or request_headers_lower.get("x-mcp-session-id")
                         if mcp_session_id:
                             headers["x-mcp-session-id"] = mcp_session_id
-                            # Standard
-                            import os  # pylint: disable=import-outside-toplevel
 
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id

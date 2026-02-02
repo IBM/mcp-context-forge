@@ -1862,7 +1862,7 @@ class SessionRegistry(SessionBackend):
                         capable_sessions.append(session_id)
             return capable_sessions
 
-    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
+    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any]) -> None:
         """Generate and send response for incoming MCP protocol message.
 
         Processes MCP protocol messages and generates appropriate responses based on
@@ -1874,7 +1874,6 @@ class SessionRegistry(SessionBackend):
             transport: SSE transport to send responses through.
             server_id: Optional server ID for scoped operations.
             user: User information containing authentication token.
-            base_url: Base URL for constructing RPC endpoints.
 
         Examples:
             >>> import asyncio
