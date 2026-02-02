@@ -56,6 +56,7 @@ import logging
 import time
 import traceback
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 import uuid
 
 # Third-Party
@@ -897,67 +898,6 @@ class SessionRegistry(SessionBackend):
 
         logger.info(f"Removed session: {session_id}")
 
-    async def _register_session_mapping(self, session_id: str, message: Dict[str, Any], user_email: Optional[str] = None) -> None:
-        """Pre-register session mapping in mcp_session_pool for session affinity.
-
-        Parses the message to extract tool name, looks up tool.gateway via cache,
-        and registers mapping: (session_id, url, transport_type, gateway_id, user_email) → pool_key.
-
-        This enables session affinity for SSE-based tool invocations, ensuring that
-        the same downstream session ID routes to the same upstream MCP session even
-        when JWT tokens rotate (different jti values per request).
-
-        Args:
-            session_id: The SSE session ID (used as x-mcp-session-id for upstream).
-            message: The JSON-RPC message being broadcast.
-            user_email: The email of the authenticated user making the request.
-        """
-        try:
-            method = message.get("method", "")
-            params = message.get("params", {})
-
-            if method != "tools/call":
-                return
-
-            tool_name = params.get("name")
-            if not tool_name:
-                return
-
-            # Look up tool and gateway from cache
-            # First-Party
-            from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
-
-            cached = await tool_lookup_cache.get(tool_name)
-            if not cached or cached.get("status") != "active":
-                logger.debug(f"Session affinity: tool '{tool_name}' not found in cache")
-                return
-
-            gateway_info = cached.get("gateway")
-            if not gateway_info:
-                logger.debug(f"Session affinity: tool '{tool_name}' has no gateway")
-                return
-
-            url = gateway_info.get("url")
-            gateway_id = gateway_info.get("id", "")
-            transport_type = gateway_info.get("transport", "streamablehttp")
-
-            if not url:
-                logger.debug(f"Session affinity: gateway for tool '{tool_name}' has no URL")
-                return
-
-            # Register in mcp_session_pool with user email
-            # First-Party
-            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
-
-            pool = get_mcp_session_pool()
-            await pool.register_session_mapping(session_id, url, gateway_id, transport_type, user_email)
-
-        except RuntimeError as e:
-            # Pool not initialized yet - this is expected during startup
-            logger.debug(f"Session affinity: pool not ready: {e}")
-        except Exception as e:
-            logger.debug(f"Failed to pre-register session mapping: {e}")
-
     async def broadcast(self, session_id: str, message: Dict[str, Any]) -> None:
         """Broadcast a message to a session.
 
@@ -1167,7 +1107,7 @@ class SessionRegistry(SessionBackend):
                         message = data["message"]
                     else:
                         message = data
-                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
+                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
                 else:
                     logger.warning(f"Session message stored but message content is None for session {session_id}")
 
@@ -1212,7 +1152,7 @@ class SessionRegistry(SessionBackend):
                     message = data.get("message", {})
                     transport = self.get_session_sync(session_id)
                     if transport:
-                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
+                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
                 raise  # Re-raise to properly complete cancellation
@@ -1440,6 +1380,7 @@ class SessionRegistry(SessionBackend):
                                     transport=transport,
                                     server_id=server_id,
                                     user=user,
+                                    base_url=base_url,
                                 )
 
                                 await asyncio.to_thread(_db_remove, session_id, record.message)
@@ -1861,7 +1802,7 @@ class SessionRegistry(SessionBackend):
                         capable_sessions.append(session_id)
             return capable_sessions
 
-    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any]) -> None:
+    async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
         """Generate and send response for incoming MCP protocol message.
 
         Processes MCP protocol messages and generates appropriate responses based on
@@ -1873,6 +1814,7 @@ class SessionRegistry(SessionBackend):
             transport: SSE transport to send responses through.
             server_id: Optional server ID for scoped operations.
             user: User information containing authentication token.
+            base_url: Base URL for constructing RPC endpoints.
 
         Examples:
             >>> import asyncio
@@ -1933,26 +1875,26 @@ class SessionRegistry(SessionBackend):
                     # Generate token using centralized token creation
                     token = await create_jwt_token(payload)
 
-                session_id = transport.session_id
+                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                # Extract root URL from base_url (remove /servers/{id} path)
+                parsed_url = urlparse(base_url)
+                # Preserve the path up to the root path (before /servers/{id})
+                path_parts = parsed_url.path.split("/")
+                if "/servers/" in parsed_url.path:
+                    # Find the index of 'servers' and take everything before it
+                    try:
+                        servers_index = path_parts.index("servers")
+                        root_path = "/" + "/".join(path_parts[1:servers_index]).strip("/")
+                        if root_path == "/":
+                            root_path = ""
+                    except ValueError:
+                        root_path = ""
+                else:
+                    root_path = parsed_url.path.rstrip("/")
 
-                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json", "x-mcp-session-id": session_id}
-                # Internal RPC call must hit THIS worker (not go through load balancer)
-                # Use 127.0.0.1 if host is 0.0.0.0, otherwise use settings.host
-                internal_host = "127.0.0.1" if settings.host == "0.0.0.0" else settings.host
-                rpc_url = f"http://{internal_host}:{settings.port}/rpc"
+                root_url = f"{parsed_url.scheme}://{parsed_url.netloc}{root_path}"
+                rpc_url = root_url + "/rpc"
 
-                # Pre-register session mapping for session affinity before making /rpc call
-                # This ensures the mapping is available when pool.acquire() is called
-                user_email = user.get("email", "system")
-                if settings.mcpgateway_session_affinity_enabled:
-                    await self._register_session_mapping(session_id, message, user_email)
-
-                # Standard
-                import os  # pylint: disable=import-outside-toplevel
-
-                worker_id = str(os.getpid())
-                session_short = session_id[:8] if len(session_id) >= 8 else session_id
-                print(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Method: {method} | SSE session making internal /rpc call to {rpc_url}")
                 logger.info(f"SSE RPC: Making call to {rpc_url} with method={method}, params={params}")
 
                 async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
