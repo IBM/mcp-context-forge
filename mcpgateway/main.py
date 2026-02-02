@@ -2374,6 +2374,7 @@ async def list_servers(
 
     # Check team ID from token
     token_team_id = getattr(request.state, "team_id", None)
+    token_teams = getattr(request.state, "token_teams", None)
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
@@ -2385,6 +2386,13 @@ async def list_servers(
     # Determine final team ID
     team_id = team_id or token_team_id
 
+    # SECURITY: Determine if we need access filtering
+    # - token_teams is None: admin gets unrestricted, non-admin gets their accessible resources
+    # - token_teams is []: public-only token, must filter to public resources
+    # - token_teams is [...]: team-scoped, filter to those teams + public
+    # We ALWAYS pass user_email now to ensure proper access control
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+
     # Use consolidated server listing with optional team filtering
     logger.debug(f"User: {user_email} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await server_service.list_servers(
@@ -2393,9 +2401,10 @@ async def list_servers(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
-        user_email=user_email if (team_id or visibility) else None,
+        user_email=user_email,
         team_id=team_id,
-        visibility=visibility,
+        visibility="public" if is_public_only_token and not visibility else visibility,
+        token_teams=token_teams,
     )
 
     if include_pagination:
@@ -2466,16 +2475,28 @@ async def create_server(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new server for team {team_id}")
         return await server_service.register_server(
@@ -2701,9 +2722,11 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
         # Extract and normalize token teams
         # Returns None if no JWT payload (non-JWT auth), or list if JWT exists
-        token_teams_or_none = _get_token_teams_from_request(request)
-        # Coerce to list for downstream consumers that expect a list
-        token_teams = token_teams_or_none if token_teams_or_none is not None else []
+        # SECURITY: Preserve None vs [] distinction for admin bypass:
+        # - None: unrestricted (admin keeps bypass, non-admin gets their accessible resources)
+        # - []: public-only (admin bypass disabled)
+        # - [...]: team-scoped access
+        token_teams = _get_token_teams_from_request(request)
 
         # Preserve is_admin from user object (for cookie-authenticated admins)
         is_admin = False
@@ -2715,7 +2738,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         # Create enriched user dict
         user_with_token = dict(user) if isinstance(user, dict) else {"email": getattr(user, "email", str(user))}
         user_with_token["auth_token"] = auth_token
-        user_with_token["token_teams"] = token_teams  # Always a list, never None
+        user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
         # Defensive cleanup callback - runs immediately on client disconnect
@@ -3127,16 +3150,28 @@ async def create_a2a_agent(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new A2A agent for team {team_id}")
         if a2a_service is None:
@@ -3527,16 +3562,28 @@ async def create_tool(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and tool.visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new tool for team {team_id}")
         return await tool_service.register_tool(
@@ -4025,16 +4072,28 @@ async def create_resource(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new resource for team {team_id}")
         return await resource_service.register_resource(
@@ -4488,16 +4547,28 @@ async def create_prompt(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new prompt for team {team_id}")
         return await prompt_service.register_prompt(
@@ -4877,6 +4948,7 @@ async def list_gateways(
 
     # Check team_id from token
     token_team_id = getattr(request.state, "team_id", None)
+    token_teams = getattr(request.state, "token_teams", None)
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
@@ -4888,6 +4960,12 @@ async def list_gateways(
     # Determine final team ID
     team_id = team_id or token_team_id
 
+    # SECURITY: Determine if we need access filtering
+    # - token_teams is None: admin gets unrestricted, non-admin gets their accessible gateways
+    # - token_teams is []: public-only token, must filter to public gateways
+    # - token_teams is [...]: team-scoped, filter to those teams + public
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+
     # Use consolidated gateway listing with optional team filtering
     logger.debug(f"User: {user_email} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await gateway_service.list_gateways(
@@ -4895,9 +4973,10 @@ async def list_gateways(
         cursor=cursor,
         limit=limit,
         include_inactive=include_inactive,
-        user_email=user_email if (team_id or visibility) else None,
+        user_email=user_email,
         team_id=team_id,
-        visibility=visibility,
+        visibility="public" if is_public_only_token and not visibility else visibility,
+        token_teams=token_teams,
     )
 
     if include_pagination:
@@ -4938,18 +5017,30 @@ async def register_gateway(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
         gateway_team_id = gateway.team_id
+        visibility = gateway.visibility
 
-        # Check for team ID mismatch
-        if gateway_team_id is not None and token_team_id is not None and gateway_team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and gateway_team_id is not None and token_team_id is not None and gateway_team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = gateway_team_id or token_team_id
-        visibility = gateway.visibility
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = gateway_team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new gateway for team {team_id}")
 
@@ -5409,7 +5500,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = {"contents": [result]}
             except ValueError:
                 # Resource has no local content, forward to upstream MCP server
-                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "resources/subscribe":
@@ -5557,7 +5648,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                         )
                     except ValueError:
                         # Fallback to gateway forwarding
-                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
 
                 tool_task = asyncio.create_task(execute_tool())
 
@@ -5782,7 +5873,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:
-                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
                     if hasattr(result, "model_dump"):
                         result = result.model_dump(by_alias=True, exclude_none=True)
                 except Exception:
@@ -5934,9 +6025,11 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
         # Extract and normalize token teams
         # Returns None if no JWT payload (non-JWT auth), or list if JWT exists
-        token_teams_or_none = _get_token_teams_from_request(request)
-        # Coerce to list for downstream consumers that expect a list
-        token_teams = token_teams_or_none if token_teams_or_none is not None else []
+        # SECURITY: Preserve None vs [] distinction for admin bypass:
+        # - None: unrestricted (admin keeps bypass, non-admin gets their accessible resources)
+        # - []: public-only (admin bypass disabled)
+        # - [...]: team-scoped access
+        token_teams = _get_token_teams_from_request(request)
 
         # Preserve is_admin from user object (for cookie-authenticated admins)
         is_admin = False
@@ -5948,7 +6041,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         # Create enriched user dict
         user_with_token = dict(user) if isinstance(user, dict) else {"email": getattr(user, "email", str(user))}
         user_with_token["auth_token"] = auth_token
-        user_with_token["token_teams"] = token_teams  # Always a list, never None
+        user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
         # Create respond task and register for cancellation on disconnect

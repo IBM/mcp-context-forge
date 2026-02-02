@@ -351,8 +351,7 @@ class Settings(BaseSettings):
             "fe80::/10",  # IPv6 link-local
         ],
         description=(
-            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. "
-            "Default blocks cloud metadata endpoints. Add private ranges for stricter security."
+            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. " "Default blocks cloud metadata endpoints. Add private ranges for stricter security."
         ),
     )
 
@@ -366,11 +365,7 @@ class Settings(BaseSettings):
 
     ssrf_allow_localhost: bool = Field(
         default=True,
-        description=(
-            "Allow localhost/loopback addresses (127.0.0.0/8, ::1). "
-            "Set to false to block localhost access for stricter security. "
-            "Default true for development compatibility."
-        ),
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Set to false to block localhost access for stricter security. " "Default true for development compatibility."),
     )
 
     ssrf_allow_private_networks: bool = Field(

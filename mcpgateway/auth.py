@@ -179,21 +179,40 @@ async def get_team_from_token(payload: Dict[str, Any]) -> Optional[str]:
         >>> payload = {"sub": "user@example.com", "teams": ["team_456"]}
         >>> asyncio.run(get_team_from_token(payload))
         'team_456'
-    """
-    team_id = payload.get("teams")[0] if payload.get("teams") else None
-    if isinstance(team_id, dict):
-        team_id = team_id.get("id")
-    user_email = payload.get("sub")
 
-    # If no team found in token, get user's personal team using fresh DB session
-    if not team_id and user_email:
+        >>> # --- Case 2: Token has explicit empty teams (public-only) ---
+        >>> payload = {"sub": "user@example.com", "teams": []}
+        >>> asyncio.run(get_team_from_token(payload))  # Returns None, no fallback
+        >>> # None
+
+        >>> # --- Case 3: Token has no teams key (legacy fallback) ---
+        >>> payload = {"sub": "user@example.com"}
+        >>> # Falls back to user's personal team
+    """
+    teams = payload.get("teams")
+
+    # SECURITY: Distinguish between explicit empty teams and missing teams claim
+    # - teams == [] (explicit empty list): Public-only token, DO NOT fall back to personal team
+    # - teams is None (missing key): Legacy token, fall back to personal team for compatibility
+    if teams is not None:
+        if len(teams) == 0:
+            # Explicit public-only token - return None, no fallback
+            return None
+        # Has teams - use the first one
+        team_id = teams[0]
+        if isinstance(team_id, dict):
+            team_id = team_id.get("id")
+        return team_id
+
+    # Legacy fallback: teams claim missing, get user's personal team
+    user_email = payload.get("sub")
+    if user_email:
         try:
-            team_id = await asyncio.to_thread(_get_personal_team_sync, user_email)
+            return await asyncio.to_thread(_get_personal_team_sync, user_email)
         except Exception as e:
             logging.getLogger(__name__).warning(f"Failed to get personal team for {user_email}: {e}")
-            team_id = None
 
-    return team_id
+    return None
 
 
 def _check_token_revoked_sync(jti: str) -> bool:
@@ -659,11 +678,24 @@ async def get_current_user(
 
                     # Set team_id from cache
                     if request:
-                        # Prefer team from token, fallback to cached personal team
-                        token_team_id = payload.get("teams", [None])[0] if payload.get("teams") else None
-                        if isinstance(token_team_id, dict):
-                            token_team_id = token_team_id.get("id")
-                        request.state.team_id = token_team_id or cached_ctx.personal_team_id
+                        # SECURITY: Store raw token_teams for downstream empty-team checks
+                        teams = payload.get("teams")
+                        request.state.token_teams = teams  # None = missing, [] = public-only, [...] = has teams
+
+                        # Determine team_id with proper empty-teams handling
+                        if teams is not None:
+                            if len(teams) == 0:
+                                # Explicit public-only token - no team access
+                                request.state.team_id = None
+                            else:
+                                token_team_id = teams[0]
+                                if isinstance(token_team_id, dict):
+                                    token_team_id = token_team_id.get("id")
+                                request.state.team_id = token_team_id
+                        else:
+                            # Legacy fallback: teams claim missing, use personal team
+                            request.state.team_id = cached_ctx.personal_team_id
+
                         await _set_auth_method_from_payload(payload)
 
                     # Return user from cache
@@ -709,11 +741,24 @@ async def get_current_user(
                         headers={"WWW-Authenticate": "Bearer"},
                     )
 
-                # Set team_id (prefer token team, fallback to personal team from batch)
-                token_team_id = payload.get("teams", [None])[0] if payload.get("teams") else None
-                if isinstance(token_team_id, dict):
-                    token_team_id = token_team_id.get("id")
-                team_id = token_team_id or auth_ctx.get("personal_team_id")
+                # Set team_id with proper empty-teams handling
+                teams = payload.get("teams")
+                if request:
+                    # SECURITY: Store raw token_teams for downstream empty-team checks
+                    request.state.token_teams = teams  # None = missing, [] = public-only, [...] = has teams
+
+                if teams is not None:
+                    if len(teams) == 0:
+                        # Explicit public-only token - no team access
+                        team_id = None
+                    else:
+                        team_id = teams[0]
+                        if isinstance(team_id, dict):
+                            team_id = team_id.get("id")
+                else:
+                    # Legacy fallback: teams claim missing, use personal team
+                    team_id = auth_ctx.get("personal_team_id")
+
                 if request:
                     request.state.team_id = team_id
                     await _set_auth_method_from_payload(payload)
@@ -814,10 +859,12 @@ async def get_current_user(
                 # Log the error but don't fail authentication for admin tokens
                 logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
 
-        # Check team level token, if applicable. If public token, then will be defaulted to personal team.
+        # Check team level token, if applicable
         # Uses fresh DB session to avoid holding connection during downstream calls
         team_id = await get_team_from_token(payload)
         if request:
+            # SECURITY: Store raw token_teams for downstream empty-team checks
+            request.state.token_teams = payload.get("teams")  # None = missing, [] = public-only, [...] = has teams
             request.state.team_id = team_id
             await _set_auth_method_from_payload(payload)
 

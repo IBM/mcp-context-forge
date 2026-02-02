@@ -1147,7 +1147,7 @@ class SecurityValidator:
             try:
                 # getaddrinfo returns all A/AAAA records
                 addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-                for family, _, _, _, sockaddr in addr_info:
+                for _, _, _, _, sockaddr in addr_info:
                     try:
                         ip_addresses.append(ipaddress.ip_address(sockaddr[0]))
                     except ValueError:

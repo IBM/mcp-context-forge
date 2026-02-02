@@ -108,15 +108,25 @@ def test_get_personal_team_sync(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_team_from_token_variants(monkeypatch):
+    # Teams with dict format
     assert await auth.get_team_from_token({"teams": [{"id": "t1"}], "sub": "user@example.com"}) == "t1"
-    monkeypatch.setattr(auth, "_get_personal_team_sync", lambda _email: "team-2")
-    assert await auth.get_team_from_token({"teams": [], "sub": "user@example.com"}) == "team-2"
 
+    # Teams with string format
+    assert await auth.get_team_from_token({"teams": ["t2"], "sub": "user@example.com"}) == "t2"
+
+    # SECURITY: Empty teams list means public-only - NO fallback to personal team
+    assert await auth.get_team_from_token({"teams": [], "sub": "user@example.com"}) is None
+
+    # Legacy fallback: teams claim MISSING (None) should fallback to personal team
+    monkeypatch.setattr(auth, "_get_personal_team_sync", lambda _email: "team-2")
+    assert await auth.get_team_from_token({"sub": "user@example.com"}) == "team-2"
+
+    # Legacy fallback failure: if personal team lookup fails, return None
     def _boom(_email):
         raise RuntimeError("fail")
 
     monkeypatch.setattr(auth, "_get_personal_team_sync", _boom)
-    assert await auth.get_team_from_token({"teams": [], "sub": "user@example.com"}) is None
+    assert await auth.get_team_from_token({"sub": "user@example.com"}) is None
 
 
 def test_check_token_revoked_sync(monkeypatch):
