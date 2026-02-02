@@ -458,10 +458,15 @@ class TestAdminAuthMiddleware:
         mock_auth_service = MagicMock()
         mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
 
+        # Mock PermissionService to return False for non-admin user without admin permissions
+        mock_permission_service = MagicMock()
+        mock_permission_service.has_admin_permission = AsyncMock(return_value=False)
+
         with (
             patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com"})),
             patch("mcpgateway.main.get_db", _db_gen),
             patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+            patch("mcpgateway.main.PermissionService", return_value=mock_permission_service),
         ):
             response = await middleware.dispatch(request, call_next)
 

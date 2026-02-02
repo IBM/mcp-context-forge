@@ -967,6 +967,24 @@ class Permissions:
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
     ADMIN_USER_MANAGEMENT = "admin.user_management"
     ADMIN_SECURITY_AUDIT = "admin.security_audit"
+    ADMIN_OVERVIEW = "admin.overview"
+    ADMIN_DASHBOARD = "admin.dashboard"
+    ADMIN_EVENTS = "admin.events"
+    ADMIN_GRPC = "admin.grpc"
+    ADMIN_PLUGINS = "admin.plugins"
+
+    # A2A Agent permissions
+    A2A_CREATE = "a2a.create"
+    A2A_READ = "a2a.read"
+    A2A_UPDATE = "a2a.update"
+    A2A_DELETE = "a2a.delete"
+    A2A_INVOKE = "a2a.invoke"
+
+    # Tag permissions
+    TAGS_READ = "tags.read"
+    TAGS_CREATE = "tags.create"
+    TAGS_UPDATE = "tags.update"
+    TAGS_DELETE = "tags.delete"
 
     # Special permissions
     ALL_PERMISSIONS = "*"  # Wildcard for all permissions

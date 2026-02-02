@@ -132,6 +132,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
+from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
@@ -1538,7 +1539,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 # No authentication method succeeded - redirect to login or return 401
                 return self._error_response(request, root_path, 401, "Authentication required")
 
-            # Check if user exists, is active, and is admin
+            # Check if user exists, is active, and has admin permissions
             db = next(get_db())
             try:
                 auth_service = EmailAuthService(db)
@@ -1553,12 +1554,17 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                     else:
                         return ORJSONResponse(status_code=401, content={"detail": "User not found"})
                 else:
-                    # User exists in DB - check active and admin status
+                    # User exists in DB - check active status
                     if not user.is_active:
                         logger.warning(f"Admin access denied for disabled user: {username}")
                         return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
-                    if not user.is_admin:
-                        logger.warning(f"Admin access denied for non-admin user: {username}")
+
+                    # Check if user has admin permissions (either is_admin flag OR admin.* RBAC permissions)
+                    # This allows granular admin access for users with specific admin permissions
+                    permission_service = PermissionService(db)
+                    has_admin_access = await permission_service.has_admin_permission(username)
+                    if not has_admin_access:
+                        logger.warning(f"Admin access denied for user without admin permissions: {username}")
                         return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
             finally:
                 db.close()

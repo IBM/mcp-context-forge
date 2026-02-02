@@ -71,6 +71,7 @@ class PermissionService:
         team_id: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        allow_admin_bypass: bool = True,
     ) -> bool:
         """Check if user has specific permission.
 
@@ -85,6 +86,9 @@ class PermissionService:
             team_id: Team context for the permission check
             ip_address: IP address for audit logging
             user_agent: User agent for audit logging
+            allow_admin_bypass: If True, admin users bypass all permission checks.
+                               If False, admins must have explicit permissions.
+                               Default is True for backward compatibility.
 
         Returns:
             bool: True if permission is granted, False otherwise
@@ -104,8 +108,8 @@ class PermissionService:
             True
         """
         try:
-            # First check if user is admin (bypass all permission checks)
-            if await self._is_user_admin(user_email):
+            # Check if user is admin (bypass all permission checks if allowed)
+            if allow_admin_bypass and await self._is_user_admin(user_email):
                 return True
 
             # Get user's effective permissions from roles
@@ -143,6 +147,42 @@ class PermissionService:
         except Exception as e:
             logger.error(f"Error checking permission for {user_email}: {e}")
             # Default to deny on error
+            return False
+
+    async def has_admin_permission(self, user_email: str) -> bool:
+        """Check if user has any admin-level permission.
+
+        This is used by AdminAuthMiddleware to allow access to /admin/* routes
+        for users who have admin permissions via RBAC, even if they're not
+        marked as is_admin in the database.
+
+        Args:
+            user_email: Email of the user to check
+
+        Returns:
+            bool: True if user is an admin OR has any admin.* permission
+        """
+        try:
+            # First check if user is a database admin
+            if await self._is_user_admin(user_email):
+                return True
+
+            # Get user's permissions and check for any admin.* permission
+            user_permissions = await self.get_user_permissions(user_email)
+
+            # Check for wildcard or any admin permission
+            if Permissions.ALL_PERMISSIONS in user_permissions:
+                return True
+
+            # Check for any admin.* permission
+            for perm in user_permissions:
+                if perm.startswith("admin."):
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking admin permission for {user_email}: {e}")
             return False
 
     async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None) -> Set[str]:

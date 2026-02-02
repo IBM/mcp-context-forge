@@ -226,21 +226,14 @@ async def test_admin_test_api_unknown_type():
 
 
 @pytest.mark.asyncio
-async def test_get_provider_defaults(monkeypatch: pytest.MonkeyPatch):
-    import mcpgateway.middleware.rbac as rbac_module
-
-    monkeypatch.setattr(rbac_module.PermissionService, "check_permission", AsyncMock(return_value=True))
-
-    result = await llm_admin_router.get_provider_defaults(MagicMock(), current_user_ctx={"email": "user@example.com", "db": MagicMock()})
+async def test_get_provider_defaults():
+    mock_db = MagicMock()
+    result = await llm_admin_router.get_provider_defaults(mock_db, current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert isinstance(result, dict)
 
 
 @pytest.mark.asyncio
 async def test_get_provider_configs(monkeypatch: pytest.MonkeyPatch):
-    import mcpgateway.middleware.rbac as rbac_module
-
-    monkeypatch.setattr(rbac_module.PermissionService, "check_permission", AsyncMock(return_value=True))
-
     class DummyConfig:
         def model_dump(self):
             return {"fields": []}
@@ -249,7 +242,8 @@ async def test_get_provider_configs(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(config_module, "get_all_provider_configs", lambda: {"openai": DummyConfig()})
 
-    result = await llm_admin_router.get_provider_configs(MagicMock(), current_user_ctx={"email": "user@example.com", "db": MagicMock()})
+    mock_db = MagicMock()
+    result = await llm_admin_router.get_provider_configs(mock_db, current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert result["openai"]["fields"] == []
 
 
