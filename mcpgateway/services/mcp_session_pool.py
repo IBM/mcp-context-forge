@@ -1407,6 +1407,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             try:
                 # Prepare request with response channel
                 forward_data = {
+                    "type": "rpc_forward",
                     **request_data,
                     "response_channel": response_channel,
                     "mcp_session_id": mcp_session_id,
@@ -1436,10 +1437,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return None  # Execute locally on error
 
     async def start_rpc_listener(self) -> None:
-        """Start listening for forwarded RPC requests on this worker's channel.
+        """Start listening for forwarded RPC and HTTP requests on this worker's channels.
 
-        This method subscribes to a Redis pub/sub channel specific to this worker
-        and processes incoming forwarded RPC requests from other workers.
+        This method subscribes to Redis pub/sub channels specific to this worker
+        and processes incoming forwarded requests from other workers:
+        - mcpgw:pool_rpc:{WORKER_ID} - for SSE transport JSON-RPC forwards
+        - mcpgw:pool_http:{WORKER_ID} - for Streamable HTTP request forwards
         """
         if not settings.mcpgateway_session_affinity_enabled:
             return
@@ -1453,35 +1456,41 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 logger.debug("Redis not available, RPC listener not started")
                 return
 
-            channel = f"mcpgw:pool_rpc:{WORKER_ID}"
+            rpc_channel = f"mcpgw:pool_rpc:{WORKER_ID}"
+            http_channel = f"mcpgw:pool_http:{WORKER_ID}"
             pubsub = redis.pubsub()
-            await pubsub.subscribe(channel)
-            logger.info(f"RPC listener started for worker {WORKER_ID}")
+            await pubsub.subscribe(rpc_channel, http_channel)
+            logger.info(f"RPC/HTTP listener started for worker {WORKER_ID} on channels: {rpc_channel}, {http_channel}")
 
             while not self._closed:
                 try:
                     msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                     if msg and msg["type"] == "message":
                         request = orjson.loads(msg["data"])
+                        forward_type = request.get("type")
                         response_channel = request.get("response_channel")
 
                         if response_channel:
-                            # Execute the forwarded request
-                            response = await self._execute_forwarded_request(request)
-
-                            # Publish response back
-                            await redis.publish(response_channel, orjson.dumps(response))
-                            logger.debug(f"Processed forwarded RPC request, response sent to {response_channel}")
+                            if forward_type == "rpc_forward":
+                                # Execute forwarded RPC request for SSE transport
+                                response = await self._execute_forwarded_request(request)
+                                await redis.publish(response_channel, orjson.dumps(response))
+                                logger.debug(f"Processed forwarded RPC request, response sent to {response_channel}")
+                            elif forward_type == "http_forward":
+                                # Execute forwarded HTTP request for Streamable HTTP transport
+                                await self._execute_forwarded_http_request(request, redis)
+                            else:
+                                logger.warning(f"Unknown forward type: {forward_type}")
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
-                    logger.warning(f"Error processing forwarded RPC request: {e}")
+                    logger.warning(f"Error processing forwarded request: {e}")
 
-            await pubsub.unsubscribe(channel)
-            logger.info(f"RPC listener stopped for worker {WORKER_ID}")
+            await pubsub.unsubscribe(rpc_channel, http_channel)
+            logger.info(f"RPC/HTTP listener stopped for worker {WORKER_ID}")
 
         except Exception as e:
-            logger.warning(f"RPC listener failed: {e}")
+            logger.warning(f"RPC/HTTP listener failed: {e}")
 
     async def _execute_forwarded_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a forwarded RPC request locally via internal HTTP call.
@@ -1542,6 +1551,89 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             logger.warning(f"Error executing forwarded request: {e}")
             return {"error": {"code": -32603, "message": str(e)}}
 
+    async def _execute_forwarded_http_request(self, request: Dict[str, Any], redis: Any) -> None:
+        """Execute a forwarded HTTP request locally and return response via Redis.
+
+        This method handles full HTTP requests forwarded from other workers for
+        Streamable HTTP transport session affinity. It reconstructs the HTTP request,
+        makes an internal call to the appropriate endpoint, and publishes the response
+        back through Redis.
+
+        Args:
+            request: Serialized HTTP request data from Redis Pub/Sub containing:
+                - type: "http_forward"
+                - response_channel: Redis channel to publish response to
+                - mcp_session_id: Session identifier
+                - method: HTTP method (GET, POST, DELETE)
+                - path: Request path (e.g., /mcp)
+                - query_string: Query parameters
+                - headers: Request headers dict
+                - body: Hex-encoded request body
+            redis: Redis client for publishing response
+        """
+        response_channel = None
+        try:
+            response_channel = request.get("response_channel")
+            method = request.get("method")
+            path = request.get("path")
+            query_string = request.get("query_string", "")
+            headers = request.get("headers", {})
+            body_hex = request.get("body", "")
+            mcp_session_id = request.get("mcp_session_id")
+
+            # Decode hex body back to bytes
+            body = bytes.fromhex(body_hex) if body_hex else b""
+
+            session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
+            print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
+
+            # Add internal forwarding headers to prevent loops
+            internal_headers = dict(headers)
+            internal_headers["x-forwarded-internally"] = "true"
+            internal_headers["x-original-worker"] = request.get("original_worker", "unknown")
+
+            # Make internal HTTP request to local endpoint
+            url = f"http://127.0.0.1:{settings.port}{path}"
+            if query_string:
+                url = f"{url}?{query_string}"
+
+            async with httpx.AsyncClient() as client:
+                response = await client.request(
+                    method=method,
+                    url=url,
+                    headers=internal_headers,
+                    content=body,
+                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                )
+
+                print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed locally: {response.status_code}")
+
+                # Serialize response for Redis transport
+                response_data = {
+                    "status": response.status_code,
+                    "headers": dict(response.headers),
+                    "body": response.content.hex(),  # Hex encode binary response
+                }
+
+                # Publish response back to requesting worker
+                if redis and response_channel:
+                    await redis.publish(response_channel, orjson.dumps(response_data))
+                    print(f"[HTTP_AFFINITY] Published HTTP response to Redis channel: {response_channel}")
+
+        except Exception as e:
+            logger.error(f"Error executing forwarded HTTP request: {e}")
+            # Try to send error response if possible
+            if redis and response_channel:
+                error_response = {
+                    "status": 500,
+                    "headers": {"content-type": "application/json"},
+                    "body": orjson.dumps({"error": "Internal forwarding error"}).hex(),
+                }
+                try:
+                    await redis.publish(response_channel, orjson.dumps(error_response))
+                except Exception:
+                    pass  # Best effort error reporting
+
     async def get_streamable_http_session_owner(self, mcp_session_id: str) -> Optional[str]:
         """Get the worker ID that owns a Streamable HTTP session.
 
@@ -1566,11 +1658,12 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         body: bytes,
         query_string: str = "",
     ) -> Optional[Dict[str, Any]]:
-        """Forward a Streamable HTTP request to the worker that owns the session.
+        """Forward a Streamable HTTP request to the worker that owns the session via Redis Pub/Sub.
 
-        This method forwards the entire HTTP request to another worker via internal
-        HTTP call. Used when a Streamable HTTP request arrives at a worker that
-        doesn't own the session.
+        This method forwards the entire HTTP request to another worker using Redis
+        Pub/Sub channels, similar to forward_request_to_owner() for SSE transport.
+        This ensures session affinity works correctly in single-host multi-worker
+        deployments where hostname-based routing fails.
 
         Args:
             owner_worker_id: The worker ID that owns the session.
@@ -1592,50 +1685,68 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")
 
         try:
-            # Extract hostname from owner_worker_id (format: hostname:pid)
-            # In Docker, containers can reach each other by hostname
-            owner_hostname = owner_worker_id.split(":")[0] if ":" in owner_worker_id else owner_worker_id
+            # First-Party
+            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
-            # Build the internal URL using owner's hostname
-            url = f"http://{owner_hostname}:{settings.port}{path}"
-            if query_string:
-                url = f"{url}?{query_string}"
-            print(f"[HTTP_AFFINITY] Forwarding to URL: {url}")
+            redis = await get_redis_client()
+            if not redis:
+                logger.warning("Redis unavailable for HTTP forwarding, executing locally")
+                return None  # Fall back to local execution
 
-            # Forward headers but add marker to prevent infinite loops
-            forward_headers = dict(headers)
-            forward_headers["x-forwarded-internally"] = "true"
-            forward_headers["x-original-worker"] = WORKER_ID
-            # Update Host header to match the target (required for proper routing)
-            forward_headers["host"] = f"{owner_hostname}:{settings.port}"
+            # Generate unique response channel for this request
+            response_uuid = uuid.uuid4().hex
+            response_channel = f"mcpgw:pool_http_response:{response_uuid}"
 
-            async with httpx.AsyncClient() as client:
-                response = await client.request(
-                    method=method,
-                    url=url,
-                    headers=forward_headers,
-                    content=body,
-                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                )
+            # Serialize HTTP request for Redis transport
+            forward_data = {
+                "type": "http_forward",
+                "response_channel": response_channel,
+                "mcp_session_id": mcp_session_id,
+                "method": method,
+                "path": path,
+                "query_string": query_string,
+                "headers": headers,
+                "body": body.hex() if body else "",  # Hex encode binary body
+                "original_worker": WORKER_ID,
+                "timestamp": time.time(),
+            }
 
-                self._forwarded_requests += 1
-                print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarded response: {response.status_code}")
-                if response.status_code >= 400:
-                    print(f"[HTTP_AFFINITY] Error response body: {response.content[:500]}")
+            # Subscribe to response channel BEFORE publishing request (prevent race)
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(response_channel)
 
-                return {
-                    "status": response.status_code,
-                    "headers": dict(response.headers),
-                    "body": response.content,
-                }
+            try:
+                # Publish forwarded request to owner worker's HTTP channel
+                owner_channel = f"mcpgw:pool_http:{owner_worker_id}"
+                await redis.publish(owner_channel, orjson.dumps(forward_data))
+                print(f"[HTTP_AFFINITY] Published HTTP request to Redis channel: {owner_channel}")
 
-        except httpx.TimeoutException:
+                # Wait for response with timeout
+                timeout = settings.mcpgateway_pool_rpc_forward_timeout
+                async with asyncio.timeout(timeout):
+                    while True:
+                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+                        if msg and msg["type"] == "message":
+                            response_data = orjson.loads(msg["data"])
+                            print(f"[HTTP_AFFINITY] Received HTTP response via Redis: status={response_data.get('status')}")
+
+                            # Decode hex body back to bytes
+                            body_hex = response_data.get("body", "")
+                            response_data["body"] = bytes.fromhex(body_hex) if body_hex else b""
+
+                            self._forwarded_requests += 1
+                            return response_data
+
+            finally:
+                await pubsub.unsubscribe(response_channel)
+
+        except asyncio.TimeoutError:
             self._forwarded_request_timeouts += 1
-            logger.warning(f"Timeout forwarding Streamable HTTP request to owner {owner_worker_id}")
+            logger.warning(f"Timeout forwarding HTTP request to owner {owner_worker_id}")
             return None
         except Exception as e:
             self._forwarded_request_failures += 1
-            logger.warning(f"Error forwarding Streamable HTTP request to owner: {e}")
+            logger.warning(f"Error forwarding HTTP request via Redis: {e}")
             return None
 
     def get_metrics(self) -> Dict[str, Any]:

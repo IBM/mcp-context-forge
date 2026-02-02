@@ -17,12 +17,12 @@ MCP Gateway supports horizontal scaling with multiple worker processes (e.g., `g
 
 ## Decision
 
-Implement **transport-specific session affinity** using Redis for cross-worker coordination:
+Implement **unified session affinity** using Redis Pub/Sub for cross-worker coordination:
 
-1. **SSE Transport**: Uses message-based routing via `broadcast()` → `respond()` pattern
-2. **Streamable HTTP Transport**: Uses direct RPC-style forwarding via `forward_request_to_owner()` pattern
+1. **SSE Transport**: Uses Redis Pub/Sub for JSON-RPC message routing via `broadcast()` → `respond()` pattern
+2. **Streamable HTTP Transport**: Uses Redis Pub/Sub for full HTTP request forwarding via `forward_streamable_http_to_owner()` pattern
 
-Both transports share the core session pool (`MCPSessionPool`) and ownership registration (`register_session_mapping()`), but differ in how requests reach the session owner.
+Both transports share the core session pool (`MCPSessionPool`), ownership registration (`register_session_mapping()`), and **Redis Pub/Sub communication mechanism**. The only difference is the payload format (JSON-RPC messages vs full HTTP requests).
 
 ## Architecture Overview
 
@@ -182,7 +182,22 @@ sequenceDiagram
 
 ## Streamable HTTP Transport Flow
 
-Streamable HTTP uses **independent HTTP request/response cycles**. Any worker can respond to the client, so we use HTTP-level forwarding combined with internal `/rpc` routing.
+Streamable HTTP uses **independent HTTP request/response cycles**. Any worker can respond to the client, so we use **Redis Pub/Sub forwarding** to route requests to the session owner, which then executes them via internal `/rpc` routing.
+
+### Why Redis Pub/Sub Instead of HTTP Forwarding?
+
+An earlier implementation attempted HTTP-based forwarding using the worker's hostname extracted from `WORKER_ID` (format: `hostname:pid`). This approach **failed for single-host multi-worker deployments** because:
+
+- All workers share the same hostname (e.g., gunicorn with 4 workers on one server)
+- Worker IDs: `myserver:1234`, `myserver:5678`, `myserver:9012`
+- Extracting hostname → `myserver` for all workers
+- HTTP forwarding to `http://myserver:4444/mcp` routes to load balancer, not specific worker PID
+- Result: Random worker receives request, session not found, error
+
+**Redis Pub/Sub solution** works universally:
+- Each worker listens on unique channel: `mcpgw:pool_http:{worker_id}`
+- Direct worker-to-worker messaging without hostname routing
+- Works identically for single-host and multi-host deployments
 
 ### Why Not Use SDK's Session Manager?
 
@@ -199,11 +214,13 @@ Our solution: **bypass the SDK for request routing** and use `/rpc` endpoint dir
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | `handle_streamable_http()` | `streamablehttp_transport.py:1252` | ASGI handler with affinity routing |
-| `forward_streamable_http_to_owner()` | `mcp_session_pool.py:1559` | HTTP-level forwarding to owner worker |
+| `forward_streamable_http_to_owner()` | `mcp_session_pool.py:1651` | Redis Pub/Sub forwarding to owner worker |
+| `_execute_forwarded_http_request()` | `mcp_session_pool.py:1554` | Executes forwarded HTTP requests on owner |
 | `get_streamable_http_session_owner()` | `mcp_session_pool.py:1545` | Checks Redis for session ownership |
+| `start_rpc_listener()` | `mcp_session_pool.py:1438` | Listens on both RPC and HTTP Redis channels |
 | `/rpc` endpoint | `main.py:5259` | Unified request handler for all methods |
 | `register_session_mapping()` | `mcp_session_pool.py:545` | Registers session ownership atomically |
-| `WORKER_ID` | `mcp_session_pool.py` | Unique identifier: `{hostname}:{pid}` |
+| `WORKER_ID` | `mcp_session_pool.py:61` | Unique identifier: `{hostname}:{pid}` |
 
 ### Sequence Diagram
 
@@ -239,14 +256,19 @@ sequenceDiagram
     LB->>WB: Route to WORKER_B (different worker!)
     WB->>Redis: GET mcpgw:pool_owner:ABC
     Redis-->>WB: host_a:1 (not us!)
-    WB->>WA: HTTP Forward POST /mcp (x-forwarded-internally: true)
+    WB->>WB: forward_streamable_http_to_owner()
+    WB->>Redis: Subscribe to response channel
+    WB->>Redis: PUBLISH to mcpgw:pool_http:host_a:1 (hex-encoded request)
 
-    Note over WA: Receives forwarded request
-    WA->>WA: Route to /rpc (bypass SDK sessions)
+    Note over WA: start_rpc_listener() receives message
+    Redis-->>WA: HTTP forward message
+    WA->>WA: _execute_forwarded_http_request()
+    WA->>WA: POST /rpc (internal, x-forwarded-internally: true)
     WA->>WA: tool_service.invoke_tool()
     WA->>Backend: Execute tool
     Backend-->>WA: Result
-    WA-->>WB: HTTP Response {result}
+    WA->>Redis: PUBLISH response (hex-encoded)
+    Redis-->>WB: Response received
 
     WB-->>Client: HTTP Response {result}
 ```
@@ -280,40 +302,58 @@ sequenceDiagram
 │          │                                                                      │
 │          └─► pool.forward_streamable_http_to_owner(...)                         │
 │                │                                                                │
-│                ├─► Extract hostname from owner: "host_a"                        │
+│                ├─► Generate unique response channel UUID                        │
+│                │     response_channel = mcpgw:pool_http_response:{uuid}        │
 │                │                                                                │
-│                ├─► HTTP POST http://host_a:4444/mcp/                            │
-│                │     Headers:                                                   │
-│                │       x-forwarded-internally: true                             │
-│                │       x-original-worker: host_b:1                              │
-│                │       mcp-session-id: ABC123                                   │
-│                │     Body: (original request body)                              │
+│                ├─► Serialize HTTP request for Redis:                           │
+│                │     {                                                          │
+│                │       "type": "http_forward",                                 │
+│                │       "response_channel": response_channel,                   │
+│                │       "method": "POST",                                       │
+│                │       "path": "/mcp",                                         │
+│                │       "headers": {...},                                       │
+│                │       "body": "..." (hex-encoded),                            │
+│                │       "original_worker": "host_b:1"                           │
+│                │     }                                                          │
+│                │                                                                │
+│                ├─► Subscribe to response channel (prevent race)                 │
+│                │                                                                │
+│                ├─► Redis PUBLISH to mcpgw:pool_http:host_a:1                   │
+│                │                                                                │
+│                ├─► Wait for response on response_channel (with timeout)         │
 │                │                                                                │
 │                :     (see WORKER_A processing below)                            │
 │                :                                                                │
 │                ▼                                                                │
-│              Response received from WORKER_A                                    │
+│              Response received from Redis                                       │
+│                │                                                                │
+│                ├─► Decode hex body back to bytes                                │
 │                │                                                                │
 │                └─► Forward response to client ──────────────────────► CLIENT    │
 │                                                                                 │
 │  ─────────────────────────────────────────────────────────────────────────────  │
 │                                                                                 │
-│  WORKER_A (receives forwarded HTTP request) - hostname:pid = "host_a:1"         │
+│  WORKER_A (start_rpc_listener receives Redis message) - hostname:pid = "host_a:1" │
 │    │                                                                            │
-│    └─► handle_streamable_http(scope, receive, send)                             │
+│    └─► start_rpc_listener() loop                                                │
 │          │                                                                      │
-│          ├─► is_internally_forwarded = True (x-forwarded-internally header)     │
+│          ├─► Redis message received on mcpgw:pool_http:host_a:1                │
+│          │     type = "http_forward"                                           │
 │          │                                                                      │
-│          ├─► Read request body, parse JSON-RPC                                  │
-│          │                                                                      │
-│          └─► Route to /rpc (bypass SDK's broken session manager)                │
+│          └─► _execute_forwarded_http_request(request, redis)                    │
 │                │                                                                │
-│                ├─► HTTP POST http://127.0.0.1:4444/rpc                          │
+│                ├─► Deserialize HTTP request from Redis message                  │
+│                │                                                                │
+│                ├─► Decode hex body back to bytes                                │
+│                │                                                                │
+│                ├─► Add x-forwarded-internally: true header                      │
+│                │                                                                │
+│                ├─► HTTP POST http://127.0.0.1:4444/mcp                          │
 │                │     Headers:                                                   │
-│                │       content-type: application/json                           │
-│                │       x-mcp-session-id: ABC123                                 │
 │                │       x-forwarded-internally: true                             │
-│                │       authorization: Bearer ...                                │
+│                │       x-original-worker: host_b:1                              │
+│                │       mcp-session-id: ABC123                                   │
+│                │       (+ all original headers)                                 │
 │                │                                                                │
 │                └─► /rpc handler (main.py)                                       │
 │                      │                                                          │
@@ -327,9 +367,15 @@ sequenceDiagram
 │                            │                                                    │
 │                            └─► MCPSessionPool.acquire()                         │
 │                                  │                                              │
-│                                  └─► Reuse pooled connection to backend         │
+│                                  ├─► Reuse pooled connection to backend         │
+│                                  │                                              │
+│                                  └─► Execute tool on upstream server            │
 │                                        │                                        │
-│                                        └─► Execute tool on upstream server      │
+│                                        └─► Response returned to _execute...()   │
+│                                              │                                  │
+│                                              ├─► Hex-encode response body       │
+│                                              │                                  │
+│                                              └─► Redis PUBLISH to response_channel │
 │                                                                                 │
 │  ─────────────────────────────────────────────────────────────────────────────  │
 │                                                                                 │
@@ -374,25 +420,33 @@ self._server_instances: dict[str, ServerInstance] = {}
 |--------|-----|-----------------|
 | **Client Connection** | Persistent SSE stream | Independent HTTP requests |
 | **Response Path** | Via SSE stream on owner worker | Via HTTP on any worker (forwarded if needed) |
-| **Routing Mechanism** | `broadcast()` → Redis → `respond()` | HTTP forward → `/rpc` endpoint |
-| **Message Storage** | Redis/DB (persistent until consumed) | HTTP only (synchronous) |
-| **Latency** | Higher (message queue + polling) | Lower (direct HTTP) |
+| **Routing Mechanism** | `broadcast()` → Redis Pub/Sub → `respond()` | Redis Pub/Sub → `_execute_forwarded_http_request()` |
+| **Message Format** | JSON-RPC message only | Full HTTP request (method, headers, body) |
+| **Message Storage** | Redis/DB (persistent until consumed) | Redis Pub/Sub only (synchronous) |
+| **Latency** | Higher (message queue + polling) | Lower (direct pub/sub) |
 | **SDK Dependency** | Uses SDK for SSE streaming | Bypasses SDK for session routing |
-| **Why Different?** | SSE stream constraint | SDK session issues require bypass |
+| **Hex Encoding** | Not needed (JSON only) | Required (binary HTTP bodies) |
 
-### Why Two Implementations?
+### Why Same Mechanism, Different Payloads?
 
-**SSE is constrained by the SSE stream:**
-- The SSE stream is a persistent connection on ONE worker
-- Only that worker can send responses to the client
-- Messages MUST route to the SSE owner for sending
-- The `broadcast()` → `respond()` pattern is **required**
+**Both transports now use Redis Pub/Sub** for consistency and reliability:
 
-**Streamable HTTP has no such constraint:**
-- Each HTTP request/response is independent
-- Any worker CAN respond (via HTTP response)
-- We only need session affinity for upstream pool efficiency
-- Direct RPC-style forwarding is **sufficient and faster**
+**SSE Transport:**
+- Forwards JSON-RPC messages via `mcpgw:pool_rpc:{worker_id}`
+- Owner worker's `respond()` loop processes messages
+- Responses sent via persistent SSE stream back to client
+
+**Streamable HTTP Transport:**
+- Forwards full HTTP requests via `mcpgw:pool_http:{worker_id}`
+- Owner worker's `_execute_forwarded_http_request()` executes locally
+- Responses returned via Redis Pub/Sub to requesting worker
+- Requesting worker sends HTTP response to client
+
+**Benefits of unified approach:**
+- Works in ALL deployment scenarios (single-host, multi-host, containers)
+- No dependency on hostname-based routing
+- Consistent debugging and monitoring
+- Same timeout and error handling logic
 
 ## Redis Keys
 
@@ -400,13 +454,15 @@ self._server_instances: dict[str, ServerInstance] = {}
 |-------------|---------|-----|
 | `mcpgw:pool_owner:{session_id}` | Worker ID that owns the session (e.g., `host_a:1`) | Configurable (default 5min) |
 | `mcpgw:session_mapping:{session_id}:{url}:{transport}:{gateway_id}` | Pool key for session | Configurable |
-| `mcpgw:pool_rpc:{worker_id}` | Pub/sub channel for SSE forwarded requests | N/A (pub/sub) |
+| `mcpgw:pool_rpc:{worker_id}` | Pub/sub channel for SSE JSON-RPC forwards | N/A (pub/sub) |
 | `mcpgw:pool_rpc_response:{uuid}` | Pub/sub channel for SSE responses | N/A (pub/sub) |
+| `mcpgw:pool_http:{worker_id}` | Pub/sub channel for Streamable HTTP forwards | N/A (pub/sub) |
+| `mcpgw:pool_http_response:{uuid}` | Pub/sub channel for HTTP responses | N/A (pub/sub) |
 | `mcpgw:eventstore:{stream_id}:events` | Sorted set for event storage (resumability) | Configurable |
 | `mcpgw:eventstore:{stream_id}:meta` | Hash for stream metadata | Configurable |
 | `mcpgw:eventstore:event_index` | Hash mapping event_id to stream | Configurable |
 
-**Note:** Streamable HTTP uses direct HTTP forwarding, not Redis pub/sub for request routing. The `pool_rpc` channels are primarily for SSE transport.
+**Note:** Both SSE and Streamable HTTP use Redis Pub/Sub for worker-to-worker communication. The difference is payload format: JSON-RPC messages for SSE, full HTTP requests for Streamable HTTP.
 
 ## Configuration
 
@@ -461,14 +517,61 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 - Hostname is unique per container (container ID or configured hostname)
 - Combined format ensures uniqueness across containers and processes
 
+**Important Note on Single-Host Deployments:**
+While `hostname:pid` provides unique worker identification, it **cannot be used for HTTP routing** in single-host multi-worker scenarios. All workers on the same host share the same hostname, making hostname-based HTTP forwarding fail. This is why Redis Pub/Sub is used instead - each worker listens on a unique Redis channel based on the full `WORKER_ID` (including PID), enabling direct worker-to-worker communication without hostname routing.
+
+## Deployment Compatibility
+
+| Deployment Type | Hostname Uniqueness | Worker ID Example | Compatibility |
+|----------------|---------------------|-------------------|---------------|
+| Kubernetes StatefulSet | ✅ Unique per pod | `mcpgateway-0:1`, `mcpgateway-1:1` | ✅ Fully compatible |
+| Docker Compose (multi-container) | ✅ Unique per container | `gateway-1:1`, `gateway-2:1` | ✅ Fully compatible |
+| Kubernetes Deployment (replicas) | ✅ Unique per pod | `mcpgateway-abc123:1`, `mcpgateway-def456:1` | ✅ Fully compatible |
+| **Gunicorn multi-worker (single host)** | ❌ Shared hostname | `myserver:1234`, `myserver:5678` | ✅ Fixed with Redis Pub/Sub |
+| **Docker single container + gunicorn** | ❌ Shared hostname | `container:1`, `container:2` | ✅ Fixed with Redis Pub/Sub |
+| **Traditional server + gunicorn** | ❌ Shared hostname | `prod-server:1234`, `prod-server:5678` | ✅ Fixed with Redis Pub/Sub |
+
+**Key Insight:** Redis Pub/Sub channels use the full `WORKER_ID` (including PID), so even when hostnames are identical, each worker listens on a unique channel. This makes the solution work universally across all deployment scenarios.
+
+## Binary Data Encoding
+
+Since Redis Pub/Sub transports messages as strings (JSON), binary HTTP request/response bodies must be encoded:
+
+```python
+# In forward_streamable_http_to_owner() - encoding request
+forward_data = {
+    "type": "http_forward",
+    "body": body.hex() if body else "",  # bytes → hex string
+    ...
+}
+
+# In _execute_forwarded_http_request() - decoding request
+body = bytes.fromhex(body_hex) if body_hex else b""
+
+# In _execute_forwarded_http_request() - encoding response
+response_data = {
+    "body": response.content.hex(),  # bytes → hex string
+    ...
+}
+
+# In forward_streamable_http_to_owner() - decoding response
+response_data["body"] = bytes.fromhex(body_hex) if body_hex else b""
+```
+
+**Performance Impact:**
+- Hex encoding doubles payload size (each byte → 2 hex chars)
+- Negligible for typical JSON-RPC requests (<10KB)
+- Redis default message limit is ~512MB (sufficient for MCP use cases)
+- Encoding/decoding is fast (built-in Python operations)
+
 ## Loop Prevention
 
 When forwarding requests, we prevent infinite loops with the `x-forwarded-internally` header:
 
 ```python
-# In handle_streamable_http() when forwarding
-forward_headers["x-forwarded-internally"] = "true"
-forward_headers["x-original-worker"] = WORKER_ID
+# In _execute_forwarded_http_request() when making internal call
+internal_headers["x-forwarded-internally"] = "true"
+internal_headers["x-original-worker"] = request.get("original_worker", "unknown")
 
 # In handle_streamable_http() when receiving
 is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
@@ -480,9 +583,17 @@ if is_internally_forwarded and mcp_session_id:
     # Execute locally - don't forward again
 ```
 
+This prevents the following loop:
+1. WORKER_B receives request for session owned by WORKER_A
+2. WORKER_B forwards via Redis to WORKER_A
+3. WORKER_A's `_execute_forwarded_http_request()` adds `x-forwarded-internally: true`
+4. WORKER_A makes internal HTTP call to `127.0.0.1:4444/mcp`
+5. Load balancer routes to... WORKER_A (with header set)
+6. WORKER_A sees header, skips affinity check, executes locally ✓
+
 ## Startup Initialization
 
-The RPC listener must be started during application startup:
+The RPC/HTTP listener must be started during application startup:
 
 ```python
 # In main.py lifespan
@@ -490,6 +601,14 @@ if settings.mcpgateway_session_affinity_enabled:
     pool = get_mcp_session_pool()
     pool._rpc_listener_task = asyncio.create_task(pool.start_rpc_listener())
 ```
+
+The `start_rpc_listener()` subscribes to both channels:
+- `mcpgw:pool_rpc:{WORKER_ID}` - for SSE JSON-RPC forwards
+- `mcpgw:pool_http:{WORKER_ID}` - for Streamable HTTP request forwards
+
+Messages are routed based on the `type` field:
+- `"rpc_forward"` → `_execute_forwarded_request()` (SSE)
+- `"http_forward"` → `_execute_forwarded_http_request()` (Streamable HTTP)
 
 ## Consequences
 
@@ -499,15 +618,19 @@ if settings.mcpgateway_session_affinity_enabled:
 - Works transparently for both SSE and Streamable HTTP
 - Atomic ownership prevents race conditions (SETNX)
 - Bypasses SDK session issues for reliable operation
+- **Universal deployment compatibility** - works for single-host and multi-host deployments
+- **Consistent communication mechanism** - both transports use Redis Pub/Sub
+- **No hostname routing dependency** - eliminates single-host multi-worker failures
 
 ### Negative
 - Requires Redis for multi-worker deployments
-- Adds latency for cross-worker requests (HTTP forwarding)
-- More complex debugging (requests may span workers)
+- Adds latency for cross-worker requests (~1-2ms Redis roundtrip)
+- More complex debugging (requests may span workers via Redis)
 - SDK is partially bypassed, requiring maintenance of parallel path
+- Binary data requires hex encoding (2x payload size in Redis)
 
 ### Neutral
-- Two different implementations (SSE uses message queue, Streamable HTTP uses HTTP forwarding)
+- Unified Redis Pub/Sub approach for both transports (different payload formats)
 - Streamable HTTP routing could be simplified further by eliminating SDK dependency entirely
 
 ## Future Improvements
