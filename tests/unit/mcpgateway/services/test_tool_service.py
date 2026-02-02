@@ -474,6 +474,21 @@ class TestToolService:
         assert tool_read.auth.auth_header_value == settings.masked_auth_value
 
     @pytest.mark.asyncio
+    async def test_convert_tool_to_read_authheaders_empty(self, tool_service, mock_tool):
+        """Check auth for authheaders auth with empty value (regression test for StopIteration)"""
+
+        mock_tool.auth_type = "authheaders"
+        # Set auth_value to something non-empty so has_encrypted_auth is True
+        mock_tool.auth_value = "some_encrypted_garbage"
+
+        # Mock decode_auth to return empty dict
+        with patch("mcpgateway.services.tool_service.decode_auth", return_value={}):
+            # Should not raise StopIteration
+            tool_read = tool_service.convert_tool_to_read(mock_tool)
+
+        assert tool_read.auth is None
+
+    @pytest.mark.asyncio
     async def test_convert_tool_to_read_include_auth_false_skips_decode(self, tool_service, mock_tool):
         """Verify include_auth=False skips decryption and returns minimal auth info."""
         # Set up tool with encrypted basic auth
@@ -3598,7 +3613,14 @@ class TestToolListingGracefulErrorHandling:
         service = ToolService()
 
         # Use patch.object to properly mock the instance method
-        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+        # Also patch _get_registry_cache to ensure we don't hit polluted cache
+        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert), \
+             patch("mcpgateway.services.tool_service._get_registry_cache") as mock_get_cache:
+
+            # Setup mock cache to miss and handle async set
+            mock_get_cache.return_value.get = AsyncMock(return_value=None)
+            mock_get_cache.return_value.set = AsyncMock()
+            mock_get_cache.return_value.hash_filters = Mock(return_value="mock_hash")
             # Call list_tools - should NOT raise an exception
             result, next_cursor = await service.list_tools(mock_db)
 

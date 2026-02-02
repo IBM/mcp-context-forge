@@ -726,12 +726,15 @@ class ToolService:
                 }
             elif tool.auth_type == "authheaders":
                 # Get first key
-                first_key = next(iter(decoded_auth_value))
-                tool_dict["auth"] = {
-                    "auth_type": "authheaders",
-                    "auth_header_key": first_key,
-                    "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,
-                }
+                if decoded_auth_value:
+                    first_key = next(iter(decoded_auth_value))
+                    tool_dict["auth"] = {
+                        "auth_type": "authheaders",
+                        "auth_header_key": first_key,
+                        "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,
+                    }
+                else:
+                    tool_dict["auth"] = None
             else:
                 tool_dict["auth"] = None
         elif not include_auth and has_encrypted_auth:
