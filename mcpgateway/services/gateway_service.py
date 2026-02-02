@@ -49,7 +49,7 @@ import ssl
 import tempfile
 import time
 from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING, Union
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
@@ -78,7 +78,7 @@ except ImportError:
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db, get_for_update
+from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource

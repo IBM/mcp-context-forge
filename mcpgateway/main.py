@@ -5539,6 +5539,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
                     Returns:
                         The tool invocation result or gateway forwarding result.
+
+                    Raises:
+                        ValueError: If the tool is not found.
                     """
                     try:
                         return await tool_service.invoke_tool(
