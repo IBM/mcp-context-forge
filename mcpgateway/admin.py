@@ -1089,6 +1089,7 @@ async def update_global_passthrough_headers(
 @rate_limit(requests_per_minute=10)  # Strict limit for cache operations
 async def invalidate_passthrough_headers_cache(
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Invalidate the GlobalConfig cache.
 
@@ -1126,6 +1127,7 @@ async def invalidate_passthrough_headers_cache(
 @rate_limit(requests_per_minute=30)
 async def get_passthrough_headers_cache_stats(
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get GlobalConfig cache statistics.
 
@@ -1161,6 +1163,7 @@ async def get_passthrough_headers_cache_stats(
 @rate_limit(requests_per_minute=10)
 async def invalidate_a2a_stats_cache(
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Invalidate the A2A stats cache.
 
@@ -1196,6 +1199,7 @@ async def invalidate_a2a_stats_cache(
 @rate_limit(requests_per_minute=30)
 async def get_a2a_stats_cache_stats(
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get A2A stats cache statistics.
 
@@ -1225,6 +1229,7 @@ async def get_a2a_stats_cache_stats(
 async def get_mcp_session_pool_metrics(
     request: Request,  # pylint: disable=unused-argument
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get MCP session pool metrics.
 
@@ -10354,7 +10359,7 @@ async def admin_set_prompt_state(
 
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
@@ -10388,7 +10393,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
 @admin_router.post("/roots/{uri:path}/delete")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """
     Delete a root via the admin UI.
 
@@ -10778,7 +10783,7 @@ async def admin_test_gateway(
 # Event Streaming via SSE to the Admin UI
 @admin_router.get("/events")
 @require_permission("admin.events", allow_admin_bypass=False)
-async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions)):
+async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """
     Stream admin events from all services via SSE (Server-Sent Events).
 
@@ -11264,6 +11269,7 @@ async def admin_get_logs(
     offset: int = 0,
     order: str = "desc",
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get filtered log entries from the in-memory buffer.
 
@@ -11349,6 +11355,7 @@ async def admin_stream_logs(
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
 ):
     """Stream real-time log updates via Server-Sent Events.
 
@@ -11433,6 +11440,7 @@ async def admin_stream_logs(
 async def admin_get_log_file(
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
 ):
     """Download log file.
 
@@ -11563,6 +11571,7 @@ async def admin_export_logs(
     request_id: Optional[str] = None,
     search: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
 ):
     """Export filtered logs in JSON or CSV format.
 
@@ -11952,7 +11961,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
 
 @admin_router.get("/import/status/{import_id}")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)):
+async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get import status via Admin UI.
 
     Args:
@@ -11976,7 +11985,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
 
 @admin_router.get("/import/status")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions)):
+async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """List all import statuses via Admin UI.
 
     Args:
@@ -13879,6 +13888,7 @@ async def admin_generate_support_bundle(
     include_env: bool = Query(default=True, description="Include environment config"),
     include_system: bool = Query(default=True, description="Include system info"),
     user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """
     Generate and download a support bundle with sanitized diagnostics.
@@ -13955,6 +13965,7 @@ async def admin_generate_support_bundle(
 async def get_maintenance_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Render the maintenance dashboard partial (platform admin only).
 
@@ -14000,7 +14011,7 @@ async def get_maintenance_partial(
 
 @admin_router.get("/observability/partial", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
+async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Render the observability dashboard partial.
 
     Args:
@@ -14016,7 +14027,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
+async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Render the advanced metrics dashboard partial.
 
     Args:
@@ -14032,7 +14043,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions)):
+async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get observability statistics for the dashboard.
 
     Args:
@@ -14089,6 +14100,7 @@ async def get_observability_traces(
     attribute_search: Optional[str] = Query(None),
     tool_name: Optional[str] = Query(None),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get list of traces for the dashboard.
 
@@ -14175,7 +14187,7 @@ async def get_observability_traces(
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions)):
+async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get detailed trace information with spans.
 
     Args:
@@ -14215,6 +14227,7 @@ async def save_observability_query(
     filter_config: dict = Body(..., description="Filter configuration as JSON"),
     is_shared: bool = Body(False, description="Whether query is shared with team"),
     user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Save a new observability query filter configuration.
 
@@ -14259,7 +14272,7 @@ async def save_observability_query(
 
 @admin_router.get("/observability/queries", response_model=list)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
+async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """List saved observability queries for the current user.
 
     Returns user's own queries plus any shared queries.
@@ -14307,7 +14320,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
+async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Get a specific saved query by ID.
 
     Args:
@@ -14362,6 +14375,7 @@ async def update_observability_query(
     filter_config: Optional[dict] = Body(None),
     is_shared: Optional[bool] = Body(None),
     user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Update an existing saved query.
 
@@ -14427,7 +14441,7 @@ async def update_observability_query(
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
+async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Delete a saved query.
 
     Args:
@@ -14460,7 +14474,7 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
+async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):  # pylint: disable=unused-argument
     """Track usage of a saved query (increments use count and updates last_used_at).
 
     Args:
@@ -14515,6 +14529,7 @@ async def get_latency_percentiles(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get latency percentiles (p50, p90, p95, p99) over time.
 
@@ -14682,6 +14697,7 @@ async def get_timeseries_metrics(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get time-series metrics (request rate, error rate, throughput).
 
@@ -15008,6 +15024,7 @@ async def get_top_slow_endpoints(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(10, ge=1, le=100, description="Number of results"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get top N slowest endpoints by average duration.
 
@@ -15075,6 +15092,7 @@ async def get_top_volume_endpoints(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(10, ge=1, le=100, description="Number of results"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get top N highest volume endpoints by request count.
 
@@ -15140,6 +15158,7 @@ async def get_top_error_endpoints(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(10, ge=1, le=100, description="Number of results"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get top N error-prone endpoints by error count and rate.
 
@@ -15209,6 +15228,7 @@ async def get_latency_heatmap(
     time_buckets: int = Query(24, ge=10, le=100, description="Number of time buckets"),
     latency_buckets: int = Query(20, ge=5, le=50, description="Number of latency buckets"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get latency distribution heatmap data.
 
@@ -15255,6 +15275,7 @@ async def get_tool_usage(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get tool usage frequency statistics.
 
@@ -15326,6 +15347,7 @@ async def get_tool_performance(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get tool performance metrics (avg, min, max duration).
 
@@ -15376,6 +15398,7 @@ async def get_tool_errors(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get tool error rates and statistics.
 
@@ -15446,6 +15469,7 @@ async def get_tool_chains(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of chains to return"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get tool chain analysis (which tools are invoked together in the same trace).
 
@@ -15522,6 +15546,7 @@ async def get_tool_chains(
 async def get_tools_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Render the tool invocation metrics dashboard HTML partial.
 
@@ -15555,6 +15580,7 @@ async def get_prompt_usage(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get prompt rendering frequency statistics.
 
@@ -15626,6 +15652,7 @@ async def get_prompt_performance(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get prompt performance metrics (avg, min, max duration).
 
@@ -15675,6 +15702,7 @@ async def get_prompts_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get prompt error rates.
 
@@ -15736,6 +15764,7 @@ async def get_prompts_errors(
 async def get_prompts_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Render the prompt rendering metrics dashboard HTML partial.
 
@@ -15769,6 +15798,7 @@ async def get_resource_usage(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get resource fetch frequency statistics.
 
@@ -15840,6 +15870,7 @@ async def get_resource_performance(
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
     limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get resource performance metrics (avg, min, max duration).
 
@@ -15889,6 +15920,7 @@ async def get_resources_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Get resource error rates.
 
@@ -15950,6 +15982,7 @@ async def get_resources_errors(
 async def get_resources_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ):
     """Render the resource fetch metrics dashboard HTML partial.
 

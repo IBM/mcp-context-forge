@@ -719,14 +719,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
+      - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (increased from 120s to handle slow MCP calls)
+      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
