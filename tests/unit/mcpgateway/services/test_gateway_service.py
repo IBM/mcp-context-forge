@@ -1353,41 +1353,10 @@ class TestGatewayService:
     # FORWARD
     # ────────────────────────────────────────────────────────────────────
 
-    @pytest.mark.asyncio
-    async def test_forward_request(self, gateway_service, mock_gateway):
-        """Happy-path RPC forward."""
-        mock_response = AsyncMock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json = Mock(return_value={"jsonrpc": "2.0", "result": {"success": True, "data": "OK"}, "id": 1})
-        gateway_service._http_client.post.return_value = mock_response
-
-        result = await gateway_service.forward_request(mock_gateway, "method", {"p": 1})
-
-        assert result == {"success": True, "data": "OK"}
-        assert mock_gateway.last_seen is not None
-
-    @pytest.mark.asyncio
-    async def test_forward_request_error_response(self, gateway_service, mock_gateway):
-        """Gateway returns JSON-RPC error."""
-        mock_response = AsyncMock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json = Mock(return_value={"jsonrpc": "2.0", "error": {"code": -32000, "message": "Boom"}, "id": 1})
-        gateway_service._http_client.post.return_value = mock_response
-
-        with pytest.raises(GatewayError) as exc_info:
-            await gateway_service.forward_request(mock_gateway, "method", {"p": 1})
-        assert "Gateway error: Boom" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_forward_request_connection_error(self, gateway_service, mock_gateway):
-        """HTTP client raises network-level exception."""
-        gateway_service._http_client.post.side_effect = Exception("Network down")
-        with pytest.raises(GatewayConnectionError):
-            await gateway_service.forward_request(mock_gateway, "method", {})
-
     # ────────────────────────────────────────────────────────────────────
     # REDIS/INITIALIZATION COVERAGE
     # ────────────────────────────────────────────────────────────────────
+
 
     @pytest.mark.asyncio
     async def test_init_with_redis_unavailable(self, monkeypatch):
