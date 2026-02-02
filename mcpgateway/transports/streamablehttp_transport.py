@@ -516,7 +516,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
             meta_data = ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
-        print("No active request context found")
+        logger.debug("No active request context found")
 
     # Extract authorization parameters from user context (same pattern as list_tools)
     user_email = user_context.get("email") if user_context else None
@@ -560,7 +560,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                         if url:
                             await pool.register_session_mapping(mcp_session_id, url, gateway_id, transport_type, user_email)
             except Exception as e:
-                print(f"Failed to pre-register session mapping for Streamable HTTP: {e}")
+                logger.error(f"Failed to pre-register session mapping for Streamable HTTP: {e}")
 
             forwarded_response = await pool.forward_request_to_owner(
                 mcp_session_id,
@@ -871,7 +871,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
             meta_data = ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
-        print("No active request context found")
+        logger.debug("No active request context found")
 
     try:
         async with get_db() as db:
@@ -995,7 +995,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
             meta_data = ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
-        print("No active request context found")
+        logger.debug("No active request context found")
 
     try:
         async with get_db() as db:
@@ -1223,7 +1223,7 @@ class SessionManagerWrapper:
                 from mcpgateway.transports.redis_event_store import RedisEventStore
 
                 event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
-                print("Using RedisEventStore for stateful sessions (single-worker)")
+                logger.debug("Using RedisEventStore for stateful sessions (single-worker)")
             else:
                 # Fall back to in-memory for single-worker or when Redis not available
                 event_store = InMemoryEventStore()
@@ -1253,7 +1253,7 @@ class SessionManagerWrapper:
             >>> callable(wrapper.initialize)
             True
         """
-        print("Initializing Streamable HTTP service")
+        logger.debug("Initializing Streamable HTTP service")
         await self.stack.enter_async_context(self.session_manager.run())
 
     async def shutdown(self) -> None:
@@ -1268,7 +1268,7 @@ class SessionManagerWrapper:
             >>> callable(wrapper.shutdown)
             True
         """
-        print("Stopping Streamable HTTP Session Manager...")
+        logger.debug("Stopping Streamable HTTP Session Manager...")
         await self.stack.aclose()
 
     async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -1311,7 +1311,7 @@ class SessionManagerWrapper:
         mcp_session_id = headers.get("mcp-session-id", "not-provided")
         method = scope.get("method", "UNKNOWN")
         query_string = scope.get("query_string", b"").decode("utf-8")
-        print(f"[STATEFUL] Streamable HTTP {method} {path} | MCP-Session-Id: {mcp_session_id} | Query: {query_string} | Stateful: {settings.use_stateful_sessions}")
+        logger.debug(f"[STATEFUL] Streamable HTTP {method} {path} | MCP-Session-Id: {mcp_session_id} | Query: {query_string} | Stateful: {settings.use_stateful_sessions}")
 
         # Note: mcp-session-id from client is used for gateway-internal session affinity
         # routing (stored in request_headers_var), but is NOT renamed or forwarded to
@@ -1322,15 +1322,15 @@ class SessionManagerWrapper:
         is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
 
         # Always log session manager ID and sessions for debugging
-        print(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)} | Sessions: {list(self.session_manager._server_instances.keys())}")
+        logger.debug(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)} | Sessions: {list(self.session_manager._server_instances.keys())}")
 
         if is_internally_forwarded:
-            print(f"[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: {method} | Session: {mcp_session_id}")
+            logger.debug(f"[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: {method} | Session: {mcp_session_id}")
 
             # Only route POST requests with JSON-RPC body to /rpc
             # DELETE and other methods should return success (session cleanup is local)
             if method != "POST":
-                print(f"[HTTP_AFFINITY_FORWARDED] Non-POST method, returning 200 OK")
+                logger.debug("[HTTP_AFFINITY_FORWARDED] Non-POST method, returning 200 OK")
                 await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
                 await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","result":{}}'})
                 return
@@ -1351,7 +1351,7 @@ class SessionManagerWrapper:
                 body = b"".join(body_parts)
 
                 if not body:
-                    print(f"[HTTP_AFFINITY_FORWARDED] Empty body, returning 202 Accepted")
+                    logger.debug("[HTTP_AFFINITY_FORWARDED] Empty body, returning 202 Accepted")
                     await send({"type": "http.response.start", "status": 202, "headers": []})
                     await send({"type": "http.response.body", "body": b""})
                     return
@@ -1362,11 +1362,11 @@ class SessionManagerWrapper:
 
                 json_body = orjson.loads(body)
                 rpc_method = json_body.get("method", "")
-                print(f"[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: {rpc_method}")
+                logger.debug(f"[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: {rpc_method}")
 
                 # Notifications don't need /rpc routing - just acknowledge
                 if rpc_method.startswith("notifications/"):
-                    print(f"[HTTP_AFFINITY_FORWARDED] Notification, returning 202 Accepted")
+                    logger.debug("[HTTP_AFFINITY_FORWARDED] Notification, returning 202 Accepted")
                     await send({"type": "http.response.start", "status": 202, "headers": []})
                     await send({"type": "http.response.body", "body": b""})
                     return
@@ -1413,7 +1413,7 @@ class SessionManagerWrapper:
                             "body": response.content,
                         }
                     )
-                    print(f"[HTTP_AFFINITY_FORWARDED] Response sent | Status: {response.status_code}")
+                    logger.debug(f"[HTTP_AFFINITY_FORWARDED] Response sent | Status: {response.status_code}")
                     return
             except Exception as e:
                 logger.error(f"[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: {e}")
@@ -1427,11 +1427,11 @@ class SessionManagerWrapper:
 
                 pool = get_mcp_session_pool()
                 owner = await pool.get_streamable_http_session_owner(mcp_session_id)
-                print(f"[HTTP_AFFINITY_CHECK] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
+                logger.debug(f"[HTTP_AFFINITY_CHECK] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
 
                 if owner and owner != WORKER_ID:
                     # Session owned by another worker - forward the entire HTTP request
-                    print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
+                    logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
 
                     # Read request body
                     body_parts = []
@@ -1474,17 +1474,17 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
+                        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
                         return
                     else:
                         # Forwarding failed - fall through to local handling
                         # This may result in "session not found" but it's better than no response
-                        print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
+                        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
 
                 elif owner == WORKER_ID and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    print(f"[HTTP_AFFINITY_LOCAL] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner is us, routing to /rpc")
+                    logger.debug(f"[HTTP_AFFINITY_LOCAL] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner is us, routing to /rpc")
 
                     # Read request body
                     body_parts = []
@@ -1499,7 +1499,7 @@ class SessionManagerWrapper:
                     body = b"".join(body_parts)
 
                     if not body:
-                        print(f"[HTTP_AFFINITY_LOCAL] Empty body, returning 202 Accepted")
+                        logger.debug("[HTTP_AFFINITY_LOCAL] Empty body, returning 202 Accepted")
                         await send({"type": "http.response.start", "status": 202, "headers": []})
                         await send({"type": "http.response.body", "body": b""})
                         return
@@ -1511,11 +1511,11 @@ class SessionManagerWrapper:
 
                         json_body = orjson.loads(body)
                         rpc_method = json_body.get("method", "")
-                        print(f"[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: {rpc_method}")
+                        logger.debug(f"[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: {rpc_method}")
 
                         # Notifications don't need /rpc routing
                         if rpc_method.startswith("notifications/"):
-                            print(f"[HTTP_AFFINITY_LOCAL] Notification, returning 202 Accepted")
+                            logger.debug("[HTTP_AFFINITY_LOCAL] Notification, returning 202 Accepted")
                             await send({"type": "http.response.start", "status": 202, "headers": []})
                             await send({"type": "http.response.body", "body": b""})
                             return
@@ -1559,7 +1559,7 @@ class SessionManagerWrapper:
                                     "body": response.content,
                                 }
                             )
-                            print(f"[HTTP_AFFINITY_LOCAL] Response sent | Status: {response.status_code}")
+                            logger.debug(f"[HTTP_AFFINITY_LOCAL] Response sent | Status: {response.status_code}")
                             return
                     except Exception as e:
                         logger.error(f"[HTTP_AFFINITY_LOCAL] Error routing to /rpc: {e}")
@@ -1601,18 +1601,18 @@ class SessionManagerWrapper:
 
         try:
             await self.session_manager.handle_request(scope, receive, send_with_capture)
-            print(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
-            print(f"[SESSION_MGR_AFTER] Sessions after handling: {list(self.session_manager._server_instances.keys())}")
+            logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
+            logger.debug(f"[SESSION_MGR_AFTER] Sessions after handling: {list(self.session_manager._server_instances.keys())}")
 
             # Register ownership for the session we just handled
             # This captures both existing sessions (mcp_session_id from request)
             # and new sessions (captured_session_id from response)
-            print(
+            logger.debug(
                 f"[HTTP_AFFINITY_DEBUG] affinity_enabled={settings.mcpgateway_session_affinity_enabled} stateful={settings.use_stateful_sessions} captured={captured_session_id} mcp_session_id={mcp_session_id}"
             )
             if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
                 session_to_register = captured_session_id or (mcp_session_id if mcp_session_id != "not-provided" else None)
-                print(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
+                logger.debug(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
                 if session_to_register:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
@@ -1621,14 +1621,14 @@ class SessionManagerWrapper:
 
                         pool = get_mcp_session_pool()
                         await pool._register_pool_session_owner(session_to_register)
-                        print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after successful handling")
+                        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after successful handling")
                     except Exception as e:
-                        print(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
+                        logger.debug(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
                         logger.debug(f"Failed to register session ownership: {e}")
 
         except anyio.ClosedResourceError:
             # Expected when client closes one side of the stream (normal lifecycle)
-            print("Streamable HTTP connection closed by client (ClosedResourceError)")
+            logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
             logger.error(f"[STATEFUL] Streamable HTTP request failed | Session: {mcp_session_id} | Error: {e}")
             logger.exception(f"Error handling streamable HTTP request: {e}")

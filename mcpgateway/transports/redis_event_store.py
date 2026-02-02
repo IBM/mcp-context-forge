@@ -77,15 +77,33 @@ class RedisEventStore(EventStore):
         logger.info(f"RedisEventStore initialized: max_events={max_events_per_stream}, ttl={ttl}s")
 
     def _get_stream_meta_key(self, stream_id: str) -> str:
-        """Get Redis key for stream metadata."""
+        """Get Redis key for stream metadata.
+
+        Args:
+            stream_id: Unique stream identifier
+
+        Returns:
+            Redis key for stream metadata hash
+        """
         return f"mcpgw:eventstore:{stream_id}:meta"
 
     def _get_stream_events_key(self, stream_id: str) -> str:
-        """Get Redis key for stream events sorted set."""
+        """Get Redis key for stream events sorted set.
+
+        Args:
+            stream_id: Unique stream identifier
+
+        Returns:
+            Redis key for stream events sorted set
+        """
         return f"mcpgw:eventstore:{stream_id}:events"
 
     def _get_event_index_key(self) -> str:
-        """Get Redis key for global event index."""
+        """Get Redis key for global event index.
+
+        Returns:
+            Redis key for event index hash
+        """
         return "mcpgw:eventstore:event_index"
 
     async def store_event(self, stream_id: str, message: JSONRPCMessage | None) -> str:
@@ -103,6 +121,9 @@ class RedisEventStore(EventStore):
             >>> event_id = await store.store_event("stream-123", {"jsonrpc": "2.0", "method": "test"})  # doctest: +SKIP
             >>> isinstance(event_id, str)  # doctest: +SKIP
             True  # doctest: +SKIP
+
+        Raises:
+            RuntimeError: If Redis client is not available
         """
         redis: Redis = await get_redis_client()
         if redis is None:
