@@ -399,6 +399,7 @@ async def get_db() -> AsyncGenerator[Session, Any]:
         Ensures the session is closed after use.
 
     Raises:
+        asyncio.CancelledError: Re-raised after rollback and close on task cancellation.
         Exception: Re-raises any exception after rolling back the transaction.
 
     Examples:

@@ -1099,6 +1099,7 @@ async def invalidate_passthrough_headers_cache(
 
     Args:
         _user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         Dict with invalidation status and cache statistics
@@ -1136,6 +1137,7 @@ async def get_passthrough_headers_cache_stats(
 
     Args:
         _user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         Dict with cache statistics
@@ -1173,6 +1175,7 @@ async def invalidate_a2a_stats_cache(
 
     Args:
         _user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         Dict with invalidation status and cache statistics
@@ -1208,6 +1211,7 @@ async def get_a2a_stats_cache_stats(
 
     Args:
         _user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         Dict with cache statistics
@@ -1240,6 +1244,7 @@ async def get_mcp_session_pool_metrics(
     Args:
         request: HTTP request object (required by rate_limit decorator)
         _user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         Dict with pool metrics including:
@@ -10369,6 +10374,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
     Args:
         request: FastAPI request containing form data.
         user: Authenticated user.
+        db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the admin dashboard.
@@ -10405,6 +10411,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         uri (str): The URI of the root to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         user (str): Authenticated user dependency.
+        db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the roots section of the admin
@@ -10794,6 +10801,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
     Args:
         request (Request): The FastAPI request object, used to detect client disconnection.
         _user (Any): Authenticated user dependency (ensures admin permissions).
+        db: Database session for permission checks.
 
     Returns:
         StreamingResponse: An async generator yielding SSE-formatted strings
@@ -11285,6 +11293,7 @@ async def admin_get_logs(
         offset: Number of results to skip
         order: Sort order (asc or desc)
         user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         Dictionary with logs and metadata
@@ -11365,6 +11374,7 @@ async def admin_stream_logs(
         entity_id: Filter by entity ID
         level: Minimum log level
         user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         SSE response with real-time log updates
@@ -11447,6 +11457,7 @@ async def admin_get_log_file(
     Args:
         filename: Specific log file to download (optional)
         user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         File download response or list of available files
@@ -11585,6 +11596,7 @@ async def admin_export_logs(
         request_id: Filter by request ID
         search: Search in message text
         user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         File download response with exported logs
@@ -11967,6 +11979,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
     Args:
         import_id: Import operation ID
         user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         JSON response with import status
@@ -11990,6 +12003,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 
     Args:
         user: Authenticated user
+        db: Database session for permission checks.
 
     Returns:
         JSON response with list of import statuses
@@ -13902,6 +13916,7 @@ async def admin_generate_support_bundle(
         include_env: Include environment configuration (default: True)
         include_system: Include system diagnostics (default: True)
         user: Authenticated user from dependency
+        db: Database session for permission checks.
 
     Returns:
         Response: ZIP file download with support bundle
@@ -13979,6 +13994,7 @@ async def get_maintenance_partial(
     Args:
         request: FastAPI request object
         _user: Authenticated user with admin permissions
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered maintenance dashboard template
@@ -14017,6 +14033,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
     Args:
         request: FastAPI request object
         _user: Authenticated user with admin permissions (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered observability dashboard template
@@ -14033,6 +14050,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
     Args:
         request: FastAPI request object
         _user: Authenticated user with admin permissions (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered metrics dashboard template
@@ -14050,6 +14068,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
         request: FastAPI request object
         hours: Number of hours to look back for statistics (1-168)
         _user: Authenticated user with admin permissions (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered statistics template with trace counts and averages
@@ -14117,6 +14136,7 @@ async def get_observability_traces(
         attribute_search: Full-text attribute search
         tool_name: Filter by tool name (shows traces that invoked this tool)
         _user: Authenticated user with admin permissions (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered traces list template
@@ -14194,6 +14214,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
         request: FastAPI request object
         trace_id: UUID of the trace to retrieve
         _user: Authenticated user with admin permissions (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered trace detail template with waterfall view
@@ -14238,6 +14259,7 @@ async def save_observability_query(
         filter_config: Dictionary containing all filter values
         is_shared: Whether this query is visible to other users
         user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Created query details with id
@@ -14280,6 +14302,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
     Args:
         request: FastAPI request object
         user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         list: List of saved query dictionaries
@@ -14327,6 +14350,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
         request: FastAPI request object
         query_id: ID of the saved query
         user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Query details
@@ -14387,6 +14411,7 @@ async def update_observability_query(
         filter_config: New filter configuration (optional)
         is_shared: New sharing status (optional)
         user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Updated query details
@@ -14448,6 +14473,7 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
         request: FastAPI request object
         query_id: ID of the query to delete
         user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Raises:
         HTTPException: 404 if query not found, 403 if unauthorized
@@ -14481,6 +14507,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         request: FastAPI request object
         query_id: ID of the query being used
         user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Updated query usage stats
@@ -14538,6 +14565,7 @@ async def get_latency_percentiles(
         hours: Number of hours to look back (1-168)
         interval_minutes: Aggregation interval in minutes (5-1440)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Time-series data with percentiles
@@ -14706,6 +14734,7 @@ async def get_timeseries_metrics(
         hours: Number of hours to look back (1-168)
         interval_minutes: Aggregation interval in minutes (5-1440)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Time-series data with request counts, error rates, and throughput
@@ -15033,6 +15062,7 @@ async def get_top_slow_endpoints(
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: List of slowest endpoints with stats
@@ -15101,6 +15131,7 @@ async def get_top_volume_endpoints(
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: List of highest volume endpoints with stats
@@ -15167,6 +15198,7 @@ async def get_top_error_endpoints(
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: List of error-prone endpoints with stats
@@ -15241,6 +15273,7 @@ async def get_latency_heatmap(
         time_buckets: Number of time buckets (10-100)
         latency_buckets: Number of latency buckets (5-50)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Heatmap data with time and latency dimensions
@@ -15284,6 +15317,7 @@ async def get_tool_usage(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Tool usage statistics with counts and percentages
@@ -15356,6 +15390,7 @@ async def get_tool_performance(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Tool performance metrics
@@ -15407,6 +15442,7 @@ async def get_tool_errors(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Tool error statistics
@@ -15478,6 +15514,7 @@ async def get_tool_chains(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of chains to return (5-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Tool chain statistics showing common tool sequences
@@ -15553,6 +15590,7 @@ async def get_tools_partial(
     Args:
         request: FastAPI request object
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered tool metrics dashboard partial
@@ -15589,6 +15627,7 @@ async def get_prompt_usage(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of prompts to return (5-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Prompt usage statistics with counts and percentages
@@ -15661,6 +15700,7 @@ async def get_prompt_performance(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of prompts to return (5-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Prompt performance metrics
@@ -15710,6 +15750,7 @@ async def get_prompts_errors(
         hours: Time range in hours to analyze
         limit: Maximum number of prompts to return
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Prompt error statistics
@@ -15771,6 +15812,7 @@ async def get_prompts_partial(
     Args:
         request: FastAPI request object
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered prompt metrics dashboard partial
@@ -15807,6 +15849,7 @@ async def get_resource_usage(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of resources to return (5-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Resource usage statistics with counts and percentages
@@ -15879,6 +15922,7 @@ async def get_resource_performance(
         hours: Number of hours to look back (1-168)
         limit: Maximum number of resources to return (5-100)
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Resource performance metrics
@@ -15928,6 +15972,7 @@ async def get_resources_errors(
         hours: Time range in hours to analyze
         limit: Maximum number of resources to return
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         dict: Resource error statistics
@@ -15989,6 +16034,7 @@ async def get_resources_partial(
     Args:
         request: FastAPI request object
         _user: Authenticated user (required by dependency)
+        db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered resource metrics dashboard partial

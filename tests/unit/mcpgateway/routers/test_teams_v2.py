@@ -156,7 +156,7 @@ class TestTeamsRouterV2:
             assert "Team name cannot be empty" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_get_team_success(self, mock_current_user, mock_db, mock_team):
+    async def test_get_team_success(self, mock_user_context, mock_db, mock_team):
         """Test getting a specific team successfully."""
         team_id = mock_team.id
 
@@ -166,15 +166,15 @@ class TestTeamsRouterV2:
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
             MockService.return_value = mock_service
 
-            result = await teams.get_team(team_id, current_user=mock_current_user, db=mock_db)
+            result = await teams.get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
             mock_service.get_team_by_id.assert_called_once_with(team_id)
-            mock_service.get_user_role_in_team.assert_called_once_with(mock_current_user.email, team_id)
+            mock_service.get_user_role_in_team.assert_called_once_with(mock_user_context["email"], team_id)
 
     @pytest.mark.asyncio
-    async def test_get_team_not_found(self, mock_current_user, mock_db):
+    async def test_get_team_not_found(self, mock_user_context, mock_db):
         """Test getting a non-existent team."""
         team_id = str(uuid4())
 
@@ -184,13 +184,13 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.get_team(team_id, current_user=mock_current_user, db=mock_db)
+                await teams.get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_update_team_success(self, mock_current_user, mock_db, mock_team):
+    async def test_update_team_success(self, mock_user_context, mock_db, mock_team):
         """Test updating a team successfully."""
         team_id = mock_team.id
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
@@ -201,13 +201,13 @@ class TestTeamsRouterV2:
             mock_service.update_team = AsyncMock(return_value=mock_team)
             MockService.return_value = mock_service
 
-            result = await teams.update_team(team_id, request, current_user=mock_current_user, db=mock_db)
+            result = await teams.update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             mock_service.update_team.assert_called_once_with(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
 
     @pytest.mark.asyncio
-    async def test_delete_team_success(self, mock_current_user, mock_db):
+    async def test_delete_team_success(self, mock_user_context, mock_db):
         """Test deleting a team successfully."""
         team_id = str(uuid4())
 
@@ -217,17 +217,17 @@ class TestTeamsRouterV2:
             mock_service.delete_team = AsyncMock(return_value=True)
             MockService.return_value = mock_service
 
-            result = await teams.delete_team(team_id, current_user=mock_current_user, db=mock_db)
+            result = await teams.delete_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Team deleted successfully"
-            mock_service.delete_team.assert_called_once_with(team_id, mock_current_user.email)
+            mock_service.delete_team.assert_called_once_with(team_id, mock_user_context["email"])
 
     # =========================================================================
     # Team Member Management Tests
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_list_team_members_success(self, mock_current_user, mock_db, mock_team_member):
+    async def test_list_team_members_success(self, mock_user_context, mock_db, mock_team_member):
         """Test listing team members successfully."""
         team_id = str(uuid4())
 
@@ -250,7 +250,7 @@ class TestTeamsRouterV2:
                 cursor=None,
                 limit=None,
                 include_pagination=False,
-                current_user=mock_current_user,
+                current_user=mock_user_context,
                 db=mock_db
             )
 
@@ -260,7 +260,7 @@ class TestTeamsRouterV2:
             assert result[0].role == mock_team_member.role
 
     @pytest.mark.asyncio
-    async def test_update_team_member_success(self, mock_current_user, mock_db, mock_team_member):
+    async def test_update_team_member_success(self, mock_user_context, mock_db, mock_team_member):
         """Test updating a team member's role successfully."""
         team_id = str(uuid4())
         user_email = "member@example.com"
@@ -274,13 +274,13 @@ class TestTeamsRouterV2:
             mock_service.update_member_role = AsyncMock(return_value=mock_team_member)
             MockService.return_value = mock_service
 
-            result = await teams.update_team_member(team_id, user_email, request, current_user=mock_current_user, db=mock_db)
+            result = await teams.update_team_member(team_id, user_email, request, current_user=mock_user_context, db=mock_db)
 
             assert result.role == "owner"
             mock_service.update_member_role.assert_called_once_with(team_id, user_email, request.role)
 
     @pytest.mark.asyncio
-    async def test_remove_team_member_as_owner(self, mock_current_user, mock_db):
+    async def test_remove_team_member_as_owner(self, mock_user_context, mock_db):
         """Test removing a team member as team owner."""
         team_id = str(uuid4())
         user_email = "member@example.com"
@@ -291,7 +291,7 @@ class TestTeamsRouterV2:
             mock_service.remove_member_from_team = AsyncMock(return_value=True)
             MockService.return_value = mock_service
 
-            result = await teams.remove_team_member(team_id, user_email, current_user=mock_current_user, db=mock_db)
+            result = await teams.remove_team_member(team_id, user_email, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Team member removed successfully"
             mock_service.remove_member_from_team.assert_called_once_with(team_id, user_email)
@@ -301,7 +301,7 @@ class TestTeamsRouterV2:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_team_operation_with_database_error(self, mock_current_user, mock_db):
+    async def test_team_operation_with_database_error(self, mock_user_context, mock_db):
         """Test handling of database errors in team operations."""
         team_id = str(uuid4())
 
@@ -311,7 +311,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.get_team(team_id, current_user=mock_current_user, db=mock_db)
+                await teams.get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to get team" in str(exc_info.value.detail)
