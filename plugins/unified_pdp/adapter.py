@@ -45,6 +45,13 @@ class PolicyEvaluationError(Exception):
     """
 
     def __init__(self, engine: EngineType, message: str, cause: Exception | None = None):
+        """Initialize a policy evaluation error.
+
+        Args:
+            engine: The engine type that raised the error.
+            message: Human-readable error description.
+            cause: Optional underlying exception that caused this error.
+        """
         self.engine = engine
         self.cause = cause
         super().__init__(f"[{engine.value}] {message}")
