@@ -1631,8 +1631,8 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 }
                 try:
                     await redis.publish(response_channel, orjson.dumps(error_response))
-                except Exception:
-                    pass  # Best effort error reporting
+                except Exception as publish_error:
+                    logger.debug(f"Failed to publish error response via Redis: {publish_error}")
 
     async def get_streamable_http_session_owner(self, mcp_session_id: str) -> Optional[str]:
         """Get the worker ID that owns a Streamable HTTP session.
