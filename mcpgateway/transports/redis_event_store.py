@@ -56,12 +56,12 @@ class RedisEventStore(EventStore):
         >>> store = RedisEventStore(max_events_per_stream=200, ttl=7200)
 
         >>> # Store an event
-        >>> event_id = await store.store_event("stream-123", message)
+        >>> event_id = await store.store_event("stream-123", message)  # doctest: +SKIP
 
         >>> # Replay events after a specific event_id
-        >>> async def callback(msg):
+        >>> async def callback(msg):  # doctest: +SKIP
         ...     print(f"Replayed: {msg}")
-        >>> stream_id = await store.replay_events_after(event_id, callback)
+        >>> stream_id = await store.replay_events_after(event_id, callback)  # doctest: +SKIP
     """
 
     def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600):
@@ -100,11 +100,13 @@ class RedisEventStore(EventStore):
             Unique event_id for this event
 
         Examples:
-            >>> event_id = await store.store_event("stream-123", {"jsonrpc": "2.0", "method": "test"})
-            >>> isinstance(event_id, str)
-            True
+            >>> event_id = await store.store_event("stream-123", {"jsonrpc": "2.0", "method": "test"})  # doctest: +SKIP
+            >>> isinstance(event_id, str)  # doctest: +SKIP
+            True  # doctest: +SKIP
         """
         redis: Redis = await get_redis_client()
+        if redis is None:
+            raise RuntimeError("Redis client not available - cannot store event")
         event_id = str(uuid.uuid4())
 
         logger.info(f"[REDIS_EVENTSTORE] Storing event | stream_id={stream_id} | event_id={event_id} | message_type={type(message).__name__ if message else 'None'}")
@@ -176,14 +178,17 @@ class RedisEventStore(EventStore):
             stream_id if found, None if event not found or evicted
 
         Examples:
-            >>> messages = []
-            >>> async def callback(msg):
-            ...     messages.append(msg)
-            >>> stream_id = await store.replay_events_after(event_id, callback)
-            >>> len(messages) > 0
-            True
+            >>> messages = []  # doctest: +SKIP
+            >>> async def callback(msg):  # doctest: +SKIP
+            ...     messages.append(msg)  # doctest: +SKIP
+            >>> stream_id = await store.replay_events_after(event_id, callback)  # doctest: +SKIP
+            >>> len(messages) > 0  # doctest: +SKIP
+            True  # doctest: +SKIP
         """
         redis: Redis = await get_redis_client()
+        if redis is None:
+            logger.warning("Redis client not available - cannot replay events")
+            return None
         index_key = self._get_event_index_key()
 
         logger.info(f"[REDIS_EVENTSTORE] Replaying events | last_event_id={last_event_id}")

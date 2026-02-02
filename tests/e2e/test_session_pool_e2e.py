@@ -969,10 +969,13 @@ class TestMultiWorkerSessionAffinityE2E:
 
     @pytest.mark.asyncio
     async def test_worker_id_is_process_id(self):
-        """Verify WORKER_ID is set to the current process ID."""
+        """Verify WORKER_ID is set to hostname:pid format."""
+        import socket
         from mcpgateway.services.mcp_session_pool import WORKER_ID
 
-        assert WORKER_ID == str(os.getpid())
+        # WORKER_ID format is "hostname:pid"
+        expected = f"{socket.gethostname()}:{os.getpid()}"
+        assert WORKER_ID == expected
 
     @pytest.mark.asyncio
     async def test_register_pool_session_owner_disabled_when_affinity_off(self):

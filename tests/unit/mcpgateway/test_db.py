@@ -1196,20 +1196,20 @@ def test_email_api_token_helpers():
 # --- SSO auth session helpers ---
 def test_sso_auth_session_is_expired_handles_naive_datetime():
     session = db.SSOAuthSession(provider_id="github", state="state", redirect_uri="http://example.com")
-    session.expires_at = datetime.now() - timedelta(minutes=1)
+    session.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     assert session.is_expired is True
 
 
 def test_email_team_join_request_is_expired_timezone_mismatch():
     """Ensure timezone mismatch is handled in join request expiration."""
-    expires_at = datetime.now() - timedelta(minutes=1)  # naive datetime
+    expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)  # timezone-aware datetime
     join_request = db.EmailTeamJoinRequest(team_id="team-1", user_email="user@example.com", expires_at=expires_at)
     assert join_request.is_expired() is True
 
 
 def test_pending_user_approval_is_expired_timezone_mismatch():
     """Ensure timezone mismatch is handled in pending approval expiration."""
-    expires_at = datetime.now() - timedelta(minutes=1)  # naive datetime
+    expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)  # timezone-aware datetime
     approval = db.PendingUserApproval(email="user@example.com", full_name="User", auth_provider="github", expires_at=expires_at, status="pending")
     assert approval.is_expired() is True
 

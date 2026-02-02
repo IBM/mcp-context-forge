@@ -1386,15 +1386,15 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             owner = await redis.get(f"mcpgw:pool_owner:{mcp_session_id}")
             method = request_data.get("method", "unknown")
             if not owner:
-                print(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
                 return None  # No owner registered - execute locally (new session)
 
             owner_id = owner.decode() if isinstance(owner, bytes) else owner
             if owner_id == WORKER_ID:
-                print(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | We own it → execute locally")
                 return None  # We own it - execute locally
 
-            print(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
+            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Owner: {owner_id} → forwarding")
 
             # Forward to owner worker via pub/sub
             response_id = str(uuid.uuid4())
@@ -1415,7 +1415,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # Publish request to owner's channel
                 await redis.publish(f"mcpgw:pool_rpc:{owner_id}", orjson.dumps(forward_data))
                 self._forwarded_requests += 1
-                print(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | Published to worker {owner_id}")
 
                 # Wait for response
                 async with asyncio.timeout(effective_timeout):
@@ -1506,7 +1506,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             mcp_session_id = request.get("mcp_session_id", "unknown")
             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
 
-            print(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
+            logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Received forwarded request, executing locally")
 
             # Make internal HTTP call to local /rpc endpoint
             # This reuses ALL existing method handling logic without duplication
@@ -1530,9 +1530,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                 # Extract result or error from JSON-RPC response
                 if "error" in response_data:
-                    print(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
+                    logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed with error")
                     return {"error": response_data["error"]}
-                print(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
+                logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Method: {method} | Forwarded execution completed successfully")
                 return {"result": response_data.get("result", {})}
 
         except httpx.TimeoutException:
