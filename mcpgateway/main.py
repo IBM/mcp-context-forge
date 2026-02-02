@@ -5541,7 +5541,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                         The tool invocation result or gateway forwarding result.
 
                     Raises:
-                        ValueError: If the tool is not found.
+                        JSONRPCError: If the tool is not found.
                     """
                     try:
                         return await tool_service.invoke_tool(
@@ -5558,9 +5558,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                             meta_data=meta_data,
                         )
                     except ValueError:
-                        # Tool not found log error and re-raise
+                        # Tool not found log error and raise JSONRPCError
                         logger.error(f"Tool not found: {name}")
-                        raise
+                        raise JSONRPCError(-32601, f"Tool not found: {name}", None)
 
                 tool_task = asyncio.create_task(execute_tool())
 

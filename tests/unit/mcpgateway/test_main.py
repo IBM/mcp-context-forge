@@ -1828,7 +1828,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert "error" in body
-        assert body["error"]["code"] == -32000  # Internal error
+        assert body["error"]["code"] == -32601  # Method not found (Tool not found)
 
     def test_rpc_elicitation_disabled(self, test_client, auth_headers, monkeypatch):
         """Test elicitation/create JSON-RPC when feature disabled."""
