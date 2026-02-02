@@ -50,7 +50,7 @@ def create_mock_user_context(
         "ip_address": ip_address,
         "user_agent": user_agent,
         "auth_method": auth_method,
-        "db": MagicMock(),  # Mock database session
+        "db": None,  # Session closed; use endpoint's db param instead
     }
 
 

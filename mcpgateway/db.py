@@ -5452,49 +5452,8 @@ def get_for_update(
     return db.execute(stmt).scalar_one_or_none()
 
 
-@contextmanager
-def fresh_db_session() -> Generator[Session, Any, None]:
-    """Get a fresh database session for isolated operations.
-
-    Use this when you need a new session independent of the request lifecycle,
-    such as for metrics recording after releasing the main session.
-
-    This is a synchronous context manager that creates a new database session
-    from the SessionLocal factory. The session is automatically committed on
-    successful exit or rolled back on exception, then closed.
-
-    Note: Prior to this fix, sessions were closed without commit, causing
-    PostgreSQL to implicitly rollback all transactions (even read-only SELECTs).
-    This was causing ~40% rollback rate under load.
-
-    Yields:
-        Session: A fresh SQLAlchemy database session.
-
-    Raises:
-        Exception: Any exception raised during database operations is re-raised
-            after rolling back the transaction.
-
-    Examples:
-        >>> from mcpgateway.db import fresh_db_session
-        >>> with fresh_db_session() as db:
-        ...     hasattr(db, 'query')
-        True
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()  # Commit on successful exit (even for read-only operations)
-    except Exception:
-        try:
-            db.rollback()  # Explicit rollback on exception
-        except Exception:
-            try:
-                db.invalidate()  # Connection broken, discard from pool
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
+# Using the existing get_db generator to create a context manager for fresh sessions
+fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
 def patch_string_columns_for_mariadb(base, engine_) -> None:

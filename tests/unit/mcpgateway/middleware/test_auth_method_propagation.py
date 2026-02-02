@@ -103,9 +103,6 @@ async def test_auth_method_in_user_context():
     mock_request.headers = {"user-agent": "TestAgent"}
     mock_request.cookies = {"jwt_token": "test-token"}
 
-    # Create mock database session
-    mock_db = MagicMock()
-
     # Create mock user
     mock_user = MagicMock()
     mock_user.email = "test@example.com"
@@ -116,23 +113,18 @@ async def test_auth_method_in_user_context():
     with patch("mcpgateway.middleware.rbac.get_current_user", new_callable=AsyncMock) as mock_get_user:
         mock_get_user.return_value = mock_user
 
-        # Mock the database dependency
-        with patch("mcpgateway.middleware.rbac.get_db") as mock_get_db:
-            mock_get_db.return_value = mock_db
+        # Call get_current_user_with_permissions
+        user_context = await get_current_user_with_permissions(
+            request=mock_request,
+            credentials=None,
+            jwt_token="test-token",
+        )
 
-            # Call get_current_user_with_permissions
-            user_context = await get_current_user_with_permissions(
-                request=mock_request,
-                credentials=None,
-                jwt_token="test-token",
-                db=mock_db,
-            )
-
-            # Verify user_context includes auth_method and request_id
-            assert user_context["auth_method"] == "simple_token"
-            assert user_context["request_id"] == "test-request-id"
-            assert user_context["email"] == "test@example.com"
-            assert user_context["full_name"] == "Test User"
-            assert user_context["is_admin"] is False
-            assert user_context["ip_address"] == "127.0.0.1"
-            assert user_context["user_agent"] == "TestAgent"
+        # Verify user_context includes auth_method and request_id
+        assert user_context["auth_method"] == "simple_token"
+        assert user_context["request_id"] == "test-request-id"
+        assert user_context["email"] == "test@example.com"
+        assert user_context["full_name"] == "Test User"
+        assert user_context["is_admin"] is False
+        assert user_context["ip_address"] == "127.0.0.1"
+        assert user_context["user_agent"] == "TestAgent"
