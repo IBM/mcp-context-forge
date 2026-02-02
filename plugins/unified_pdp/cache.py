@@ -70,6 +70,7 @@ class _CacheEntry:
 
     @property
     def expired(self) -> bool:
+        """Return True if this cache entry has exceeded its TTL."""
         return time.monotonic() > self.expires_at
 
 
@@ -90,6 +91,7 @@ class DecisionCache:
     # ------------------------------------------------------------------
 
     async def _get_redis(self):  # pragma: no cover – integration test only
+        """Lazily initialize and return the Redis client, or None if unavailable."""
         if self._redis is None and self._redis_url:
             try:
                 import redis.asyncio as aioredis

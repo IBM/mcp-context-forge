@@ -58,6 +58,7 @@ _DEFAULTS: Dict[str, Any] = {
 
 
 def _merge_settings(user: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge user-provided settings with defaults."""
     return {**_DEFAULTS, **user}
 
 
@@ -79,6 +80,7 @@ class OPAEngineAdapter(PolicyEngineAdapter):
 
     @property
     def engine_type(self) -> EngineType:
+        """Return the engine type identifier."""
         return EngineType.OPA
 
     # ------------------------------------------------------------------
@@ -86,6 +88,7 @@ class OPAEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:
+        """Return the shared httpx client, creating it lazily if needed."""
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
@@ -220,6 +223,7 @@ class OPAEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> EngineHealthReport:
+        """Check OPA health via /health endpoint."""
         start = time.perf_counter()
         try:
             resp = await self._get_client().get("/health")

@@ -192,6 +192,7 @@ class PolicyDecisionPoint:
         """Launch all engines concurrently via asyncio.gather."""
 
         async def _single(eng_type: EngineType, adapter: PolicyEngineAdapter) -> EngineDecision:
+            """Evaluate a single engine with timeout and error handling."""
             try:
                 return await asyncio.wait_for(
                     adapter.evaluate(subject, action, resource, context),
@@ -433,6 +434,7 @@ class PolicyDecisionPoint:
     # ------------------------------------------------------------------
 
     def cache_stats(self) -> dict:
+        """Return cache statistics including hits, misses, and current size."""
         return self._cache.stats()
 
     # ------------------------------------------------------------------

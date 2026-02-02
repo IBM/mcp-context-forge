@@ -65,6 +65,7 @@ _DEFAULTS: Dict[str, Any] = {
 
 
 def _merge(user: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge user-provided settings with defaults."""
     return {**_DEFAULTS, **user}
 
 
@@ -93,6 +94,7 @@ class CedarEngineAdapter(PolicyEngineAdapter):
 
     @property
     def engine_type(self) -> EngineType:
+        """Return the engine type identifier."""
         return EngineType.CEDAR
 
     # ------------------------------------------------------------------
@@ -100,6 +102,7 @@ class CedarEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     def _get_client(self) -> httpx.AsyncClient:
+        """Return the shared httpx client, creating it lazily if needed."""
         if self._client is None:
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
@@ -144,6 +147,7 @@ class CedarEngineAdapter(PolicyEngineAdapter):
 
     @staticmethod
     def _build_request(subject: Subject, action: str, resource: Resource, context: Context) -> Dict[str, Any]:
+        """Build the Cedar authorization request payload."""
         cedar_resource_type = _RESOURCE_TYPE_MAP.get(resource.type, "Resource")
 
         return {
@@ -179,6 +183,7 @@ class CedarEngineAdapter(PolicyEngineAdapter):
         resource: Resource,
         context: Context,
     ) -> EngineDecision:
+        """Evaluate a policy decision against the Cedar agent with retries."""
         payload = self._build_request(subject, action, resource, context)
         start = time.perf_counter()
         last_error: Exception | None = None
@@ -238,6 +243,7 @@ class CedarEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> EngineHealthReport:
+        """Check Cedar agent health via /health endpoint."""
         start = time.perf_counter()
         try:
             resp = await self._get_client().get("/health")
@@ -264,6 +270,7 @@ class CedarEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def close(self) -> None:
+        """Close the HTTP client and release resources."""
         if self._client:
             await self._client.aclose()
             self._client = None

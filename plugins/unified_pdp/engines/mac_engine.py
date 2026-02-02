@@ -98,6 +98,7 @@ class MACEngineAdapter(PolicyEngineAdapter):
 
     @property
     def engine_type(self) -> EngineType:
+        """Return the engine type identifier."""
         return EngineType.MAC
 
     # ------------------------------------------------------------------
@@ -111,6 +112,7 @@ class MACEngineAdapter(PolicyEngineAdapter):
         resource: Resource,
         context: Context,
     ) -> EngineDecision:
+        """Evaluate access using Bell-LaPadula mandatory access control."""
         start = time.perf_counter()
 
         # --- Guard: both levels must be present ---
@@ -198,6 +200,7 @@ class MACEngineAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> EngineHealthReport:
+        """Return healthy status (no external dependencies)."""
         return EngineHealthReport(
             engine=EngineType.MAC,
             status=EngineStatus.HEALTHY,

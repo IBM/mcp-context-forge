@@ -78,6 +78,7 @@ class NativeRBACAdapter(PolicyEngineAdapter):
 
     @property
     def engine_type(self) -> EngineType:
+        """Return the engine type identifier."""
         return EngineType.NATIVE
 
     # ------------------------------------------------------------------
@@ -208,6 +209,7 @@ class NativeRBACAdapter(PolicyEngineAdapter):
         resource: Resource,
         context: Context,
     ) -> EngineDecision:
+        """Evaluate access request against RBAC rules."""
         start = time.perf_counter()
 
         # --- Phase 1: deny rules (checked first – fail closed) ---
@@ -306,6 +308,7 @@ class NativeRBACAdapter(PolicyEngineAdapter):
     # ------------------------------------------------------------------
 
     async def health_check(self) -> EngineHealthReport:
+        """Return healthy status (no external dependencies)."""
         return EngineHealthReport(
             engine=EngineType.NATIVE,
             status=EngineStatus.HEALTHY,
