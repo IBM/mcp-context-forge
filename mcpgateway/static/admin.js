@@ -18097,6 +18097,10 @@ window.updateAvailableTags = updateAvailableTags;
  * Toggle masking for sensitive text inputs (passwords, tokens, headers)
  * @param {HTMLElement|string} inputOrId - Target input element or its ID
  * @param {HTMLElement} button - Button triggering the toggle
+ *
+ * SECURITY NOTE: Stored secrets cannot be revealed. The "Show" button only works
+ * for newly entered values, not for existing credentials stored in the database.
+ * This is intentional - stored secrets are write-only for security.
  */
 function toggleInputMask(inputOrId, button) {
     const input =
@@ -18108,15 +18112,27 @@ function toggleInputMask(inputOrId, button) {
         return;
     }
 
+    // SECURITY: Check if this is a stored secret (isMasked=true but no realValue)
+    // Stored secrets cannot be revealed - they are write-only
+    const hasStoredSecret = input.dataset.isMasked === "true";
+    const hasRevealableValue = input.dataset.realValue && input.dataset.realValue.trim() !== "";
+
+    if (hasStoredSecret && !hasRevealableValue) {
+        // Stored secret with no revealable value - show tooltip/message
+        button.title = "Stored secrets cannot be revealed. Enter a new value to replace.";
+        button.classList.add("cursor-not-allowed", "opacity-50");
+        return;
+    }
+
     const revealing = input.type === "password";
     if (revealing) {
         input.type = "text";
-        if (input.dataset.isMasked === "true") {
-            input.value = input.dataset.realValue ?? "";
+        if (hasStoredSecret && hasRevealableValue) {
+            input.value = input.dataset.realValue;
         }
     } else {
         input.type = "password";
-        if (input.dataset.isMasked === "true") {
+        if (hasStoredSecret) {
             input.value = MASKED_AUTH_VALUE;
         }
     }

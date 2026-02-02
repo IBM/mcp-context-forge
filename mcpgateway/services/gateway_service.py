@@ -1517,7 +1517,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             cached = await cache.get("gateways", filters_hash)
             if cached is not None:
                 # Reconstruct GatewayRead objects from cached dicts
-                cached_gateways = [GatewayRead.model_validate(g) for g in cached["gateways"]]
+                # SECURITY: Always apply .masked() to ensure stale cache entries don't leak credentials
+                cached_gateways = [GatewayRead.model_validate(g).masked() for g in cached["gateways"]]
                 return (cached_gateways, cached.get("next_cursor"))
 
         # Build base query with ordering
@@ -2219,7 +2220,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db=db,
                 )
 
-                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
+                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -3970,7 +3971,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # other service methods. Return None if no match found.
         if result is None:
             return None
-        return GatewayRead.model_validate(result)
+        return GatewayRead.model_validate(result).masked()
 
     async def _run_leader_heartbeat(self) -> None:
         """Run leader heartbeat loop to keep leader key alive.
@@ -4248,7 +4249,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
-        return GatewayRead.model_validate(gateway_dict)
+        return GatewayRead.model_validate(gateway_dict).masked()
 
     def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
         """DEPRECATED: Use convert_gateway_to_read instead.

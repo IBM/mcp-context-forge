@@ -284,9 +284,8 @@ class TestMultiAuthHeaders:
         for header in masked.auth_headers:
             if header["value"]:
                 assert header["value"] == settings.masked_auth_value
-        assert masked.auth_headers_unmasked is not None
-        for header in masked.auth_headers_unmasked:
-            assert header["value"] == auth_map[header["key"]]
+        # SECURITY: After masking, unmasked fields must be None to prevent credential leakage
+        assert masked.auth_headers_unmasked is None
 
     @pytest.mark.asyncio
     async def test_gateway_update_preserves_masked_header_values(self, monkeypatch):
@@ -331,7 +330,10 @@ class TestMultiAuthHeaders:
 
         monkeypatch.setattr(service, "_prepare_gateway_for_read", lambda value: value)
 
-        monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda value: value))
+        # Mock model_validate to return a mock that returns itself when masked() is called
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+        monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda value: mock_gateway_read))
 
         gateway_update = GatewayUpdate(
             name="Gateway",
@@ -356,7 +358,10 @@ class TestMultiAuthHeaders:
 
         assert updated_auth["X-API-Key"] == "secret123"
         assert updated_auth["X-Trace"] == "updated-trace"
-        assert result is gateway_db_obj
+        # Result is now the masked GatewayRead (via our mock)
+        assert result is mock_gateway_read
+        # SECURITY: Verify .masked() is called to prevent credential leakage
+        mock_gateway_read.masked.assert_called_once()
 
     def test_gateway_read_unmasked_basic_and_bearer(self, monkeypatch):
         """Verify GatewayRead retains unmasked values for basic and bearer auth."""
@@ -373,7 +378,8 @@ class TestMultiAuthHeaders:
         assert basic_gateway.auth_password_unmasked == "secret-pass"
         masked_basic = basic_gateway.masked()
         assert masked_basic.auth_password == settings.masked_auth_value
-        assert masked_basic.auth_password_unmasked == "secret-pass"
+        # SECURITY: After masking, unmasked fields must be None to prevent credential leakage
+        assert masked_basic.auth_password_unmasked is None
 
         # Bearer auth
         bearer_gateway = GatewayRead(
@@ -385,4 +391,5 @@ class TestMultiAuthHeaders:
         assert bearer_gateway.auth_token_unmasked == "token-123"
         masked_bearer = bearer_gateway.masked()
         assert masked_bearer.auth_token == settings.masked_auth_value
-        assert masked_bearer.auth_token_unmasked == "token-123"
+        # SECURITY: After masking, unmasked fields must be None to prevent credential leakage
+        assert masked_bearer.auth_token_unmasked is None
