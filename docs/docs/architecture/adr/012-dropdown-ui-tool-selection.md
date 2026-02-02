@@ -8,7 +8,7 @@
 
 The current solution provides a text box for users where they can enter tool ids to link to a server
 
-With the change of IDs from integers to UUIDs, this process is more cumbursome.
+With the change of IDs from integers to UUIDs, this process is more cumbersome.
 
 This is modified so that users can select from tool names from a drop down.
 
@@ -18,7 +18,7 @@ We implemented this by making the following changes:
 
 1. **Replace text box with a dropdown element** keeping the styling consistent with the to the tailwind styling used
 
-   - Users select names, but the selected tool `id`s are sent to the API for databse storage
+   - Users select names, but the selected tool `id`s are sent to the API for database storage
    - Make this change in server creation and editing screens
 
 2. **Add a span to display selected tools**
@@ -34,4 +34,4 @@ We implemented this by making the following changes:
 *Tool count warning*
 ## Status
 
-PR created: []()
+Implemented.
