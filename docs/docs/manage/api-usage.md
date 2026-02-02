@@ -625,6 +625,16 @@ export SERVER_ID="your-server-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers/$SERVER_ID | jq '.'
 ```
 
+**Response:**
+```json
+{
+  "id": "server123",
+  "name": "my-virtual-server",
+  "associatedTools": ["tool1", "tool2"],
+  "enabled": true
+}
+```
+
 
 
 #### Complete Example: Virtual Server Creation
@@ -778,6 +788,16 @@ export RESOURCE_ID="your-resource-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources/$RESOURCE_ID | jq '.'
 ```
 
+**Response:**
+```json
+{
+  "id": "res123",
+  "name": "config-file",
+  "uri": "file:///etc/config.json",
+  "mimeType": "application/json"
+}
+```
+
 
 ### Read Resource Content
 
@@ -898,6 +918,16 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 # Get specific prompt
 export PROMPT_ID="your-prompt-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts/$PROMPT_ID | jq '.'
+```
+
+**Response:**
+```json
+{
+  "id": "prompt123",
+  "name": "code-review",
+  "template": "Review code: {{code}}",
+  "arguments": [{"name": "code", "required": true}]
+}
 ```
 
 ### Execute Prompt (Get Rendered Content)

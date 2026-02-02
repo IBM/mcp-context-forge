@@ -1,6 +1,6 @@
 ---
 classification:
-status: draft
+status: published
 owner: Mihai Criveti
 ---
 

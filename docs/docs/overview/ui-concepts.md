@@ -35,7 +35,7 @@
     - Each one is backed by a real SSE or STDIO interface.
     - You can activate/deactivate, view metrics, and invoke tools from this server.
 
-    <!-- ![Virtual Server GIF](./images/virtual-servers.gif) -->
+
 
 ---
 
@@ -50,7 +50,7 @@
     - Input Schema: JSON Schema defines valid input.
     - Supports Basic Auth, Bearer, or Custom headers.
 
-    <!-- ![Tools GIF](./images/tools.gif) -->
+
 
 ---
 
@@ -64,7 +64,7 @@
     - Exposed via unique URI (`file:///`, `db://`, etc.).
     - Resources can be listed, templated, or subscribed to.
 
-    <!-- ![Resources GIF](./images/resources.gif) -->
+
 
 ---
 
@@ -78,7 +78,7 @@
     - Arguments are defined with name, description, and required status.
     - Used to enforce consistency across tool use or system messaging.
 
-    <!-- ![Prompts GIF](./images/prompts.gif) -->
+
 
 ---
 
@@ -92,7 +92,7 @@
     - Peer tools show up in your catalog with `gateway_id`.
     - Can be toggled active/inactive.
 
-    <!-- ![Gateways GIF](./images/gateways.gif) -->
+
 
 ---
 
@@ -106,7 +106,7 @@
     - Prevent tools from referencing outside their sandbox.
     - Deleting a root invalidates its associated resources.
 
-    <!-- ![Roots GIF](./images/roots.gif) -->
+
 
 ---
 
@@ -120,7 +120,7 @@
     - Latency, failure rate, and hot paths.
     - Top tools, resources, prompts, and servers.
 
-    <!-- ![Metrics GIF](./images/metrics.gif) -->
+
 
 ---
 
@@ -134,7 +134,7 @@
     - Live system metrics (CPU, memory).
     - Environment checks and service readiness.
 
-    <!-- ![Version GIF](./images/version.gif) -->
+
 
 ---
 
