@@ -1167,7 +1167,7 @@ class SessionRegistry(SessionBackend):
                         message = data["message"]
                     else:
                         message = data
-                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                    await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
                 else:
                     logger.warning(f"Session message stored but message content is None for session {session_id}")
 
@@ -1212,7 +1212,7 @@ class SessionRegistry(SessionBackend):
                     message = data.get("message", {})
                     transport = self.get_session_sync(session_id)
                     if transport:
-                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
+                        await self.generate_response(message=message, transport=transport, server_id=server_id, user=user)
             except asyncio.CancelledError:
                 logger.info(f"PubSub listener for session {session_id} cancelled")
                 raise  # Re-raise to properly complete cancellation
@@ -1440,7 +1440,6 @@ class SessionRegistry(SessionBackend):
                                     transport=transport,
                                     server_id=server_id,
                                     user=user,
-                                    base_url=base_url,
                                 )
 
                                 await asyncio.to_thread(_db_remove, session_id, record.message)
