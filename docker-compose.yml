@@ -554,6 +554,7 @@ services:
 
   postgres:
     image: postgres:18
+    shm_size: 256m  # Increase from 64MB default to prevent shared memory exhaustion under load
     ulimits:
       nofile:
         soft: 8192

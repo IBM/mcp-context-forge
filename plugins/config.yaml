@@ -514,7 +514,7 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["reliability", "sre"]
-    mode: "enforce_ignore_error"
+    mode: "disabled"
     priority: 70
     conditions: []
     config:

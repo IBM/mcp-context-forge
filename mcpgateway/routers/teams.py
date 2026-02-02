@@ -67,12 +67,13 @@ teams_router = APIRouter()
 
 @teams_router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.create")
-async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions)) -> TeamResponse:
+async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamResponse:
     """Create a new team.
 
     Args:
         request: Team creation request data
         current_user_ctx: Currently authenticated user context
+        db: Database session
 
     Returns:
         TeamResponse: Created team data
@@ -86,7 +87,6 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         True
     """
     try:
-        db = current_user_ctx["db"]
         service = TeamManagementService(db)
         team = await service.create_team(name=request.name, description=request.description, created_by=current_user_ctx["email"], visibility=request.visibility, max_members=request.max_members)
 
@@ -120,6 +120,7 @@ async def list_teams(
     cursor: Optional[str] = Query(None, description="Pagination cursor"),
     include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> Union[TeamListResponse, CursorPaginatedTeamsResponse]:
     """List teams visible to the caller.
 
@@ -132,6 +133,7 @@ async def list_teams(
         cursor: Pagination cursor
         include_pagination: Include pagination metadata
         current_user_ctx: Current user context with permissions and database session
+        db: Database session
 
     Returns:
         Union[TeamListResponse, CursorPaginatedTeamsResponse]: List of teams
@@ -140,7 +142,6 @@ async def list_teams(
         HTTPException: If there's an error listing teams
     """
     try:
-        db = current_user_ctx["db"]
         service = TeamManagementService(db)
 
         teams_data = []
@@ -707,6 +708,7 @@ async def discover_public_teams(
     skip: int = Query(0, ge=0, description="Number of teams to skip"),
     limit: int = Query(50, ge=1, le=100, description="Number of teams to return"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
 ) -> List[TeamDiscoveryResponse]:
     """Discover public teams that can be joined.
 
@@ -717,6 +719,7 @@ async def discover_public_teams(
         skip: Number of teams to skip for pagination
         limit: Maximum number of teams to return
         current_user_ctx: Current user context with permissions and database session
+        db: Database session
 
     Returns:
         List[TeamDiscoveryResponse]: List of discoverable public teams
@@ -725,7 +728,6 @@ async def discover_public_teams(
         HTTPException: If there's an error discovering teams
     """
     try:
-        db = current_user_ctx["db"]
         team_service = TeamManagementService(db)
 
         # Get public teams where user is not already a member

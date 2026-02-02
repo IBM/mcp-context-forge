@@ -31,8 +31,13 @@ from mcpgateway.services.llm_provider_service import (
 
 
 @pytest.fixture
-def ctx():
-    return {"db": MagicMock(), "email": "user@example.com"}
+def mock_db():
+    return MagicMock()
+
+
+@pytest.fixture
+def ctx(mock_db):
+    return {"db": mock_db, "email": "user@example.com"}
 
 
 def _provider():
@@ -92,131 +97,131 @@ def _model_response():
 
 
 @pytest.mark.asyncio
-async def test_create_provider_success(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_create_provider_success(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     provider = _provider()
     monkeypatch.setattr(llm_config_router.llm_provider_service, "create_provider", lambda **kwargs: provider)
     monkeypatch.setattr(llm_config_router.llm_provider_service, "to_provider_response", lambda p, model_count: SimpleNamespace(id=p.id))
 
-    result = await llm_config_router.create_provider(LLMProviderCreate(name="Provider", provider_type="openai"), current_user_ctx=ctx)
+    result = await llm_config_router.create_provider(LLMProviderCreate(name="Provider", provider_type="openai"), current_user_ctx=ctx, db=mock_db)
     assert result.id == "p1"
 
 
 @pytest.mark.asyncio
-async def test_create_provider_conflict(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_create_provider_conflict(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     monkeypatch.setattr(llm_config_router.llm_provider_service, "create_provider", MagicMock(side_effect=LLMProviderNameConflictError("Provider")))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llm_config_router.create_provider(LLMProviderCreate(name="Provider", provider_type="openai"), current_user_ctx=ctx)
+        await llm_config_router.create_provider(LLMProviderCreate(name="Provider", provider_type="openai"), current_user_ctx=ctx, db=mock_db)
 
     assert excinfo.value.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_list_providers(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_list_providers(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     provider = _provider()
     monkeypatch.setattr(llm_config_router.llm_provider_service, "list_providers", lambda **kwargs: ([provider], 1))
     monkeypatch.setattr(llm_config_router.llm_provider_service, "to_provider_response", lambda p, model_count: _provider_response())
 
-    response = await llm_config_router.list_providers(page=1, page_size=50, current_user_ctx=ctx)
+    response = await llm_config_router.list_providers(page=1, page_size=50, current_user_ctx=ctx, db=mock_db)
 
     assert response.total == 1
     assert response.providers[0].id == "p1"
 
 
 @pytest.mark.asyncio
-async def test_get_provider_not_found(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_get_provider_not_found(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     monkeypatch.setattr(llm_config_router.llm_provider_service, "get_provider", MagicMock(side_effect=LLMProviderNotFoundError("missing")))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llm_config_router.get_provider("missing", current_user_ctx=ctx)
+        await llm_config_router.get_provider("missing", current_user_ctx=ctx, db=mock_db)
 
     assert excinfo.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_update_provider_success(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_update_provider_success(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     provider = _provider()
     monkeypatch.setattr(llm_config_router.llm_provider_service, "update_provider", lambda **kwargs: provider)
     monkeypatch.setattr(llm_config_router.llm_provider_service, "to_provider_response", lambda p, model_count: _provider_response())
 
-    result = await llm_config_router.update_provider("p1", LLMProviderUpdate(name="Provider"), current_user_ctx=ctx)
+    result = await llm_config_router.update_provider("p1", LLMProviderUpdate(name="Provider"), current_user_ctx=ctx, db=mock_db)
     assert result.id == "p1"
 
 
 @pytest.mark.asyncio
-async def test_update_provider_conflict(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_update_provider_conflict(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     monkeypatch.setattr(llm_config_router.llm_provider_service, "update_provider", MagicMock(side_effect=LLMProviderNameConflictError("Provider")))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llm_config_router.update_provider("p1", LLMProviderUpdate(name="Provider"), current_user_ctx=ctx)
+        await llm_config_router.update_provider("p1", LLMProviderUpdate(name="Provider"), current_user_ctx=ctx, db=mock_db)
 
     assert excinfo.value.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_delete_provider_not_found(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_delete_provider_not_found(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     monkeypatch.setattr(llm_config_router.llm_provider_service, "delete_provider", MagicMock(side_effect=LLMProviderNotFoundError("missing")))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llm_config_router.delete_provider("missing", current_user_ctx=ctx)
+        await llm_config_router.delete_provider("missing", current_user_ctx=ctx, db=mock_db)
 
     assert excinfo.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_set_provider_state(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_set_provider_state(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     provider = _provider()
     monkeypatch.setattr(llm_config_router.llm_provider_service, "set_provider_state", lambda *args, **kwargs: provider)
     monkeypatch.setattr(llm_config_router.llm_provider_service, "to_provider_response", lambda p, model_count: _provider_response())
 
-    result = await llm_config_router.set_provider_state("p1", activate=True, current_user_ctx=ctx)
+    result = await llm_config_router.set_provider_state("p1", activate=True, current_user_ctx=ctx, db=mock_db)
     assert result.id == "p1"
 
 
 @pytest.mark.asyncio
-async def test_check_provider_health(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_check_provider_health(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     health = ProviderHealthCheck(provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.HEALTHY, response_time_ms=1.0, error=None, checked_at=datetime.now(timezone.utc))
     monkeypatch.setattr(llm_config_router.llm_provider_service, "check_provider_health", AsyncMock(return_value=health))
 
-    result = await llm_config_router.check_provider_health("p1", current_user_ctx=ctx)
+    result = await llm_config_router.check_provider_health("p1", current_user_ctx=ctx, db=mock_db)
     assert result.provider_id == "p1"
 
 
 @pytest.mark.asyncio
-async def test_create_model_conflict(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_create_model_conflict(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     monkeypatch.setattr(llm_config_router.llm_provider_service, "create_model", MagicMock(side_effect=LLMModelConflictError("conflict")))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llm_config_router.create_model(LLMModelCreate(provider_id="p1", model_id="gpt", model_name="GPT"), current_user_ctx=ctx)
+        await llm_config_router.create_model(LLMModelCreate(provider_id="p1", model_id="gpt", model_name="GPT"), current_user_ctx=ctx, db=mock_db)
 
     assert excinfo.value.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_get_model_not_found(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_get_model_not_found(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     monkeypatch.setattr(llm_config_router.llm_provider_service, "get_model", MagicMock(side_effect=LLMModelNotFoundError("missing")))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llm_config_router.get_model("missing", current_user_ctx=ctx)
+        await llm_config_router.get_model("missing", current_user_ctx=ctx, db=mock_db)
 
     assert excinfo.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_update_model_success(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_update_model_success(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     model = _model()
     monkeypatch.setattr(llm_config_router.llm_provider_service, "update_model", lambda *args, **kwargs: model)
     monkeypatch.setattr(llm_config_router.llm_provider_service, "to_model_response", lambda m, provider=None: _model_response())
 
-    result = await llm_config_router.update_model("m1", LLMModelUpdate(model_name="GPT"), current_user_ctx=ctx)
+    result = await llm_config_router.update_model("m1", LLMModelUpdate(model_name="GPT"), current_user_ctx=ctx, db=mock_db)
     assert result.id == "m1"
 
 
 @pytest.mark.asyncio
-async def test_delete_model_not_found(monkeypatch: pytest.MonkeyPatch, ctx):
+async def test_delete_model_not_found(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
     monkeypatch.setattr(llm_config_router.llm_provider_service, "delete_model", MagicMock(side_effect=LLMModelNotFoundError("missing")))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llm_config_router.delete_model("missing", current_user_ctx=ctx)
+        await llm_config_router.delete_model("missing", current_user_ctx=ctx, db=mock_db)
 
     assert excinfo.value.status_code == 404

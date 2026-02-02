@@ -3351,7 +3351,6 @@ class ResourceService:
             "data": {
                 "id": resource.id,
                 "uri": resource.uri,
-                "content": resource.content,
                 "enabled": resource.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
