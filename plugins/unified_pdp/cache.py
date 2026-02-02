@@ -34,16 +34,25 @@ logger = logging.getLogger(__name__)
 
 
 def _build_cache_key(subject: Subject, action: str, resource: Resource, context: Context) -> str:
-    """Produce a stable, collision-resistant cache key."""
+    """Produce a stable, collision-resistant cache key.
+
+    Includes all context fields that could affect policy decisions:
+    - ip, session_id, user_agent for request identification
+    - extra dict for policy-relevant metadata (e.g., MAC operation override)
+
+    Excludes only the timestamp so requests within the same TTL window
+    can hit the cache.
+    """
     payload = json.dumps(
         {
             "subject": subject.model_dump(mode="json"),
             "action": action,
             "resource": resource.model_dump(mode="json"),
-            # Exclude timestamp from context so that requests arriving within
-            # the same TTL window hit the cache regardless of exact arrival time.
+            # Include all context fields except timestamp
             "context_ip": context.ip,
             "context_session_id": context.session_id,
+            "context_user_agent": context.user_agent,
+            "context_extra": context.extra,
         },
         sort_keys=True,
     )

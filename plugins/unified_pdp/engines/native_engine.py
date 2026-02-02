@@ -6,7 +6,7 @@ Design goals
   engine by a large margin (sub-millisecond) and the only one that can
   enumerate permissions via ``get_permissions()``.
 * **Rule format.**  Rules are plain Python dicts.  They can be loaded from
-  JSON or YAML at startup or registered programmatically.  Each rule has:
+  a JSON file at startup or registered programmatically.  Each rule has:
 
       {
           "id":             "rule-001",

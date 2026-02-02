@@ -211,6 +211,13 @@ class PolicyDecisionPoint:
                     decision=self._config.default_decision,
                     reason=f"{eng_type.value}: evaluation error – {exc}",
                 )
+            except Exception as exc:  # noqa: BLE001 – catch unexpected errors to avoid failing the whole request
+                logger.exception("PDP: engine %s unexpected error: %s", eng_type.value, exc)
+                return EngineDecision(
+                    engine=eng_type,
+                    decision=self._config.default_decision,
+                    reason=f"{eng_type.value}: unexpected error – {type(exc).__name__}: {exc}",
+                )
 
         tasks = [_single(eng_type, adapter) for eng_type, adapter in self._engines.items()]
         return list(await asyncio.gather(*tasks))
@@ -240,11 +247,21 @@ class PolicyDecisionPoint:
                     break
 
             except (asyncio.TimeoutError, PolicyEvaluationError) as exc:
+                logger.warning("PDP: engine %s error: %s", eng_type.value, exc)
                 results.append(
                     EngineDecision(
                         engine=eng_type,
                         decision=self._config.default_decision,
                         reason=f"{eng_type.value}: {exc}",
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 – catch unexpected errors to avoid failing the whole request
+                logger.exception("PDP: engine %s unexpected error: %s", eng_type.value, exc)
+                results.append(
+                    EngineDecision(
+                        engine=eng_type,
+                        decision=self._config.default_decision,
+                        reason=f"{eng_type.value}: unexpected error – {type(exc).__name__}: {exc}",
                     )
                 )
 

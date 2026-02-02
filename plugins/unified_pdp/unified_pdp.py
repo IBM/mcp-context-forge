@@ -194,6 +194,35 @@ class UnifiedPDPPlugin(Plugin):
             attributes=user.get("attributes", {}),
         )
 
+    @staticmethod
+    def _extract_http_metadata(headers) -> dict:
+        """Extract IP and user_agent from HTTP headers.
+
+        Args:
+            headers: HttpHeaderPayload or None.
+
+        Returns:
+            Dict with 'ip' and 'user_agent' keys (values may be None).
+        """
+        if headers is None:
+            return {"ip": None, "user_agent": None}
+
+        # Try to get headers as dict
+        try:
+            header_dict = headers.root if hasattr(headers, "root") else dict(headers)
+        except (TypeError, AttributeError):
+            return {"ip": None, "user_agent": None}
+
+        # Extract IP from X-Forwarded-For or X-Real-IP
+        ip = header_dict.get("x-forwarded-for") or header_dict.get("x-real-ip")
+        if ip and "," in ip:
+            ip = ip.split(",")[0].strip()  # Take first IP in chain
+
+        # Extract User-Agent
+        user_agent = header_dict.get("user-agent")
+
+        return {"ip": ip, "user_agent": user_agent}
+
     # ------------------------------------------------------------------
     # Hook: tool_pre_invoke
     # ------------------------------------------------------------------
@@ -219,14 +248,23 @@ class UnifiedPDPPlugin(Plugin):
         """
         subject = self._extract_subject(context)
 
+        # Extract HTTP metadata from headers for IP and user_agent
+        http_meta = self._extract_http_metadata(payload.headers)
+
         resource = Resource(
             type="tool",
             id=payload.name,
             server=context.global_context.server_id,
+            # Pass tool annotations for fine-grained policy checks
+            annotations={"args_keys": list((payload.args or {}).keys())},
         )
 
         pdp_context = Context(
+            ip=http_meta["ip"],
+            user_agent=http_meta["user_agent"],
             session_id=context.global_context.request_id,
+            # Pass tool args to context.extra for policy evaluation
+            extra={"tool_args": payload.args or {}},
         )
 
         action = f"tools.invoke.{payload.name}"
@@ -292,10 +330,14 @@ class UnifiedPDPPlugin(Plugin):
             type="resource",
             id=payload.uri,
             server=context.global_context.server_id,
+            # Pass resource metadata for fine-grained policy checks
+            annotations=payload.metadata or {},
         )
 
         pdp_context = Context(
             session_id=context.global_context.request_id,
+            # Pass resource metadata to context.extra as well
+            extra={"resource_metadata": payload.metadata or {}},
         )
 
         action = "resources.fetch"
