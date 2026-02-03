@@ -1311,19 +1311,19 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
             redis = await get_redis_client()
-            print(f"[REDIS_DEBUG] _register_pool_session_owner | redis client: {redis}")
+            logger.debug(f"[REDIS_DEBUG] _register_pool_session_owner | redis client: {redis}")
             if redis:
                 key = f"mcpgw:pool_owner:{mcp_session_id}"
                 result = await redis.setex(key, settings.mcpgateway_session_affinity_ttl, WORKER_ID)
-                print(f"[REDIS_DEBUG] SETEX {key} = {WORKER_ID} (TTL: {settings.mcpgateway_session_affinity_ttl}s) | Result: {result}")
+                logger.debug(f"[REDIS_DEBUG] SETEX {key} = {WORKER_ID} (TTL: {settings.mcpgateway_session_affinity_ttl}s) | Result: {result}")
                 # Immediately verify the write
                 verify = await redis.get(key)
-                print(f"[REDIS_DEBUG] Immediate GET {key} = {verify}")
+                logger.debug(f"[REDIS_DEBUG] Immediate GET {key} = {verify}")
             else:
-                print(f"[REDIS_DEBUG] Redis client is None, cannot register session ownership")
+                logger.debug("[REDIS_DEBUG] Redis client is None, cannot register session ownership")
         except Exception as e:
             # Redis failure is non-fatal - single worker mode still works
-            print(f"[REDIS_DEBUG] Exception during register: {e}")
+            logger.debug(f"[REDIS_DEBUG] Exception during register: {e}")
             logger.debug(f"Failed to register pool session owner in Redis: {e}")
 
     async def _get_pool_session_owner(self, mcp_session_id: str) -> Optional[str]:
@@ -1343,21 +1343,21 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
             redis = await get_redis_client()
-            print(f"[REDIS_DEBUG] _get_pool_session_owner | redis client: {redis}")
+            logger.debug(f"[REDIS_DEBUG] _get_pool_session_owner | redis client: {redis}")
             if redis:
                 key = f"mcpgw:pool_owner:{mcp_session_id}"
                 owner = await redis.get(key)
-                print(f"[REDIS_DEBUG] GET {key} = {owner}")
+                logger.debug(f"[REDIS_DEBUG] GET {key} = {owner}")
                 if owner:
                     decoded = owner.decode() if isinstance(owner, bytes) else owner
-                    print(f"[REDIS_DEBUG] Decoded owner: {decoded}")
+                    logger.debug(f"[REDIS_DEBUG] Decoded owner: {decoded}")
                     return decoded
                 else:
-                    print(f"[REDIS_DEBUG] No owner found for key {key}")
+                    logger.debug(f"[REDIS_DEBUG] No owner found for key {key}")
             else:
-                print(f"[REDIS_DEBUG] Redis client is None, cannot get session owner")
+                logger.debug("[REDIS_DEBUG] Redis client is None, cannot get session owner")
         except Exception as e:
-            print(f"[REDIS_DEBUG] Exception during get: {e}")
+            logger.debug(f"[REDIS_DEBUG] Exception during get: {e}")
             logger.debug(f"Failed to get pool session owner from Redis: {e}")
         return None
 

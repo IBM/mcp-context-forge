@@ -466,16 +466,30 @@ self._server_instances: dict[str, ServerInstance] = {}
 
 ## Configuration
 
+Session affinity requires Redis for cross-worker coordination. The following environment variables must be configured:
+
 ```bash
-# Enable session affinity (required for multi-worker)
+# REQUIRED: Enable Redis client (session affinity depends on Redis)
+CACHE_TYPE=redis
+REDIS_URL=redis://localhost:6379/0
+
+# REQUIRED: Enable stateful sessions for Streamable HTTP transport
+USE_STATEFUL_SESSIONS=true
+
+# REQUIRED: Enable session affinity for multi-worker deployments
 MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
 
-# Session ownership TTL (seconds)
+# OPTIONAL: Session ownership TTL (seconds, default: 300)
 MCPGATEWAY_SESSION_AFFINITY_TTL=300
 
-# Forwarded request timeout (seconds)
+# OPTIONAL: Forwarded request timeout (seconds, default: 30)
 MCPGATEWAY_POOL_RPC_FORWARD_TIMEOUT=30
 ```
+
+**Important Notes**:
+- `CACHE_TYPE=redis` is **required** - the Redis client will not initialize without it
+- Session affinity works independently of session pooling - the MCP session pool will be initialized automatically when `MCPGATEWAY_SESSION_AFFINITY_ENABLED=true`, even if `MCP_SESSION_POOL_ENABLED=false`
+- Redis must be accessible at the configured `REDIS_URL` before starting the application
 
 ## Atomic Ownership with SETNX
 
@@ -643,6 +657,63 @@ The current implementation works around SDK limitations. A cleaner approach woul
 4. **Handle SSE streaming** separately without SDK session state
 
 This would eliminate the SDK dependency for session routing while keeping it only for protocol compliance (JSON-RPC formatting, SSE streaming).
+
+## Troubleshooting
+
+### Redis Client Returns None
+
+**Symptoms**: Logs show `[REDIS_DEBUG] Redis client is None, cannot register session ownership`
+
+**Cause**: Redis client is not initialized because `CACHE_TYPE` is not set to `redis`.
+
+**Solution**:
+```bash
+# Add to .env
+CACHE_TYPE=redis
+REDIS_URL=redis://localhost:6379/0
+```
+
+Verify Redis is running:
+```bash
+redis-cli ping  # Should return "PONG"
+```
+
+### MCP Session Pool Not Initialized
+
+**Symptoms**: Error message `MCP session pool not initialized. Call init_mcp_session_pool() first.`
+
+**Cause**: Session pool initialization was skipped because both `MCP_SESSION_POOL_ENABLED=false` and `MCPGATEWAY_SESSION_AFFINITY_ENABLED=false`.
+
+**Solution**: The session pool is automatically initialized when session affinity is enabled. Ensure:
+```bash
+MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
+```
+
+The pool will initialize even if `MCP_SESSION_POOL_ENABLED=false` (affinity needs the ownership registry but not the full pooling functionality).
+
+### Session Affinity Not Working (No "Owner from Redis" in Logs)
+
+**Symptoms**: Requests fail with "No valid session ID provided" or session state is lost between requests.
+
+**Root Cause Checklist**:
+1. ✅ `CACHE_TYPE=redis` - Redis client must be enabled
+2. ✅ `USE_STATEFUL_SESSIONS=true` - Required for Streamable HTTP stateful sessions
+3. ✅ `MCPGATEWAY_SESSION_AFFINITY_ENABLED=true` - Enables session affinity
+4. ✅ Redis is accessible at `REDIS_URL`
+5. ✅ Server restarted after changing `.env`
+
+**Debug Logging**: Look for these log messages during startup:
+```
+Redis client initialized: parser=AsyncHiredisParser, pool_size=10...
+MCP session pool initialized
+Multi-worker session affinity RPC listener started
+```
+
+During requests:
+```
+[HTTP_AFFINITY_SDK] Worker hostname:pid | Session abc12345... | Registered ownership after SDK handling
+[HTTP_AFFINITY_CHECK] Worker hostname:pid | Session abc12345... | Owner from Redis: hostname:pid
+```
 
 ## References
 
