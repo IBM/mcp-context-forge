@@ -979,7 +979,7 @@ class TestMultiWorkerSessionAffinityE2E:
 
     @pytest.mark.asyncio
     async def test_register_pool_session_owner_disabled_when_affinity_off(self):
-        """Verify _register_pool_session_owner does nothing when affinity disabled."""
+        """Verify register_pool_session_owner does nothing when affinity disabled."""
         pool = MCPSessionPool()
 
         try:
@@ -989,7 +989,7 @@ class TestMultiWorkerSessionAffinityE2E:
                 mock_settings.mcpgateway_session_affinity_enabled = False
 
                 # Should return immediately without calling Redis
-                await pool._register_pool_session_owner(mcp_session_id)
+                await pool.register_pool_session_owner(mcp_session_id)
                 # No assertion needed - just verify it doesn't hang or crash
         finally:
             await pool.close_all()
