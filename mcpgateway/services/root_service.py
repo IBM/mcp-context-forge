@@ -209,7 +209,7 @@ class RootService:
             Root: The found root object
 
         Raises:
-            RootServiceError: If root not found
+            RootServiceNotFoundError: If root not found
 
         Examples:
             >>> from mcpgateway.services.root_service import RootService
@@ -243,7 +243,7 @@ class RootService:
             Root: The updated root object
 
         Raises:
-            RootServiceError: If root is not found
+            RootServiceNotFoundError: If root is not found
 
         Examples:
             >>> from mcpgateway.services.root_service import RootService

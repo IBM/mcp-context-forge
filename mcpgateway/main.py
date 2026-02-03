@@ -191,7 +191,7 @@ plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_E
 from mcpgateway.services.gateway_service import gateway_service  # noqa: E402
 from mcpgateway.services.prompt_service import prompt_service  # noqa: E402
 from mcpgateway.services.resource_service import resource_service  # noqa: E402
-from mcpgateway.services.root_service import root_service, RootService, RootServiceNotFoundError  # noqa: E402
+from mcpgateway.services.root_service import root_service, RootServiceNotFoundError  # noqa: E402
 from mcpgateway.services.server_service import server_service  # noqa: E402
 from mcpgateway.services.tool_service import tool_service  # noqa: E402
 
@@ -5336,7 +5336,6 @@ async def list_roots(
 @root_router.get("/export", response_model=Dict[str, Any])
 async def export_root(
     uri: str,
-    request: Request,
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
@@ -5344,7 +5343,6 @@ async def export_root(
 
     Args:
         uri: Root URI to export (query parameter)
-        request: FastAPI request object
         user: Authenticated user
 
     Returns:
@@ -5404,6 +5402,10 @@ async def get_root_by_uri(
 
     Returns:
         Root object.
+
+    Raises:
+        HTTPException: If the root is not found.
+        Exception: For any other unexpected errors.
     """
     logger.debug(f"User '{user}' requested root with URI: {root_uri}")
     try:
@@ -5452,6 +5454,10 @@ async def update_root(
 
     Returns:
         Updated Root object.
+
+    Raises:
+        HTTPException: If the root is not found.
+        Exception: For any other unexpected errors.
     """
     logger.debug(f"User '{user}' requested to update root with URI: {root_uri}")
     print("Here is the root", root)

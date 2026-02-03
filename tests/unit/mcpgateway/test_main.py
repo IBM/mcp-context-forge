@@ -1508,8 +1508,9 @@ class TestRootEndpoints:
 
         mock_subscribe.return_value = mock_async_gen()
         response = test_client.get("/roots/changes", headers=auth_headers)
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+        # GET /roots/changes was REMOVED - returns SSE stream, not JSON.
+        assert response.status_code == 404
+        assert response.headers["content-type"] == "application/json"
 
 
 # ----------------------------------------------------- #

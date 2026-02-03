@@ -215,7 +215,7 @@ async def test_subscribe_changes_receives_events():
 
     # Add a root, then remove it again.
     r = await service.add_root("subscriber-test")
-    await service.remove_root(str(r.uri).rstrip("/"))  # match stored key
+    await service.remove_root(str(r.uri))  # match stored key
 
     # Collect both events or time-out
     await asyncio.wait_for(task, timeout=1.0)

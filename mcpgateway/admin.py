@@ -10366,7 +10366,6 @@ async def admin_set_prompt_state(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_export_root(
     uri: str,
-    request: Request,
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -10374,7 +10373,6 @@ async def admin_export_root(
 
     Args:
         uri: Root URI to export (query parameter)
-        request: FastAPI request object
         user: Authenticated user
 
     Returns:
@@ -10430,7 +10428,7 @@ async def admin_export_root(
 
 @admin_router.get("/roots/{uri:path}")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_get_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> dict:
+async def admin_get_root(uri: str, user=Depends(get_current_user_with_permissions)) -> dict:
     """Get a specific root by URI via the admin UI.
 
     This endpoint retrieves details for a specific root URI from the system.
@@ -10438,7 +10436,6 @@ async def admin_get_root(uri: str, request: Request, user=Depends(get_current_us
 
     Args:
         uri (str): The URI of the root to retrieve.
-        request (Request): FastAPI request object.
         user: Authenticated user dependency.
 
     Returns:
@@ -10446,6 +10443,7 @@ async def admin_get_root(uri: str, request: Request, user=Depends(get_current_us
 
     Raises:
         HTTPException: If the root is not found.
+        Exception: For any other unexpected errors.
 
     Examples:
         >>> callable(admin_get_root)
@@ -10546,6 +10544,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
     Raises:
         HTTPException: If the root is not found (404) or other errors occur.
+        Exception: For any other unexpected errors.
 
     Examples:
         >>> callable(admin_update_root)
