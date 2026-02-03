@@ -1,6 +1,6 @@
 <!-- htmlhint doctype-first:false, tag-pair:false -->
 <!-- Advanced Metrics Dashboard -->
-<script>
+<script defer>
 // Metrics Dashboard Controller Factory
 window.createMetricsController = function() {
   return {
@@ -18,7 +18,7 @@ window.createMetricsController = function() {
      */
     destroyAllCharts() {
       // Use global registry for centralized cleanup
-      window.chartRegistry.destroyByPrefix('metrics-');
+      Admin.chartRegistry.destroyByPrefix('metrics-');
       this.charts = {};
     },
 
@@ -175,7 +175,7 @@ window.createMetricsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('metrics-percentile');
+      Admin.chartRegistry.destroy('metrics-percentile');
 
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
@@ -283,7 +283,7 @@ window.createMetricsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('metrics-percentile', chart);
+          Admin.chartRegistry.register('metrics-percentile', chart);
           this.charts.percentile = chart;
         } catch (e) {
           console.error('Failed to create percentile chart:', e);
@@ -308,7 +308,7 @@ window.createMetricsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('metrics-timeseries');
+      Admin.chartRegistry.destroy('metrics-timeseries');
 
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
@@ -415,7 +415,7 @@ window.createMetricsController = function() {
         },
       });
           // Register with global registry
-          window.chartRegistry.register('metrics-timeseries', chart);
+          Admin.chartRegistry.register('metrics-timeseries', chart);
           this.charts.timeSeries = chart;
         } catch (e) {
           console.error('Failed to create time series chart:', e);
@@ -493,7 +493,7 @@ window.createMetricsController = function() {
       }
 
       // Destroy existing chart via global registry
-      window.chartRegistry.destroy('metrics-heatmap');
+      Admin.chartRegistry.destroy('metrics-heatmap');
 
       // Flatten the 2D heatmap data for Chart.js matrix
       const heatmapData = [];
@@ -526,90 +526,90 @@ window.createMetricsController = function() {
           const defaults = getChartDefaults();
           const chart = new Chart(ctx, {
             type: 'scatter',
-        data: {
-          datasets: [
-            {
-              label: 'Request Count',
-              data: heatmapData,
-              backgroundColor: function (context) {
-                const value = context.raw.v;
-                const maxValue = Math.max(...heatmapData.map((d) => d.v));
-                const alpha = value / maxValue;
-                return `rgba(239, 68, 68, ${alpha})`;
-              },
-              pointRadius: 10,
-              pointHoverRadius: 12,
-            },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: {
-            title: {
-              display: true,
-              text: 'Latency Distribution Heatmap',
-              color: defaults.titleColor,
-            },
-            legend: {
-              display: false,
-            },
-            tooltip: {
-              callbacks: {
-                title: function (context) {
-                  const timeLabel = data.time_labels[context[0].raw.x];
-                  const latencyLabel = data.latency_labels[context[0].raw.y];
-                  return `${timeLabel} - ${latencyLabel}`;
+            data: {
+              datasets: [
+                {
+                  label: 'Request Count',
+                  data: heatmapData,
+                  backgroundColor: function (context) {
+                    const value = context.raw.v;
+                    const maxValue = Math.max(...heatmapData.map((d) => d.v));
+                    const alpha = value / maxValue;
+                    return `rgba(239, 68, 68, ${alpha})`;
+                  },
+                  pointRadius: 10,
+                  pointHoverRadius: 12,
                 },
-                label: function (context) {
-                  return `Requests: ${context.raw.v}`;
-                },
-              },
+              ],
             },
-          },
-          scales: {
-            x: {
-              type: 'linear',
-              position: 'bottom',
-              ticks: {
-                stepSize: 1,
-                color: defaults.tickColor,
-                callback: function (value) {
-                  return data.time_labels[value] || '';
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                title: {
+                  display: true,
+                  text: 'Latency Distribution Heatmap',
+                  color: defaults.titleColor,
+                },
+                legend: {
+                  display: false,
+                },
+                tooltip: {
+                  callbacks: {
+                    title: function (context) {
+                      const timeLabel = data.time_labels[context[0].raw.x];
+                      const latencyLabel = data.latency_labels[context[0].raw.y];
+                      return `${timeLabel} - ${latencyLabel}`;
+                    },
+                    label: function (context) {
+                      return `Requests: ${context?.raw?.v || 0}`;
+                    },
+                  },
                 },
               },
-              title: {
-                display: true,
-                text: 'Time',
-                color: defaults.titleColor,
-              },
-              grid: {
-                color: defaults.gridColor,
-              },
-            },
-            y: {
-              type: 'linear',
-              ticks: {
-                stepSize: 1,
-                color: defaults.tickColor,
-                callback: function (value) {
-                  return data.latency_labels[value] || '';
+              scales: {
+                x: {
+                  type: 'linear',
+                  position: 'bottom',
+                  ticks: {
+                    stepSize: 1,
+                    color: defaults.tickColor,
+                    callback: function (value) {
+                      return data.time_labels[value] || '';
+                    },
+                  },
+                  title: {
+                    display: true,
+                    text: 'Time',
+                    color: defaults.titleColor,
+                  },
+                  grid: {
+                    color: defaults.gridColor,
+                  },
+                },
+                y: {
+                  type: 'linear',
+                  ticks: {
+                    stepSize: 1,
+                    color: defaults.tickColor,
+                    callback: function (value) {
+                      return data.latency_labels[value] || '';
+                    },
+                  },
+                  title: {
+                    display: true,
+                    text: 'Latency',
+                    color: defaults.titleColor,
+                  },
+                  grid: {
+                    color: defaults.gridColor,
+                  },
                 },
               },
-              title: {
-                display: true,
-                text: 'Latency',
-                color: defaults.titleColor,
-              },
-              grid: {
-                color: defaults.gridColor,
-              },
             },
-          },
-        },
-      });
+          });
           // Register with global registry
-          window.chartRegistry.register('metrics-heatmap', chart);
+          Admin.chartRegistry.register('metrics-heatmap', chart);
           this.charts.heatmap = chart;
         } catch (e) {
           console.error('Failed to create heatmap chart:', e);
