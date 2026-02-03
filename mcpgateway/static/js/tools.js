@@ -305,7 +305,7 @@ export const initToolSelect = function (
           visibleCheckboxes.forEach((cb) => (cb.checked = true));
         } else {
           // Paginated (or no visible items) => fetch full set from server
-          const selectedGatewayIds = getSelectedGatewayIds
+          const selectedGatewayIds = Admin.getSelectedGatewayIds
           ? Admin.getSelectedGatewayIds()
           : [];
           const selectedTeamId = Admin.getCurrentTeamId();

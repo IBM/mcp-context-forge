@@ -227,3 +227,12 @@ export function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
     }
     element.innerHTML = htmlContent;
 }
+
+/**
+* Helper to escape HTML for safe rendering
+*/
+export const escapeHtmlChat = function (text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}

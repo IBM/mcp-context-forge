@@ -18,7 +18,6 @@ export default defineConfig({
       output: {
         entryFileNames: 'bundle.js',
         format: 'iife', // IIFE format for direct script inclusion
-        inlineDynamicImports: true, // Force synchronous inlining, no code splitting
         // Externalize dependencies that are loaded separately
         globals: {
           marked: 'marked',
