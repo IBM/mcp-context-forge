@@ -191,7 +191,7 @@ plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_E
 from mcpgateway.services.gateway_service import gateway_service  # noqa: E402
 from mcpgateway.services.prompt_service import prompt_service  # noqa: E402
 from mcpgateway.services.resource_service import resource_service  # noqa: E402
-from mcpgateway.services.root_service import root_service  # noqa: E402
+from mcpgateway.services.root_service import root_service, RootService, RootServiceNotFoundError  # noqa: E402
 from mcpgateway.services.server_service import server_service  # noqa: E402
 from mcpgateway.services.tool_service import tool_service  # noqa: E402
 
@@ -5333,6 +5333,89 @@ async def list_roots(
     return await root_service.list_roots()
 
 
+@root_router.get("/export", response_model=Dict[str, Any])
+async def export_root(
+    uri: str,
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Export a single root configuration to JSON format.
+
+    Args:
+        uri: Root URI to export (query parameter)
+        request: FastAPI request object
+        user: Authenticated user
+
+    Returns:
+        Export data containing root information
+
+    Raises:
+        HTTPException: If root not found or export fails
+    """
+    try:
+        logger.info(f"User {user} requested root export for URI: {uri}")
+
+        # Extract username from user
+        username: Optional[str] = None
+        if hasattr(user, "email"):
+            username = getattr(user, "email", None)
+        elif isinstance(user, dict):
+            username = user.get("email", None)
+        else:
+            username = None
+
+        # Get the root by URI
+        root = await root_service.get_root_by_uri(uri)
+
+        # Create export data
+        export_data = {
+            "exported_at": datetime.now().isoformat(),
+            "exported_by": username or "unknown",
+            "export_type": "root",
+            "version": "1.0",
+            "root": {
+                "uri": str(root.uri),
+                "name": root.name,
+            },
+        }
+
+        return export_data
+
+    except RootServiceNotFoundError as e:
+        logger.error(f"Root not found for export by user {user}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected root export error for user {user}: {str(e)}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Root export failed: {str(e)}")
+
+
+@root_router.get("/{root_uri:path}", response_model=Root)
+async def get_root_by_uri(
+    root_uri: str,
+    user=Depends(get_current_user_with_permissions),
+) -> Root:
+    """
+    Retrieve a specific root by its URI.
+
+    Args:
+        root_uri: URI of the root to retrieve.
+        user: Authenticated user.
+
+    Returns:
+        Root object.
+    """
+    logger.debug(f"User '{user}' requested root with URI: {root_uri}")
+    try:
+        root = await root_service.get_root_by_uri(root_uri)
+        return root.model_dump(by_alias=True)
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting root {root_uri}: {e}")
+        raise e
+
+
 @root_router.post("", response_model=Root)
 @root_router.post("/", response_model=Root)
 async def add_root(
@@ -5351,6 +5434,35 @@ async def add_root(
     """
     logger.debug(f"User '{user}' requested to add root: {root}")
     return await root_service.add_root(str(root.uri), root.name)
+
+
+@root_router.put("/{root_uri:path}", response_model=Root)
+async def update_root(
+    root_uri: str,
+    root: Root,
+    user=Depends(get_current_user_with_permissions),
+) -> Root:
+    """
+    Update a root by URI.
+
+    Args:
+        root_uri: URI of the root to update.
+        root: Root object with updated information.
+        user: Authenticated user.
+
+    Returns:
+        Updated Root object.
+    """
+    logger.debug(f"User '{user}' requested to update root with URI: {root_uri}")
+    print("Here is the root", root)
+    try:
+        root = await root_service.update_root(root_uri, root.name)
+        return root
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting root {root_uri}: {e}")
+        raise e
 
 
 @root_router.delete("/{uri:path}")

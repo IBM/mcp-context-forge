@@ -134,7 +134,7 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
-from mcpgateway.services.root_service import RootService
+from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -10362,13 +10362,115 @@ async def admin_set_prompt_state(
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
+@admin_router.get("/roots/export")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_export_root(
+    uri: str,
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Export a single root configuration as JSON.
+
+    Args:
+        uri: Root URI to export (query parameter)
+        request: FastAPI request object
+        user: Authenticated user
+
+    Returns:
+        JSON file download with root configuration
+
+    Raises:
+        HTTPException: If root not found or export fails
+    """
+    try:
+        LOGGER.info(f"Admin user {get_user_email(user)} requested root export for URI: {uri}")
+
+        # Get the root by URI
+        root = await root_service.get_root_by_uri(uri)
+
+        # Extract username from user
+        username = get_user_email(user)
+
+        # Create export data
+        export_data = {
+            "exported_at": datetime.now().isoformat(),
+            "exported_by": username,
+            "export_type": "root",
+            "version": "1.0",
+            "root": {
+                "uri": str(root.uri),
+                "name": root.name,
+            },
+        }
+
+        # Generate filename - sanitize URI for filename
+        # Remove protocol and special characters
+        safe_uri = uri.replace("://", "_").replace("/", "_").replace("\\", "_")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"root-export-{safe_uri}-{timestamp}.json"
+
+        # Return as downloadable file
+        content = orjson.dumps(export_data, option=orjson.OPT_INDENT_2).decode()
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    except RootServiceNotFoundError as e:
+        LOGGER.error(f"Root not found for export by user {get_user_email(user)}: {str(e)}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected root export error for user {get_user_email(user)}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Root export failed: {str(e)}")
+
+
+@admin_router.get("/roots/{uri:path}")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_get_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> dict:
+    """Get a specific root by URI via the admin UI.
+
+    This endpoint retrieves details for a specific root URI from the system.
+    It requires authentication and logs the operation for audit purposes.
+
+    Args:
+        uri (str): The URI of the root to retrieve.
+        request (Request): FastAPI request object.
+        user: Authenticated user dependency.
+
+    Returns:
+        dict: A dictionary containing the root information.
+
+    Raises:
+        HTTPException: If the root is not found.
+
+    Examples:
+        >>> callable(admin_get_root)
+        True
+        >>> admin_get_root.__name__
+        'admin_get_root'
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is retrieving root URI {uri}")
+    try:
+        root = await root_service.get_root_by_uri(uri)
+        return root.model_dump(by_alias=True)
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error getting root {uri}: {e}")
+        raise e
+
+
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
-      - path
+      - uri
       - name (optional)
 
     Args:
@@ -10385,16 +10487,96 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         >>> admin_add_root.__name__
         'admin_add_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new root")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is adding a new root")
+
     form = await request.form()
-    uri = str(form["uri"])
+    uri = str(form.get("uri", ""))
     name_value = form.get("name")
     name: str | None = None
-    if isinstance(name_value, str):
-        name = name_value
-    await root_service.add_root(uri, name)
+    if isinstance(name_value, str) and name_value.strip():
+        name = name_value.strip()
+
+    try:
+        if not uri:
+            raise ValueError("URI is required")
+        await root_service.add_root(str(uri), name)
+
+    except RootServiceError as e:
+        LOGGER.warning(f"Failed to add root for user {user_email}: {e}")
+        error_message = "Failed to add root. Please check the URI format."
+    except ValueError as e:
+        LOGGER.warning(f"Invalid input from user {user_email}: {e}")
+        error_message = "Invalid input. Please try again."
+    except Exception as e:
+        LOGGER.error(f"Error adding root: {e}")
+        error_message = "Failed to add root. Please try again."
+
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        return RedirectResponse(f"{root_path}/admin{error_param}#roots", status_code=303)
+
     return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+
+
+@admin_router.post("/roots/{uri:path}/update")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_update_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+    """Update a root via the admin UI.
+
+    This endpoint updates an existing root URI in the system. It expects form
+    fields for the new values and requires authentication.
+
+    Expects form fields:
+    - name (optional): New name for the root
+    - is_inactive_checked: Whether the root should be marked as inactive
+
+    Args:
+        uri (str): The URI of the root to update.
+        request (Request): FastAPI request object containing form data.
+        user: Authenticated user dependency.
+
+    Returns:
+        RedirectResponse: A redirect response to the roots section of the admin
+        dashboard with a status code of 303 (See Other).
+
+    Raises:
+        HTTPException: If the root is not found (404) or other errors occur.
+
+    Examples:
+        >>> callable(admin_update_root)
+        True
+        >>> admin_update_root.__name__
+        'admin_update_root'
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is updating root URI {uri}")
+
+    try:
+        form = await request.form()
+        name_value = form.get("name")
+        name: str | None = None
+
+        if isinstance(name_value, str):
+            name = name_value
+
+        await root_service.update_root(uri, name)
+
+        root_path = request.scope.get("root_path", "")
+        is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
+
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
+        return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error updating root {uri}: {e}")
+        raise e
 
 
 @admin_router.post("/roots/{uri:path}/delete")
