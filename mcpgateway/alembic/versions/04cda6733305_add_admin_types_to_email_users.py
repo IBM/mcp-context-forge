@@ -16,6 +16,7 @@ preserving manual grants from being auto-revoked.
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 

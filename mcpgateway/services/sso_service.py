@@ -784,9 +784,9 @@ class SSOService:
                     if not user.is_admin:
                         logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
                         user.is_admin = True
-                    # Track that admin was granted via SSO (only if not already manual/api)
-                    if user.admin_origin in (None, "sso"):
+                        # Track that admin was granted via SSO (only set on initial grant)
                         user.admin_origin = "sso"
+                    # Do NOT change admin_origin if already admin - preserve manual/API grants
                 elif user.is_admin and user.admin_origin == "sso":
                     # User was SSO admin but no longer in admin groups - revoke access
                     logger.info(f"Revoking is_admin for {email} - removed from SSO admin groups")
@@ -902,15 +902,16 @@ class SSOService:
         # Add user teams to token
         # For admin users: omit "teams" key entirely to enable unrestricted access bypass
         # This matches email_auth.py behavior - checks is_admin only, not provider
+        teams = user.get_teams()
         if not user.is_admin:
-            teams = user.get_teams()
             token_data["teams"] = [team.id for team in teams]
-            # Add namespaces for RBAC
-            namespaces = [f"user:{user.email}"]
-            namespaces.extend([f"team:{team.slug}" for team in teams])
-            namespaces.append("public")
-            token_data["namespaces"] = namespaces
-        # Admin users get no teams key for unrestricted bypass (and no namespaces)
+        # Admin users get no teams key for unrestricted bypass
+
+        # Add namespaces for RBAC (always included for consistency with email_auth.py)
+        namespaces = [f"user:{user.email}"]
+        namespaces.extend([f"team:{team.slug}" for team in teams])
+        namespaces.append("public")
+        token_data["namespaces"] = namespaces
 
         # Add scopes
         token_data["scopes"] = {"server_id": None, "permissions": ["*"] if user.is_admin else [], "ip_restrictions": [], "time_restrictions": {}}
