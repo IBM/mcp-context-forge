@@ -5,7 +5,7 @@
 // Callback registry for cleanup functions defined in other modules
 let cleanupToolTestStateCallback = null;
 
-export function registerCleanupToolTestState(callback) {
+function registerCleanupToolTestState(callback) {
     cleanupToolTestStateCallback = callback;
 }
 
