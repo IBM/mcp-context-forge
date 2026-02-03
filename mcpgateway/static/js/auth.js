@@ -1,10 +1,9 @@
-// ===================================================================
-// MULTI-HEADER AUTHENTICATION MANAGEMENT
-// ===================================================================
-
 import { MASKED_AUTH_VALUE } from './constants.js';
 import { safeGetElement, showSuccessMessage, showErrorMessage } from './utils.js';
 
+// ===================================================================
+// MULTI-HEADER AUTHENTICATION MANAGEMENT
+// ===================================================================
 /**
  * Toggle masking for sensitive text inputs (passwords, tokens, headers)
  * @param {HTMLElement|string} inputOrId - Target input element or its ID
@@ -467,15 +466,5 @@ export function handleAuthTypeSelection(
             break;
     }
 }
-
-// Self-register on window.Admin for IIFE modules that depend on these
-const Admin = window.Admin;
-Admin.toggleInputMask = toggleInputMask;
-Admin.addAuthHeader = addAuthHeader;
-Admin.removeAuthHeader = removeAuthHeader;
-Admin.updateAuthHeadersJSON = updateAuthHeadersJSON;
-Admin.loadAuthHeaders = loadAuthHeaders;
-Admin.fetchToolsForGateway = fetchToolsForGateway;
-Admin.handleAuthTypeSelection = handleAuthTypeSelection;
 
 console.log("🛡️ ContextForge MCP Gateway auth module initialized");

@@ -227,14 +227,3 @@ export function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
     }
     element.innerHTML = htmlContent;
 }
-
-// Self-register on window.Admin for IIFE modules that depend on these
-const Admin = window.Admin;
-Admin.escapeHtml = escapeHtml;
-Admin.extractApiError = extractApiError;
-Admin.parseErrorResponse = parseErrorResponse;
-Admin.validatePassthroughHeader = validatePassthroughHeader;
-Admin.validateInputName = validateInputName;
-Admin.validateUrl = validateUrl;
-Admin.validateJson = validateJson;
-Admin.safeSetInnerHTML = safeSetInnerHTML;
