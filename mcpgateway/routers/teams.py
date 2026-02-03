@@ -88,9 +88,8 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         service = TeamManagementService(db)
         team = await service.create_team(name=request.name, description=request.description, created_by=current_user_ctx["email"], visibility=request.visibility, max_members=request.max_members)
 
-        db.commit()
-        db.close()
-        return TeamResponse(
+        # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
+        response = TeamResponse(
             id=team.id,
             name=team.name,
             slug=team.slug,
@@ -104,6 +103,9 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
             updated_at=team.updated_at,
             is_active=team.is_active,
         )
+        db.commit()
+        db.close()
+        return response
     except ValueError as e:
         logger.error(f"Team creation failed: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -291,9 +293,8 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
 
         team_obj = cast(Any, team)
-        db.commit()
-        db.close()
-        return TeamResponse(
+        # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
+        response = TeamResponse(
             id=team_obj.id,
             name=team_obj.name,
             slug=team_obj.slug,
@@ -307,6 +308,9 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
             updated_at=team_obj.updated_at,
             is_active=team_obj.is_active,
         )
+        db.commit()
+        db.close()
+        return response
     except HTTPException:
         raise
     except Exception as e:
@@ -345,9 +349,8 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
         team_obj = cast(Any, team)
-        db.commit()
-        db.close()
-        return TeamResponse(
+        # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
+        response = TeamResponse(
             id=team_obj.id,
             name=team_obj.name,
             slug=team_obj.slug,
@@ -361,6 +364,9 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
             updated_at=team_obj.updated_at,
             is_active=team_obj.is_active,
         )
+        db.commit()
+        db.close()
+        return response
     except HTTPException:
         raise
     except ValueError as e:
