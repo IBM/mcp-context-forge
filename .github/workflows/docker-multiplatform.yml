@@ -40,11 +40,6 @@ on:
   schedule:
     - cron: "17 18 * * 2"  # Weekly rebuild (Tuesday 18:17 UTC) for CVE patches
   workflow_dispatch:
-    inputs:
-      platforms:
-        description: 'Platforms to build (comma-separated)'
-        required: false
-        default: 'linux/amd64,linux/arm64,linux/s390x,linux/ppc64le'
 
 permissions:
   contents: read
