@@ -1763,7 +1763,7 @@ class TestRPCEndpoints:
         """Test list_gateways JSON-RPC method."""
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {"id": "gateway-1"}
-        mock_list_gateways.return_value = [mock_gateway]
+        mock_list_gateways.return_value = ([mock_gateway], None)
 
         req = {
             "jsonrpc": "2.0",

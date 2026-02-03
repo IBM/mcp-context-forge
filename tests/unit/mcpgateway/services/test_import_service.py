@@ -196,7 +196,7 @@ async def test_import_configuration_conflict_update(import_service, mock_db, val
     mock_gateway = MagicMock()
     mock_gateway.name = "test_gateway"
     mock_gateway.id = "gw1"
-    import_service.gateway_service.list_gateways.return_value = [mock_gateway]
+    import_service.gateway_service.list_gateways.return_value = ([mock_gateway], None)
 
     # Execute import with update strategy
     status = await import_service.import_configuration(db=mock_db, import_data=valid_import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
@@ -898,7 +898,7 @@ async def test_gateway_conflict_update_not_found(import_service, mock_db):
 
     # Setup conflict and empty list from service
     import_service.gateway_service.register_gateway.side_effect = GatewayNameConflictError("missing_gateway")
-    import_service.gateway_service.list_gateways.return_value = []  # Empty list - no existing gateway found
+    import_service.gateway_service.list_gateways.return_value = ([], None)  # Empty list - no existing gateway found
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
@@ -919,7 +919,7 @@ async def test_gateway_conflict_update_exception(import_service, mock_db):
     mock_gateway = MagicMock()
     mock_gateway.name = "error_gateway"
     mock_gateway.id = "gateway_id"
-    import_service.gateway_service.list_gateways.return_value = [mock_gateway]
+    import_service.gateway_service.list_gateways.return_value = ([mock_gateway], None)
     import_service.gateway_service.update_gateway.side_effect = Exception("Update failed")
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
@@ -2120,7 +2120,7 @@ async def test_preview_import_builds_bundles_and_conflicts(import_service, mock_
     }
 
     import_service.tool_service.list_tools.return_value = ([SimpleNamespace(original_name="tool1")], None)
-    import_service.gateway_service.list_gateways.return_value = [SimpleNamespace(name="gw1")]
+    import_service.gateway_service.list_gateways.return_value = ([SimpleNamespace(name="gw1")], None)
     import_service.server_service.list_servers.return_value = [SimpleNamespace(name="srv1")]
     import_service.prompt_service.list_prompts.return_value = ([SimpleNamespace(name="prompt1")], None)
     import_service.resource_service.list_resources.return_value = ([SimpleNamespace(uri="file:///res1")], None)

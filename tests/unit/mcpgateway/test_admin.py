@@ -5360,7 +5360,7 @@ async def test_get_gateways_section(monkeypatch, mock_db):
         team_id = "team-1"
 
     gateway_service = MagicMock()
-    gateway_service.list_gateways = AsyncMock(return_value=[gateway_a, gateway_b, GatewayModel()])
+    gateway_service.list_gateways = AsyncMock(return_value=([gateway_a, gateway_b, GatewayModel()], None))
     monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: gateway_service)
 
     response = await get_gateways_section(team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})

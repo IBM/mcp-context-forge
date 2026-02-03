@@ -13190,7 +13190,7 @@ async def get_gateways_section(
         get_user_email(user)
 
         # Get all gateways and filter by team
-        gateways_list = await local_gateway_service.list_gateways(db, include_inactive=True)
+        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True)
 
         # Apply team filtering if specified
         if team_id:

@@ -1433,7 +1433,7 @@ class TestRpcHandling:
         gateway.model_dump.return_value = {"id": "gw-1"}
         mock_db = MagicMock()
 
-        with patch("mcpgateway.main.gateway_service.list_gateways", new=AsyncMock(return_value=[gateway])):
+        with patch("mcpgateway.main.gateway_service.list_gateways", new=AsyncMock(return_value=([gateway], None))):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             assert result["result"]["gateways"][0]["id"] == "gw-1"
 
