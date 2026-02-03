@@ -95,8 +95,3 @@ export const AppState = {
         this.activeModals.delete(modalId);
     },
 };
-
-// Self-register on window.Admin for IIFE modules that depend on these
-const Admin = window.Admin;
-Admin.AppState = AppState;
-Admin.registerCleanupToolTestState = registerCleanupToolTestState;
