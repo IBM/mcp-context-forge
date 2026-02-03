@@ -343,10 +343,15 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
         if role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-        team = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
+        success = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
 
+        if not success:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found or update failed")
+
+        # Fetch the updated team to build the response
+        team = await service.get_team_by_id(team_id)
         if not team:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found after update")
 
         team_obj = cast(Any, team)
         # Build response BEFORE closing session to avoid lazy-load issues with get_member_count()
