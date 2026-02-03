@@ -30,14 +30,14 @@ async def test_get_permission_service_returns_instance():
 async def test_get_current_user_with_permissions_cookie_token_success():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
-    mock_request.headers = {"user-agent": "pytest"}
+    mock_request.headers = {"user-agent": "pytest", "accept": "text/html"}  # Mark as browser request
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req123")
 
     mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=True)
     with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
-        result = await rbac.get_current_user_with_permissions(mock_request)
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
         assert result["email"] == "user@example.com"
         assert result["auth_method"] == "jwt"
         assert result["request_id"] == "req123"
@@ -50,13 +50,12 @@ async def test_get_current_user_with_permissions_no_token_raises_401():
     mock_request.headers = {}
     mock_request.state = MagicMock()
     mock_request.client = None
-    # Patch security dependency to mock HTTPAuthorizationCredentials behavior
+    # Create proper HTTPAuthorizationCredentials mock
     mock_credentials = MagicMock()
     mock_credentials.credentials = None
-    with patch("mcpgateway.middleware.rbac.security", mock_credentials):
-        with pytest.raises(HTTPException) as exc:
-            await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials)
-        assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 @pytest.mark.asyncio
@@ -69,7 +68,7 @@ async def test_get_current_user_with_permissions_auth_failure_redirect_html():
     mock_request.client.host = "127.0.0.1"
     with patch("mcpgateway.middleware.rbac.get_current_user", side_effect=Exception("fail")):
         with pytest.raises(HTTPException) as exc:
-            await rbac.get_current_user_with_permissions(mock_request)
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
         assert exc.value.status_code == status.HTTP_302_FOUND
 
 

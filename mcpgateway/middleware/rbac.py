@@ -230,29 +230,44 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         }
 
     # Standard JWT authentication flow
-    # Try multiple sources for the token, prioritizing manual cookie reading
+    # Try multiple sources for the token, prioritizing Authorization header for API requests
     token = None
+    token_from_cookie = False
 
-    # 1. First try manual cookie reading (most reliable)
-    if request.cookies:
+    # 1. First try Authorization header (preferred for API requests)
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+
+    # 2. Try manual cookie reading (for browser requests)
+    if not token and request.cookies:
         # Try both jwt_token and access_token cookie names
         manual_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
         if manual_token:
             token = manual_token
-
-    # 2. Then try Authorization header
-    if not token and credentials and credentials.credentials:
-        token = credentials.credentials
+            token_from_cookie = True
 
     # 3. Finally try FastAPI Cookie dependency (fallback)
     if not token and jwt_token:
         token = jwt_token
+        token_from_cookie = True
+
+    # Check if this is an API request (not a browser request)
+    accept_header = request.headers.get("accept", "")
+    is_htmx = request.headers.get("hx-request") == "true"
+    is_browser_request = "text/html" in accept_header or is_htmx
+
+    # SECURITY: Reject cookie-only authentication for API requests
+    # Cookies should only be used for browser/HTML requests
+    if token_from_cookie and not is_browser_request:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Cookie authentication not allowed for API requests. Use Authorization header.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if not token:
         # For browser requests (HTML Accept header or HTMX), redirect to login
-        accept_header = request.headers.get("accept", "")
-        is_htmx = request.headers.get("hx-request") == "true"
-        if "text/html" in accept_header or is_htmx:
+        if is_browser_request:
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
 
         # If auth is disabled, return the stock admin user
