@@ -5516,7 +5516,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     pool = get_mcp_session_pool()
                     # Register this worker as the owner of this session
                     # We don't need the full session mapping here, just ownership
-                    await pool._register_pool_session_owner(mcp_session_id)
+                    await pool.register_pool_session_owner(mcp_session_id)
                     print(f"[AFFINITY_INIT] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Registered ownership after initialize")
                 except Exception as e:
                     print(f"[AFFINITY_INIT] Failed to register session ownership: {e}")

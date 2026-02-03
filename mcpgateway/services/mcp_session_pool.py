@@ -1290,7 +1290,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
         logger.info("All sessions closed")
 
-    async def _register_pool_session_owner(self, mcp_session_id: str) -> None:
+    async def register_pool_session_owner(self, mcp_session_id: str) -> None:
         """Register this worker as owner of a pool session in Redis.
 
         This enables multi-worker session affinity by tracking which worker owns
@@ -1311,7 +1311,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
             redis = await get_redis_client()
-            logger.debug(f"[REDIS_DEBUG] _register_pool_session_owner | redis client: {redis}")
+            logger.debug(f"[REDIS_DEBUG] register_pool_session_owner | redis client: {redis}")
             if redis:
                 key = f"mcpgw:pool_owner:{mcp_session_id}"
                 result = await redis.setex(key, settings.mcpgateway_session_affinity_ttl, WORKER_ID)
@@ -1352,8 +1352,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     decoded = owner.decode() if isinstance(owner, bytes) else owner
                     logger.debug(f"[REDIS_DEBUG] Decoded owner: {decoded}")
                     return decoded
-                else:
-                    logger.debug(f"[REDIS_DEBUG] No owner found for key {key}")
+                logger.debug(f"[REDIS_DEBUG] No owner found for key {key}")
             else:
                 logger.debug("[REDIS_DEBUG] Redis client is None, cannot get session owner")
         except Exception as e:
@@ -1601,7 +1600,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             body = bytes.fromhex(body_hex) if body_hex else b""
 
             session_short = mcp_session_id[:8] if mcp_session_id and len(mcp_session_id) >= 8 else "unknown"
-            print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
+            logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Received forwarded HTTP request: {method} {path}")
 
             # Add internal forwarding headers to prevent loops
             internal_headers = dict(headers)
@@ -1622,7 +1621,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                     timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                 )
 
-                print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed locally: {response.status_code}")
+                logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | Executed locally: {response.status_code}")
 
                 # Serialize response for Redis transport
                 response_data = {
@@ -1634,7 +1633,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # Publish response back to requesting worker
                 if redis and response_channel:
                     await redis.publish(response_channel, orjson.dumps(response_data))
-                    print(f"[HTTP_AFFINITY] Published HTTP response to Redis channel: {response_channel}")
+                    logger.debug(f"[HTTP_AFFINITY] Published HTTP response to Redis channel: {response_channel}")
 
         except Exception as e:
             logger.error(f"Error executing forwarded HTTP request: {e}")
@@ -1698,7 +1697,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return None
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
-        print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")
+        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_short}... | {method} {path} | Forwarding to worker {owner_worker_id}")
 
         try:
             # First-Party
@@ -1735,7 +1734,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 # Publish forwarded request to owner worker's HTTP channel
                 owner_channel = f"mcpgw:pool_http:{owner_worker_id}"
                 await redis.publish(owner_channel, orjson.dumps(forward_data))
-                print(f"[HTTP_AFFINITY] Published HTTP request to Redis channel: {owner_channel}")
+                logger.debug(f"[HTTP_AFFINITY] Published HTTP request to Redis channel: {owner_channel}")
 
                 # Wait for response with timeout
                 timeout = settings.mcpgateway_pool_rpc_forward_timeout
@@ -1744,7 +1743,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                         msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
                         if msg and msg["type"] == "message":
                             response_data = orjson.loads(msg["data"])
-                            print(f"[HTTP_AFFINITY] Received HTTP response via Redis: status={response_data.get('status')}")
+                            logger.debug(f"[HTTP_AFFINITY] Received HTTP response via Redis: status={response_data.get('status')}")
 
                             # Decode hex body back to bytes
                             body_hex = response_data.get("body", "")

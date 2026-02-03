@@ -1604,7 +1604,7 @@ class SessionManagerWrapper:
                         from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                         pool = get_mcp_session_pool()
-                        await pool._register_pool_session_owner(session_to_register)  # pylint: disable=protected-access
+                        await pool.register_pool_session_owner(session_to_register)
                         print(f"[HTTP_AFFINITY_SDK] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after SDK handling")
                     except Exception as e:
                         print(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
