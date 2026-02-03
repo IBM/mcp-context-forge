@@ -633,6 +633,8 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
 
         logger.info(f"Admin {current_user_ctx['email']} created user: {user.email}")
 
+        db.commit()
+        db.close()
         return EmailUserResponse.from_email_user(user)
 
     except EmailValidationError as e:
@@ -729,7 +731,9 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
 
         logger.info(f"Admin {current_user_ctx['email']} updated user: {user.email}")
 
-        return EmailUserResponse.from_email_user(user)
+        result = EmailUserResponse.from_email_user(user)
+        db.close()
+        return result
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
@@ -770,6 +774,8 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
 
         logger.info(f"Admin {current_user_ctx['email']} deleted user: {user_email}")
 
+        db.commit()
+        db.close()
         return SuccessResponse(success=True, message=f"User {user_email} has been deleted")
 
     except HTTPException:

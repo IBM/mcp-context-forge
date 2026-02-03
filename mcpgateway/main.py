@@ -2501,7 +2501,7 @@ async def create_server(
             team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new server for team {team_id}")
-        return await server_service.register_server(
+        result = await server_service.register_server(
             db,
             server,
             created_by=metadata["created_by"],
@@ -2512,6 +2512,9 @@ async def create_server(
             owner_email=user_email,
             visibility=visibility,
         )
+        db.commit()
+        db.close()
+        return result
     except ServerNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
@@ -2556,7 +2559,7 @@ async def update_server(
 
         user_email: str = get_user_email(user)
 
-        return await server_service.update_server(
+        result = await server_service.update_server(
             db,
             server_id,
             server,
@@ -2566,6 +2569,9 @@ async def update_server(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
+        db.commit()
+        db.close()
+        return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
@@ -2673,6 +2679,8 @@ async def delete_server(
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await server_service.get_server(db, server_id)
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
+        db.commit()
+        db.close()
         return {
             "status": "success",
             "message": f"Server {server_id} deleted successfully",
@@ -3516,6 +3524,9 @@ async def list_tools(
         visibility=visibility,
         token_teams=token_teams,
     )
+    # Release transaction before response serialization
+    db.commit()
+    db.close()
 
     if apijsonpath is None:
         if include_pagination:
@@ -3588,7 +3599,7 @@ async def create_tool(
             team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new tool for team {team_id}")
-        return await tool_service.register_tool(
+        result = await tool_service.register_tool(
             db,
             tool,
             created_by=metadata["created_by"],
@@ -3601,6 +3612,9 @@ async def create_tool(
             owner_email=user_email,
             visibility=tool.visibility,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
         if isinstance(ex, ToolNameConflictError):
@@ -3694,7 +3708,7 @@ async def update_tool(
 
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        return await tool_service.update_tool(
+        result = await tool_service.update_tool(
             db,
             tool_id,
             tool,
@@ -3704,6 +3718,9 @@ async def update_tool(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as ex:
         if isinstance(ex, PermissionError):
             raise HTTPException(status_code=403, detail=str(ex))
@@ -3748,6 +3765,8 @@ async def delete_tool(
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
+        db.commit()
+        db.close()
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -4029,6 +4048,9 @@ async def list_resources(
         visibility=visibility,
         token_teams=token_teams,
     )
+    # Release transaction before response serialization
+    db.commit()
+    db.close()
 
     if include_pagination:
         payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
@@ -4098,7 +4120,7 @@ async def create_resource(
             team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new resource for team {team_id}")
-        return await resource_service.register_resource(
+        result = await resource_service.register_resource(
             db,
             resource,
             created_by=metadata["created_by"],
@@ -4111,6 +4133,9 @@ async def create_resource(
             owner_email=user_email,
             visibility=visibility,
         )
+        db.commit()
+        db.close()
+        return result
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
@@ -4176,6 +4201,9 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
+        # Release transaction before response serialization
+        db.commit()
+        db.close()
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -4294,6 +4322,8 @@ async def update_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    db.commit()
+    db.close()
     await invalidate_resource_cache(resource_id)
     return result
 
@@ -4325,6 +4355,8 @@ async def delete_resource(
         logger.debug(f"User {user} is deleting resource with id {resource_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await resource_service.delete_resource(db, resource_id, user_email=user_email, purge_metrics=purge_metrics)
+        db.commit()
+        db.close()
         await invalidate_resource_cache(resource_id)
         return {"status": "success", "message": f"Resource {resource_id} deleted"}
     except PermissionError as e:
@@ -4502,6 +4534,9 @@ async def list_prompts(
         visibility=visibility,
         token_teams=token_teams,
     )
+    # Release transaction before response serialization
+    db.commit()
+    db.close()
 
     if include_pagination:
         payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
@@ -4573,7 +4608,7 @@ async def create_prompt(
             team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new prompt for team {team_id}")
-        return await prompt_service.register_prompt(
+        result = await prompt_service.register_prompt(
             db,
             prompt,
             created_by=metadata["created_by"],
@@ -4586,6 +4621,9 @@ async def create_prompt(
             owner_email=user_email,
             visibility=visibility,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as e:
         if isinstance(e, PromptNameConflictError):
             # If the prompt name already exists, return a 409 Conflict error
@@ -4763,7 +4801,7 @@ async def update_prompt(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        return await prompt_service.update_prompt(
+        result = await prompt_service.update_prompt(
             db,
             prompt_id,
             prompt,
@@ -4773,6 +4811,9 @@ async def update_prompt(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as e:
         if isinstance(e, PermissionError):
             raise HTTPException(status_code=403, detail=str(e))
@@ -4822,6 +4863,8 @@ async def delete_prompt(
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
+        db.commit()
+        db.close()
         return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
         if isinstance(e, PermissionError):
@@ -4982,6 +5025,9 @@ async def list_gateways(
         visibility="public" if is_public_only_token and not visibility else visibility,
         token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
     )
+    # Release transaction before response serialization
+    db.commit()
+    db.close()
 
     if include_pagination:
         payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
@@ -5129,7 +5175,7 @@ async def update_gateway(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        return await gateway_service.update_gateway(
+        result = await gateway_service.update_gateway(
             db,
             gateway_id,
             gateway,
@@ -5139,6 +5185,9 @@ async def update_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as ex:
         if isinstance(ex, PermissionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=403)
@@ -5192,6 +5241,8 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
         if has_resources:
             await invalidate_resource_cache()
 
+        db.commit()
+        db.close()
         return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -5507,6 +5558,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+            # Release transaction after resources/read completes
+            db.commit()
+            db.close()
         elif method == "resources/subscribe":
             # MCP spec-compliant resource subscription endpoint
             uri = params.get("uri")
@@ -5516,6 +5570,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
             await resource_service.subscribe_resource(db, subscription)
+            db.commit()
+            db.close()
             result = {}
         elif method == "resources/unsubscribe":
             # MCP spec-compliant resource unsubscription endpoint
@@ -5526,6 +5582,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
             await resource_service.unsubscribe_resource(db, subscription)
+            db.commit()
+            db.close()
             result = {}
         elif method == "prompts/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
@@ -5578,6 +5636,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             )
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
+            # Release transaction after prompts/get completes
+            db.commit()
+            db.close()
         elif method == "ping":
             # Per the MCP spec, a ping returns an empty result.
             result = {}
@@ -5675,6 +5736,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 # Unregister the run when done (only if feature enabled)
                 if settings.mcpgateway_tool_cancellation_enabled and run_id:
                     await cancellation_service.unregister_run(run_id)
+                # Release transaction after tools/call completes
+                db.commit()
+                db.close()
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             # MCP spec-compliant resource templates list endpoint
@@ -5692,6 +5756,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 user_email=user_email_rpc,
                 token_teams=token_teams_rpc,
             )
+            db.commit()
+            db.close()
             result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
         elif method == "roots/list":
             # MCP spec-compliant method name

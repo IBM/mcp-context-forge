@@ -11,6 +11,27 @@
 ###############################################################################
 
 ###############################################################################
+#  DOCKER COMPOSE PROFILES
+#
+#  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
+#  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
+#  --profile benchmark:   Adds benchmark MCP servers for load testing
+#  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
+#
+#  TLS Quick Start:
+#    make compose-tls                    # HTTP:8080 + HTTPS:8443
+#    make compose-tls-https              # Force HTTPS (HTTP redirects)
+#    curl -sk https://localhost:8443/health
+#
+#  Custom certificates:
+#    mkdir -p certs && cp your-cert.pem certs/cert.pem && cp your-key.pem certs/key.pem
+#    make compose-tls
+#
+#  Environment variables (TLS profile):
+#    NGINX_FORCE_HTTPS=true              # Redirect all HTTP to HTTPS
+###############################################################################
+
+###############################################################################
 #  NETWORKS + VOLUMES - declared first so they can be referenced later
 ###############################################################################
 networks:
@@ -43,13 +64,15 @@ services:
     restart: unless-stopped
     ports:
       - "8080:80"                   # HTTP caching proxy (public-facing)
+      # - "8443:443"                  # HTTPS caching proxy (public-facing)
     networks: [mcpnet]
     depends_on:
       gateway:
         condition: service_healthy
     volumes:
       - nginx_cache:/var/cache/nginx    # Persistent cache storage
-      # - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+      # - ./certs:/app/certs:ro           # Mount SSL certs for HTTPS backend verification
     # TCP kernel tuning for 3000 concurrent connections
     # Note: net.core.* sysctls are host-level and cannot be set per-container
     # Only net.ipv4.* sysctls that are network-namespace aware work here
@@ -110,6 +133,8 @@ services:
       - HTTP_SERVER=gunicorn # Python-based, battle-tested, lower memory usage
       - HOST=0.0.0.0
       - PORT=4444
+      # Domain for CORS/cookies (nginx default at http://localhost:8080)
+      - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
@@ -124,8 +149,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       # Redis parser: hiredis (C extension ~83x faster for large responses)
       - REDIS_PARSER=hiredis
-      # Redis connection pool tuning for load testing (32 workers × 150 = 4800 < 5000 maxclients)
-      - REDIS_MAX_CONNECTIONS=150
+      # Redis connection pool tuning for load testing (3 replicas × 24 workers × 100 = 7200 < 10000 maxclients)
+      - REDIS_MAX_CONNECTIONS=100
       - REDIS_SOCKET_TIMEOUT=5.0
       - REDIS_SOCKET_CONNECT_TIMEOUT=5.0
       - REDIS_HEALTH_CHECK_INTERVAL=30
@@ -188,11 +213,21 @@ services:
       # - JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem
       - JWT_AUDIENCE=mcpgateway-api
       - JWT_ISSUER=mcpgateway
+      # Basic auth is DISABLED by default for security (API_ALLOW_BASIC_AUTH=false)
+      # Only set these if you explicitly enable Basic auth for backwards compatibility
+      # - API_ALLOW_BASIC_AUTH=true
+      # - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
+      # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
+      # Auth encryption secret + default user password
+      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-my-test-salt}
+      - DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:-changeme}
+      # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
-      - REQUIRE_TOKEN_EXPIRATION=false
-      - REQUIRE_JTI=${REQUIRE_JTI:-false}
+      # Security defaults (tokens require expiration and JTI for revocation)
+      - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
+      - REQUIRE_JTI=${REQUIRE_JTI:-true}
       - REQUIRE_USER_IN_DB=${REQUIRE_USER_IN_DB:-false}
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true
@@ -201,11 +236,27 @@ services:
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
-      ## Uncomment to enable HTTPS
+      # ═══════════════════════════════════════════════════════════════════════════
+      # SSRF Protection (Server-Side Request Forgery)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Prevents gateway from accessing internal resources or cloud metadata services.
+      # Default: enabled with safe settings for dev/internal deployments.
+      # Cloud metadata (169.254.169.254, etc.) is ALWAYS blocked by default.
+      # - SSRF_PROTECTION_ENABLED=true           # Master switch (default: true)
+      # - SSRF_ALLOW_LOCALHOST=true              # Allow localhost (default: true for dev)
+      # - SSRF_ALLOW_PRIVATE_NETWORKS=true       # Allow 10.x, 172.16.x, 192.168.x (default: true)
+      # - SSRF_DNS_FAIL_CLOSED=false             # Reject on DNS failure (default: false = fail open)
+      # For strict production mode (external endpoints only):
+      # - SSRF_ALLOW_LOCALHOST=false
+      # - SSRF_ALLOW_PRIVATE_NETWORKS=false
+      # - SSRF_DNS_FAIL_CLOSED=true
+      ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
-      # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}  # Optional: Set in .env for passphrase-protected keys
+      # For passphrase-protected keys: run `make certs-passphrase` and use:
+      # - KEY_FILE=/app/certs/key-encrypted.pem
+      # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
       # Uncomment to enable catalog
@@ -275,8 +326,8 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Shared HTTP client for all outbound requests (federation, health checks,
       # A2A, SSO, catalog). Provides ~20x better performance than per-request clients.
-      - HTTPX_MAX_CONNECTIONS=200           # Total connections in pool (default: 200)
-      - HTTPX_MAX_KEEPALIVE_CONNECTIONS=100 # Keepalive connections (default: 100)
+      - HTTPX_MAX_CONNECTIONS=500           # Total connections in pool (increased from 200 for high concurrency)
+      - HTTPX_MAX_KEEPALIVE_CONNECTIONS=300 # Keepalive connections (increased from 100)
       - HTTPX_KEEPALIVE_EXPIRY=30.0         # Idle connection expiry (seconds)
       - HTTPX_CONNECT_TIMEOUT=5.0           # TCP connection timeout (seconds)
       - HTTPX_READ_TIMEOUT=120.0            # Response read timeout (seconds, high for slow tools)
@@ -337,7 +388,7 @@ services:
       # ~20ms to ~1-2ms (10-20x improvement). Sessions are isolated per user/tenant
       # via identity hashing to prevent cross-user session sharing.
       - MCP_SESSION_POOL_ENABLED=true              # Enable session pooling (default: false, enabled for docker-compose)
-      - MCP_SESSION_POOL_MAX_PER_KEY=50            # Max sessions per (URL, identity, transport)
+      - MCP_SESSION_POOL_MAX_PER_KEY=200           # Max sessions per (URL, identity, transport) - increased from 150 for 4000+ users
       - MCP_SESSION_POOL_TTL=300.0                 # Session TTL in seconds (default: 300)
       - MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL=60.0  # Idle time before health check (default: 60)
       - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60.0     # Timeout waiting for session slot (default: 30)
@@ -394,7 +445,7 @@ services:
       # Disable when using external observability to improve performance.
       # Set to true if you need per-operation metrics in the database.
       # Note: Does NOT affect log aggregation (METRICS_AGGREGATION_ENABLED) or Prometheus.
-      - DB_METRICS_RECORDING_ENABLED=false
+      - DB_METRICS_RECORDING_ENABLED=true
 
       # ═══════════════════════════════════════════════════════════════════════════
       # Metrics Configuration
@@ -432,16 +483,6 @@ services:
         soft: 65535
         hard: 65535
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Profiling Support (py-spy, memray)
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SYS_PTRACE capability required for py-spy and memray to attach to running processes
-    # Usage:
-    #   py-spy: sudo py-spy top --pid $(docker inspect --format '{{.State.Pid}}' mcp-context-forge-gateway-1)
-    #   memray: docker exec -it mcp-context-forge-gateway-1 memray attach <PID> -o /tmp/profile.bin
-    cap_add:
-      - SYS_PTRACE
-
     depends_on:          # Default stack: PgBouncer + Redis (PgBouncer depends on Postgres)
       pgbouncer:
         condition: service_healthy   # ▶ wait for connection pooler
@@ -456,9 +497,9 @@ services:
     healthcheck:
       ## Uncomment for HTTP healthcheck
       test: ["CMD", "python3", "-c", "import urllib.request; import json; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); data = json.loads(resp.read()); exit(0 if data.get('status') == 'healthy' else 1)"]
-      ## Uncomment for HTTPS healthcheck
+      ## Uncomment for HTTPS healthcheck (requires valid SSL cert)
       # test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
-      ## Uncomment to skip SSL validation (self-signed certs)
+      # HTTPS healthcheck with SSL validation skipped (self-signed certs)
       # test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
       interval: 30s
       timeout: 10s
@@ -492,7 +533,7 @@ services:
     # Uncomment to mount catalog configuration and SSL certificates
     # volumes:
     #   - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
-    #   - ./certs:/app/mcpgateway/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
+      # - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # SSL/TLS Certificate Setup:
     # 1. Generate certificates:
@@ -513,6 +554,7 @@ services:
 
   postgres:
     image: postgres:18
+    shm_size: 256m  # Increase from 64MB default to prevent shared memory exhaustion under load
     ulimits:
       nofile:
         soft: 8192
@@ -676,14 +718,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=120        # Close idle client connections (2x DB_POOL_RECYCLE)
+      - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=120   # Kill transactions idle > 120s (aligned with CLIENT_IDLE_TIMEOUT)
+      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -1503,3 +1545,94 @@ services:
         print(f'✅ Registration complete: {registered}/{server_count} benchmark servers')
         "
     profiles: ["benchmark"]
+
+###############################################################################
+#  TLS PROFILE - Zero-config HTTPS via Nginx (enabled with --profile tls)
+#  Usage: make compose-tls  (or: docker compose --profile tls up -d)
+#
+#  Features:
+#  - Auto-generates self-signed certificates on first run
+#  - Custom certs: place your own cert.pem/key.pem in ./certs/ before starting
+#  - HTTPS on port 8443, HTTP on port 8080 (both available)
+#  - Compatible with other profiles: --profile tls --profile monitoring
+#
+#  Custom Certificate Usage:
+#    mkdir -p certs
+#    cp /path/to/your/cert.pem certs/cert.pem
+#    cp /path/to/your/key.pem certs/key.pem
+#    make compose-tls
+###############################################################################
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Certificate Initialization - Auto-generates self-signed certs if missing
+  # ──────────────────────────────────────────────────────────────────────
+  cert_init:
+    image: alpine/openssl:latest
+    volumes:
+      - ./certs:/certs
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ -f /certs/cert.pem ] && [ -f /certs/key.pem ]; then
+          echo "✅ Certificates found in ./certs - using existing"
+          exit 0
+        fi
+        echo "🔏 Generating self-signed TLS certificate..."
+        mkdir -p /certs
+        openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
+          -keyout /certs/key.pem -out /certs/cert.pem \
+          -subj "/CN=localhost" \
+          -addext "subjectAltName=DNS:localhost,DNS:gateway,DNS:nginx,IP:127.0.0.1"
+        chmod 644 /certs/cert.pem
+        chmod 640 /certs/key.pem
+        echo "✅ TLS certificate generated in ./certs"
+    profiles: ["tls"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Nginx TLS - HTTPS-enabled reverse proxy (overrides default nginx)
+  # ──────────────────────────────────────────────────────────────────────
+  nginx_tls:
+    build:
+      context: ./infra/nginx
+      dockerfile: Dockerfile
+    image: mcpgateway/nginx-cache:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"                   # HTTP caching proxy (public-facing)
+      - "8443:443"                  # HTTPS caching proxy (public-facing)
+    networks: [mcpnet]
+    environment:
+      # Set to "true" to force all HTTP requests to redirect to HTTPS
+      - NGINX_FORCE_HTTPS=${NGINX_FORCE_HTTPS:-false}
+    depends_on:
+      gateway:
+        condition: service_healthy
+      cert_init:
+        condition: service_completed_successfully
+    volumes:
+      - nginx_cache:/var/cache/nginx                         # Persistent cache storage
+      - ./infra/nginx/nginx-tls.conf:/etc/nginx/nginx.conf:ro  # TLS-enabled config
+      - ./certs:/app/certs:ro                                 # Mount SSL certs
+    # TCP kernel tuning for 3000 concurrent connections
+    sysctls:
+      - net.ipv4.tcp_fin_timeout=15
+      - net.ipv4.ip_local_port_range=1024 65535
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      test: ["CMD", "curl", "-fk", "https://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 1G
+        reservations:
+          cpus: '2'
+          memory: 512M
+    profiles: ["tls"]

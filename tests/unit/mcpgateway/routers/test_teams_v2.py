@@ -116,7 +116,7 @@ class TestTeamsRouterV2:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_create_team_success(self, mock_user_context, mock_team):
+    async def test_create_team_success(self, mock_user_context, mock_team, mock_db):
         """Test successful team creation."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
@@ -125,7 +125,7 @@ class TestTeamsRouterV2:
             mock_service.create_team = AsyncMock(return_value=mock_team)
             MockService.return_value = mock_service
 
-            result = await teams.create_team(request, current_user_ctx=mock_user_context)
+            result = await teams.create_team(request, current_user_ctx=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name

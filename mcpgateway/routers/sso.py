@@ -371,7 +371,7 @@ async def create_sso_provider(
 
     provider = await sso_service.create_provider(provider_data.dict())
 
-    return {
+    result = {
         "id": provider.id,
         "name": provider.name,
         "display_name": provider.display_name,
@@ -379,6 +379,9 @@ async def create_sso_provider(
         "is_enabled": provider.is_enabled,
         "created_at": provider.created_at,
     }
+    db.commit()
+    db.close()
+    return result
 
 
 @sso_router.get("/admin/providers", response_model=List[Dict])
@@ -406,7 +409,7 @@ async def list_all_sso_providers(
     result = db.execute(stmt)
     providers = result.scalars().all()
 
-    return [
+    result = [
         {
             "id": provider.id,
             "name": provider.name,
@@ -420,6 +423,9 @@ async def list_all_sso_providers(
         }
         for provider in providers
     ]
+    db.commit()
+    db.close()
+    return result
 
 
 @sso_router.get("/admin/providers/{provider_id}", response_model=Dict)
@@ -448,7 +454,7 @@ async def get_sso_provider(
     if not provider:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
-    return {
+    result = {
         "id": provider.id,
         "name": provider.name,
         "display_name": provider.display_name,
@@ -466,6 +472,9 @@ async def get_sso_provider(
         "created_at": provider.created_at,
         "updated_at": provider.updated_at,
     }
+    db.commit()
+    db.close()
+    return result
 
 
 @sso_router.put("/admin/providers/{provider_id}", response_model=Dict)
@@ -501,7 +510,7 @@ async def update_sso_provider(
     if not provider:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
-    return {
+    result = {
         "id": provider.id,
         "name": provider.name,
         "display_name": provider.display_name,
@@ -509,6 +518,9 @@ async def update_sso_provider(
         "is_enabled": provider.is_enabled,
         "updated_at": provider.updated_at,
     }
+    db.commit()
+    db.close()
+    return result
 
 
 @sso_router.delete("/admin/providers/{provider_id}")
@@ -536,6 +548,8 @@ async def delete_sso_provider(
     if not sso_service.delete_provider(provider_id):
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
+    db.commit()
+    db.close()
     return {"message": f"SSO provider '{provider_id}' deleted successfully"}
 
 

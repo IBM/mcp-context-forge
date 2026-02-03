@@ -416,6 +416,43 @@ The system grants implicit permissions without explicit role assignment. These a
     - Team owners automatically have management rights
     - Users can always manage their own API tokens
 
+### Admin API RBAC
+
+The Admin API enforces **strict RBAC** where even users with `is_admin: true` must have explicit permissions granted. This enables **delegated administration** - granting specific admin capabilities without full superuser access.
+
+**Key behaviors:**
+
+| Aspect | Behavior |
+|--------|----------|
+| Admin bypass | `allow_admin_bypass=False` on all admin routes |
+| `is_admin` flag | Does NOT bypass permission checks |
+| UI entry | Requires any `admin.*` permission via `has_admin_permission()` |
+| Route protection | All 177 admin routes use `@require_permission` decorators |
+
+**Example: Delegated Server Management**
+
+```json
+{
+  "role": "server-manager",
+  "permissions": [
+    "servers.read",
+    "servers.create",
+    "servers.update",
+    "servers.delete"
+  ]
+}
+```
+
+A user with this role can:
+
+- ✅ Access `/admin/servers/*` endpoints
+- ✅ View the Admin UI (has `servers.*` which satisfies `has_admin_permission()`)
+- ❌ Access `/admin/tools/*` endpoints (no `tools.*` permissions)
+- ❌ Access `/admin/gateways/*` endpoints (no `gateways.*` permissions)
+
+!!! warning "Platform Admin Role"
+    The built-in `platform_admin` role has `["*"]` (wildcard) permissions, which grants access to all operations. For delegated administration, create custom roles with specific permission sets.
+
 ---
 
 ## Configuration Safety

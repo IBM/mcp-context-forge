@@ -1089,7 +1089,7 @@ async def update_global_passthrough_headers(
 @rate_limit(requests_per_minute=10)  # Strict limit for cache operations
 async def invalidate_passthrough_headers_cache(
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Invalidate the GlobalConfig cache.
 
@@ -1099,7 +1099,7 @@ async def invalidate_passthrough_headers_cache(
 
     Args:
         _user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         Dict with invalidation status and cache statistics
@@ -1128,7 +1128,7 @@ async def invalidate_passthrough_headers_cache(
 @rate_limit(requests_per_minute=30)
 async def get_passthrough_headers_cache_stats(
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get GlobalConfig cache statistics.
 
@@ -1137,7 +1137,7 @@ async def get_passthrough_headers_cache_stats(
 
     Args:
         _user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         Dict with cache statistics
@@ -1165,7 +1165,7 @@ async def get_passthrough_headers_cache_stats(
 @rate_limit(requests_per_minute=10)
 async def invalidate_a2a_stats_cache(
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Invalidate the A2A stats cache.
 
@@ -1175,7 +1175,7 @@ async def invalidate_a2a_stats_cache(
 
     Args:
         _user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         Dict with invalidation status and cache statistics
@@ -1202,7 +1202,7 @@ async def invalidate_a2a_stats_cache(
 @rate_limit(requests_per_minute=30)
 async def get_a2a_stats_cache_stats(
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get A2A stats cache statistics.
 
@@ -1211,7 +1211,7 @@ async def get_a2a_stats_cache_stats(
 
     Args:
         _user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         Dict with cache statistics
@@ -1233,7 +1233,7 @@ async def get_a2a_stats_cache_stats(
 async def get_mcp_session_pool_metrics(
     request: Request,  # pylint: disable=unused-argument
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get MCP session pool metrics.
 
@@ -1244,7 +1244,7 @@ async def get_mcp_session_pool_metrics(
     Args:
         request: HTTP request object (required by rate_limit decorator)
         _user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         Dict with pool metrics including:
@@ -10364,7 +10364,7 @@ async def admin_set_prompt_state(
 
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
@@ -10374,7 +10374,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
     Args:
         request: FastAPI request containing form data.
         user: Authenticated user.
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the admin dashboard.
@@ -10399,7 +10399,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
 @admin_router.post("/roots/{uri:path}/delete")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
     """
     Delete a root via the admin UI.
 
@@ -10411,7 +10411,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         uri (str): The URI of the root to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         user (str): Authenticated user dependency.
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the roots section of the admin
@@ -10790,7 +10790,7 @@ async def admin_test_gateway(
 # Event Streaming via SSE to the Admin UI
 @admin_router.get("/events")
 @require_permission("admin.events", allow_admin_bypass=False)
-async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """
     Stream admin events from all services via SSE (Server-Sent Events).
 
@@ -10801,7 +10801,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
     Args:
         request (Request): The FastAPI request object, used to detect client disconnection.
         _user (Any): Authenticated user dependency (ensures admin permissions).
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         StreamingResponse: An async generator yielding SSE-formatted strings
@@ -11277,7 +11277,7 @@ async def admin_get_logs(
     offset: int = 0,
     order: str = "desc",
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """Get filtered log entries from the in-memory buffer.
 
@@ -11293,7 +11293,7 @@ async def admin_get_logs(
         offset: Number of results to skip
         order: Sort order (asc or desc)
         user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         Dictionary with logs and metadata
@@ -11364,7 +11364,7 @@ async def admin_stream_logs(
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """Stream real-time log updates via Server-Sent Events.
 
@@ -11374,7 +11374,7 @@ async def admin_stream_logs(
         entity_id: Filter by entity ID
         level: Minimum log level
         user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         SSE response with real-time log updates
@@ -11450,14 +11450,14 @@ async def admin_stream_logs(
 async def admin_get_log_file(
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """Download log file.
 
     Args:
         filename: Specific log file to download (optional)
         user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         File download response or list of available files
@@ -11582,7 +11582,7 @@ async def admin_export_logs(
     request_id: Optional[str] = None,
     search: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """Export filtered logs in JSON or CSV format.
 
@@ -11596,7 +11596,7 @@ async def admin_export_logs(
         request_id: Filter by request ID
         search: Search in message text
         user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         File download response with exported logs
@@ -11973,13 +11973,13 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
 
 @admin_router.get("/import/status/{import_id}")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """Get import status via Admin UI.
 
     Args:
         import_id: Import operation ID
         user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         JSON response with import status
@@ -11998,12 +11998,12 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
 
 @admin_router.get("/import/status")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """List all import statuses via Admin UI.
 
     Args:
         user: Authenticated user
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         JSON response with list of import statuses
@@ -13902,7 +13902,7 @@ async def admin_generate_support_bundle(
     include_env: bool = Query(default=True, description="Include environment config"),
     include_system: bool = Query(default=True, description="Include system info"),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """
     Generate and download a support bundle with sanitized diagnostics.
@@ -13916,7 +13916,7 @@ async def admin_generate_support_bundle(
         include_env: Include environment configuration (default: True)
         include_system: Include system diagnostics (default: True)
         user: Authenticated user from dependency
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         Response: ZIP file download with support bundle
@@ -13980,7 +13980,7 @@ async def admin_generate_support_bundle(
 async def get_maintenance_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """Render the maintenance dashboard partial (platform admin only).
 
@@ -13994,7 +13994,7 @@ async def get_maintenance_partial(
     Args:
         request: FastAPI request object
         _user: Authenticated user with admin permissions
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered maintenance dashboard template
@@ -14027,13 +14027,13 @@ async def get_maintenance_partial(
 
 @admin_router.get("/observability/partial", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """Render the observability dashboard partial.
 
     Args:
         request: FastAPI request object
         _user: Authenticated user with admin permissions (required by dependency)
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered observability dashboard template
@@ -14044,13 +14044,13 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
     """Render the advanced metrics dashboard partial.
 
     Args:
         request: FastAPI request object
         _user: Authenticated user with admin permissions (required by dependency)
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered metrics dashboard template
@@ -15583,14 +15583,14 @@ async def get_tool_chains(
 async def get_tools_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """Render the tool invocation metrics dashboard HTML partial.
 
     Args:
         request: FastAPI request object
         _user: Authenticated user (required by dependency)
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered tool metrics dashboard partial
@@ -15805,14 +15805,14 @@ async def get_prompts_errors(
 async def get_prompts_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """Render the prompt rendering metrics dashboard HTML partial.
 
     Args:
         request: FastAPI request object
         _user: Authenticated user (required by dependency)
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered prompt metrics dashboard partial
@@ -16027,14 +16027,14 @@ async def get_resources_errors(
 async def get_resources_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """Render the resource fetch metrics dashboard HTML partial.
 
     Args:
         request: FastAPI request object
         _user: Authenticated user (required by dependency)
-        db: Database session for permission checks.
+        _db: Database session for permission checks.
 
     Returns:
         HTMLResponse: Rendered resource metrics dashboard partial

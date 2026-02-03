@@ -88,6 +88,8 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         service = TeamManagementService(db)
         team = await service.create_team(name=request.name, description=request.description, created_by=current_user_ctx["email"], visibility=request.visibility, max_members=request.max_members)
 
+        db.commit()
+        db.close()
         return TeamResponse(
             id=team.id,
             name=team.name,
@@ -189,6 +191,10 @@ async def list_teams(
             for team in teams_data
         ]
 
+        # Release transaction before response serialization
+        db.commit()
+        db.close()
+
         if include_pagination:
             return CursorPaginatedTeamsResponse(teams=team_responses, nextCursor=next_cursor)
 
@@ -246,6 +252,10 @@ async def discover_public_teams(
                 )
             )
 
+        # Release transaction before response serialization
+        db.commit()
+        db.close()
+
         return discovery_responses
     except Exception as e:
         logger.error(f"Error discovering public teams: {e}")
@@ -281,6 +291,8 @@ async def get_team(team_id: str, current_user: dict = Depends(get_current_user_w
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
 
         team_obj = cast(Any, team)
+        db.commit()
+        db.close()
         return TeamResponse(
             id=team_obj.id,
             name=team_obj.name,
@@ -333,6 +345,8 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: di
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
         team_obj = cast(Any, team)
+        db.commit()
+        db.close()
         return TeamResponse(
             id=team_obj.id,
             name=team_obj.name,
@@ -385,6 +399,8 @@ async def delete_team(team_id: str, current_user: dict = Depends(get_current_use
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Team deleted successfully")
     except HTTPException:
         raise
@@ -463,6 +479,8 @@ async def list_team_members(
             )
 
         # Return with pagination metadata if requested
+        db.commit()
+        db.close()
         if include_pagination:
             return PaginatedTeamMembersResponse(members=member_responses, nextCursor=next_cursor)
 
@@ -507,6 +525,8 @@ async def update_team_member(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found")
 
         mm = cast(Any, member)
+        db.commit()
+        db.close()
         return TeamMemberResponse(id=mm.id, team_id=mm.team_id, user_email=mm.user_email, role=mm.role, joined_at=mm.joined_at, invited_by=mm.invited_by, is_active=mm.is_active)
     except HTTPException:
         raise
@@ -547,6 +567,8 @@ async def remove_team_member(team_id: str, user_email: str, current_user: dict =
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Team member removed successfully")
     except HTTPException:
         raise
@@ -594,6 +616,8 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         team = await team_service.get_team_by_id(team_id)
         team_name = team.name if team else "Unknown Team"
 
+        db.commit()
+        db.close()
         return TeamInvitationResponse(
             id=invitation.id,
             team_id=invitation.team_id,
@@ -666,6 +690,8 @@ async def list_team_invitations(team_id: str, current_user: dict = Depends(get_c
                 )
             )
 
+        db.commit()
+        db.close()
         return invitation_responses
     except HTTPException:
         raise
@@ -698,6 +724,8 @@ async def accept_team_invitation(token: str, current_user: dict = Depends(get_cu
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid or expired invitation")
 
         mm = cast(Any, member)
+        db.commit()
+        db.close()
         return TeamMemberResponse(id=mm.id, team_id=mm.team_id, user_email=mm.user_email, role=mm.role, joined_at=mm.joined_at, invited_by=mm.invited_by, is_active=mm.is_active)
     except HTTPException:
         raise
@@ -746,6 +774,8 @@ async def cancel_team_invitation(invitation_id: str, current_user: dict = Depend
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Team invitation cancelled successfully")
     except HTTPException:
         raise
@@ -797,6 +827,8 @@ async def request_to_join_team(
         # Create join request
         join_req = await team_service.create_join_request(team_id=team_id, user_email=current_user["email"], message=join_request.message)
 
+        db.commit()
+        db.close()
         return TeamJoinRequestResponse(
             id=join_req.id,
             team_id=join_req.team_id,
@@ -858,6 +890,8 @@ async def leave_team(
         if not success:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot leave team - you may be the last owner")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Successfully left the team")
     except HTTPException:
         raise
@@ -903,7 +937,7 @@ async def list_team_join_requests(
         # Get join requests
         join_requests = await team_service.list_join_requests(team_id)
 
-        return [
+        result = [
             TeamJoinRequestResponse(
                 id=req.id,
                 team_id=req.team_id,
@@ -916,6 +950,9 @@ async def list_team_join_requests(
             )
             for req in join_requests
         ]
+        db.commit()
+        db.close()
+        return result
     except HTTPException:
         raise
     except Exception as e:
@@ -964,6 +1001,8 @@ async def approve_join_request(
         if not member:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
 
+        db.commit()
+        db.close()
         return TeamMemberResponse(
             id=member.id,
             team_id=member.team_id,
@@ -1021,6 +1060,8 @@ async def reject_join_request(
         if not success:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Join request not found")
 
+        db.commit()
+        db.close()
         return SuccessResponse(message="Join request rejected successfully")
     except HTTPException:
         raise

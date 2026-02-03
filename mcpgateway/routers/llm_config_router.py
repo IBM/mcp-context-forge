@@ -88,7 +88,10 @@ async def create_provider(
             created_by=current_user_ctx.get("email"),
         )
         model_count = len(provider.models)
-        return llm_provider_service.to_provider_response(provider, model_count)
+        result = llm_provider_service.to_provider_response(provider, model_count)
+        db.commit()
+        db.close()
+        return result
     except LLMProviderNameConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
@@ -134,12 +137,15 @@ async def list_providers(
 
     provider_responses = [llm_provider_service.to_provider_response(p, len(p.models)) for p in providers]
 
-    return LLMProviderListResponse(
+    result = LLMProviderListResponse(
         providers=provider_responses,
         total=total,
         page=page,
         page_size=page_size,
     )
+    db.commit()
+    db.close()
+    return result
 
 
 @llm_config_router.get(
@@ -170,7 +176,10 @@ async def get_provider(
     try:
         provider = llm_provider_service.get_provider(db, provider_id)
         model_count = len(provider.models)
-        return llm_provider_service.to_provider_response(provider, model_count)
+        result = llm_provider_service.to_provider_response(provider, model_count)
+        db.commit()
+        db.close()
+        return result
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -210,7 +219,10 @@ async def update_provider(
             modified_by=current_user_ctx.get("email"),
         )
         model_count = len(provider.models)
-        return llm_provider_service.to_provider_response(provider, model_count)
+        result = llm_provider_service.to_provider_response(provider, model_count)
+        db.commit()
+        db.close()
+        return result
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except LLMProviderNameConflictError as e:
@@ -241,6 +253,8 @@ async def delete_provider(
     """
     try:
         llm_provider_service.delete_provider(db, provider_id)
+        db.commit()
+        db.close()
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -275,7 +289,10 @@ async def set_provider_state(
     try:
         provider = llm_provider_service.set_provider_state(db, provider_id, activate)
         model_count = len(provider.models)
-        return llm_provider_service.to_provider_response(provider, model_count)
+        result = llm_provider_service.to_provider_response(provider, model_count)
+        db.commit()
+        db.close()
+        return result
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -306,7 +323,10 @@ async def check_provider_health(
         HTTPException: If provider is not found.
     """
     try:
-        return await llm_provider_service.check_provider_health(db, provider_id)
+        result = await llm_provider_service.check_provider_health(db, provider_id)
+        db.commit()
+        db.close()
+        return result
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -345,7 +365,10 @@ async def create_model(
     try:
         model = llm_provider_service.create_model(db, model_data)
         provider = llm_provider_service.get_provider(db, model.provider_id)
-        return llm_provider_service.to_model_response(model, provider)
+        result = llm_provider_service.to_model_response(model, provider)
+        db.commit()
+        db.close()
+        return result
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except LLMModelConflictError as e:
@@ -396,12 +419,15 @@ async def list_models(
         except LLMProviderNotFoundError:
             model_responses.append(llm_provider_service.to_model_response(model))
 
-    return LLMModelListResponse(
+    result = LLMModelListResponse(
         models=model_responses,
         total=total,
         page=page,
         page_size=page_size,
     )
+    db.commit()
+    db.close()
+    return result
 
 
 @llm_config_router.get(
@@ -435,7 +461,10 @@ async def get_model(
             provider = llm_provider_service.get_provider(db, model.provider_id)
         except LLMProviderNotFoundError:
             provider = None
-        return llm_provider_service.to_model_response(model, provider)
+        result = llm_provider_service.to_model_response(model, provider)
+        db.commit()
+        db.close()
+        return result
     except LLMModelNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -473,7 +502,10 @@ async def update_model(
             provider = llm_provider_service.get_provider(db, model.provider_id)
         except LLMProviderNotFoundError:
             provider = None
-        return llm_provider_service.to_model_response(model, provider)
+        result = llm_provider_service.to_model_response(model, provider)
+        db.commit()
+        db.close()
+        return result
     except LLMModelNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -502,6 +534,8 @@ async def delete_model(
     """
     try:
         llm_provider_service.delete_model(db, model_id)
+        db.commit()
+        db.close()
     except LLMModelNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -539,7 +573,10 @@ async def set_model_state(
             provider = llm_provider_service.get_provider(db, model.provider_id)
         except LLMProviderNotFoundError:
             provider = None
-        return llm_provider_service.to_model_response(model, provider)
+        result = llm_provider_service.to_model_response(model, provider)
+        db.commit()
+        db.close()
+        return result
     except LLMModelNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -572,4 +609,7 @@ async def get_gateway_models(
         List of available gateway models.
     """
     models = llm_provider_service.get_gateway_models(db)
-    return GatewayModelsResponse(models=models, count=len(models))
+    result = GatewayModelsResponse(models=models, count=len(models))
+    db.commit()
+    db.close()
+    return result

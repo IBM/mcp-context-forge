@@ -162,7 +162,7 @@ class TestTeamsRouter:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_create_team_success(self, mock_user_context, mock_team):
+    async def test_create_team_success(self, mock_user_context, mock_team, mock_db):
         """Test successful team creation."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
@@ -174,7 +174,7 @@ class TestTeamsRouter:
             # Import the function to test
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context)
+            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
@@ -184,7 +184,7 @@ class TestTeamsRouter:
             )
 
     @pytest.mark.asyncio
-    async def test_create_team_value_error(self, mock_user_context):
+    async def test_create_team_value_error(self, mock_user_context, mock_db):
         """Test team creation with service-level validation error."""
         request = TeamCreateRequest(
             name="Valid Name",  # Valid name to pass Pydantic validation
@@ -201,13 +201,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context)
+                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Service validation error" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_create_team_unexpected_error(self, mock_user_context):
+    async def test_create_team_unexpected_error(self, mock_user_context, mock_db):
         """Test team creation with unexpected error."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
@@ -219,13 +219,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context)
+                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to create team" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_list_teams_admin(self, mock_admin_context, mock_team):
+    async def test_list_teams_admin(self, mock_admin_context, mock_team, mock_db):
         """Test listing teams as admin (sees all teams)."""
         teams = [mock_team]
         next_cursor = None  # No more pages
@@ -240,14 +240,14 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.teams[0].id == mock_team.id
             mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None)
 
     @pytest.mark.asyncio
-    async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team):
+    async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team, mock_db):
         """Test listing teams as admin with include_pagination=True returns cursor format."""
         teams = [mock_team]
         next_cursor = "eyJjcmVhdGVkX2F0IjogIjIwMjYtMDEtMTQiLCAiaWQiOiAiMTIzIn0="  # Base64 encoded cursor
@@ -262,7 +262,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, current_user_ctx=mock_admin_context)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, current_user_ctx=mock_admin_context, db=mock_db)
 
             # With include_pagination=True, should return CursorPaginatedTeamsResponse
             assert hasattr(result, "teams")
@@ -271,7 +271,7 @@ class TestTeamsRouter:
             assert result.next_cursor == next_cursor
 
     @pytest.mark.asyncio
-    async def test_list_teams_regular_user(self, mock_user_context, mock_team):
+    async def test_list_teams_regular_user(self, mock_user_context, mock_team, mock_db):
         """Test listing teams as regular user (sees only their teams)."""
         user_teams = [mock_team]
 
@@ -284,7 +284,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_user_context)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.total == 1
@@ -292,7 +292,7 @@ class TestTeamsRouter:
             mock_service.get_user_teams.assert_called_once_with(mock_user_context["email"], include_personal=True)
 
     @pytest.mark.asyncio
-    async def test_list_teams_with_pagination(self, mock_user_context):
+    async def test_list_teams_with_pagination(self, mock_user_context, mock_db):
         """Test listing teams with pagination."""
         # Create multiple mock teams
         teams = []
@@ -324,7 +324,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_teams
 
             # Test pagination - skip 5, limit 3
-            result = await list_teams(skip=5, limit=3, cursor=None, include_pagination=False, current_user_ctx=mock_user_context)
+            result = await list_teams(skip=5, limit=3, cursor=None, include_pagination=False, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result.teams) == 3
             assert result.total == 10
@@ -332,7 +332,7 @@ class TestTeamsRouter:
             assert result.teams[2].name == "Team 7"
 
     @pytest.mark.asyncio
-    async def test_list_teams_error(self, mock_user_context):
+    async def test_list_teams_error(self, mock_user_context, mock_db):
         """Test listing teams with error."""
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -342,7 +342,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_teams
 
             with pytest.raises(HTTPException) as exc_info:
-                await list_teams(skip=0, limit=50, current_user_ctx=mock_user_context)
+                await list_teams(skip=0, limit=50, current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to list teams" in str(exc_info.value.detail)
@@ -861,7 +861,7 @@ class TestTeamsRouter:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_discover_public_teams_success(self, mock_user_context, mock_public_team):
+    async def test_discover_public_teams_success(self, mock_user_context, mock_public_team, mock_db):
         """Test discovering public teams."""
         public_teams = [mock_public_team]
 
@@ -874,7 +874,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import discover_public_teams
 
-            result = await discover_public_teams(skip=0, limit=50, current_user_ctx=mock_user_context)
+            result = await discover_public_teams(skip=0, limit=50, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result) == 1
             assert result[0].name == mock_public_team.name
