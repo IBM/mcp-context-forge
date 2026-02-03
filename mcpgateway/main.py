@@ -80,6 +80,7 @@ from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
@@ -2428,7 +2429,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 ###############
 @server_router.get("", response_model=Union[List[ServerRead], CursorPaginatedServersResponse])
 @server_router.get("/", response_model=Union[List[ServerRead], CursorPaginatedServersResponse])
-@require_permission("servers.read")
+@require_permission_v2("servers.read")
 async def list_servers(
     request: Request,
     cursor: Optional[str] = Query(None, description="Cursor for pagination"),

@@ -299,3 +299,78 @@ class PolicyEngine:
             f"reason={decision.reason}"
         )
         # TODO: Write to access_decisions table
+
+
+# ---------------------------------------------------------------------------
+# New Decorator (uses PolicyEngine instead of old RBAC)
+# ---------------------------------------------------------------------------
+
+
+def require_permission_v2(permission: str, resource_type: Optional[str] = None):
+    """
+    New decorator using PolicyEngine (Phase 1 - #2019).
+    
+    This will eventually replace the old @require_permission decorator.
+    For now, it coexists with the old system via feature flag.
+    
+    Args:
+        permission: Required permission (e.g., 'servers.read')
+        resource_type: Optional resource type
+        
+    Usage:
+        @require_permission_v2("servers.read")
+        async def list_servers(...):
+            ...
+    """
+    from functools import wraps
+    from fastapi import HTTPException
+    
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Extract user from kwargs (passed by Depends(get_current_user))
+            user = kwargs.get('user')
+            db = kwargs.get('db')
+            
+            if not user:
+                raise HTTPException(status_code=401, detail="Authentication required")
+            
+            if not db:
+                raise HTTPException(status_code=500, detail="Database session not available")
+            
+            # Create PolicyEngine
+            policy_engine = PolicyEngine(db)
+            
+            # Build Subject from user
+            subject = Subject(
+                email=user.get("email", "unknown"),
+                roles=user.get("roles", []),
+                teams=user.get("teams", []),
+                is_admin=user.get("is_admin", False),
+                permissions=user.get("permissions", [])
+            )
+            
+            # Build Resource (basic - can be enhanced)
+            resource = Resource(
+                resource_type=resource_type or permission.split(".")[0],
+                resource_id=None  # Not known at decorator time
+            ) if resource_type else None
+            
+            # Check access
+            decision = await policy_engine.check_access(
+                subject=subject,
+                permission=permission,
+                resource=resource
+            )
+            
+            if not decision.allowed:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Access denied: {decision.reason}"
+                )
+            
+            # Access granted - call original function
+            return await func(*args, **kwargs)
+        
+        return wrapper
+    return decorator
