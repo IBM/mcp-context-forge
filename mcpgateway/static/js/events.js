@@ -1,6 +1,7 @@
 import { AppState } from "./appState";
 import { closeModal } from "./modals";
-import { cleanupToolTestState } from "./tools";
+import { initializeTagFiltering } from "./tags";
+import { cleanupToolTestState, loadTools } from "./tools";
 import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
 
 ((Admin) => {
@@ -269,7 +270,7 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
     }
   });
   
-  document.addEventListener("DOMContentLoaded", Admin.loadTools);
+  document.addEventListener("DOMContentLoaded", loadTools);
   
   // ===================================================================
   // GLOBAL ERROR HANDLERS
@@ -302,4 +303,26 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
     window.performance.mark("app-security-complete");
     console.log("✓ Performance markers available");
   }
+
+
+
+    // ===============================================
+    // TAG FILTERING FUNCTIONALITY
+    // ===============================================
+
+    // Initialize tag filtering when page loads
+    document.addEventListener("DOMContentLoaded", function () {
+        initializeTagFiltering();
+
+        if (typeof initializeTeamScopingMonitor === "function") {
+            Admin.initializeTeamScopingMonitor();
+        }
+    });
+
+    // ===================================================================
+    // CHART.JS INSTANCE CLEANUP
+    // ===================================================================
+    window.addEventListener("beforeunload", () => {
+        Admin.chartRegistry.destroyAll();
+    });
 })(window.Admin)

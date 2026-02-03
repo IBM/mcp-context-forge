@@ -1,3 +1,4 @@
+import { escapeHtml } from "./security";
 import { fetchWithTimeout, handleFetchError, safeGetElement } from "./utils";
 
 // ===================================================================
@@ -251,7 +252,7 @@ export const retryLoadMetrics = function () {
   // Reset all tracking variables
   metricsRequestController = null;
   metricsRequestPromise = null;
-  Admin.loadAggregatedMetrics();
+  loadAggregatedMetrics();
 };
 
 export const showMetricsPlaceholder = function () {
@@ -875,7 +876,7 @@ export const updateKPICards = function (kpiData) {
 /**
 * SECURITY: Create top performers section with safe display
 */
-// Admin.createTopPerformersSection = function (topData) {
+// export const createTopPerformersSection = function (topData) {
 //     try {
 //         const section = document.createElement("div");
 //         section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
@@ -923,7 +924,7 @@ export const updateKPICards = function (kpiData) {
 //     }
 // }
 // Removed unused function createEnhancedTopPerformersSection - handled by HTMX
-/* Admin.createEnhancedTopPerformersSection = function (topData) {
+/* export const createEnhancedTopPerformersSection = function (topData) {
 try {
 const section = document.createElement("div");
 section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
@@ -962,7 +963,7 @@ const entityTypes = [
 ];
 entityTypes.forEach((type, index) => {
   if (topData[type] && Array.isArray(topData[type])) {
-const tab = Admin.createTab(type, index === 0);
+const tab = createTab(type, index === 0);
 tabList.appendChild(tab);
 }
 });
@@ -976,7 +977,7 @@ contentContainer.className = "mt-4";
 
 entityTypes.forEach((type, index) => {
   if (topData[type] && Array.isArray(topData[type])) {
-const panel = Admin.createTopPerformersTable(
+const panel = createTopPerformersTable(
 type,
 topData[type],
 index === 0,
@@ -995,13 +996,13 @@ const exportButton = document.createElement("button");
 exportButton.className =
 "mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 dark:bg-indigo-500 dark:hover:bg-indigo-600";
 exportButton.textContent = "Export Metrics";
-exportButton.onclick = () => Admin.exportMetricsToCSV(topData);
+exportButton.onclick = () => exportMetricsToCSV(topData);
 section.appendChild(exportButton);
 
 return section;
 } catch (error) {
 console.error("Error creating enhanced top performers section:", error);
-Admin.showErrorMessage("Failed to load top performers section");
+showErrorMessage("Failed to load top performers section");
 return document.createElement("div");
 }
 } */
@@ -1060,7 +1061,7 @@ export const formatLastUsed = function (timestamp) {
 };
 
 /* Unused - part of commented createEnhancedTopPerformersSection
-Admin.createTopPerformersTable = function (entityType, data, isActive) {
+export const createTopPerformersTable = function (entityType, data, isActive) {
 const panel = document.createElement("div");
 panel.id = `top-${entityType}-panel`;
 panel.className = `transition-opacity duration-300 ${isActive ? "opacity-100" : "hidden opacity-0"}`;
@@ -1148,7 +1149,7 @@ row.appendChild(rankCell);
 const nameCell = document.createElement("td");
 nameCell.className =
 "px-6 py-4 whitespace-nowrap text-sm text-indigo-600 dark:text-indigo-400 cursor-pointer";
-nameCell.textContent = Admin.escapeHtml(item.name || "Unknown");
+nameCell.textContent = escapeHtml(item.name || "Unknown");
 // nameCell.onclick = () => Admin.showDetailedMetrics(entityType, item.id);
 nameCell.setAttribute("role", "button");
 nameCell.setAttribute(
@@ -1178,7 +1179,7 @@ row.appendChild(avgTimeCell);
 const successCell = document.createElement("td");
 successCell.className =
 "px-6 py-4 whitespace-nowrap text-sm sm:px-6 sm:py-4";
-const successRate = Admin.calculateSuccessRate(item);
+const successRate = calculateSuccessRate(item);
 const successBadge = document.createElement("span");
 successBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
 successRate >= 95
@@ -1230,7 +1231,7 @@ return panel;
 */
 
 /* Unused - part of commented createEnhancedTopPerformersSection
-Admin.createTab = function (type, isActive) {
+export const createTab = function (type, isActive) {
 const tab = document.createElement("a");
 tab.href = "#";
 tab.id = `top-${type}-tab`;
@@ -1499,7 +1500,7 @@ export const updateTableRows = function (tbody, entityType, data, page, perPage)
     const nameCell = document.createElement("td");
     nameCell.className =
     "px-6 py-4 whitespace-nowrap text-sm text-indigo-600 dark:text-indigo-400 cursor-pointer";
-    nameCell.textContent = Admin.escapeHtml(item.name || "Unknown");
+    nameCell.textContent = escapeHtml(item.name || "Unknown");
     nameCell.setAttribute("role", "button");
     nameCell.setAttribute(
       "aria-label",
@@ -1559,7 +1560,7 @@ export const updateTableRows = function (tbody, entityType, data, page, perPage)
 };
 
 /* Unused - part of commented createEnhancedTopPerformersSection
-Admin.exportMetricsToCSV = function (topData) {
+export const exportMetricsToCSV = function (topData) {
 const headers = [
 "Entity Type",
 "Rank",
@@ -1733,21 +1734,21 @@ export const createRecentActivitySection = function (activityData) {
         
         const actionSpan = document.createElement("span");
         actionSpan.className = "font-medium dark:text-gray-200";
-        actionSpan.textContent = Admin.escapeHtml(
+        actionSpan.textContent = escapeHtml(
           activity.action || "Unknown Action",
         );
         
         const targetSpan = document.createElement("span");
         targetSpan.className =
         "text-sm text-gray-500 dark:text-gray-400 ml-2";
-        targetSpan.textContent = Admin.escapeHtml(activity.target || "");
+        targetSpan.textContent = escapeHtml(activity.target || "");
         
         leftSide.appendChild(actionSpan);
         leftSide.appendChild(targetSpan);
         
         const rightSide = document.createElement("div");
         rightSide.className = "text-xs text-gray-400";
-        rightSide.textContent = Admin.escapeHtml(activity.timestamp || "");
+        rightSide.textContent = escapeHtml(activity.timestamp || "");
         
         activityItem.appendChild(leftSide);
         activityItem.appendChild(rightSide);

@@ -1,5 +1,8 @@
 import { loadAuthHeaders, updateAuthHeadersJSON } from './auth';
+import { getCatalogUrl } from './configExport';
+import { MASKED_AUTH_VALUE } from './constants';
 import { openModal } from './modals';
+import { initResourceSelect } from './resources';
 import { validateInputName, validateJson, validateUrl } from './security';
 import { safeGetElement, fetchWithTimeout, isInactiveChecked, handleFetchError, showErrorMessage, parseUriTemplate } from './utils';
 
@@ -2668,7 +2671,7 @@ export const editGateway = async function (gatewayId) {
                             delete authPasswordField.dataset.isMasked;
                             delete authPasswordField.dataset.realValue;
                         }
-                        authPasswordField.value = Admin.MASKED_AUTH_VALUE;
+                        authPasswordField.value = MASKED_AUTH_VALUE;
                     }
                 }
                 break;
@@ -2680,7 +2683,7 @@ export const editGateway = async function (gatewayId) {
                             authTokenField.dataset.isMasked = "true";
                             authTokenField.dataset.realValue =
                                 gateway.authTokenUnmasked;
-                            authTokenField.value = Admin.MASKED_AUTH_VALUE;
+                            authTokenField.value = MASKED_AUTH_VALUE;
                         } else {
                             delete authTokenField.dataset.isMasked;
                             delete authTokenField.dataset.realValue;
@@ -2721,7 +2724,7 @@ export const editGateway = async function (gatewayId) {
                             authHeaderValueField.dataset.realValue =
                                 unmaskedHeaders[0].value ?? "";
                         }
-                        authHeaderValueField.value = Admin.MASKED_AUTH_VALUE;
+                        authHeaderValueField.value = MASKED_AUTH_VALUE;
                     }
                 }
                 break;
@@ -2783,7 +2786,7 @@ export const editGateway = async function (gatewayId) {
                     }
                     if (queryParamValueField) {
                         // Always show masked value for security
-                        queryParamValueField.value = Admin.MASKED_AUTH_VALUE;
+                        queryParamValueField.value = MASKED_AUTH_VALUE;
                         if (gateway.authQueryParamValueUnmasked) {
                             queryParamValueField.dataset.isMasked = "true";
                             queryParamValueField.dataset.realValue =
@@ -2898,7 +2901,7 @@ export const viewServer = async function (serverId) {
 
             const fields = [
                 { label: "Server ID", value: server.id },
-                { label: "URL", value: Admin.getCatalogUrl(server) || "N/A" },
+                { label: "URL", value: getCatalogUrl(server) || "N/A" },
                 { label: "Type", value: "Virtual Server" },
                 { label: "Visibility", value: server.visibility || "private" },
             ];
@@ -3555,7 +3558,7 @@ export const editServer = async function (serverId) {
             );
         }
 
-        Admin.initResourceSelect(
+        initResourceSelect(
             "edit-server-resources",
             "selectedEditResourcesPills",
             "selectedEditResourcesWarning",

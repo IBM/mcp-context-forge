@@ -2,6 +2,7 @@
 // ===================================================================
 // ENHANCED TAB HANDLING with Better Error Management
 
+import { loadAggregatedMetrics } from "./metrics";
 import { safeSetInnerHTML } from "./security";
 import { fetchWithTimeout, isAdminUser, safeGetElement, showErrorMessage } from "./utils";
 
@@ -181,7 +182,7 @@ export const showTab = function (tabName) {
         if (tabName === "metrics") {
           // Only load if we're still on the metrics tab
           if (!panel.classList.contains("hidden")) {
-            Admin.loadAggregatedMetrics();
+            loadAggregatedMetrics();
           }
         }
         if (tabName === "llm-chat") {
@@ -433,8 +434,8 @@ export const showTab = function (tabName) {
               // Initialize plugin functions after HTML is loaded
               Admin.initializePluginFunctions();
               // Populate filter dropdowns
-              if (window.populatePluginFilters) {
-                window.populatePluginFilters();
+              if (Admin.populatePluginFilters) {
+                Admin.populatePluginFilters();
               }
             })
             .catch((error) => {

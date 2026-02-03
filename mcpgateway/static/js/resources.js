@@ -215,7 +215,7 @@ export const initResourceSelect = function (
             visibleCheckboxes.forEach((cb) => (cb.checked = true));
           } else {
             // Paginated (or no visible items) => fetch full set from server
-            const selectedGatewayIds = getSelectedGatewayIds
+            const selectedGatewayIds = Admin.getSelectedGatewayIds
             ? Admin.getSelectedGatewayIds()
             : [];
             const selectedTeamId = Admin.getCurrentTeamId();
@@ -470,7 +470,3 @@ export const cleanupResourceTestModal = function () {
         console.error("Error cleaning up resource test modal:", err);
     }
 };
-
-const Admin = window.Admin;
-Admin.initResourceSelect = initResourceSelect;
-Admin.cleanupResourceTestModal = cleanupResourceTestModal;
