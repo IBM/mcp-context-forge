@@ -1763,7 +1763,7 @@ class TestRPCEndpoints:
         """Test list_gateways JSON-RPC method."""
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {"id": "gateway-1"}
-        mock_list_gateways.return_value = [mock_gateway]
+        mock_list_gateways.return_value = ([mock_gateway], None)
 
         req = {
             "jsonrpc": "2.0",
@@ -2055,6 +2055,113 @@ class TestRealtimeEndpoints:
         mock_read.side_effect = ValueError("Invalid payload")
         response = test_client.post("/message?session_id=test-session", json={"bad": True}, headers=auth_headers)
         assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_websocket_forwards_auth_token_to_rpc(self, monkeypatch):
+        """Test that WebSocket forwards JWT token to /rpc endpoint.
+
+        This ensures auth credentials are propagated so /rpc doesn't reject
+        with 401 when AUTH_REQUIRED=true.
+        """
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+
+        # Track headers passed to the RPC call
+        captured_headers = {}
+
+        class MockResponse:
+            text = '{"jsonrpc":"2.0","id":1,"result":{}}'
+
+        class MockClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json, headers):
+                captured_headers.update(headers)
+                return MockResponse()
+
+        monkeypatch.setattr(mcpgateway_main.settings, "auth_required", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "mcp_client_auth_enabled", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "federation_timeout", 30)
+        monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
+        monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
+        monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
+        monkeypatch.setattr(mcpgateway_main, "verify_jwt_token", AsyncMock(return_value=None))
+
+        # Create mock websocket with token in query params
+        websocket = AsyncMock()
+        websocket.query_params = {"token": "test-jwt-token"}
+        websocket.headers = {}
+
+        # Track messages
+        messages_received = []
+        websocket.receive_text = AsyncMock(side_effect=[
+            '{"jsonrpc":"2.0","method":"test","id":1}',
+            WebSocketDisconnect(),
+        ])
+        websocket.send_text = AsyncMock(side_effect=lambda msg: messages_received.append(msg))
+
+        await mcpgateway_main.websocket_endpoint(websocket)
+
+        # Verify auth token was forwarded to /rpc
+        assert "Authorization" in captured_headers, "Authorization header should be forwarded to /rpc"
+        assert captured_headers["Authorization"] == "Bearer test-jwt-token"
+
+    @pytest.mark.asyncio
+    async def test_websocket_forwards_proxy_user_to_rpc(self, monkeypatch):
+        """Test that WebSocket forwards proxy user header to /rpc endpoint."""
+        # First-Party
+        from mcpgateway import main as mcpgateway_main
+
+        # Track headers passed to the RPC call
+        captured_headers = {}
+
+        class MockResponse:
+            text = '{"jsonrpc":"2.0","id":1,"result":{}}'
+
+        class MockClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                pass
+
+            async def post(self, url, json, headers):
+                captured_headers.update(headers)
+                return MockResponse()
+
+        monkeypatch.setattr(mcpgateway_main.settings, "auth_required", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "mcp_client_auth_enabled", False)
+        monkeypatch.setattr(mcpgateway_main.settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(mcpgateway_main.settings, "proxy_user_header", "X-Forwarded-User")
+        monkeypatch.setattr(mcpgateway_main.settings, "federation_timeout", 30)
+        monkeypatch.setattr(mcpgateway_main.settings, "skip_ssl_verify", False)
+        monkeypatch.setattr(mcpgateway_main.settings, "port", 4444)
+        monkeypatch.setattr(mcpgateway_main.settings, "app_root_path", "")
+        monkeypatch.setattr(mcpgateway_main, "ResilientHttpClient", lambda **kwargs: MockClient())
+
+        # Create mock websocket with proxy user header
+        # Note: Use exact case matching settings.proxy_user_header since we're using a plain dict
+        websocket = AsyncMock()
+        websocket.query_params = {}
+        websocket.headers = {"X-Forwarded-User": "proxy-user@example.com"}
+
+        # Track messages
+        websocket.receive_text = AsyncMock(side_effect=[
+            '{"jsonrpc":"2.0","method":"test","id":1}',
+            WebSocketDisconnect(),
+        ])
+        websocket.send_text = AsyncMock()
+
+        await mcpgateway_main.websocket_endpoint(websocket)
+
+        # Verify proxy user header was forwarded to /rpc
+        assert "X-Forwarded-User" in captured_headers, "Proxy user header should be forwarded to /rpc"
+        assert captured_headers["X-Forwarded-User"] == "proxy-user@example.com"
 
     @pytest.mark.asyncio
     async def test_websocket_disconnect_on_accept(self, monkeypatch):
@@ -2887,25 +2994,25 @@ class TestGetTokenTeamsFromRequest:
         result = _get_token_teams_from_request(mock_request)
         assert result == ["t1"]
 
-    def test_get_token_teams_no_cached_payload_returns_none(self):
-        """Test that missing cached payload returns None (triggers DB lookup)."""
+    def test_get_token_teams_no_cached_payload_returns_empty_list(self):
+        """Test that missing cached payload returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = None
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None  # None triggers DB team lookup in services
+        assert result == []  # SECURITY: No JWT = public-only (secure default)
 
-    def test_get_token_teams_no_teams_in_payload_returns_none(self):
-        """Test that payload without teams key returns None (unrestricted access)."""
+    def test_get_token_teams_no_teams_in_payload_returns_empty_list(self):
+        """Test that payload without teams key returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None  # None = JWT exists but no teams key (unrestricted)
+        assert result == []  # SECURITY: Missing teams = public-only (secure default)
 
     def test_get_token_teams_empty_teams_returns_empty_list(self):
         """Test that payload with empty teams returns empty list (not None)."""
@@ -2917,45 +3024,55 @@ class TestGetTokenTeamsFromRequest:
         result = _get_token_teams_from_request(mock_request)
         assert result == []  # Empty list = JWT exists but no teams
 
-    def test_get_token_teams_null_teams_returns_none(self):
-        """Test that payload with teams: null returns None (same as missing teams)."""
+    def test_get_token_teams_null_teams_non_admin_returns_empty_list(self):
+        """Test that payload with teams: null (non-admin) returns [] (public-only)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"sub": "user@example.com", "teams": None})
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None  # None = teams is null, treated same as missing (unrestricted)
+        assert result == []  # SECURITY: Null teams + non-admin = public-only
 
-    def test_get_token_teams_invalid_tuple_format_returns_none(self):
-        """Test that non-tuple cached payload returns None."""
+    def test_get_token_teams_null_teams_admin_returns_none(self):
+        """Test that payload with teams: null + is_admin=true returns None (admin bypass)."""
+        from mcpgateway.main import _get_token_teams_from_request
+
+        mock_request = MagicMock()
+        mock_request.state._jwt_verified_payload = ("token", {"sub": "admin@example.com", "teams": None, "is_admin": True})
+
+        result = _get_token_teams_from_request(mock_request)
+        assert result is None  # Admin with explicit null teams = admin bypass
+
+    def test_get_token_teams_invalid_tuple_format_returns_empty_list(self):
+        """Test that non-tuple cached payload returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = "not_a_tuple"
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None
+        assert result == []  # SECURITY: Invalid format = public-only (secure default)
 
-    def test_get_token_teams_short_tuple_returns_none(self):
-        """Test that tuple with wrong length returns None."""
+    def test_get_token_teams_short_tuple_returns_empty_list(self):
+        """Test that tuple with wrong length returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("only_one_element",)
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None
+        assert result == []  # SECURITY: Invalid format = public-only (secure default)
 
-    def test_get_token_teams_none_payload_in_tuple_returns_none(self):
-        """Test that None payload in tuple returns None."""
+    def test_get_token_teams_none_payload_in_tuple_returns_empty_list(self):
+        """Test that None payload in tuple returns [] (public-only, secure default)."""
         from mcpgateway.main import _get_token_teams_from_request
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", None)
 
         result = _get_token_teams_from_request(mock_request)
-        assert result is None
+        assert result == []  # SECURITY: No payload = public-only (secure default)
 
 
 class TestGetRpcFilterContext:
@@ -3076,8 +3193,8 @@ class TestGetRpcFilterContext:
         assert email == "user@example.com"
         assert is_admin is False
 
-    def test_get_rpc_filter_context_no_jwt_returns_none_teams(self):
-        """Test that missing JWT payload returns None for teams (triggers DB lookup)."""
+    def test_get_rpc_filter_context_no_jwt_returns_empty_teams(self):
+        """Test that missing JWT payload returns [] for teams (public-only, secure default)."""
         from mcpgateway.main import _get_rpc_filter_context
 
         mock_request = MagicMock()
@@ -3087,5 +3204,5 @@ class TestGetRpcFilterContext:
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
         assert email == "plugin_user@example.com"
-        assert teams is None  # None triggers DB team lookup in services
+        assert teams == []  # SECURITY: No JWT = public-only (secure default)
         assert is_admin is False

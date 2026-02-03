@@ -16,6 +16,25 @@ API: Quick Usage & Testing Guide
   - Header: `Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN`
   - Many endpoints also accept an optional `jwt_token` cookie parameter, but the header is preferred.
 
+**Token Scoping (affects what resources you can see)**
+
+- The `teams` claim in your JWT determines resource visibility:
+  - No `teams` key → PUBLIC-ONLY (secure default, can only see `visibility=public` resources)
+  - `teams: null` + `is_admin: true` → ADMIN BYPASS (see all resources)
+  - `teams: []` → PUBLIC-ONLY (even for admins)
+  - `teams: ["team-uuid"]` → Team + Public resources
+- Generate team-scoped token:
+  ```bash
+  export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+    --username user@example.com --exp 60 --secret KEY --teams '["team-uuid"]' | tr -d '\n')
+  ```
+- Generate public-only token (for automation):
+  ```bash
+  export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+    --username ci@example.com --exp 60 --secret KEY --teams '[]' | tr -d '\n')
+  ```
+- Full documentation: `docs/docs/manage/rbac.md`
+
 **Health & Metadata**
 - Health: `GET /health` (no auth) — returns basic health status.
   ```bash

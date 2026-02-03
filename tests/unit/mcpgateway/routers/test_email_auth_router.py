@@ -481,10 +481,10 @@ async def test_admin_list_users_with_and_without_pagination():
 
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         MockAuthService.return_value.list_users = AsyncMock(return_value=result)
-        response = await email_auth.list_users(include_pagination=True, current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+        response = await email_auth.list_users(include_pagination=True, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert response.users[0].email == "user@example.com"
 
-        response_list = await email_auth.list_users(include_pagination=False, current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+        response_list = await email_auth.list_users(include_pagination=False, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert isinstance(response_list, list)
         assert response_list[0].email == "user@example.com"
 
@@ -494,10 +494,11 @@ async def test_admin_list_users_error():
     # First-Party
     from mcpgateway.routers import email_auth
 
+    mock_db = MagicMock()
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         MockAuthService.return_value.list_users = AsyncMock(side_effect=Exception("boom"))
         with pytest.raises(email_auth.HTTPException) as excinfo:
-            await email_auth.list_users(include_pagination=True, current_user_ctx={"db": MagicMock(), "email": "admin@example.com"})
+            await email_auth.list_users(include_pagination=True, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
 
     assert excinfo.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
@@ -507,11 +508,12 @@ async def test_admin_list_all_auth_events():
     # First-Party
     from mcpgateway.routers import email_auth
 
+    mock_db = MagicMock()
     event = SimpleNamespace(id=1, timestamp=datetime.now(timezone.utc), user_email="user@example.com", event_type="login", success=True, ip_address="1.2.3.4", failure_reason=None)
 
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         MockAuthService.return_value.get_auth_events = AsyncMock(return_value=[event])
-        result = await email_auth.list_all_auth_events(current_user_ctx={"db": MagicMock(), "email": "admin@example.com"})
+        result = await email_auth.list_all_auth_events(current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
 
     assert result[0].event_type == "login"
 
@@ -541,7 +543,7 @@ async def test_admin_create_user_default_password_enforcement():
 
         with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
             MockAuthService.return_value.create_user = AsyncMock(return_value=user)
-            response = await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+            response = await email_auth.create_user(user_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
 
     assert response.password_change_required is True
     mock_db.commit.assert_called()
@@ -576,14 +578,14 @@ async def test_admin_get_update_delete_user():
             MockPasswordService.return_value.hash_password_async = AsyncMock(return_value="hashed")
             update_request = EmailRegistrationRequest(email="user@example.com", password="newpassword123", full_name="Updated", is_admin=True)
 
-            response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+            response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
             assert response.email == "user@example.com"
 
-            response = await email_auth.update_user("user@example.com", update_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+            response = await email_auth.update_user("user@example.com", update_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
             assert response.full_name == "Updated"
             assert user.password_hash == "hashed"
 
-            delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"})
+            delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
             assert delete_response.success is True
 
 
@@ -592,9 +594,10 @@ async def test_admin_delete_user_self_block():
     # First-Party
     from mcpgateway.routers import email_auth
 
+    mock_db = MagicMock()
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         MockAuthService.return_value.is_last_active_admin = AsyncMock(return_value=False)
         with pytest.raises(email_auth.HTTPException) as excinfo:
-            await email_auth.delete_user("admin@example.com", current_user_ctx={"db": MagicMock(), "email": "admin@example.com"})
+            await email_auth.delete_user("admin@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
 
     assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST

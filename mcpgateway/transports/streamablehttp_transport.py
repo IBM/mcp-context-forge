@@ -32,6 +32,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
@@ -389,13 +390,16 @@ async def get_db() -> AsyncGenerator[Session, Any]:
     Asynchronous context manager for database sessions.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
-    for read-only operations. Rolls back explicitly on exception.
+    for read-only operations. Rolls back explicitly on exception. Handles
+    asyncio.CancelledError explicitly to prevent transaction leaks when MCP
+    handlers are cancelled (client disconnect, timeout, etc.).
 
     Yields:
         A database session instance from SessionLocal.
         Ensures the session is closed after use.
 
     Raises:
+        asyncio.CancelledError: Re-raised after rollback and close on task cancellation.
         Exception: Re-raises any exception after rolling back the transaction.
 
     Examples:
@@ -412,6 +416,19 @@ async def get_db() -> AsyncGenerator[Session, Any]:
     try:
         yield db
         db.commit()
+    except asyncio.CancelledError:
+        # Handle cancellation explicitly to prevent transaction leaks.
+        # When MCP handlers are cancelled (client disconnect, timeout, etc.),
+        # we must rollback and close the session before re-raising.
+        try:
+            db.rollback()
+        except Exception:
+            pass  # nosec B110 - Best effort rollback on cancellation
+        try:
+            db.close()
+        except Exception:
+            pass  # nosec B110 - Best effort close on cancellation
+        raise
     except Exception:
         try:
             db.rollback()
@@ -1407,6 +1424,12 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                         # Cache positive result
                         auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
                     finally:
+                        # Rollback any implicit transaction before closing to prevent
+                        # idle-in-transaction state if the connection is returned to pool
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass  # nosec B110 - Best effort rollback
                         db.close()
 
             user_context_var.set(

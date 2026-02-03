@@ -162,7 +162,7 @@ class TestTeamsRouter:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_create_team_success(self, mock_user_context, mock_team):
+    async def test_create_team_success(self, mock_user_context, mock_team, mock_db):
         """Test successful team creation."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
@@ -174,7 +174,7 @@ class TestTeamsRouter:
             # Import the function to test
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context)
+            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
@@ -184,7 +184,7 @@ class TestTeamsRouter:
             )
 
     @pytest.mark.asyncio
-    async def test_create_team_value_error(self, mock_user_context):
+    async def test_create_team_value_error(self, mock_user_context, mock_db):
         """Test team creation with service-level validation error."""
         request = TeamCreateRequest(
             name="Valid Name",  # Valid name to pass Pydantic validation
@@ -201,13 +201,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context)
+                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Service validation error" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_create_team_unexpected_error(self, mock_user_context):
+    async def test_create_team_unexpected_error(self, mock_user_context, mock_db):
         """Test team creation with unexpected error."""
         request = TeamCreateRequest(name="New Team", description="A new team", visibility="private", max_members=50)
 
@@ -219,13 +219,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context)
+                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to create team" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_list_teams_admin(self, mock_admin_context, mock_team):
+    async def test_list_teams_admin(self, mock_admin_context, mock_team, mock_db):
         """Test listing teams as admin (sees all teams)."""
         teams = [mock_team]
         next_cursor = None  # No more pages
@@ -240,14 +240,14 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_admin_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.teams[0].id == mock_team.id
             mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None)
 
     @pytest.mark.asyncio
-    async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team):
+    async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team, mock_db):
         """Test listing teams as admin with include_pagination=True returns cursor format."""
         teams = [mock_team]
         next_cursor = "eyJjcmVhdGVkX2F0IjogIjIwMjYtMDEtMTQiLCAiaWQiOiAiMTIzIn0="  # Base64 encoded cursor
@@ -262,7 +262,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, current_user_ctx=mock_admin_context)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, current_user_ctx=mock_admin_context, db=mock_db)
 
             # With include_pagination=True, should return CursorPaginatedTeamsResponse
             assert hasattr(result, "teams")
@@ -271,7 +271,7 @@ class TestTeamsRouter:
             assert result.next_cursor == next_cursor
 
     @pytest.mark.asyncio
-    async def test_list_teams_regular_user(self, mock_user_context, mock_team):
+    async def test_list_teams_regular_user(self, mock_user_context, mock_team, mock_db):
         """Test listing teams as regular user (sees only their teams)."""
         user_teams = [mock_team]
 
@@ -284,7 +284,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_teams
 
-            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_user_context)
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result.teams) == 1
             assert result.total == 1
@@ -292,7 +292,7 @@ class TestTeamsRouter:
             mock_service.get_user_teams.assert_called_once_with(mock_user_context["email"], include_personal=True)
 
     @pytest.mark.asyncio
-    async def test_list_teams_with_pagination(self, mock_user_context):
+    async def test_list_teams_with_pagination(self, mock_user_context, mock_db):
         """Test listing teams with pagination."""
         # Create multiple mock teams
         teams = []
@@ -324,7 +324,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_teams
 
             # Test pagination - skip 5, limit 3
-            result = await list_teams(skip=5, limit=3, cursor=None, include_pagination=False, current_user_ctx=mock_user_context)
+            result = await list_teams(skip=5, limit=3, cursor=None, include_pagination=False, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result.teams) == 3
             assert result.total == 10
@@ -332,7 +332,7 @@ class TestTeamsRouter:
             assert result.teams[2].name == "Team 7"
 
     @pytest.mark.asyncio
-    async def test_list_teams_error(self, mock_user_context):
+    async def test_list_teams_error(self, mock_user_context, mock_db):
         """Test listing teams with error."""
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -342,13 +342,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_teams
 
             with pytest.raises(HTTPException) as exc_info:
-                await list_teams(skip=0, limit=50, current_user_ctx=mock_user_context)
+                await list_teams(skip=0, limit=50, current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to list teams" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_get_team_success(self, mock_current_user, mock_db, mock_team):
+    async def test_get_team_success(self, mock_user_context, mock_db, mock_team):
         """Test getting a specific team successfully."""
         team_id = mock_team.id
 
@@ -366,7 +366,7 @@ class TestTeamsRouter:
                 team = await mock_service.get_team_by_id(team_id)
                 if not team:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
-                user_role = await mock_service.get_user_role_in_team(current_user.email, team_id)
+                user_role = await mock_service.get_user_role_in_team(current_user["email"], team_id)
                 if not user_role:
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
                 return TeamResponse(
@@ -385,15 +385,15 @@ class TestTeamsRouter:
                 )
 
             with patch("mcpgateway.routers.teams.get_team", new=mock_get_team):
-                result = await mock_get_team(team_id, mock_current_user, mock_db)
+                result = await mock_get_team(team_id, mock_user_context, mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
             mock_service.get_team_by_id.assert_called_once_with(team_id)
-            mock_service.get_user_role_in_team.assert_called_once_with(mock_current_user.email, team_id)
+            mock_service.get_user_role_in_team.assert_called_once_with(mock_user_context["email"], team_id)
 
     @pytest.mark.asyncio
-    async def test_get_team_not_found(self, mock_current_user, mock_db):
+    async def test_get_team_not_found(self, mock_user_context, mock_db):
         """Test getting a non-existent team."""
         team_id = str(uuid4())
 
@@ -405,13 +405,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import get_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_team(team_id, current_user=mock_current_user, db=mock_db)
+                await get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_get_team_access_denied(self, mock_current_user, mock_db, mock_team):
+    async def test_get_team_access_denied(self, mock_user_context, mock_db, mock_team):
         """Test getting a team without access."""
         team_id = mock_team.id
 
@@ -424,13 +424,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import get_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_team(team_id, current_user=mock_current_user, db=mock_db)
+                await get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Access denied to team" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_update_team_success(self, mock_current_user, mock_db, mock_team):
+    async def test_update_team_success(self, mock_user_context, mock_db, mock_team):
         """Test updating a team successfully."""
         team_id = mock_team.id
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
@@ -438,18 +438,19 @@ class TestTeamsRouter:
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
-            mock_service.update_team = AsyncMock(return_value=mock_team)
+            mock_service.update_team = AsyncMock(return_value=True)  # Returns bool, not team
+            mock_service.get_team_by_id = AsyncMock(return_value=mock_team)  # Fetches team after update
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import update_team
 
-            result = await update_team(team_id, request, current_user=mock_current_user, db=mock_db)
+            result = await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             mock_service.update_team.assert_called_once_with(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
 
     @pytest.mark.asyncio
-    async def test_update_team_insufficient_permissions(self, mock_current_user, mock_db):
+    async def test_update_team_insufficient_permissions(self, mock_user_context, mock_db):
         """Test updating a team without owner permissions."""
         team_id = str(uuid4())
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
@@ -462,13 +463,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team(team_id, request, current_user=mock_current_user, db=mock_db)
+                await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Insufficient permissions" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_update_team_not_found(self, mock_current_user, mock_db):
+    async def test_update_team_not_found(self, mock_user_context, mock_db):
         """Test updating a non-existent team."""
         team_id = str(uuid4())
         request = TeamUpdateRequest(name="Updated Team", description="Updated description", visibility="public", max_members=200)
@@ -482,13 +483,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team(team_id, request, current_user=mock_current_user, db=mock_db)
+                await update_team(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_delete_team_success(self, mock_current_user, mock_db):
+    async def test_delete_team_success(self, mock_user_context, mock_db):
         """Test deleting a team successfully."""
         team_id = str(uuid4())
 
@@ -500,13 +501,13 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import delete_team
 
-            result = await delete_team(team_id, current_user=mock_current_user, db=mock_db)
+            result = await delete_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Team deleted successfully"
-            mock_service.delete_team.assert_called_once_with(team_id, mock_current_user.email)
+            mock_service.delete_team.assert_called_once_with(team_id, mock_user_context["email"])
 
     @pytest.mark.asyncio
-    async def test_delete_team_insufficient_permissions(self, mock_current_user, mock_db):
+    async def test_delete_team_insufficient_permissions(self, mock_user_context, mock_db):
         """Test deleting a team without owner permissions."""
         team_id = str(uuid4())
 
@@ -518,13 +519,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import delete_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await delete_team(team_id, current_user=mock_current_user, db=mock_db)
+                await delete_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Only team owners can delete teams" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_delete_team_not_found(self, mock_current_user, mock_db):
+    async def test_delete_team_not_found(self, mock_user_context, mock_db):
         """Test deleting a non-existent team."""
         team_id = str(uuid4())
 
@@ -537,7 +538,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import delete_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await delete_team(team_id, current_user=mock_current_user, db=mock_db)
+                await delete_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team not found" in str(exc_info.value.detail)
@@ -547,7 +548,7 @@ class TestTeamsRouter:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_list_team_members_success(self, mock_current_user, mock_db, mock_team_member):
+    async def test_list_team_members_success(self, mock_user_context, mock_db, mock_team_member):
         """Test listing team members successfully."""
         team_id = str(uuid4())
 
@@ -572,7 +573,7 @@ class TestTeamsRouter:
                 cursor=None,
                 limit=None,
                 include_pagination=False,
-                current_user=mock_current_user,
+                current_user=mock_user_context,
                 db=mock_db
             )
 
@@ -582,7 +583,7 @@ class TestTeamsRouter:
             assert result[0].role == mock_team_member.role
 
     @pytest.mark.asyncio
-    async def test_list_team_members_access_denied(self, mock_current_user, mock_db):
+    async def test_list_team_members_access_denied(self, mock_user_context, mock_db):
         """Test listing team members without access."""
         team_id = str(uuid4())
 
@@ -594,14 +595,14 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import list_team_members
 
             with pytest.raises(HTTPException) as exc_info:
-                await list_team_members(team_id, current_user=mock_current_user, db=mock_db)
+                await list_team_members(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Access denied to team" in str(exc_info.value.detail)
 
     @pytest.mark.skip(reason="RBAC mocking complex - functionality covered by test_teams_v2.py")
     @pytest.mark.asyncio
-    async def test_update_team_member_success(self, mock_current_user, mock_db, mock_team_member):
+    async def test_update_team_member_success(self, mock_user_context, mock_db, mock_team_member):
         """Test updating a team member's role successfully."""
         team_id = str(uuid4())
         user_email = "member@example.com"
@@ -617,14 +618,14 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import update_team_member
 
-            result = await update_team_member(team_id, user_email, request, mock_current_user, mock_db)
+            result = await update_team_member(team_id, user_email, request, mock_user_context, mock_db)
 
             assert result.role == "owner"
             mock_service.update_member_role.assert_called_once_with(team_id, user_email, request.role)
 
     @pytest.mark.skip(reason="RBAC mocking complex - functionality covered by test_teams_v2.py")
     @pytest.mark.asyncio
-    async def test_update_team_member_insufficient_permissions(self, mock_current_user, mock_db):
+    async def test_update_team_member_insufficient_permissions(self, mock_user_context, mock_db):
         """Test updating a team member without owner permissions."""
         team_id = str(uuid4())
         user_email = "member@example.com"
@@ -638,14 +639,14 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team_member(team_id, user_email, request, current_user=mock_current_user, db=mock_db)
+                await update_team_member(team_id, user_email, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Insufficient permissions" in str(exc_info.value.detail)
 
     @pytest.mark.skip(reason="RBAC mocking complex - functionality covered by test_teams_v2.py")
     @pytest.mark.asyncio
-    async def test_update_team_member_not_found(self, mock_current_user, mock_db):
+    async def test_update_team_member_not_found(self, mock_user_context, mock_db):
         """Test updating a non-existent team member."""
         team_id = str(uuid4())
         user_email = "nonexistent@example.com"
@@ -660,13 +661,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team_member(team_id, user_email, request, current_user=mock_current_user, db=mock_db)
+                await update_team_member(team_id, user_email, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Team member not found" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_remove_team_member_as_owner(self, mock_current_user, mock_db):
+    async def test_remove_team_member_as_owner(self, mock_user_context, mock_db):
         """Test removing a team member as team owner."""
         team_id = str(uuid4())
         user_email = "member@example.com"
@@ -679,16 +680,16 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import remove_team_member
 
-            result = await remove_team_member(team_id, user_email, current_user=mock_current_user, db=mock_db)
+            result = await remove_team_member(team_id, user_email, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Team member removed successfully"
             mock_service.remove_member_from_team.assert_called_once_with(team_id, user_email)
 
     @pytest.mark.asyncio
-    async def test_remove_team_member_self(self, mock_current_user, mock_db):
+    async def test_remove_team_member_self(self, mock_user_context, mock_db):
         """Test user removing themselves from a team."""
         team_id = str(uuid4())
-        user_email = mock_current_user.email  # Removing self
+        user_email = mock_user_context["email"]  # Removing self
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
@@ -698,12 +699,12 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import remove_team_member
 
-            result = await remove_team_member(team_id, user_email, current_user=mock_current_user, db=mock_db)
+            result = await remove_team_member(team_id, user_email, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Team member removed successfully"
 
     @pytest.mark.asyncio
-    async def test_remove_team_member_insufficient_permissions(self, mock_current_user, mock_db):
+    async def test_remove_team_member_insufficient_permissions(self, mock_user_context, mock_db):
         """Test removing another member without owner permissions."""
         team_id = str(uuid4())
         user_email = "other@example.com"  # Trying to remove someone else
@@ -716,7 +717,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import remove_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await remove_team_member(team_id, user_email, current_user=mock_current_user, db=mock_db)
+                await remove_team_member(team_id, user_email, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Insufficient permissions" in str(exc_info.value.detail)
@@ -726,7 +727,7 @@ class TestTeamsRouter:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_invite_team_member_success(self, mock_current_user, mock_db, mock_invitation, mock_team):
+    async def test_invite_team_member_success(self, mock_user_context, mock_db, mock_invitation, mock_team):
         """Test inviting a user to join a team."""
         team_id = mock_team.id
         request = TeamInviteRequest(email="invited@example.com", role="member")
@@ -743,7 +744,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import invite_team_member
 
-            result = await invite_team_member(team_id, request, current_user=mock_current_user, db=mock_db)
+            result = await invite_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_invitation.id
             assert result.email == mock_invitation.email
@@ -751,7 +752,7 @@ class TestTeamsRouter:
             assert result.team_name == mock_team.name
 
     @pytest.mark.asyncio
-    async def test_invite_team_member_insufficient_permissions(self, mock_current_user, mock_db):
+    async def test_invite_team_member_insufficient_permissions(self, mock_user_context, mock_db):
         """Test inviting a user without owner permissions."""
         team_id = str(uuid4())
         request = TeamInviteRequest(email="invited@example.com", role="member")
@@ -764,13 +765,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import invite_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await invite_team_member(team_id, request, current_user=mock_current_user, db=mock_db)
+                await invite_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Insufficient permissions" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_list_team_invitations_success(self, mock_current_user, mock_db, mock_invitation, mock_team):
+    async def test_list_team_invitations_success(self, mock_user_context, mock_db, mock_invitation, mock_team):
         """Test listing team invitations."""
         team_id = mock_team.id
         invitations = [mock_invitation]
@@ -787,14 +788,14 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_team_invitations
 
-            result = await list_team_invitations(team_id, current_user=mock_current_user, db=mock_db)
+            result = await list_team_invitations(team_id, current_user=mock_user_context, db=mock_db)
 
             assert len(result) == 1
             assert result[0].email == mock_invitation.email
             assert result[0].team_name == mock_team.name
 
     @pytest.mark.asyncio
-    async def test_accept_team_invitation_success(self, mock_current_user, mock_db, mock_team_member):
+    async def test_accept_team_invitation_success(self, mock_user_context, mock_db, mock_team_member):
         """Test accepting a team invitation."""
         token = "test-token-123"
 
@@ -805,14 +806,14 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import accept_team_invitation
 
-            result = await accept_team_invitation(token, current_user=mock_current_user, db=mock_db)
+            result = await accept_team_invitation(token, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team_member.id
             assert result.user_email == mock_team_member.user_email
-            mock_invite_service.accept_invitation.assert_called_once_with(token, mock_current_user.email)
+            mock_invite_service.accept_invitation.assert_called_once_with(token, mock_user_context["email"])
 
     @pytest.mark.asyncio
-    async def test_accept_team_invitation_invalid_token(self, mock_current_user, mock_db):
+    async def test_accept_team_invitation_invalid_token(self, mock_user_context, mock_db):
         """Test accepting an invitation with invalid token."""
         token = "invalid-token"
 
@@ -824,13 +825,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import accept_team_invitation
 
             with pytest.raises(HTTPException) as exc_info:
-                await accept_team_invitation(token, current_user=mock_current_user, db=mock_db)
+                await accept_team_invitation(token, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
             assert "Invalid or expired invitation" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_cancel_team_invitation_success(self, mock_current_user, mock_db, mock_invitation):
+    async def test_cancel_team_invitation_success(self, mock_user_context, mock_db, mock_invitation):
         """Test cancelling a team invitation."""
         invitation_id = mock_invitation.id
 
@@ -852,7 +853,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import cancel_team_invitation
 
-            result = await cancel_team_invitation(invitation_id, current_user=mock_current_user, db=mock_db)
+            result = await cancel_team_invitation(invitation_id, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Team invitation cancelled successfully"
 
@@ -861,7 +862,7 @@ class TestTeamsRouter:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_discover_public_teams_success(self, mock_user_context, mock_public_team):
+    async def test_discover_public_teams_success(self, mock_user_context, mock_public_team, mock_db):
         """Test discovering public teams."""
         public_teams = [mock_public_team]
 
@@ -874,14 +875,14 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import discover_public_teams
 
-            result = await discover_public_teams(skip=0, limit=50, current_user_ctx=mock_user_context)
+            result = await discover_public_teams(skip=0, limit=50, current_user_ctx=mock_user_context, db=mock_db)
 
             assert len(result) == 1
             assert result[0].name == mock_public_team.name
             assert result[0].is_joinable is True
 
     @pytest.mark.asyncio
-    async def test_request_to_join_team_success(self, mock_current_user, mock_db, mock_public_team, mock_join_request):
+    async def test_request_to_join_team_success(self, mock_user_context, mock_db, mock_public_team, mock_join_request):
         """Test requesting to join a public team."""
         team_id = mock_public_team.id
         join_request = TeamJoinRequest(message="I'd like to join")
@@ -895,14 +896,14 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import request_to_join_team
 
-            result = await request_to_join_team(team_id, join_request, current_user=mock_current_user, db=mock_db)
+            result = await request_to_join_team(team_id, join_request, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_join_request.id
             assert result.team_name == mock_public_team.name
             assert result.status == "pending"
 
     @pytest.mark.asyncio
-    async def test_request_to_join_team_not_public(self, mock_current_user, mock_db, mock_team):
+    async def test_request_to_join_team_not_public(self, mock_user_context, mock_db, mock_team):
         """Test requesting to join a non-public team."""
         team_id = mock_team.id  # Private team
         join_request = TeamJoinRequest(message="I'd like to join")
@@ -915,13 +916,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import request_to_join_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await request_to_join_team(team_id, join_request, current_user=mock_current_user, db=mock_db)
+                await request_to_join_team(team_id, join_request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Can only request to join public teams" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_request_to_join_team_already_member(self, mock_current_user, mock_db, mock_public_team):
+    async def test_request_to_join_team_already_member(self, mock_user_context, mock_db, mock_public_team):
         """Test requesting to join a team when already a member."""
         team_id = mock_public_team.id
         join_request = TeamJoinRequest(message="I'd like to join")
@@ -935,13 +936,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import request_to_join_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await request_to_join_team(team_id, join_request, current_user=mock_current_user, db=mock_db)
+                await request_to_join_team(team_id, join_request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "User is already a member of this team" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_leave_team_success(self, mock_current_user, mock_db, mock_team):
+    async def test_leave_team_success(self, mock_user_context, mock_db, mock_team):
         """Test leaving a team successfully."""
         team_id = mock_team.id
 
@@ -954,12 +955,12 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import leave_team
 
-            result = await leave_team(team_id, current_user=mock_current_user, db=mock_db)
+            result = await leave_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Successfully left the team"
 
     @pytest.mark.asyncio
-    async def test_leave_personal_team_fails(self, mock_current_user, mock_db):
+    async def test_leave_personal_team_fails(self, mock_user_context, mock_db):
         """Test that users cannot leave their personal team."""
         personal_team = MagicMock(spec=EmailTeam)
         personal_team.id = str(uuid4())
@@ -973,13 +974,13 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import leave_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await leave_team(personal_team.id, current_user=mock_current_user, db=mock_db)
+                await leave_team(personal_team.id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Cannot leave personal team" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_list_team_join_requests_success(self, mock_current_user, mock_db, mock_public_team, mock_join_request):
+    async def test_list_team_join_requests_success(self, mock_user_context, mock_db, mock_public_team, mock_join_request):
         """Test listing join requests for a team."""
         team_id = mock_public_team.id
         join_requests = [mock_join_request]
@@ -993,14 +994,14 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_team_join_requests
 
-            result = await list_team_join_requests(team_id, current_user=mock_current_user, db=mock_db)
+            result = await list_team_join_requests(team_id, current_user=mock_user_context, db=mock_db)
 
             assert len(result) == 1
             assert result[0].user_email == mock_join_request.user_email
             assert result[0].team_name == mock_public_team.name
 
     @pytest.mark.asyncio
-    async def test_approve_join_request_success(self, mock_current_user, mock_db, mock_public_team, mock_team_member):
+    async def test_approve_join_request_success(self, mock_user_context, mock_db, mock_public_team, mock_team_member):
         """Test approving a join request."""
         team_id = mock_public_team.id
         request_id = str(uuid4())
@@ -1014,13 +1015,13 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import approve_join_request
 
-            result = await approve_join_request(team_id, request_id, current_user=mock_current_user, db=mock_db)
+            result = await approve_join_request(team_id, request_id, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team_member.id
-            mock_service.approve_join_request.assert_called_once_with(request_id, approved_by=mock_current_user.email)
+            mock_service.approve_join_request.assert_called_once_with(request_id, approved_by=mock_user_context["email"])
 
     @pytest.mark.asyncio
-    async def test_reject_join_request_success(self, mock_current_user, mock_db, mock_public_team):
+    async def test_reject_join_request_success(self, mock_user_context, mock_db, mock_public_team):
         """Test rejecting a join request."""
         team_id = mock_public_team.id
         request_id = str(uuid4())
@@ -1034,12 +1035,12 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import reject_join_request
 
-            result = await reject_join_request(team_id, request_id, current_user=mock_current_user, db=mock_db)
+            result = await reject_join_request(team_id, request_id, current_user=mock_user_context, db=mock_db)
 
             assert result.message == "Join request rejected successfully"
 
     @pytest.mark.asyncio
-    async def test_reject_join_request_not_owner(self, mock_current_user, mock_db, mock_public_team):
+    async def test_reject_join_request_not_owner(self, mock_user_context, mock_db, mock_public_team):
         """Test rejecting a join request without owner permissions."""
         team_id = mock_public_team.id
         request_id = str(uuid4())
@@ -1053,7 +1054,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import reject_join_request
 
             with pytest.raises(HTTPException) as exc_info:
-                await reject_join_request(team_id, request_id, current_user=mock_current_user, db=mock_db)
+                await reject_join_request(team_id, request_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
             assert "Only team owners can reject join requests" in str(exc_info.value.detail)
@@ -1063,7 +1064,7 @@ class TestTeamsRouter:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_team_operation_with_database_error(self, mock_current_user, mock_db):
+    async def test_team_operation_with_database_error(self, mock_user_context, mock_db):
         """Test handling of database errors in team operations."""
         team_id = str(uuid4())
 
@@ -1075,14 +1076,14 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import get_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await get_team(team_id, current_user=mock_current_user, db=mock_db)
+                await get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to get team" in str(exc_info.value.detail)
 
     @pytest.mark.skip(reason="RBAC mocking complex - functionality covered by test_teams_v2.py")
     @pytest.mark.asyncio
-    async def test_invitation_with_value_error(self, mock_current_user, mock_db):
+    async def test_invitation_with_value_error(self, mock_user_context, mock_db):
         """Test handling of value errors in invitation operations."""
         team_id = str(uuid4())
         request = TeamInviteRequest(
@@ -1102,14 +1103,14 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import invite_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await invite_team_member(team_id, request, current_user=mock_current_user, db=mock_db)
+                await invite_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Invalid email format" in str(exc_info.value.detail)
 
     @pytest.mark.skip(reason="RBAC mocking complex - functionality covered by test_teams_v2.py")
     @pytest.mark.asyncio
-    async def test_member_operations_with_invalid_role(self, mock_current_user, mock_db):
+    async def test_member_operations_with_invalid_role(self, mock_user_context, mock_db):
         """Test member operations with invalid role values."""
         team_id = str(uuid4())
         user_email = "member@example.com"
@@ -1124,7 +1125,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import update_team_member
 
             with pytest.raises(HTTPException) as exc_info:
-                await update_team_member(team_id, user_email, request, current_user=mock_current_user, db=mock_db)
+                await update_team_member(team_id, user_email, request, current_user=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Invalid role" in str(exc_info.value.detail)

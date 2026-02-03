@@ -108,15 +108,48 @@ def test_get_personal_team_sync(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_team_from_token_variants(monkeypatch):
+    # Teams with dict format
     assert await auth.get_team_from_token({"teams": [{"id": "t1"}], "sub": "user@example.com"}) == "t1"
-    monkeypatch.setattr(auth, "_get_personal_team_sync", lambda _email: "team-2")
-    assert await auth.get_team_from_token({"teams": [], "sub": "user@example.com"}) == "team-2"
 
-    def _boom(_email):
-        raise RuntimeError("fail")
+    # Teams with string format
+    assert await auth.get_team_from_token({"teams": ["t2"], "sub": "user@example.com"}) == "t2"
 
-    monkeypatch.setattr(auth, "_get_personal_team_sync", _boom)
+    # SECURITY: Empty teams list means public-only - NO fallback to personal team
     assert await auth.get_team_from_token({"teams": [], "sub": "user@example.com"}) is None
+
+    # SECURITY: Missing teams claim also means public-only - NO fallback to personal team
+    # This is the secure-first approach: missing teams = public-only everywhere
+    assert await auth.get_team_from_token({"sub": "user@example.com"}) is None
+
+
+def test_normalize_token_teams():
+    """Test token teams normalization for consistent security checks."""
+    # Missing teams key → public-only ([])
+    assert auth.normalize_token_teams({"sub": "user@example.com"}) == []
+
+    # Explicit empty teams → public-only ([])
+    assert auth.normalize_token_teams({"sub": "user@example.com", "teams": []}) == []
+
+    # Explicit null + non-admin → public-only ([])
+    assert auth.normalize_token_teams({"sub": "user@example.com", "teams": None, "user": {"is_admin": False}}) == []
+
+    # Explicit null + admin → admin bypass (None)
+    assert auth.normalize_token_teams({"sub": "user@example.com", "teams": None, "user": {"is_admin": True}}) is None
+
+    # Explicit null + missing user → public-only ([])
+    assert auth.normalize_token_teams({"sub": "user@example.com", "teams": None}) == []
+
+    # Teams with string values → normalized list
+    assert auth.normalize_token_teams({"sub": "user@example.com", "teams": ["team1", "team2"]}) == ["team1", "team2"]
+
+    # Teams with dict format → normalized to string IDs
+    assert auth.normalize_token_teams({"sub": "user@example.com", "teams": [{"id": "team1"}]}) == ["team1"]
+
+    # Teams with mixed format → normalized to string IDs
+    assert auth.normalize_token_teams({"sub": "user@example.com", "teams": [{"id": "team1"}, "team2"]}) == ["team1", "team2"]
+
+    # Top-level is_admin check (explicit null + top-level is_admin)
+    assert auth.normalize_token_teams({"sub": "user@example.com", "teams": None, "is_admin": True}) is None
 
 
 def test_check_token_revoked_sync(monkeypatch):

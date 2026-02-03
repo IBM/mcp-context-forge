@@ -317,12 +317,15 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
 
 
-def require_permission(permission: str, resource_type: Optional[str] = None):
+def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Decorator to require specific permission for accessing an endpoint.
 
     Args:
         permission: Required permission (e.g., 'tools.create')
         resource_type: Optional resource type for resource-specific permissions
+        allow_admin_bypass: If True (default), admin users bypass all permission checks.
+                           If False, even admins must have explicit permissions.
+                           Use False for admin UI routes to enforce granular RBAC.
 
     Returns:
         Callable: Decorated function that enforces the permission requirement
@@ -449,6 +452,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                     team_id=team_id,
                     ip_address=user_context.get("ip_address"),
                     user_agent=user_context.get("user_agent"),
+                    allow_admin_bypass=allow_admin_bypass,
                 )
             else:
                 # Create fresh db session for permission check
@@ -461,6 +465,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                         team_id=team_id,
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
+                        allow_admin_bypass=allow_admin_bypass,
                     )
 
             if not granted:
@@ -555,12 +560,14 @@ def require_admin_permission():
     return decorator
 
 
-def require_any_permission(permissions: List[str], resource_type: Optional[str] = None):
+def require_any_permission(permissions: List[str], resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Decorator to require any of the specified permissions for accessing an endpoint.
 
     Args:
         permissions: List of permissions, user needs at least one
         resource_type: Optional resource type for resource-specific permissions
+        allow_admin_bypass: If True (default), admin users bypass all permission checks.
+                           If False, even admins must have explicit permissions.
 
     Returns:
         Callable: Decorated function that enforces the permission requirements
@@ -638,6 +645,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                         team_id=team_id,
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
+                        allow_admin_bypass=allow_admin_bypass,
                     ):
                         granted = True
                         break
@@ -655,6 +663,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                             team_id=team_id,
                             ip_address=user_context.get("ip_address"),
                             user_agent=user_context.get("user_agent"),
+                            allow_admin_bypass=allow_admin_bypass,
                         ):
                             granted = True
                             break
