@@ -1419,11 +1419,11 @@ class SessionManagerWrapper:
 
                 pool = get_mcp_session_pool()
                 owner = await pool.get_streamable_http_session_owner(mcp_session_id)
-                logger.debug(f"[HTTP_AFFINITY_CHECK] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
+                print(f"[HTTP_AFFINITY_CHECK] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
 
                 if owner and owner != WORKER_ID:
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
+                    print(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
 
                     # Read request body
                     body_parts = []
@@ -1591,12 +1591,12 @@ class SessionManagerWrapper:
             # Register ownership for the session we just handled
             # This captures both existing sessions (mcp_session_id from request)
             # and new sessions (captured_session_id from response)
-            logger.debug(
+            print(
                 f"[HTTP_AFFINITY_DEBUG] affinity_enabled={settings.mcpgateway_session_affinity_enabled} stateful={settings.use_stateful_sessions} captured={captured_session_id} mcp_session_id={mcp_session_id}"
             )
             if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
                 session_to_register = captured_session_id or (mcp_session_id if mcp_session_id != "not-provided" else None)
-                logger.debug(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
+                print(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
                 if session_to_register:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
@@ -1605,10 +1605,10 @@ class SessionManagerWrapper:
 
                         pool = get_mcp_session_pool()
                         await pool._register_pool_session_owner(session_to_register)  # pylint: disable=protected-access
-                        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after successful handling")
+                        print(f"[HTTP_AFFINITY_SDK] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after SDK handling")
                     except Exception as e:
-                        logger.debug(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
-                        logger.debug(f"Failed to register session ownership: {e}")
+                        print(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
+                        logger.warning(f"Failed to register session ownership: {e}")
 
         except anyio.ClosedResourceError:
             # Expected when client closes one side of the stream (normal lifecycle)

@@ -615,7 +615,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         app.state.update_http_pool_metrics()
 
     # Initialize MCP session pool (for session reuse across tool invocations)
-    if settings.mcp_session_pool_enabled:
+    # Also initialize if session affinity is enabled (needs the ownership registry)
+    if settings.mcp_session_pool_enabled or settings.mcpgateway_session_affinity_enabled:
         # First-Party
         from mcpgateway.services.mcp_session_pool import init_mcp_session_pool  # pylint: disable=import-outside-toplevel
 
@@ -5504,6 +5505,21 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id, server_id=server_id)
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
+
+            # Register session ownership in Redis for multi-worker affinity
+            # This must happen AFTER initialize succeeds so subsequent requests route to this worker
+            if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions and mcp_session_id and mcp_session_id != "not-provided":
+                try:
+                    # First-Party
+                    from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+
+                    pool = get_mcp_session_pool()
+                    # Register this worker as the owner of this session
+                    # We don't need the full session mapping here, just ownership
+                    await pool._register_pool_session_owner(mcp_session_id)
+                    print(f"[AFFINITY_INIT] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Registered ownership after initialize")
+                except Exception as e:
+                    print(f"[AFFINITY_INIT] Failed to register session ownership: {e}")
         elif method == "tools/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             # Admin bypass - only when token has NO team restrictions
