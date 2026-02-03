@@ -252,14 +252,19 @@ class TestObservabilityRouterEndpoints:
         from mcpgateway.routers.observability import list_traces
 
         mock_db = MagicMock()
-        fake_trace = SimpleNamespace(trace_id="t1")
+        fake_trace = SimpleNamespace(
+            trace_id="t1",
+            name="trace",
+            start_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
 
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.query_traces.return_value = [fake_trace]
 
             result = await list_traces(db=mock_db, _user={"email": "admin", "db": mock_db})
 
-        assert result == [fake_trace]
+        assert result[0].trace_id == "t1"
 
     @pytest.mark.asyncio
     async def test_query_traces_advanced_parses_dates(self, allow_permission):
@@ -267,7 +272,12 @@ class TestObservabilityRouterEndpoints:
         from mcpgateway.routers.observability import query_traces_advanced
 
         mock_db = MagicMock()
-        fake_trace = SimpleNamespace(trace_id="t1", name="n")
+        fake_trace = SimpleNamespace(
+            trace_id="t1",
+            name="n",
+            start_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
 
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.query_traces.return_value = [fake_trace]
@@ -278,7 +288,7 @@ class TestObservabilityRouterEndpoints:
                 _user={"email": "admin", "db": mock_db},
             )
 
-        assert result == [fake_trace]
+        assert result[0].trace_id == "t1"
         call_kwargs = mock_service.return_value.query_traces.call_args.kwargs
         assert isinstance(call_kwargs["start_time"], datetime)
         assert isinstance(call_kwargs["end_time"], datetime)
@@ -313,13 +323,18 @@ class TestObservabilityRouterEndpoints:
         from mcpgateway.routers.observability import get_trace
 
         mock_db = MagicMock()
-        trace = {"trace_id": "t1"}
+        trace = {
+            "trace_id": "t1",
+            "name": "trace",
+            "start_time": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "created_at": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        }
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.get_trace_with_spans.return_value = trace
 
             result = await get_trace("t1", db=mock_db, _user={"email": "admin", "db": mock_db})
 
-        assert result == trace
+        assert result.trace_id == "t1"
 
     @pytest.mark.asyncio
     async def test_list_spans_returns_service_results(self, allow_permission):
@@ -327,14 +342,20 @@ class TestObservabilityRouterEndpoints:
         from mcpgateway.routers.observability import list_spans
 
         mock_db = MagicMock()
-        fake_span = SimpleNamespace(span_id="s1")
+        fake_span = SimpleNamespace(
+            span_id="s1",
+            trace_id="t1",
+            name="span",
+            start_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
 
         with patch("mcpgateway.routers.observability.ObservabilityService") as mock_service:
             mock_service.return_value.query_spans.return_value = [fake_span]
 
             result = await list_spans(db=mock_db, _user={"email": "admin", "db": mock_db})
 
-        assert result == [fake_span]
+        assert result[0].span_id == "s1"
 
     @pytest.mark.asyncio
     async def test_cleanup_old_traces(self, allow_permission):

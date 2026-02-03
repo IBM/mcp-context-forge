@@ -95,7 +95,10 @@ async def chat_completions(
             )
         else:
             # Return regular response
-            return await llm_proxy_service.chat_completion(db, request)
+            response = await llm_proxy_service.chat_completion(db, request)
+            db.commit()
+            db.close()
+            return response
 
     except LLMModelNotFoundError as e:
         logger.warning(f"Model not found: {request.model}")
@@ -167,7 +170,10 @@ async def list_models(
             }
         )
 
-    return {
+    response = {
         "object": "list",
         "data": model_list,
     }
+    db.commit()
+    db.close()
+    return response

@@ -1585,7 +1585,7 @@ class TestAdminRootRoutes:
     """Test admin routes for root management with enhanced coverage."""
 
     @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
-    async def test_admin_add_root_with_special_characters(self, mock_add_root, mock_request):
+    async def test_admin_add_root_with_special_characters(self, mock_add_root, mock_request, mock_db):
         """Test adding root with special characters in URI."""
         form_data = FakeForm(
             {
@@ -1595,12 +1595,12 @@ class TestAdminRootRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db})
+        await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db}, _db=mock_db)
 
         mock_add_root.assert_called_once_with("/test/root-with-dashes_and_underscores", "Special-Root_Name")
 
     @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
-    async def test_admin_add_root_without_name(self, mock_add_root, mock_request):
+    async def test_admin_add_root_without_name(self, mock_add_root, mock_request, mock_db):
         """Test adding root without optional name."""
         form_data = FakeForm(
             {
@@ -1610,7 +1610,7 @@ class TestAdminRootRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db})
+        await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db}, _db=mock_db)
 
         mock_add_root.assert_called_once_with("/nameless/root", None)
 
@@ -2331,7 +2331,7 @@ class TestExportImportEndpoints:
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_export_logs(export_format="json", level=None, start_time=None, end_time=None, user={"email": "test-user", "db": mock_db})
+        result = await admin_export_logs(export_format="json", level=None, start_time=None, end_time=None, user={"email": "test-user", "db": mock_db}, _db=mock_db)
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "application/json"
@@ -2350,7 +2350,7 @@ class TestExportImportEndpoints:
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_export_logs(export_format="csv", level=None, start_time=None, end_time=None, user={"email": "test-user", "db": mock_db})
+        result = await admin_export_logs(export_format="csv", level=None, start_time=None, end_time=None, user={"email": "test-user", "db": mock_db}, _db=mock_db)
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "text/csv"
@@ -2362,7 +2362,7 @@ class TestExportImportEndpoints:
         # First-Party
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_export_logs(export_format="xml", level=None, start_time=None, end_time=None, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_export_logs(export_format="xml", level=None, start_time=None, end_time=None, user={"email": "test-user@example.com", "db": mock_db}, _db=mock_db)
 
         assert excinfo.value.status_code == 400
         assert "Invalid format: xml" in str(excinfo.value.detail)
@@ -2430,7 +2430,7 @@ class TestLoggingEndpoints:
         mock_storage.get_total_count.return_value = 1
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_get_logs(level=None, start_time=None, end_time=None, limit=50, offset=0, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_logs(level=None, start_time=None, end_time=None, limit=50, offset=0, user={"email": "test-user", "db": mock_db}, _db=mock_db)
 
         assert isinstance(result, dict)
         assert "logs" in result
@@ -2450,7 +2450,7 @@ class TestLoggingEndpoints:
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_stream_logs(request=MagicMock(), level=None, user={"email": "test-user", "db": mock_db})
+        result = await admin_stream_logs(request=MagicMock(), level=None, user={"email": "test-user", "db": mock_db}, _db=mock_db)
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -2469,7 +2469,7 @@ class TestLoggingEndpoints:
         # Mock file exists and reading
         with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.stat") as mock_stat, patch("builtins.open", mock_open(read_data=b"test log content")):
             mock_stat.return_value.st_size = 16
-            result = await admin_get_log_file(filename=None, user={"email": "test-user", "db": mock_db})
+            result = await admin_get_log_file(filename=None, user={"email": "test-user", "db": mock_db}, _db=mock_db)
 
             assert isinstance(result, Response)
             assert result.media_type == "application/octet-stream"
@@ -2485,7 +2485,7 @@ class TestLoggingEndpoints:
         mock_settings.log_file = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_get_log_file(filename=None, user={"email": "test-user@example.com", "db": mock_db}, _db=mock_db)
 
         assert excinfo.value.status_code == 404
         assert "File logging is not enabled" in str(excinfo.value.detail)
@@ -2875,7 +2875,7 @@ class TestImportConfigurationEndpoints:
         mock_status.to_dict.return_value = {"import_id": "import-123", "status": "in_progress", "progress": {"total": 10, "completed": 5, "errors": 0}}
         mock_get_status.return_value = mock_status
 
-        result = await admin_get_import_status("import-123", user={"email": "test-user@example.com", "db": mock_db})
+        result = await admin_get_import_status("import-123", user={"email": "test-user@example.com", "db": mock_db}, _db=mock_db)
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -2891,7 +2891,7 @@ class TestImportConfigurationEndpoints:
         mock_get_status.return_value = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_import_status("nonexistent", user={"email": "test-user@example.com", "db": mock_db})
+            await admin_get_import_status("nonexistent", user={"email": "test-user@example.com", "db": mock_db}, _db=mock_db)
 
         assert excinfo.value.status_code == 404
         assert "Import nonexistent not found" in str(excinfo.value.detail)
@@ -2907,7 +2907,7 @@ class TestImportConfigurationEndpoints:
         mock_status2.to_dict.return_value = {"import_id": "import-2", "status": "failed"}
         mock_list_statuses.return_value = [mock_status1, mock_status2]
 
-        result = await admin_list_import_statuses(user={"email": "test-user@example.com", "db": mock_db})
+        result = await admin_list_import_statuses(user={"email": "test-user@example.com", "db": mock_db}, _db=mock_db)
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -4421,7 +4421,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = True
 
-        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db}, _db=mock_db)
 
         assert result["total"] >= 2
         types = {entry["type"] for entry in result["files"]}
@@ -4440,7 +4440,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db}, _db=mock_db)
         types = {entry["type"] for entry in result["files"]}
         assert "main" in types
         assert "storage" in types
@@ -4458,20 +4458,20 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        response = await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db}, _db=mock_db)
         assert isinstance(response, Response)
         assert "app.log" in response.headers.get("content-disposition", "")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="../secret.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(filename="../secret.log", user={"email": "admin@example.com", "db": mock_db}, _db=mock_db)
         assert excinfo.value.status_code == 400
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="missing.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(filename="missing.log", user={"email": "admin@example.com", "db": mock_db}, _db=mock_db)
         assert excinfo.value.status_code == 404
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="random.txt", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(filename="random.txt", user={"email": "admin@example.com", "db": mock_db}, _db=mock_db)
         assert excinfo.value.status_code == 403
 
     async def test_admin_export_logs_json_csv(self, mock_db, monkeypatch):
@@ -4499,6 +4499,7 @@ class TestAdminAdditionalCoverage:
             start_time=None,
             end_time=None,
             user={"email": "test-user@example.com", "db": mock_db},
+            _db=mock_db,
         )
         assert json_response.media_type == "application/json"
         assert b"Tool One" in json_response.body
@@ -4509,6 +4510,7 @@ class TestAdminAdditionalCoverage:
             start_time=None,
             end_time=None,
             user={"email": "test-user@example.com", "db": mock_db},
+            _db=mock_db,
         )
         assert csv_response.media_type == "text/csv"
         assert b"timestamp,level,entity_type" in csv_response.body
@@ -4629,7 +4631,7 @@ class TestAdminAdditionalCoverage:
         storage.get_stats.return_value = {"total_logs": 1}
         monkeypatch.setattr("mcpgateway.admin.logging_service", MagicMock(get_storage=MagicMock(return_value=storage)))
 
-        result = await admin_get_logs(level=None, start_time=None, end_time=None, user={"email": "user@example.com", "db": mock_db})
+        result = await admin_get_logs(level=None, start_time=None, end_time=None, user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
         assert result["total"] == 1
         assert result["logs"][0]["message"] == "Test log"
 
@@ -4645,7 +4647,7 @@ class TestAdminAdditionalCoverage:
 
         request = MagicMock(spec=Request)
         request.is_disconnected = AsyncMock(return_value=False)
-        response = await admin_stream_logs(request=request, entity_type="tool", level="info", user={"email": "user@example.com", "db": mock_db})
+        response = await admin_stream_logs(request=request, entity_type="tool", level="info", user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
         assert isinstance(response, StreamingResponse)
 
         assert response.media_type == "text/event-stream"
@@ -4699,24 +4701,24 @@ async def test_cache_invalidation_endpoints(monkeypatch, mock_db, allow_permissi
     cache.stats.return_value = {"hits": 1}
     monkeypatch.setattr("mcpgateway.admin.global_config_cache", cache)
 
-    result = await _unwrap(invalidate_passthrough_headers_cache)(_user={"email": "user@example.com", "db": mock_db})
+    result = await _unwrap(invalidate_passthrough_headers_cache)(_user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
     assert result["status"] == "invalidated"
     assert result["cache_stats"]["hits"] == 1
     assert cache.invalidate.called
 
-    stats = await _unwrap(get_passthrough_headers_cache_stats)(_user={"email": "user@example.com", "db": mock_db})
+    stats = await _unwrap(get_passthrough_headers_cache_stats)(_user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
     assert stats["hits"] == 1
 
     a2a_cache = MagicMock()
     a2a_cache.stats.return_value = {"hits": 2}
     monkeypatch.setattr("mcpgateway.admin.a2a_stats_cache", a2a_cache)
 
-    result = await _unwrap(invalidate_a2a_stats_cache)(_user={"email": "user@example.com", "db": mock_db})
+    result = await _unwrap(invalidate_a2a_stats_cache)(_user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
     assert result["status"] == "invalidated"
     assert result["cache_stats"]["hits"] == 2
     assert a2a_cache.invalidate.called
 
-    stats = await _unwrap(get_a2a_stats_cache_stats)(_user={"email": "user@example.com", "db": mock_db})
+    stats = await _unwrap(get_a2a_stats_cache_stats)(_user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
     assert stats["hits"] == 2
 
 
@@ -4726,19 +4728,19 @@ async def test_get_mcp_session_pool_metrics_paths(monkeypatch, mock_db, allow_pe
     request.client = SimpleNamespace(host="10.0.0.1")
 
     monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
     assert result["enabled"] is False
 
     monkeypatch.setattr(settings, "mcp_session_pool_enabled", True)
     pool = MagicMock()
     pool.get_metrics.return_value = {"hits": 1, "misses": 0}
     monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: pool)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
     assert result["enabled"] is True
     assert result["hits"] == 1
 
     monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: (_ for _ in ()).throw(RuntimeError("not ready")))
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db}, _db=mock_db)
     assert result["enabled"] is True
     assert result["message"] == "Pool not yet initialized"
 
@@ -4800,6 +4802,7 @@ async def test_admin_generate_support_bundle(monkeypatch, tmp_path, mock_db, all
         include_env=False,
         include_system=False,
         user={"email": "user@example.com", "db": mock_db},
+        _db=mock_db,
     )
     assert isinstance(response, FileResponse)
     assert response.media_type == "application/zip"

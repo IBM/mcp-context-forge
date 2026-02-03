@@ -81,6 +81,8 @@ async def server_oauth_protected_resource(
     # Add cache headers
     headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
 
+    db.commit()
+    db.close()
     return JSONResponse(content=response_data, headers=headers)
 
 
@@ -128,4 +130,6 @@ async def server_well_known_file(
         raise HTTPException(status_code=404, detail="Server not found")
 
     # Use shared helper to get the file content
+    db.commit()
+    db.close()
     return get_well_known_file_content(filename)

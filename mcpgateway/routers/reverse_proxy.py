@@ -175,6 +175,12 @@ async def websocket_endpoint(
     Raises:
         ValueError: If token is missing required subject claim.
     """
+    # Close DB session early; this WebSocket endpoint doesn't use it.
+    try:
+        db.commit()
+    finally:
+        db.close()
+
     # Check authentication BEFORE accepting connection
     user = None
     auth_header = websocket.headers.get("Authorization", "")

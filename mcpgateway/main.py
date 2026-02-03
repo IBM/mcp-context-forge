@@ -2309,7 +2309,10 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
     """
     body = await _read_request_json(request)
     logger.debug(f"User {user['email']} sent a completion request")
-    return await completion_service.handle_completion(db, body)
+    response = await completion_service.handle_completion(db, body)
+    db.commit()
+    db.close()
+    return response
 
 
 @protocol_router.post("/sampling/createMessage")
@@ -2327,7 +2330,10 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
     """
     logger.debug(f"User {user['email']} sent a sampling request")
     body = await _read_request_json(request)
-    return await sampling_handler.create_message(db, body)
+    response = await sampling_handler.create_message(db, body)
+    db.commit()
+    db.close()
+    return response
 
 
 ###############
@@ -2379,10 +2385,13 @@ async def list_servers(
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
-        return ORJSONResponse(
+        response = ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
+        db.commit()
+        db.close()
+        return response
 
     # Determine final team ID
     team_id = team_id or token_team_id
@@ -2413,7 +2422,11 @@ async def list_servers(
         payload = {"servers": [server.model_dump(by_alias=True) for server in data]}
         if next_cursor:
             payload["nextCursor"] = next_cursor
+        db.commit()
+        db.close()
         return payload
+    db.commit()
+    db.close()
     return data
 
 
@@ -2436,7 +2449,10 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends
     """
     try:
         logger.debug(f"User {user} requested server with ID {server_id}")
-        return await server_service.get_server(db, server_id)
+        response = await server_service.get_server(db, server_id)
+        db.commit()
+        db.close()
+        return response
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -2614,7 +2630,10 @@ async def set_server_state(
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         logger.debug(f"User {user} is setting server with ID {server_id} to {'active' if activate else 'inactive'}")
-        return await server_service.set_server_state(db, server_id, activate, user_email=user_email)
+        response = await server_service.set_server_state(db, server_id, activate, user_email=user_email)
+        db.commit()
+        db.close()
+        return response
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
@@ -2648,7 +2667,9 @@ async def toggle_server_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_server_state(server_id, activate, db, user)
+    response = await set_server_state(server_id, activate, db, user)
+    db.close()
+    return response
 
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
@@ -2898,7 +2919,10 @@ async def server_get_tools(
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams)
-    return [tool.model_dump(by_alias=True) for tool in tools]
+    response = [tool.model_dump(by_alias=True) for tool in tools]
+    db.commit()
+    db.close()
+    return response
 
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
@@ -2937,7 +2961,10 @@ async def server_get_resources(
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     resources = await resource_service.list_server_resources(db, server_id=server_id, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams)
-    return [resource.model_dump(by_alias=True) for resource in resources]
+    response = [resource.model_dump(by_alias=True) for resource in resources]
+    db.commit()
+    db.close()
+    return response
 
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
@@ -2976,7 +3003,10 @@ async def server_get_prompts(
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams)
-    return [prompt.model_dump(by_alias=True) for prompt in prompts]
+    response = [prompt.model_dump(by_alias=True) for prompt in prompts]
+    db.commit()
+    db.close()
+    return response
 
 
 ##################
@@ -3044,10 +3074,13 @@ async def list_a2a_agents(
 
     # Check for team ID mismatch (only applies when both are specified and token has teams)
     if team_id is not None and token_team_id is not None and team_id != token_team_id and not is_empty_team_token:
-        return ORJSONResponse(
+        response = ORJSONResponse(
             content={"message": "Access issue: This API token does not have the required permissions for this team."},
             status_code=status.HTTP_403_FORBIDDEN,
         )
+        db.commit()
+        db.close()
+        return response
 
     # Determine final team ID - don't use token_team_id for empty-team tokens
     # Empty-team tokens should filter by public + owned, not by personal team
@@ -3073,7 +3106,11 @@ async def list_a2a_agents(
         payload = {"agents": [agent.model_dump(by_alias=True) for agent in data]}
         if next_cursor:
             payload["nextCursor"] = next_cursor
+        db.commit()
+        db.close()
         return payload
+    db.commit()
+    db.close()
     return data
 
 
@@ -3114,12 +3151,15 @@ async def get_a2a_agent(
         elif token_teams is None:
             token_teams = []  # Non-admin without teams = public-only
 
-        return await a2a_service.get_agent(
+        response = await a2a_service.get_agent(
             db,
             agent_id,
             user_email=user_email,
             token_teams=token_teams,
         )
+        db.commit()
+        db.close()
+        return response
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -3165,17 +3205,23 @@ async def create_a2a_agent(
         # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
         is_public_only_token = token_teams is not None and len(token_teams) == 0
         if is_public_only_token and visibility in ("team", "private"):
-            return ORJSONResponse(
+            response = ORJSONResponse(
                 content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
+            db.commit()
+            db.close()
+            return response
 
         # Check for team ID mismatch (only for non-public-only tokens)
         if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
-            return ORJSONResponse(
+            response = ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
+            db.commit()
+            db.close()
+            return response
 
         # Determine final team ID (public-only tokens get no team)
         if is_public_only_token:
@@ -3186,7 +3232,7 @@ async def create_a2a_agent(
         logger.debug(f"User {user_email} is creating a new A2A agent for team {team_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.register_agent(
+        response = await a2a_service.register_agent(
             db,
             agent,
             created_by=metadata["created_by"],
@@ -3199,6 +3245,9 @@ async def create_a2a_agent(
             owner_email=user_email,
             visibility=visibility,
         )
+        db.commit()
+        db.close()
+        return response
     except A2AAgentNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except A2AAgentError as e:
@@ -3244,7 +3293,7 @@ async def update_a2a_agent(
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        return await a2a_service.update_agent(
+        response = await a2a_service.update_agent(
             db,
             agent_id,
             agent,
@@ -3254,6 +3303,9 @@ async def update_a2a_agent(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        db.commit()
+        db.close()
+        return response
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
@@ -3298,7 +3350,10 @@ async def set_a2a_agent_state(
         logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
+        response = await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
+        db.commit()
+        db.close()
+        return response
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
@@ -3330,7 +3385,9 @@ async def toggle_a2a_agent_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_a2a_agent_state(agent_id, activate, db, user)
+    response = await set_a2a_agent_state(agent_id, activate, db, user)
+    db.close()
+    return response
 
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
@@ -3362,10 +3419,13 @@ async def delete_a2a_agent(
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await a2a_service.delete_agent(db, agent_id, user_email=user_email, purge_metrics=purge_metrics)
-        return {
+        response = {
             "status": "success",
             "message": f"A2A Agent {agent_id} deleted successfully",
         }
+        db.commit()
+        db.close()
+        return response
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
@@ -3421,7 +3481,7 @@ async def invoke_a2a_agent(
         else:
             user_id = str(user)
 
-        return await a2a_service.invoke_agent(
+        response = await a2a_service.invoke_agent(
             db,
             agent_name,
             parameters,
@@ -3430,6 +3490,9 @@ async def invoke_a2a_agent(
             user_email=user_email,
             token_teams=token_teams,
         )
+        db.commit()
+        db.close()
+        return response
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
@@ -3664,11 +3727,17 @@ async def get_tool(
         logger.debug(f"User {user} is retrieving tool with ID {tool_id}")
         data = await tool_service.get_tool(db, tool_id)
         if apijsonpath is None:
-            return data
+            response = data
+            db.commit()
+            db.close()
+            return response
 
         data_dict = data.to_dict(use_alias=True)
 
-        return jsonpath_modifier(data_dict, apijsonpath.jsonpath, apijsonpath.mapping)
+        response = jsonpath_modifier(data_dict, apijsonpath.jsonpath, apijsonpath.mapping)
+        db.commit()
+        db.close()
+        return response
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -3803,11 +3872,14 @@ async def set_tool_state(
         logger.debug(f"User {user} is setting tool state for ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
-        return {
+        response = {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
             "tool": tool.model_dump(),
         }
+        db.commit()
+        db.close()
+        return response
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ToolNotFoundError as e:
@@ -3841,7 +3913,9 @@ async def toggle_tool_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_tool_state(tool_id, activate, db, user)
+    response = await set_tool_state(tool_id, activate, db, user)
+    db.close()
+    return response
 
 
 #################
@@ -3897,7 +3971,10 @@ async def list_resource_templates(
         visibility=visibility,
     )
     # For simplicity, we're not implementing real pagination here
-    return ListResourceTemplatesResult(_meta={}, resource_templates=resource_templates, next_cursor=None)  # No pagination for now
+    response = ListResourceTemplatesResult(_meta={}, resource_templates=resource_templates, next_cursor=None)  # No pagination for now
+    db.commit()
+    db.close()
+    return response
 
 
 @resource_router.post("/{resource_id}/state")
@@ -3927,11 +4004,14 @@ async def set_resource_state(
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         resource = await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
-        return {
+        response = {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
             "resource": resource.model_dump(),
         }
+        db.commit()
+        db.close()
+        return response
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ResourceNotFoundError as e:
@@ -3965,7 +4045,9 @@ async def toggle_resource_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_resource_state(resource_id, activate, db, user)
+    response = await set_resource_state(resource_id, activate, db, user)
+    db.close()
+    return response
 
 
 @resource_router.get("", response_model=Union[List[ResourceRead], CursorPaginatedResourcesResponse])
@@ -4264,7 +4346,10 @@ async def get_resource_info(
     """
     try:
         logger.debug(f"User {user} requested resource info for ID {resource_id}")
-        return await resource_service.get_resource_by_id(db, resource_id, include_inactive=include_inactive)
+        response = await resource_service.get_resource_by_id(db, resource_id, include_inactive=include_inactive)
+        db.commit()
+        db.close()
+        return response
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -4413,11 +4498,14 @@ async def set_prompt_state(
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         prompt = await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
-        return {
+        response = {
             "status": "success",
             "message": f"Prompt {prompt_id} {'activated' if activate else 'deactivated'}",
             "prompt": prompt.model_dump(),
         }
+        db.commit()
+        db.close()
+        return response
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except PromptNotFoundError as e:
@@ -4451,7 +4539,9 @@ async def toggle_prompt_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_prompt_state(prompt_id, activate, db, user)
+    response = await set_prompt_state(prompt_id, activate, db, user)
+    db.close()
+    return response
 
 
 @prompt_router.get("", response_model=Union[List[PromptRead], CursorPaginatedPromptsResponse])
@@ -4700,17 +4790,21 @@ async def get_prompt(
             plugin_global_context=plugin_global_context,
         )
         logger.debug(f"Prompt execution successful for '{prompt_id}'")
+        response: Any = result
     except Exception as ex:
         logger.error(f"Could not retrieve prompt {prompt_id}: {ex}")
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
-            return ORJSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
-        if isinstance(ex, (ValueError, PromptError)):
+            response = ORJSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
+        elif isinstance(ex, (ValueError, PromptError)):
             # Return the actual error message
-            return ORJSONResponse(content={"message": str(ex)}, status_code=422)
-        raise
+            response = ORJSONResponse(content={"message": str(ex)}, status_code=422)
+        else:
+            raise
 
-    return result
+    db.commit()
+    db.close()
+    return response
 
 
 @prompt_router.get("/{prompt_id}")
@@ -4753,7 +4847,7 @@ async def get_prompt_no_args(
     auth_user_email = None if is_admin else user_email
 
     try:
-        return await prompt_service.get_prompt(
+        response = await prompt_service.get_prompt(
             db,
             prompt_id,
             {},
@@ -4763,6 +4857,9 @@ async def get_prompt_no_args(
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
+        db.commit()
+        db.close()
+        return response
     except PromptNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PermissionError as e:
@@ -4917,11 +5014,14 @@ async def set_gateway_state(
             activate,
             user_email=user_email,
         )
-        return {
+        response = {
             "status": "success",
             "message": f"Gateway {gateway_id} {'activated' if activate else 'deactivated'}",
             "gateway": gateway.model_dump(),
         }
+        db.commit()
+        db.close()
+        return response
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except GatewayNotFoundError as e:
@@ -4953,7 +5053,9 @@ async def toggle_gateway_status(
     """
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
-    return await set_gateway_state(gateway_id, activate, db, user)
+    response = await set_gateway_state(gateway_id, activate, db, user)
+    db.close()
+    return response
 
 
 @gateway_router.get("", response_model=Union[List[GatewayRead], CursorPaginatedGatewaysResponse])
@@ -5074,17 +5176,23 @@ async def register_gateway(
         # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
         is_public_only_token = token_teams is not None and len(token_teams) == 0
         if is_public_only_token and visibility in ("team", "private"):
-            return ORJSONResponse(
+            response = ORJSONResponse(
                 content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
+            db.commit()
+            db.close()
+            return response
 
         # Check for team ID mismatch (only for non-public-only tokens)
         if not is_public_only_token and gateway_team_id is not None and token_team_id is not None and gateway_team_id != token_team_id:
-            return ORJSONResponse(
+            response = ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
+            db.commit()
+            db.close()
+            return response
 
         # Determine final team ID (public-only tokens get no team)
         if is_public_only_token:
@@ -5094,7 +5202,7 @@ async def register_gateway(
 
         logger.debug(f"User {user_email} is creating a new gateway for team {team_id}")
 
-        return await gateway_service.register_gateway(
+        response = await gateway_service.register_gateway(
             db,
             gateway,
             created_by=metadata["created_by"],
@@ -5105,22 +5213,49 @@ async def register_gateway(
             owner_email=user_email,
             visibility=visibility,
         )
+        db.commit()
+        db.close()
+        return response
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
-            return ORJSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            response = ORJSONResponse(content={"message": "Unable to connect to gateway"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
+            db.commit()
+            db.close()
+            return response
         if isinstance(ex, ValueError):
-            return ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
+            response = ORJSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
+            db.commit()
+            db.close()
+            return response
         if isinstance(ex, GatewayNameConflictError):
-            return ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+            response = ORJSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
+            db.commit()
+            db.close()
+            return response
         if isinstance(ex, GatewayDuplicateConflictError):
-            return ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
+            response = ORJSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
+            db.commit()
+            db.close()
+            return response
         if isinstance(ex, RuntimeError):
-            return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            response = ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            db.commit()
+            db.close()
+            return response
         if isinstance(ex, ValidationError):
-            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            db.commit()
+            db.close()
+            return response
         if isinstance(ex, IntegrityError):
-            return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
-        return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            response = ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
+            db.commit()
+            db.close()
+            return response
+        response = ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        db.commit()
+        db.close()
+        return response
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
@@ -5142,7 +5277,10 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
     """
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
     try:
-        return await gateway_service.get_gateway(db, gateway_id)
+        response = await gateway_service.get_gateway(db, gateway_id)
+        db.commit()
+        db.close()
+        return response
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -6265,6 +6403,8 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
         a2a_metrics = await a2a_service.aggregate_metrics(db)
         metrics_result["a2a_agents"] = a2a_metrics
 
+    db.commit()
+    db.close()
     return metrics_result
 
 
@@ -6311,7 +6451,10 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
             raise HTTPException(status_code=400, detail="A2A features are disabled")
     else:
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
-    return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
+    response = {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
+    db.commit()
+    db.close()
+    return response
 
 
 ####################
@@ -6492,6 +6635,8 @@ async def list_tags(
 
     try:
         tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
+        db.commit()
+        db.close()
         return tags
     except Exception as e:
         logger.error(f"Failed to retrieve tags: {str(e)}")
@@ -6532,6 +6677,8 @@ async def get_entities_by_tag(
 
     try:
         entities = await tag_service.get_entities_by_tag(db, tag_name=tag_name, entity_types=entity_types_list)
+        db.commit()
+        db.close()
         return entities
     except Exception as e:
         logger.error(f"Failed to retrieve entities for tag '{tag_name}': {str(e)}")
@@ -6615,6 +6762,8 @@ async def export_configuration(
             root_path=root_path,
         )
 
+        db.commit()
+        db.close()
         return export_data
 
     except ExportError as e:
@@ -6669,6 +6818,8 @@ async def export_selective_configuration(
             db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown", root_path=root_path
         )
 
+        db.commit()
+        db.close()
         return export_data
 
     except ExportError as e:
@@ -6730,7 +6881,10 @@ async def import_configuration(
             db=db, import_data=import_data, conflict_strategy=strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username or "unknown", selected_entities=selected_entities
         )
 
-        return import_status.to_dict()
+        response = import_status.to_dict()
+        db.commit()
+        db.close()
+        return response
 
     except ImportValidationError as e:
         logger.error(f"Import validation failed for user {user}: {str(e)}")

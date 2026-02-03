@@ -309,19 +309,25 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
         if needs_password_change:
             logger.info(f"Login blocked for {login_request.email}: password change required")
-            return ORJSONResponse(
+            response = ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": "Password change required. Please change your password before continuing."},
                 headers={"X-Password-Change-Required": "true"},
             )
+            db.commit()
+            db.close()
+            return response
 
         # Create access token
         access_token, expires_in = await create_access_token(user)
 
         # Return authentication response
-        return AuthenticationResponse(
+        response = AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
         )  # nosec B106 - OAuth2 token type, not a password
+        db.commit()
+        db.close()
+        return response
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, etc.)
@@ -384,9 +390,12 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
 
         logger.info(f"New user registered: {user.email}")
 
-        return AuthenticationResponse(
+        response = AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
         )  # nosec B106 - OAuth2 token type, not a password
+        db.commit()
+        db.close()
+        return response
 
     except EmailValidationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -433,7 +442,10 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
         )
 
         if success:
-            return SuccessResponse(success=True, message="Password changed successfully")
+            response = SuccessResponse(success=True, message="Password changed successfully")
+            db.commit()
+            db.close()
+            return response
         else:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to change password")
 
@@ -491,7 +503,10 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
     try:
         events = await auth_service.get_auth_events(email=current_user.email, limit=limit, offset=offset)
 
-        return [AuthEventResponse.model_validate(event) for event in events]
+        responses = [AuthEventResponse.model_validate(event) for event in events]
+        db.commit()
+        db.close()
+        return responses
 
     except Exception as e:
         logger.error(f"Error getting auth events for {current_user.email}: {e}")
@@ -542,8 +557,13 @@ async def list_users(
         user_responses = [EmailUserResponse.from_email_user(user) for user in result.data]
 
         if include_pagination:
-            return CursorPaginatedUsersResponse(users=user_responses, next_cursor=result.next_cursor)
+            response = CursorPaginatedUsersResponse(users=user_responses, next_cursor=result.next_cursor)
+            db.commit()
+            db.close()
+            return response
 
+        db.commit()
+        db.close()
         return user_responses
 
     except Exception as e:
@@ -578,7 +598,10 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
     try:
         events = await auth_service.get_auth_events(email=user_email, limit=limit, offset=offset)
 
-        return [AuthEventResponse.model_validate(event) for event in events]
+        responses = [AuthEventResponse.model_validate(event) for event in events]
+        db.commit()
+        db.close()
+        return responses
 
     except Exception as e:
         logger.error(f"Error getting auth events: {e}")
@@ -671,7 +694,10 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-        return EmailUserResponse.from_email_user(user)
+        response = EmailUserResponse.from_email_user(user)
+        db.commit()
+        db.close()
+        return response
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
