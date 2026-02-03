@@ -87,11 +87,27 @@ def test_gateway_service_convert_gateway_to_read(monkeypatch):
         team=None,
     )
 
-    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: x))
+    # Mock model_validate to return a mock that returns itself when masked() is called
+    # and also stores the original dict for assertions
+    class MockGatewayRead:
+        def __init__(self, data):
+            self._data = data
+            self._masked_called = False
+
+        def masked(self):
+            self._masked_called = True
+            return self
+
+        def __getitem__(self, key):
+            return self._data[key]
+
+    monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: MockGatewayRead(x)))
 
     result = service.convert_gateway_to_read(gateway)
     assert decode_auth(result["auth_value"]) == {"token": "secret"}
     assert result["tags"] == validate_tags_field(["Analytics", "ml"])
+    # SECURITY: Verify .masked() is called to prevent credential leakage
+    assert result._masked_called, "convert_gateway_to_read must call .masked() to prevent credential leakage"
 
 
 def test_gateway_service_prepare_gateway_for_read():

@@ -658,7 +658,11 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     async def test_list_gateways_cache_hit(self, gateway_service, test_db, monkeypatch):
-        """Cache hit should return cached gateways without DB query."""
+        """Cache hit should return cached gateways without DB query.
+
+        SECURITY: Caching only applies to public-only tokens (token_teams=[]).
+        Admin bypass (token_teams=None) and team-scoped tokens never use cache.
+        """
         cache = SimpleNamespace(
             hash_filters=MagicMock(return_value="hash"),
             get=AsyncMock(return_value={"gateways": [{"name": "cached"}], "next_cursor": "next"}),
@@ -666,14 +670,28 @@ class TestGatewayService:
         )
 
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
-        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda data: SimpleNamespace(name=data["name"]))
+
+        # Mock must return object with masked() method since cache reads now apply masking
+        class MockGatewayRead:
+            def __init__(self, data):
+                self.name = data["name"]
+                self._masked_called = False
+
+            def masked(self):
+                self._masked_called = True
+                return self
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GatewayRead.model_validate", lambda data: MockGatewayRead(data))
 
         test_db.execute = Mock()
-        result, next_cursor = await gateway_service.list_gateways(test_db)
+        # SECURITY: Must use token_teams=[] (public-only) to enable caching
+        result, next_cursor = await gateway_service.list_gateways(test_db, token_teams=[])
 
         assert next_cursor == "next"
         assert len(result) == 1
         assert result[0].name == "cached"
+        # SECURITY: Verify .masked() is called on cache reads to prevent credential leakage
+        assert result[0]._masked_called, "Cache reads must call .masked() to prevent credential leakage"
         test_db.execute.assert_not_called()
 
     @pytest.mark.asyncio

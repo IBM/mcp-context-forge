@@ -236,6 +236,20 @@ services:
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
+      # ═══════════════════════════════════════════════════════════════════════════
+      # SSRF Protection (Server-Side Request Forgery)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Prevents gateway from accessing internal resources or cloud metadata services.
+      # Default: enabled with safe settings for dev/internal deployments.
+      # Cloud metadata (169.254.169.254, etc.) is ALWAYS blocked by default.
+      # - SSRF_PROTECTION_ENABLED=true           # Master switch (default: true)
+      # - SSRF_ALLOW_LOCALHOST=true              # Allow localhost (default: true for dev)
+      # - SSRF_ALLOW_PRIVATE_NETWORKS=true       # Allow 10.x, 172.16.x, 192.168.x (default: true)
+      # - SSRF_DNS_FAIL_CLOSED=false             # Reject on DNS failure (default: false = fail open)
+      # For strict production mode (external endpoints only):
+      # - SSRF_ALLOW_LOCALHOST=false
+      # - SSRF_ALLOW_PRIVATE_NETWORKS=false
+      # - SSRF_DNS_FAIL_CLOSED=true
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
@@ -540,6 +554,7 @@ services:
 
   postgres:
     image: postgres:18
+    shm_size: 256m  # Increase from 64MB default to prevent shared memory exhaustion under load
     ulimits:
       nofile:
         soft: 8192
@@ -704,14 +719,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
+      - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (increased from 120s to handle slow MCP calls)
+      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:

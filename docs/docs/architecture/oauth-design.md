@@ -1,6 +1,6 @@
 # OAuth 2.0 Integration Design for MCP Gateway
 
-**Version**: 1.1
+**Version**: 1.2
 **Status**: Design + implementation notes
 **Date**: February 2026
 **Related**: [OAuth 2.0 Authorization Code Flow UI Implementation Design](./oauth-authorization-code-ui-design.md)
@@ -8,6 +8,14 @@
 ## Executive Summary
 
 This document describes the design for the Admin UI initiated OAuth 2.0 Authorization Code flow for MCP gateways and how the backend stores and uses user-delegated tokens.
+
+!!! note "Scope of This Document"
+    This document covers **gateway OAuth token delegation** - how MCP Gateway obtains and uses OAuth tokens to authenticate with upstream MCP servers on behalf of users.
+
+    For information about **user authentication to MCP Gateway** (SSO, JWT tokens, RBAC), see:
+
+    - [RBAC Configuration](../manage/rbac.md) - Token scoping, permissions, and access control
+    - [Multi-Tenancy Architecture](./multitenancy.md) - User authentication flows and team management
 
 ## Current Implementation Snapshot
 
@@ -107,6 +115,30 @@ The gateway configuration form maps user inputs to the OAuth configuration struc
 -   **Scoping**: Tokens are scoped per gateway and app user (email) to prevent cross-user reuse.
 -   **Resource Indicator**: The gateway derives a resource value from the gateway URL if not explicitly configured.
 -   **Transport**: HTTPS is recommended in production.
+
+## Token Verification
+
+### Gateway OAuth Tokens
+
+OAuth tokens obtained through the Authorization Code flow are used to authenticate requests to upstream MCP servers. These tokens are:
+
+1. **Stored encrypted**: Using `AUTH_ENCRYPTION_SECRET`
+2. **Scoped per user**: Each user's token is stored separately per gateway
+3. **Automatically refreshed**: When access tokens expire and refresh tokens are available
+4. **Not validated locally**: The gateway trusts the upstream OAuth provider's token response
+
+### Relationship to Gateway Authentication
+
+This OAuth flow is **separate** from user authentication to the MCP Gateway itself:
+
+| Aspect | Gateway OAuth (this doc) | User Auth to Gateway |
+|--------|-------------------------|---------------------|
+| Purpose | Authenticate to upstream MCP servers | Authenticate users to the gateway |
+| Token storage | `oauth_tokens` table | JWT in client, session in browser |
+| Verification | By upstream MCP server | By gateway (`verify_jwt_token_cached`) |
+| Scope | Per gateway + user pair | Gateway-wide |
+
+For user authentication details, see [RBAC Configuration](../manage/rbac.md).
 
 ## Future Enhancements
 

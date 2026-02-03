@@ -1457,6 +1457,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Union[tuple[List[GatewayRead], Optional[str]], Dict[str, Any]]:
         """List all registered gateways with cursor pagination and optional team filtering.
 
@@ -1471,6 +1472,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             user_email: Email of user for team-based access control. None for no access control.
             team_id: Optional team ID to filter by specific team (requires user_email).
             visibility: Optional visibility filter (private, team, public) (requires user_email).
+            token_teams: Optional list of team IDs from the token (None=unrestricted, []=public-only).
 
         Returns:
             If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
@@ -1510,14 +1512,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     empty_result == [] and cursor is None
             True
         """
-        # Check cache for first page only - skip when user_email provided or page based pagination
+        # Check cache for first page only - only for public-only queries (no user/team filtering)
+        # SECURITY: Only cache public-only results (token_teams=[]), never admin bypass or team-scoped
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and page is None:
+        is_public_only = token_teams is not None and len(token_teams) == 0
+        use_cache = cursor is None and user_email is None and page is None and is_public_only
+        if use_cache:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("gateways", filters_hash)
             if cached is not None:
                 # Reconstruct GatewayRead objects from cached dicts
-                cached_gateways = [GatewayRead.model_validate(g) for g in cached["gateways"]]
+                # SECURITY: Always apply .masked() to ensure stale cache entries don't leak credentials
+                cached_gateways = [GatewayRead.model_validate(g).masked() for g in cached["gateways"]]
                 return (cached_gateways, cached.get("next_cursor"))
 
         # Build base query with ordering
@@ -1526,8 +1532,30 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbGateway.enabled)
-        # Apply team-based access control if user_email is provided
-        if user_email:
+
+        # SECURITY: Apply token-based access control based on normalized token_teams
+        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
+        # - token_teams is []: public-only access (missing teams or explicit empty)
+        # - token_teams is [...]: access to specified teams + public + user's own
+        if token_teams is not None:
+            if len(token_teams) == 0:
+                # Public-only token: only access public gateways
+                query = query.where(DbGateway.visibility == "public")
+            else:
+                # Team-scoped token: public gateways + gateways in allowed teams + user's own
+                access_conditions = [
+                    DbGateway.visibility == "public",
+                    and_(DbGateway.team_id.in_(token_teams), DbGateway.visibility.in_(["team", "public"])),
+                ]
+                if user_email:
+                    access_conditions.append(and_(DbGateway.owner_email == user_email, DbGateway.visibility == "private"))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbGateway.visibility == visibility)
+
+        # Apply team-based access control if user_email is provided (and no token_teams filtering)
+        elif user_email:
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -1600,8 +1628,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         # Cursor-based format
 
-        # Cache first page results - only for non-user-specific queries
-        if cursor is None and user_email is None:
+        # Cache first page results - only for public-only queries (no user/team filtering)
+        # SECURITY: Only cache public-only results (token_teams=[]), never admin bypass or team-scoped
+        if cursor is None and user_email is None and is_public_only:
             try:
                 cache_data = {"gateways": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("gateways", cache_data, filters_hash)
@@ -2219,7 +2248,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     db=db,
                 )
 
-                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
+                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -2921,7 +2950,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
     async def forward_request(
-        self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None
+        self,
+        gateway_or_db,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        app_user_email: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Any:  # noqa: F811 # pylint: disable=function-redefined
         """
         Forward a request to a gateway or multiple gateways.
@@ -2935,6 +2970,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             method: RPC method name
             params: Optional method parameters
             app_user_email: Optional app user email for OAuth token selection
+            user_email: Optional user email for team-based access control
+            token_teams: Optional list of team IDs from the token (None=unrestricted, []=public-only)
 
         Returns:
             Gateway response
@@ -2946,7 +2983,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Dispatch based on first parameter type
         if hasattr(gateway_or_db, "execute"):
             # This is a database session - forward to all active gateways
-            return await self._forward_request_to_all(gateway_or_db, method, params, app_user_email)
+            return await self._forward_request_to_all(gateway_or_db, method, params, app_user_email, user_email, token_teams)
         # This is a gateway object - forward to specific gateway
         return await self._forward_request_to_gateway(gateway_or_db, method, params, app_user_email)
 
@@ -3082,7 +3119,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             return result.get("result")
 
-    async def _forward_request_to_all(self, db: Session, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None) -> Any:
+    async def _forward_request_to_all(
+        self,
+        db: Session,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        app_user_email: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> Any:
         """
         Forward a request to all active gateways that can handle the method.
 
@@ -3091,6 +3136,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             method: RPC method name
             params: Optional method parameters
             app_user_email: Optional app user email for OAuth token selection
+            user_email: Optional user email for team-based access control
+            token_teams: Optional list of team IDs from the token (None=unrestricted, []=public-only)
 
         Returns:
             Gateway response from the first successful gateway
@@ -3101,7 +3148,29 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Fetch all required data before HTTP calls
         # ═══════════════════════════════════════════════════════════════════════════
-        active_gateways = db.execute(select(DbGateway).where(DbGateway.enabled.is_(True))).scalars().all()
+
+        # SECURITY: Apply team-based access control to gateway selection
+        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
+        # - token_teams is []: public-only access (missing teams or explicit empty)
+        # - token_teams is [...]: access to public + specified teams
+        query = select(DbGateway).where(DbGateway.enabled.is_(True))
+
+        if token_teams is not None:
+            if len(token_teams) == 0:
+                # Public-only token: only access public gateways
+                query = query.where(DbGateway.visibility == "public")
+            else:
+                # Team-scoped token: public gateways + gateways in allowed teams
+                access_conditions = [
+                    DbGateway.visibility == "public",
+                    and_(DbGateway.team_id.in_(token_teams), DbGateway.visibility.in_(["team", "public"])),
+                ]
+                # Also include private gateways owned by this user
+                if user_email:
+                    access_conditions.append(and_(DbGateway.owner_email == user_email, DbGateway.visibility == "private"))
+                query = query.where(or_(*access_conditions))
+
+        active_gateways = db.execute(query).scalars().all()
 
         if not active_gateways:
             raise GatewayConnectionError("No active gateways available to forward request")
@@ -3970,7 +4039,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # other service methods. Return None if no match found.
         if result is None:
             return None
-        return GatewayRead.model_validate(result)
+        return GatewayRead.model_validate(result).masked()
 
     async def _run_leader_heartbeat(self) -> None:
         """Run leader heartbeat loop to keep leader key alive.
@@ -4248,7 +4317,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         gateway_dict["version"] = getattr(gateway, "version", None)
         gateway_dict["team"] = getattr(gateway, "team", None)
 
-        return GatewayRead.model_validate(gateway_dict)
+        return GatewayRead.model_validate(gateway_dict).masked()
 
     def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
         """DEPRECATED: Use convert_gateway_to_read instead.

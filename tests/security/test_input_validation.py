@@ -1360,6 +1360,166 @@ class TestSpecificAttackVectors:
                 except ValidationError as e:
                     logger.debug(f"URL rejected: {e}")
 
+    def test_ssrf_cloud_metadata_always_blocked(self):
+        """Test that cloud metadata endpoints are ALWAYS blocked regardless of SSRF settings."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        # These should ALWAYS be blocked (default blocked networks)
+        always_blocked_urls = [
+            "http://169.254.169.254/latest/meta-data/",  # AWS/GCP/Azure metadata
+            "http://169.254.169.123/ntp",  # AWS NTP
+            "https://169.254.169.254/",  # HTTPS variant
+        ]
+
+        for url in always_blocked_urls:
+            with pytest.raises(ValueError) as exc_info:
+                SecurityValidator.validate_url(url, "URL")
+            assert "SSRF protection" in str(exc_info.value) or "blocked" in str(exc_info.value).lower()
+            logger.debug(f"Cloud metadata URL blocked: {url}")
+
+    def test_ssrf_blocked_hostnames(self):
+        """Test that configured blocked hostnames are blocked."""
+        from mcpgateway.common.validators import SecurityValidator
+
+        blocked_hostnames = [
+            "http://metadata.google.internal/computeMetadata/v1/",
+            "http://METADATA.GOOGLE.INTERNAL/",  # Case insensitive
+            "http://metadata.google.internal./",  # Trailing dot (FQDN)
+        ]
+
+        for url in blocked_hostnames:
+            with pytest.raises(ValueError) as exc_info:
+                SecurityValidator.validate_url(url, "URL")
+            assert "blocked hostname" in str(exc_info.value).lower() or "SSRF" in str(exc_info.value)
+            logger.debug(f"Blocked hostname URL rejected: {url}")
+
+    def test_ssrf_localhost_allowed_by_default(self):
+        """Test that localhost is allowed with default settings (dev-friendly)."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # Only run if default settings (localhost allowed)
+        if settings.ssrf_allow_localhost:
+            # These should be allowed with default settings
+            localhost_urls = [
+                "http://localhost:8080/api",
+                "http://127.0.0.1:4444/health",
+            ]
+
+            for url in localhost_urls:
+                # Should not raise
+                result = SecurityValidator.validate_url(url, "URL")
+                assert result == url
+                logger.debug(f"Localhost URL allowed (default): {url}")
+
+    def test_ssrf_private_networks_allowed_by_default(self):
+        """Test that private networks are allowed with default settings (dev-friendly)."""
+        from mcpgateway.common.validators import SecurityValidator
+        from mcpgateway.config import settings
+
+        # Only run if default settings (private networks allowed)
+        if settings.ssrf_allow_private_networks:
+            private_urls = [
+                "http://10.0.0.1/api",
+                "http://172.16.0.1/api",
+                "http://192.168.1.1/api",
+            ]
+
+            for url in private_urls:
+                # Should not raise
+                result = SecurityValidator.validate_url(url, "URL")
+                assert result == url
+                logger.debug(f"Private network URL allowed (default): {url}")
+
+    def test_ssrf_strict_mode_blocks_localhost(self):
+        """Test that strict mode blocks localhost when configured."""
+        from unittest.mock import patch, MagicMock
+        from mcpgateway.common.validators import SecurityValidator
+
+        mock_settings = MagicMock()
+        mock_settings.ssrf_protection_enabled = True
+        mock_settings.ssrf_allow_localhost = False  # Strict mode
+        mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
+        mock_settings.ssrf_blocked_hosts = []
+        mock_settings.ssrf_dns_fail_closed = False
+
+        with patch("mcpgateway.common.validators.settings", mock_settings):
+            with pytest.raises(ValueError) as exc_info:
+                SecurityValidator._validate_ssrf("127.0.0.1", "URL")
+            assert "localhost" in str(exc_info.value).lower()
+            logger.debug("Strict mode: localhost blocked")
+
+    def test_ssrf_strict_mode_blocks_private_networks(self):
+        """Test that strict mode blocks private networks when configured."""
+        from unittest.mock import patch, MagicMock
+        from mcpgateway.common.validators import SecurityValidator
+
+        mock_settings = MagicMock()
+        mock_settings.ssrf_protection_enabled = True
+        mock_settings.ssrf_allow_localhost = True
+        mock_settings.ssrf_allow_private_networks = False  # Strict mode
+        mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
+        mock_settings.ssrf_blocked_hosts = []
+        mock_settings.ssrf_dns_fail_closed = False
+
+        with patch("mcpgateway.common.validators.settings", mock_settings):
+            for ip in ["10.0.0.1", "172.16.0.1", "192.168.1.1"]:
+                with pytest.raises(ValueError) as exc_info:
+                    SecurityValidator._validate_ssrf(ip, "URL")
+                assert "private network" in str(exc_info.value).lower()
+                logger.debug(f"Strict mode: private IP {ip} blocked")
+
+    def test_ssrf_dns_fail_closed_rejects_unresolvable(self):
+        """Test that DNS fail-closed mode rejects unresolvable hostnames."""
+        from unittest.mock import patch, MagicMock
+        import socket
+        from mcpgateway.common.validators import SecurityValidator
+
+        mock_settings = MagicMock()
+        mock_settings.ssrf_protection_enabled = True
+        mock_settings.ssrf_allow_localhost = True
+        mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_blocked_networks = []
+        mock_settings.ssrf_blocked_hosts = []
+        mock_settings.ssrf_dns_fail_closed = True  # Fail closed
+
+        # Mock getaddrinfo to raise DNS error
+        def mock_getaddrinfo(*args, **kwargs):
+            raise socket.gaierror("DNS resolution failed")
+
+        with patch("mcpgateway.common.validators.settings", mock_settings):
+            with patch("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo):
+                with pytest.raises(ValueError) as exc_info:
+                    SecurityValidator._validate_ssrf("nonexistent.invalid.hostname.test", "URL")
+                assert "DNS resolution failed" in str(exc_info.value)
+                assert "SSRF_DNS_FAIL_CLOSED" in str(exc_info.value)
+                logger.debug("DNS fail-closed: unresolvable hostname rejected")
+
+    def test_ssrf_dns_fail_open_allows_unresolvable(self):
+        """Test that DNS fail-open mode (default) allows unresolvable hostnames."""
+        from unittest.mock import patch, MagicMock
+        import socket
+        from mcpgateway.common.validators import SecurityValidator
+
+        mock_settings = MagicMock()
+        mock_settings.ssrf_protection_enabled = True
+        mock_settings.ssrf_allow_localhost = True
+        mock_settings.ssrf_allow_private_networks = True
+        mock_settings.ssrf_blocked_networks = []
+        mock_settings.ssrf_blocked_hosts = []
+        mock_settings.ssrf_dns_fail_closed = False  # Fail open (default)
+
+        # Mock getaddrinfo to raise DNS error
+        def mock_getaddrinfo(*args, **kwargs):
+            raise socket.gaierror("DNS resolution failed")
+
+        with patch("mcpgateway.common.validators.settings", mock_settings):
+            with patch("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo):
+                # Should NOT raise - fail open allows unresolvable hostnames
+                SecurityValidator._validate_ssrf("nonexistent.invalid.hostname.test", "URL")
+                logger.debug("DNS fail-open: unresolvable hostname allowed")
+
     def test_open_redirect_prevention(self):
         """Test open redirect vulnerability prevention."""
         logger.debug("Testing open redirect prevention")

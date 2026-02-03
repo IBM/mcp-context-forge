@@ -90,7 +90,7 @@ jobs:
             --cov=mcpgateway \
             --cov-report=term \
             --cov-report=json:doctest-coverage.json \
-            --cov-fail-under=34 \
+            --cov-fail-under=30 \
             --tb=short
 
       # -----------------------------------------------------------

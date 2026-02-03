@@ -3392,10 +3392,11 @@ class GatewayRead(BaseModelWithConfigDict):
                 for header in masked_data["auth_headers"]
             ]
 
-        masked_data["auth_password_unmasked"] = self.auth_password_unmasked
-        masked_data["auth_token_unmasked"] = self.auth_token_unmasked
-        masked_data["auth_header_value_unmasked"] = self.auth_header_value_unmasked
-        masked_data["auth_headers_unmasked"] = [header.copy() for header in self.auth_headers_unmasked] if self.auth_headers_unmasked else None
+        # SECURITY: Never expose unmasked credentials in API responses
+        masked_data["auth_password_unmasked"] = None
+        masked_data["auth_token_unmasked"] = None
+        masked_data["auth_header_value_unmasked"] = None
+        masked_data["auth_headers_unmasked"] = None
         return GatewayRead.model_validate(masked_data)
 
 

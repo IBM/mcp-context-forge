@@ -371,7 +371,7 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
     request = _make_request(root_path="/root")
     mock_db = MagicMock()
     mock_db.commit = MagicMock()
-    user = {"email": "user@example.com", "is_admin": True}
+    user = {"email": "user@example.com", "is_admin": True, "db": mock_db}
 
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
     monkeypatch.setattr(admin.settings, "mcpgateway_a2a_enabled", False)
@@ -429,7 +429,7 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
     monkeypatch.setattr(admin.root_service, "list_roots", list_roots)
     monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
 
-    response = await admin.admin_ui(request, "team-1", True, mock_db, user)
+    response = await admin.admin_ui(request, "team-1", True, mock_db, user=user)
     assert isinstance(response, HTMLResponse)
     assert "jwt_token" in response.headers.get("set-cookie", "")
     context = request.app.state.templates.TemplateResponse.call_args[0][2]
@@ -476,11 +476,11 @@ async def test_change_password_required_handler(monkeypatch):
 async def test_admin_create_join_request_team_not_found(monkeypatch):
     request = _make_request()
     mock_db = MagicMock()
-    user = {"email": "user@example.com"}
+    user = {"email": "user@example.com", "db": mock_db}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: _StubTeamService(db, team=None))
 
-    response = await admin.admin_create_join_request("team-1", request, mock_db, user)
+    response = await admin.admin_create_join_request("team-1", request, mock_db, user=user)
     assert response.status_code == 404
     assert "Team not found" in _response_text(response)
 
@@ -490,7 +490,7 @@ async def test_admin_create_join_request_pending(monkeypatch):
     request = _make_request()
     request.form = AsyncMock(return_value={"message": "hello"})
     mock_db = MagicMock()
-    user = {"email": "user@example.com"}
+    user = {"email": "user@example.com", "db": mock_db}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", visibility="public")
@@ -498,7 +498,7 @@ async def test_admin_create_join_request_pending(monkeypatch):
     team_service = _StubTeamService(db=mock_db, team=team, existing_requests=[pending])
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
-    response = await admin.admin_create_join_request("team-1", request, mock_db, user)
+    response = await admin.admin_create_join_request("team-1", request, mock_db, user=user)
     assert response.status_code == 200
     body = _response_text(response)
     assert "pending request" in body
@@ -510,7 +510,7 @@ async def test_admin_create_join_request_success(monkeypatch):
     request = _make_request()
     request.form = AsyncMock(return_value={"message": "please add me"})
     mock_db = MagicMock()
-    user = {"email": "user@example.com"}
+    user = {"email": "user@example.com", "db": mock_db}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", visibility="public")
@@ -518,7 +518,7 @@ async def test_admin_create_join_request_success(monkeypatch):
     team_service = _StubTeamService(db=mock_db, team=team, existing_requests=[], create_request=created)
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
 
-    response = await admin.admin_create_join_request("team-1", request, mock_db, user)
+    response = await admin.admin_create_join_request("team-1", request, mock_db, user=user)
     assert response.status_code == 201
     assert team_service.create_args == ("team-1", "user@example.com", "please add me")
     assert "Join request submitted successfully" in _response_text(response)
