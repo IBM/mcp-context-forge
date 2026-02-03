@@ -132,10 +132,3 @@ export function resetModalState(modalId) {
         console.error(`Error resetting modal state ${modalId}:`, error);
     }
 }
-
-// Self-register on window.Admin for IIFE modules that depend on these
-const Admin = window.Admin;
-Admin.openModal = openModal;
-Admin.closeModal = closeModal;
-Admin.resetModalState = resetModalState;
-Admin.registerModalCleanup = registerModalCleanup;
