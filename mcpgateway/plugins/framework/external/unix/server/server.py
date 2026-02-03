@@ -27,19 +27,22 @@ Examples:
     >>> # asyncio.run(main())
 """
 
+# Standard
 import asyncio
 import logging
 import os
 import signal
 from typing import Optional
 
+# Third-Party
 from google.protobuf import json_format
 
+# First-Party
 from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
 from mcpgateway.plugins.framework.external.mcp.server.server import ExternalPluginServer
 from mcpgateway.plugins.framework.external.proto_convert import (
-    pydantic_context_to_proto,
     proto_context_to_pydantic,
+    pydantic_context_to_proto,
 )
 from mcpgateway.plugins.framework.external.unix.protocol import ProtocolError, read_message, write_message_async
 from mcpgateway.plugins.framework.models import PluginContext
@@ -85,12 +88,20 @@ class UnixSocketPluginServer:
 
     @property
     def socket_path(self) -> str:
-        """Get the socket path."""
+        """Get the socket path.
+
+        Returns:
+            str: The Unix socket file path.
+        """
         return self._socket_path
 
     @property
     def running(self) -> bool:
-        """Check if the server is running."""
+        """Check if the server is running.
+
+        Returns:
+            bool: True if the server is running, False otherwise.
+        """
         return self._running
 
     async def _handle_client(
@@ -296,6 +307,7 @@ class UnixSocketPluginServer:
             configs = await self._plugin_server.get_plugin_configs()
 
             for config in configs:
+                # Third-Party
                 from google.protobuf.struct_pb2 import Struct
 
                 config_struct = Struct()
@@ -333,7 +345,11 @@ class UnixSocketPluginServer:
         logger.info("Unix socket plugin server started on %s", self._socket_path)
 
     async def serve_forever(self) -> None:
-        """Serve requests until stopped."""
+        """Serve requests until stopped.
+
+        Raises:
+            RuntimeError: If the server has not been started.
+        """
         if not self._server:
             raise RuntimeError("Server not started. Call start() first.")
 

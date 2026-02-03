@@ -23,8 +23,8 @@ import grpc
 from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2, plugin_service_pb2_grpc
 from mcpgateway.plugins.framework.external.mcp.server.server import ExternalPluginServer
 from mcpgateway.plugins.framework.external.proto_convert import (
-    pydantic_context_to_proto,
     proto_context_to_pydantic,
+    pydantic_context_to_proto,
 )
 from mcpgateway.plugins.framework.models import PluginContext
 

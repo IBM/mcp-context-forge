@@ -78,12 +78,13 @@ class GrpcExternalPlugin(Plugin):
                 )
             )
 
-        target = self._config.grpc.target
+        target = self._config.grpc.get_target()
         tls_config = self._config.grpc.tls or GRPCClientTLSConfig.from_env()
+        is_uds = self._config.grpc.uds is not None
 
         try:
-            # Create channel
-            if tls_config:
+            # Create channel (TLS not supported for Unix domain sockets)
+            if tls_config and not is_uds:
                 self._channel = create_secure_channel(target, tls_config, self.name)
             else:
                 self._channel = create_insecure_channel(target)

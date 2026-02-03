@@ -168,9 +168,10 @@ plugins:
     priority: 10
     grpc:
       target: "localhost:50051"
+      # uds: /var/run/grpc-plugin.sock  # use UDS instead of TCP
 ```
 
-See [gRPC Transport Guide](./grpc-transport.md) for detailed gRPC configuration including TLS/mTLS setup.
+See [gRPC Transport Guide](./grpc-transport.md) for gRPC configuration including TLS/mTLS, or [Unix Socket Transport](./unix-socket-transport.md) for maximum local performance.
 
 ## Getting Started
 

@@ -27,13 +27,16 @@ Examples:
     >>> # result = await plugin.invoke_hook(hook_type, payload, context)
 """
 
+# Standard
 import asyncio
 import logging
 from typing import Any, Optional
 
+# Third-Party
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
+# First-Party
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
@@ -94,7 +97,11 @@ class UnixSocketExternalPlugin(Plugin):
 
     @property
     def connected(self) -> bool:
-        """Check if the client is connected."""
+        """Check if the client is connected.
+
+        Returns:
+            bool: True if connected and writer is active, False otherwise.
+        """
         return self._connected and self._writer is not None and not self._writer.is_closing()
 
     async def _connect(self) -> None:

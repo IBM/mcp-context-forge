@@ -24,6 +24,7 @@ Examples:
     >>> # data = await read_message(reader)  # returns b"hello"
 """
 
+# Standard
 import asyncio
 import struct
 from typing import Optional

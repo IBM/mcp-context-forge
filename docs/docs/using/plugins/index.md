@@ -151,10 +151,11 @@ plugins:
     priority: 10
     grpc:
       target: "localhost:50051"
+      # uds: /var/run/grpc-plugin.sock  # use UDS instead of TCP
 ```
 
-!!! tip "High-Performance Transport"
-    For performance-critical deployments, consider using [gRPC transport](./grpc-transport.md) which provides ~4,700 calls/sec compared to ~600 calls/sec with MCP/HTTP.
+!!! tip "High-Performance Transports"
+    For performance-critical deployments, consider [gRPC transport](./grpc-transport.md) (~4,700 calls/sec) or [Unix socket transport](./unix-socket-transport.md) (~9,000 calls/sec) compared to ~600 calls/sec with MCP/HTTP.
 
 ### Plugin Configuration
 

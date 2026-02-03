@@ -4,5 +4,6 @@ nav:
   - plugins.md
   - http-auth-hooks.md
   - grpc-transport.md
+  - unix-socket-transport.md
   - mtls.md
   - rust-plugins.md

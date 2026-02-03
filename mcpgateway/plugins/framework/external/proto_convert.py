@@ -10,18 +10,19 @@ This module provides efficient conversion functions that use explicit protobuf
 messages where possible, falling back to Struct for dynamic fields.
 """
 
-from typing import Optional
+# Standard
 
+# Third-Party
 from google.protobuf import json_format
-from google.protobuf.struct_pb2 import Struct
 
+# First-Party
 from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
 from mcpgateway.plugins.framework.models import (
-    GlobalContext as PydanticGlobalContext,
-    PluginContext as PydanticPluginContext,
     PluginResult,
-    PluginViolation as PydanticPluginViolation,
 )
+from mcpgateway.plugins.framework.models import GlobalContext as PydanticGlobalContext
+from mcpgateway.plugins.framework.models import PluginContext as PydanticPluginContext
+from mcpgateway.plugins.framework.models import PluginViolation as PydanticPluginViolation
 
 
 def pydantic_global_context_to_proto(ctx: PydanticGlobalContext) -> plugin_service_pb2.GlobalContext:

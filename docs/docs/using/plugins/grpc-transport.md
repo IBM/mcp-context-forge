@@ -59,6 +59,10 @@ python -m mcpgateway.plugins.framework.external.grpc.server.runtime
 
 # Or with custom port
 python -m mcpgateway.plugins.framework.external.grpc.server.runtime --port 50052
+
+# Or with Unix domain socket (highest local performance)
+PLUGINS_GRPC_SERVER_UDS=/var/run/grpc-plugin.sock \
+  python -m mcpgateway.plugins.framework.external.grpc.server.runtime
 ```
 
 Using the convenience script (if using plugin templates):
@@ -72,6 +76,7 @@ In your gateway's `plugins/config.yaml`:
 
 ```yaml
 plugins:
+  # TCP connection
   - name: "MyGrpcPlugin"
     kind: "external"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
@@ -79,6 +84,15 @@ plugins:
     priority: 50
     grpc:
       target: "localhost:50051"
+
+  # Unix domain socket connection (for local high-performance)
+  - name: "MyLocalGrpcPlugin"
+    kind: "external"
+    hooks: ["tool_pre_invoke"]
+    mode: "enforce"
+    priority: 50
+    grpc:
+      uds: /var/run/grpc-plugin.sock
 ```
 
 ## Server Configuration
@@ -99,7 +113,7 @@ plugins:
       detect_ssn: true
       detect_credit_card: true
 
-# gRPC server settings
+# gRPC server settings (TCP)
 grpc_server_settings:
   host: "0.0.0.0"
   port: 50051
@@ -108,6 +122,10 @@ grpc_server_settings:
   #   keyfile: /path/to/server-key.pem
   #   ca_bundle: /path/to/ca.pem           # Required for mTLS
   #   client_auth: "require"               # none, optional, require
+
+# OR use Unix domain socket (alternative to TCP, higher performance for local)
+# grpc_server_settings:
+#   uds: /var/run/grpc-plugin.sock
 ```
 
 ### Environment Variables (Server)
@@ -119,7 +137,8 @@ You can also configure the server via environment variables:
 | `PLUGINS_CONFIG_PATH` | `./resources/plugins/config.yaml` | Path to plugin configuration file |
 | `PLUGINS_GRPC_SERVER_HOST` | `0.0.0.0` | Server bind address |
 | `PLUGINS_GRPC_SERVER_PORT` | `50051` | Server bind port |
-| `PLUGINS_GRPC_SERVER_SSL_ENABLED` | `false` | Enable TLS/mTLS |
+| `PLUGINS_GRPC_SERVER_UDS` | - | Unix domain socket path (alternative to host:port) |
+| `PLUGINS_GRPC_SERVER_SSL_ENABLED` | `false` | Enable TLS/mTLS (not supported with UDS) |
 | `PLUGINS_GRPC_SERVER_SSL_CERTFILE` | - | Path to server certificate |
 | `PLUGINS_GRPC_SERVER_SSL_KEYFILE` | - | Path to server private key |
 | `PLUGINS_GRPC_SERVER_SSL_CA_CERTS` | - | Path to CA bundle (enables mTLS) |
@@ -180,6 +199,42 @@ Client-side TLS can be configured via environment variables:
 | `PLUGINS_GRPC_CLIENT_MTLS_CERTFILE` | - | Path to client certificate (mTLS) |
 | `PLUGINS_GRPC_CLIENT_MTLS_KEYFILE` | - | Path to client private key (mTLS) |
 | `PLUGINS_GRPC_CLIENT_MTLS_KEYFILE_PASSWORD` | - | Password for encrypted private key |
+
+## Unix Domain Socket Configuration
+
+For local deployments where both the gateway and plugin server run on the same machine, Unix domain sockets provide the best performance by avoiding TCP overhead.
+
+### Server Configuration (UDS)
+
+```yaml
+grpc_server_settings:
+  uds: /var/run/grpc-plugin.sock
+```
+
+Or via environment variable:
+```bash
+export PLUGINS_GRPC_SERVER_UDS=/var/run/grpc-plugin.sock
+```
+
+### Client Configuration (UDS)
+
+```yaml
+plugins:
+  - name: "LocalGrpcPlugin"
+    kind: "external"
+    hooks: ["tool_pre_invoke"]
+    mode: "enforce"
+    priority: 50
+    grpc:
+      uds: /var/run/grpc-plugin.sock
+```
+
+### Important Notes for UDS
+
+- **TLS is not supported** with Unix domain sockets (communication is local and inherently secure)
+- **File permissions** on the socket control access - ensure appropriate permissions on the socket directory
+- **Cannot use both** `target` and `uds` - choose one or the other
+- **Performance**: UDS eliminates TCP handshake overhead, providing lower latency for local IPC
 
 ## TLS/mTLS Configuration
 

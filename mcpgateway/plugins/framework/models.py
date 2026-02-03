@@ -824,16 +824,28 @@ class GRPCClientConfig(BaseModel):
     """Client-side gRPC configuration (gateway connecting to external plugin).
 
     Attributes:
-        target (str): The gRPC target address in host:port format.
+        target (Optional[str]): The gRPC target address in host:port format.
+        uds (Optional[str]): Unix domain socket path (alternative to target).
         tls (Optional[GRPCClientTLSConfig]): Client-side TLS configuration for mTLS.
+
+    Examples:
+        >>> # TCP connection
+        >>> config = GRPCClientConfig(target="localhost:50051")
+        >>> config.get_target()
+        'localhost:50051'
+        >>> # Unix domain socket connection (path is resolved to canonical form)
+        >>> config = GRPCClientConfig(uds="/tmp/grpc-plugin.sock")  # doctest: +SKIP
+        >>> config.get_target()  # doctest: +SKIP
+        'unix:///tmp/grpc-plugin.sock'
     """
 
-    target: str = Field(..., description="gRPC target address (host:port)")
+    target: Optional[str] = Field(default=None, description="gRPC target address (host:port)")
+    uds: Optional[str] = Field(default=None, description="Unix domain socket path")
     tls: Optional[GRPCClientTLSConfig] = None
 
     @field_validator("target", mode="after")
     @classmethod
-    def validate_target(cls, target: str) -> str:
+    def validate_target(cls, target: str | None) -> str | None:
         """Validate gRPC target address format.
 
         Args:
@@ -845,12 +857,85 @@ class GRPCClientConfig(BaseModel):
         Raises:
             ValueError: If target is not in host:port format.
         """
+        if target is None:
+            return target
         if not target:
             raise ValueError("gRPC target address cannot be empty")
         # Basic validation - should contain host and port
         if ":" not in target:
             raise ValueError(f"gRPC target must be in host:port format, got '{target}'")
         return target
+
+    @field_validator("uds", mode="after")
+    @classmethod
+    def validate_uds(cls, uds: str | None) -> str | None:
+        """Validate Unix domain socket path for gRPC.
+
+        Args:
+            uds: Unix domain socket path.
+
+        Returns:
+            The validated canonical uds path or None if none is set.
+
+        Raises:
+            ValueError: if uds is empty, not absolute, or parent directory is invalid.
+        """
+        if uds is None:
+            return uds
+        if not isinstance(uds, str) or not uds.strip():
+            raise ValueError("gRPC client uds must be a non-empty string.")
+
+        uds_path = Path(uds).expanduser().resolve()
+        if not uds_path.is_absolute():
+            raise ValueError(f"gRPC client uds path must be absolute: {uds}")
+
+        parent_dir = uds_path.parent
+        if not parent_dir.is_dir():
+            raise ValueError(f"gRPC client uds parent directory does not exist: {parent_dir}")
+
+        # Check parent directory permissions for security
+        try:
+            parent_mode = parent_dir.stat().st_mode
+            if parent_mode & 0o002:
+                logging.getLogger(__name__).warning(
+                    "gRPC client uds parent directory %s is world-writable. Consider using a directory with restricted permissions.",
+                    parent_dir,
+                )
+        except OSError:
+            pass
+
+        return str(uds_path)
+
+    @model_validator(mode="after")
+    def validate_target_or_uds(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure exactly one of target or uds is configured.
+
+        Returns:
+            Self after validation.
+
+        Raises:
+            ValueError: If neither or both target and uds are set.
+        """
+        has_target = self.target is not None
+        has_uds = self.uds is not None
+
+        if not has_target and not has_uds:
+            raise ValueError("gRPC client must have either 'target' or 'uds' configured")
+        if has_target and has_uds:
+            raise ValueError("gRPC client cannot have both 'target' and 'uds' configured")
+        if has_uds and self.tls:
+            raise ValueError("TLS configuration is not supported for Unix domain sockets")
+        return self
+
+    def get_target(self) -> str:
+        """Get the gRPC target string for channel creation.
+
+        Returns:
+            str: The target string, either host:port or unix:///path format.
+        """
+        if self.uds:
+            return f"unix://{self.uds}"
+        return self.target or ""
 
 
 class GRPCServerConfig(BaseModel):
@@ -859,12 +944,88 @@ class GRPCServerConfig(BaseModel):
     Attributes:
         host (str): Server host to bind to.
         port (int): Server port to bind to.
+        uds (Optional[str]): Unix domain socket path (alternative to host:port).
         tls (Optional[GRPCServerTLSConfig]): Server-side TLS configuration.
+
+    Examples:
+        >>> # TCP binding
+        >>> config = GRPCServerConfig(host="0.0.0.0", port=50051)
+        >>> config.get_bind_address()
+        '0.0.0.0:50051'
+        >>> # Unix domain socket binding (path is resolved to canonical form)
+        >>> config = GRPCServerConfig(uds="/tmp/grpc-plugin.sock")  # doctest: +SKIP
+        >>> config.get_bind_address()  # doctest: +SKIP
+        'unix:///tmp/grpc-plugin.sock'
     """
 
     host: str = Field(default="0.0.0.0", description="Server host to bind to")
     port: int = Field(default=50051, description="Server port to bind to")
+    uds: Optional[str] = Field(default=None, description="Unix domain socket path")
     tls: Optional[GRPCServerTLSConfig] = Field(default=None, description="Server-side TLS configuration")
+
+    @field_validator("uds", mode="after")
+    @classmethod
+    def validate_uds(cls, uds: str | None) -> str | None:
+        """Validate Unix domain socket path for gRPC server.
+
+        Args:
+            uds: Unix domain socket path.
+
+        Returns:
+            The validated canonical uds path or None if none is set.
+
+        Raises:
+            ValueError: if uds is empty, not absolute, or parent directory is invalid.
+        """
+        if uds is None:
+            return uds
+        if not isinstance(uds, str) or not uds.strip():
+            raise ValueError("gRPC server uds must be a non-empty string.")
+
+        uds_path = Path(uds).expanduser().resolve()
+        if not uds_path.is_absolute():
+            raise ValueError(f"gRPC server uds path must be absolute: {uds}")
+
+        parent_dir = uds_path.parent
+        if not parent_dir.is_dir():
+            raise ValueError(f"gRPC server uds parent directory does not exist: {parent_dir}")
+
+        # Check parent directory permissions for security
+        try:
+            parent_mode = parent_dir.stat().st_mode
+            if parent_mode & 0o002:
+                logging.getLogger(__name__).warning(
+                    "gRPC server uds parent directory %s is world-writable. Consider using a directory with restricted permissions.",
+                    parent_dir,
+                )
+        except OSError:
+            pass
+
+        return str(uds_path)
+
+    @model_validator(mode="after")
+    def validate_uds_tls(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure TLS is not configured when using a Unix domain socket.
+
+        Returns:
+            Self after validation.
+
+        Raises:
+            ValueError: if tls is set with uds.
+        """
+        if self.uds and self.tls:
+            raise ValueError("TLS configuration is not supported for Unix domain sockets")
+        return self
+
+    def get_bind_address(self) -> str:
+        """Get the gRPC bind address string.
+
+        Returns:
+            str: The bind address, either host:port or unix:///path format.
+        """
+        if self.uds:
+            return f"unix://{self.uds}"
+        return f"{self.host}:{self.port}"
 
     @classmethod
     def from_env(cls) -> Optional["GRPCServerConfig"]:
@@ -886,6 +1047,8 @@ class GRPCServerConfig(BaseModel):
                 data["port"] = int(env["PLUGINS_GRPC_SERVER_PORT"])
             except ValueError:
                 raise ValueError(f"Invalid PLUGINS_GRPC_SERVER_PORT: {env['PLUGINS_GRPC_SERVER_PORT']}")
+        if env.get("PLUGINS_GRPC_SERVER_UDS"):
+            data["uds"] = env["PLUGINS_GRPC_SERVER_UDS"]
 
         # Check if SSL/TLS is enabled
         ssl_enabled_str = env.get("PLUGINS_GRPC_SERVER_SSL_ENABLED", "").lower()

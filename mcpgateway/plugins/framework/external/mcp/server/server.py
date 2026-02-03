@@ -173,9 +173,7 @@ class ExternalPluginServer:
                     return plug.model_dump()
         return None
 
-    async def invoke_hook(
-        self, hook_type: str, plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any] | PluginContext
-    ) -> dict:
+    async def invoke_hook(self, hook_type: str, plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any] | PluginContext) -> dict:
         """Invoke a plugin hook.
 
         Args:

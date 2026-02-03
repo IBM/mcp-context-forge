@@ -20,11 +20,12 @@ Environment Variables:
     PLUGINS_CONFIG_PATH: Path to plugins configuration file (default: ./resources/plugins/config.yaml)
     PLUGINS_GRPC_SERVER_HOST: Server host (default: 0.0.0.0)
     PLUGINS_GRPC_SERVER_PORT: Server port (default: 50051)
-    PLUGINS_GRPC_SERVER_SSL_ENABLED: Enable TLS (true/false)
-    PLUGINS_GRPC_SERVER_SSL_CERTFILE: Path to server certificate
-    PLUGINS_GRPC_SERVER_SSL_KEYFILE: Path to server private key
-    PLUGINS_GRPC_SERVER_SSL_CA_CERTS: Path to CA bundle for client verification
-    PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH: Client auth requirement (none/optional/require)
+    PLUGINS_GRPC_SERVER_UDS: Unix domain socket path (alternative to host:port)
+    PLUGINS_GRPC_SERVER_SSL_ENABLED: Enable TLS (true/false). Required to enable TLS. Not supported with UDS.
+    PLUGINS_GRPC_SERVER_SSL_CERTFILE: Path to server certificate (required when SSL_ENABLED=true)
+    PLUGINS_GRPC_SERVER_SSL_KEYFILE: Path to server private key (required when SSL_ENABLED=true)
+    PLUGINS_GRPC_SERVER_SSL_CA_CERTS: Path to CA bundle for client verification (for mTLS)
+    PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH: Client auth requirement (none/optional/require, default: require)
 """
 
 # Standard
@@ -69,7 +70,6 @@ class GrpcPluginRuntime:
         config_path: Optional[str] = None,
         host: Optional[str] = None,
         port: Optional[int] = None,
-        tls_enabled: bool = False,
     ) -> None:
         """Initialize the gRPC plugin runtime.
 
@@ -77,12 +77,10 @@ class GrpcPluginRuntime:
             config_path: Path to the plugins configuration file.
             host: Server host to bind to (overrides config/env).
             port: Server port to bind to (overrides config/env).
-            tls_enabled: Whether to enable TLS (overrides config/env).
         """
         self._config_path = config_path
         self._host_override = host
         self._port_override = port
-        self._tls_override = tls_enabled
         self._server: Optional[grpc.aio.Server] = None
         self._plugin_server: Optional[ExternalPluginServer] = None
         self._shutdown_event = asyncio.Event()
@@ -107,8 +105,16 @@ class GrpcPluginRuntime:
 
         # Get server configuration
         server_config = self._get_server_config()
-        host = self._host_override or server_config.host
-        port = self._port_override or server_config.port
+
+        # Determine bind address (UDS takes precedence, then overrides, then config)
+        if server_config.uds:
+            address = server_config.get_bind_address()
+            is_uds = True
+        else:
+            host = self._host_override or server_config.host
+            port = self._port_override or server_config.port
+            address = f"{host}:{port}"
+            is_uds = False
 
         # Create gRPC server
         self._server = grpc.aio.server()
@@ -120,20 +126,17 @@ class GrpcPluginRuntime:
         plugin_service_pb2_grpc.add_PluginServiceServicer_to_server(plugin_servicer, self._server)
         plugin_service_pb2_grpc.add_HealthServicer_to_server(health_servicer, self._server)
 
-        # Configure address and TLS
-        address = f"{host}:{port}"
-
-        if self._tls_override or (server_config.tls is not None):
-            tls_config = server_config.tls
-            if tls_config is None:
-                raise RuntimeError("TLS enabled but no TLS configuration provided")
-
-            credentials = create_server_credentials(tls_config)
+        # Configure address and TLS (TLS not supported for Unix domain sockets)
+        if not is_uds and server_config.tls is not None:
+            credentials = create_server_credentials(server_config.tls)
             self._server.add_secure_port(address, credentials)
             logger.info("gRPC server configured with TLS on %s", address)
         else:
             self._server.add_insecure_port(address)
-            logger.warning("gRPC server configured WITHOUT TLS on %s - not recommended for production", address)
+            if is_uds:
+                logger.info("gRPC server configured on Unix socket %s", server_config.uds)
+            else:
+                logger.warning("gRPC server configured WITHOUT TLS on %s - not recommended for production", address)
 
         # Start serving
         await self._server.start()
@@ -192,7 +195,6 @@ async def run_server(
     config_path: Optional[str] = None,
     host: Optional[str] = None,
     port: Optional[int] = None,
-    tls_enabled: bool = False,
 ) -> None:
     """Run the gRPC plugin server.
 
@@ -200,13 +202,11 @@ async def run_server(
         config_path: Path to the plugins configuration file.
         host: Server host to bind to.
         port: Server port to bind to.
-        tls_enabled: Whether to enable TLS.
     """
     runtime = GrpcPluginRuntime(
         config_path=config_path,
         host=host,
         port=port,
-        tls_enabled=tls_enabled,
     )
 
     # Set up signal handlers for graceful shutdown
@@ -243,7 +243,8 @@ Examples:
     PLUGINS_GRPC_SERVER_SSL_ENABLED=true \\
     PLUGINS_GRPC_SERVER_SSL_CERTFILE=/path/to/server.pem \\
     PLUGINS_GRPC_SERVER_SSL_KEYFILE=/path/to/server-key.pem \\
-    python -m mcpgateway.plugins.framework.external.grpc.server.runtime --tls
+    PLUGINS_GRPC_SERVER_SSL_CA_CERTS=/path/to/ca.pem \\
+    python -m mcpgateway.plugins.framework.external.grpc.server.runtime
         """,
     )
 
@@ -269,12 +270,6 @@ Examples:
         help="Server port to bind to (default: 50051)",
     )
     parser.add_argument(
-        "--tls",
-        action="store_true",
-        default=False,
-        help="Enable TLS (configure certificates via environment variables)",
-    )
-    parser.add_argument(
         "--log-level",
         "-l",
         type=str,
@@ -298,7 +293,6 @@ Examples:
                 config_path=args.config,
                 host=args.host,
                 port=args.port,
-                tls_enabled=args.tls,
             )
         )
     except KeyboardInterrupt:

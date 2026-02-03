@@ -62,13 +62,13 @@ def create_client_credentials(tls_config: GRPCClientTLSConfig, plugin_name: str 
 
     Examples:
         >>> from mcpgateway.plugins.framework.models import GRPCClientTLSConfig
-        >>> config = GRPCClientTLSConfig(
+        >>> config = GRPCClientTLSConfig(  # doctest: +SKIP
         ...     ca_bundle="/path/to/ca.pem",
         ...     certfile="/path/to/client.pem",
         ...     keyfile="/path/to/client-key.pem",
         ...     verify=True
         ... )
-        >>> creds = create_client_credentials(config, "my_plugin")
+        >>> creds = create_client_credentials(config, "my_plugin")  # doctest: +SKIP
     """
     root_certificates: Optional[bytes] = None
     private_key: Optional[bytes] = None
@@ -125,13 +125,13 @@ def create_server_credentials(tls_config: GRPCServerTLSConfig) -> grpc.ServerCre
 
     Examples:
         >>> from mcpgateway.plugins.framework.models import GRPCServerTLSConfig
-        >>> config = GRPCServerTLSConfig(
+        >>> config = GRPCServerTLSConfig(  # doctest: +SKIP
         ...     certfile="/path/to/server.pem",
         ...     keyfile="/path/to/server-key.pem",
         ...     ca_bundle="/path/to/ca.pem",
         ...     client_auth="require"
         ... )
-        >>> creds = create_server_credentials(config)
+        >>> creds = create_server_credentials(config)  # doctest: +SKIP
     """
     if not tls_config.certfile or not tls_config.keyfile:
         raise ValueError("Server certificate (certfile) and private key (keyfile) are required for gRPC TLS")

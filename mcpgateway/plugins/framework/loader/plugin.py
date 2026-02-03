@@ -93,6 +93,9 @@ class PluginLoader:
 
         Returns:
             A plugin instance.
+
+        Raises:
+            ValueError: If an external plugin has no transport configured.
         """
         # Handle external plugins with transport selection
         if config.kind == EXTERNAL_PLUGIN_TYPE:
