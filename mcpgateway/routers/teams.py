@@ -531,9 +531,14 @@ async def update_team_member(
         if role != "owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
-        member = await service.update_member_role(team_id, user_email, request.role)
+        success = await service.update_member_role(team_id, user_email, request.role)
+        if not success:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found or update failed")
+
+        # Fetch the updated member to build the response
+        member = await service.get_member(team_id, user_email)
         if not member:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found after update")
 
         mm = cast(Any, member)
         db.commit()

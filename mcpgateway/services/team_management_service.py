@@ -659,6 +659,22 @@ class TeamManagementService:
             logger.error(f"Failed to update role of {user_email} in team {team_id}: {e}")
             return False
 
+    async def get_member(self, team_id: str, user_email: str) -> Optional[EmailTeamMember]:
+        """Get a single team member by team ID and user email.
+
+        Args:
+            team_id: ID of the team
+            user_email: Email of the user
+
+        Returns:
+            EmailTeamMember if found and active, None otherwise
+        """
+        try:
+            return self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+        except Exception as e:
+            logger.error(f"Failed to get member {user_email} in team {team_id}: {e}")
+            return None
+
     async def get_user_teams(self, user_email: str, include_personal: bool = True) -> List[EmailTeam]:
         """Get all teams a user belongs to.
 
