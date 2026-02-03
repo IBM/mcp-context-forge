@@ -343,7 +343,7 @@ class EmailAuthService:
         password_hash = await self.password_service.hash_password_async(password)
 
         # Create new user (record password change timestamp)
-        user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider, password_changed_at=utc_now())
+        user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider, password_changed_at=utc_now(), admin_origin="api" if is_admin else None)
 
         try:
             self.db.add(user)
