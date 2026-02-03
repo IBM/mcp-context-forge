@@ -352,10 +352,10 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_update_team_invalid_visibility(self, service, mock_team):
-        """Test updating team with invalid visibility."""
+        """Test updating team with invalid visibility raises ValueError."""
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.update_team(team_id="team123", visibility="invalid")
-            assert result is False
+            with pytest.raises(ValueError, match="Invalid visibility"):
+                await service.update_team(team_id="team123", visibility="invalid")
 
     @pytest.mark.asyncio
     async def test_update_team_database_error(self, service, mock_db, mock_team):
@@ -593,9 +593,9 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_update_member_role_invalid_role(self, service):
-        """Test updating member with invalid role."""
-        result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="invalid")
-        assert result is False
+        """Test updating member with invalid role raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid role"):
+            await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="invalid")
 
     @pytest.mark.asyncio
     async def test_update_last_owner_role_rejected(self, service, mock_team, mock_membership, mock_db):
@@ -620,8 +620,8 @@ class TestTeamManagementService:
         mock_db.query.side_effect = query_side_effect
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="member")
-            assert result is False
+            with pytest.raises(ValueError, match="Cannot remove owner role from the last owner"):
+                await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="member")
 
     # =========================================================================
     # Team Listing and Query Tests

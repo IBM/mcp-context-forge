@@ -146,7 +146,7 @@ class TestResourceServicePluginIntegration:
 
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_resource(mock_request, mock_db, "test-user")
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
         # Assert
         mock_register_resource.assert_called_once()
         assert result.status_code == 200

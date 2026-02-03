@@ -1,6 +1,6 @@
 # OAuth 2.0 Authorization Code Flow UI Implementation Design
 
-**Version**: 1.1
+**Version**: 1.2
 **Status**: Design + implementation notes
 **Date**: February 2026
 **Related**: [OAuth Design Document](./oauth-design.md)
@@ -8,6 +8,14 @@
 ## Executive Summary
 
 This document describes how the Admin UI initiates OAuth 2.0 Authorization Code flow for MCP gateways and how the backend stores and uses user-delegated tokens. It reflects current behavior in code and calls out remaining gaps.
+
+!!! note "Scope of This Document"
+    This document covers the **UI implementation** for gateway OAuth token delegation - specifically how administrators configure OAuth settings and authorize access to upstream MCP servers.
+
+    For information about **user authentication to MCP Gateway** (SSO, JWT tokens, RBAC), see:
+
+    - [RBAC Configuration](../manage/rbac.md) - Token scoping, permissions, and access control
+    - [Multi-Tenancy Architecture](./multitenancy.md) - User authentication flows and team management
 
 ## Current Implementation Snapshot
 
@@ -205,6 +213,19 @@ sequenceDiagram
 - Tokens are scoped per gateway and app user (email); cross-user reuse is blocked.
 - The gateway derives an RFC 8707 `resource` value from the gateway URL when `oauth_config.resource` is absent.
 - HTTPS is recommended in production; the gateway does not enforce it automatically.
+
+## Relationship to Gateway Authentication
+
+This OAuth flow is for **upstream server authentication** and is separate from user authentication to the MCP Gateway:
+
+| Aspect | Gateway OAuth (this doc) | User Auth to Gateway |
+|--------|-------------------------|---------------------|
+| Purpose | Authenticate to upstream MCP servers | Authenticate users to the gateway |
+| Initiated by | Admin UI "Authorize" button | Login flow (SSO, email, etc.) |
+| Token storage | `oauth_tokens` table (encrypted) | JWT in client, session in browser |
+| User involvement | User consents at OAuth provider | User authenticates to gateway |
+
+For user authentication and RBAC configuration, see [RBAC Configuration](../manage/rbac.md).
 
 ## Configuration
 

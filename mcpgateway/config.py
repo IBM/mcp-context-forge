@@ -329,6 +329,63 @@ class Settings(BaseSettings):
         description=("Allowlist of hosts permitted to use query parameter auth. " "Empty list allows any host when feature is enabled. " "Format: ['mcp.tavily.com', 'api.example.com']"),
     )
 
+    # ===================================
+    # SSRF Protection Configuration
+    # ===================================
+    # Server-Side Request Forgery (SSRF) protection prevents the gateway from being
+    # used to access internal resources or cloud metadata services.
+
+    ssrf_protection_enabled: bool = Field(
+        default=True,
+        description="Enable SSRF protection for gateway/tool URLs. Blocks access to dangerous endpoints.",
+    )
+
+    ssrf_blocked_networks: List[str] = Field(
+        default=[
+            # Cloud metadata services (ALWAYS dangerous - credential exposure)
+            "169.254.169.254/32",  # AWS/GCP/Azure instance metadata
+            "169.254.169.123/32",  # AWS NTP service
+            "fd00::1/128",  # IPv6 cloud metadata
+            # Link-local (often used for cloud metadata)
+            "169.254.0.0/16",  # Full link-local IPv4 range
+            "fe80::/10",  # IPv6 link-local
+        ],
+        description=(
+            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. " "Default blocks cloud metadata endpoints. Add private ranges for stricter security."
+        ),
+    )
+
+    ssrf_blocked_hosts: List[str] = Field(
+        default=[
+            "metadata.google.internal",  # GCP metadata hostname
+            "metadata.internal",  # Generic cloud metadata
+        ],
+        description="Hostnames to block for SSRF protection. Matched case-insensitively.",
+    )
+
+    ssrf_allow_localhost: bool = Field(
+        default=True,
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Set to false to block localhost access for stricter security. " "Default true for development compatibility."),
+    )
+
+    ssrf_allow_private_networks: bool = Field(
+        default=True,
+        description=(
+            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). "
+            "Set to false if the gateway should only access public internet endpoints. "
+            "Default true for internal deployment compatibility."
+        ),
+    )
+
+    ssrf_dns_fail_closed: bool = Field(
+        default=False,
+        description=(
+            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
+            "are rejected. When false (default), unresolvable hostnames are allowed through "
+            "(hostname blocklist still applies). Set to true for stricter security."
+        ),
+    )
+
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")

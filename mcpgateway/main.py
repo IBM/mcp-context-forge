@@ -64,7 +64,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
-from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user
+from mcpgateway.auth import _check_token_revoked_sync, _lookup_api_token_sync, get_current_user, normalize_token_teams
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
@@ -132,6 +132,7 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
+from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
@@ -334,57 +335,52 @@ def _get_token_teams_from_request(request: Request) -> Optional[List[str]]:
     """
     Extract and normalize teams from verified JWT token.
 
-    Uses cached verified payload from request.state to avoid re-decoding.
+    SECURITY: Uses normalize_token_teams for consistent secure-first semantics:
+        - teams key missing → [] (public-only, secure default)
+        - teams key null + is_admin=true → None (admin bypass)
+        - teams key null + is_admin=false → [] (public-only)
+        - teams key [] → [] (explicit public-only)
+        - teams key [...] → normalized list of string IDs
 
-    Semantics:
-        - teams key with non-None value -> normalized list (even if empty [])
-        - teams key absent OR teams: null -> None (unrestricted for admin, public-only for non-admin)
-        - No JWT payload -> None
+    First checks request.state.token_teams (set by auth.py), then falls back
+    to calling normalize_token_teams on the JWT payload.
 
     Args:
         request: FastAPI request object
 
     Returns:
-        List of normalized team IDs if teams key exists with non-None value,
-        or None if no JWT payload, teams key absent, or teams is null.
-        Callers use None to determine access: admin gets unrestricted, non-admin gets public-only.
+        None for admin bypass, [] for public-only, or list of normalized team ID strings.
 
     Examples:
         >>> from mcpgateway import main
         >>> from unittest.mock import MagicMock
         >>> req = MagicMock()
         >>> req.state = MagicMock()
-        >>> req.state._jwt_verified_payload = ("token", {"teams": ["team_a"]})
+        >>> req.state.token_teams = ["team_a"]  # Already normalized by auth.py
         >>> main._get_token_teams_from_request(req)
         ['team_a']
-        >>> req.state._jwt_verified_payload = ("token", {"teams": []})
+        >>> req.state.token_teams = []  # Public-only
         >>> main._get_token_teams_from_request(req)
         []
-        >>> req.state._jwt_verified_payload = ("token", {"sub": "user@example.com"})
-        >>> main._get_token_teams_from_request(req) is None  # No teams key
-        True
-        >>> req.state._jwt_verified_payload = ("token", {"teams": None})
-        >>> main._get_token_teams_from_request(req) is None  # teams: null
-        True
-        >>> req.state._jwt_verified_payload = None
-        >>> main._get_token_teams_from_request(req) is None  # No JWT
-        True
     """
-    # Use cached verified payload (set by verify_jwt_token_cached)
+    # SECURITY: First check request.state.token_teams (already normalized by auth.py)
+    # This is the preferred path as auth.py has already applied normalize_token_teams
+    # Use getattr with a sentinel to distinguish "not set" from "set to None"
+    _not_set = object()
+    token_teams = getattr(request.state, "token_teams", _not_set)
+    if token_teams is not _not_set and (token_teams is None or isinstance(token_teams, list)):
+        return token_teams
+
+    # Fallback: Use cached verified payload and call normalize_token_teams
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if cached and isinstance(cached, tuple) and len(cached) == 2:
         _, payload = cached
         if payload:
-            # Check if "teams" key exists and is not None
-            # - Key exists with non-None value (even empty []) -> return normalized list
-            # - Key absent OR key is None -> return None (unrestricted for admin, public-only for non-admin)
-            if "teams" in payload and payload.get("teams") is not None:
-                return _normalize_token_teams(payload.get("teams"))
-            # No "teams" key or teams is null - treat as unrestricted (None)
-            return None
+            # Use normalize_token_teams for consistent secure-first semantics
+            return normalize_token_teams(payload)
 
-    # No JWT payload - return None to trigger DB team lookup
-    return None
+    # No JWT payload - return [] for public-only (secure default)
+    return []
 
 
 def _get_rpc_filter_context(request: Request, user) -> tuple:
@@ -1543,7 +1539,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 # No authentication method succeeded - redirect to login or return 401
                 return self._error_response(request, root_path, 401, "Authentication required")
 
-            # Check if user exists, is active, and is admin
+            # Check if user exists, is active, and has admin permissions
             db = next(get_db())
             try:
                 auth_service = EmailAuthService(db)
@@ -1558,12 +1554,17 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                     else:
                         return ORJSONResponse(status_code=401, content={"detail": "User not found"})
                 else:
-                    # User exists in DB - check active and admin status
+                    # User exists in DB - check active status
                     if not user.is_active:
                         logger.warning(f"Admin access denied for disabled user: {username}")
                         return self._error_response(request, root_path, 403, "Account is disabled", "account_disabled")
-                    if not user.is_admin:
-                        logger.warning(f"Admin access denied for non-admin user: {username}")
+
+                    # Check if user has admin permissions (either is_admin flag OR admin.* RBAC permissions)
+                    # This allows granular admin access for users with specific admin permissions
+                    permission_service = PermissionService(db)
+                    has_admin_access = await permission_service.has_admin_permission(username)
+                    if not has_admin_access:
+                        logger.warning(f"Admin access denied for user without admin permissions: {username}")
                         return self._error_response(request, root_path, 403, "Admin privileges required", "admin_required")
             finally:
                 db.close()
@@ -2374,6 +2375,7 @@ async def list_servers(
 
     # Check team ID from token
     token_team_id = getattr(request.state, "team_id", None)
+    token_teams = getattr(request.state, "token_teams", None)
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
@@ -2385,7 +2387,15 @@ async def list_servers(
     # Determine final team ID
     team_id = team_id or token_team_id
 
+    # SECURITY: token_teams is normalized in auth.py:
+    # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
+    # - []: public-only (missing teams or explicit empty) - sees only public
+    # - [...]: team-scoped - sees public + teams + user's private
+    is_admin_bypass = token_teams is None
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+
     # Use consolidated server listing with optional team filtering
+    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
     logger.debug(f"User: {user_email} requested server list with include_inactive={include_inactive}, tags={tags_list}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await server_service.list_servers(
         db=db,
@@ -2393,9 +2403,10 @@ async def list_servers(
         limit=limit,
         include_inactive=include_inactive,
         tags=tags_list,
-        user_email=user_email if (team_id or visibility) else None,
+        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
         team_id=team_id,
-        visibility=visibility,
+        visibility="public" if is_public_only_token and not visibility else visibility,
+        token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
     )
 
     if include_pagination:
@@ -2437,7 +2448,7 @@ async def create_server(
     server: ServerCreate,
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign server to"),
-    visibility: Optional[str] = Body("public", description="Server visibility: private, team, public"),
+    visibility: Optional[str] = Body(None, description="Server visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
@@ -2466,19 +2477,31 @@ async def create_server(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new server for team {team_id}")
-        return await server_service.register_server(
+        result = await server_service.register_server(
             db,
             server,
             created_by=metadata["created_by"],
@@ -2489,6 +2512,9 @@ async def create_server(
             owner_email=user_email,
             visibility=visibility,
         )
+        db.commit()
+        db.close()
+        return result
     except ServerNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
@@ -2533,7 +2559,7 @@ async def update_server(
 
         user_email: str = get_user_email(user)
 
-        return await server_service.update_server(
+        result = await server_service.update_server(
             db,
             server_id,
             server,
@@ -2543,6 +2569,9 @@ async def update_server(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
+        db.commit()
+        db.close()
+        return result
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
@@ -2650,6 +2679,8 @@ async def delete_server(
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await server_service.get_server(db, server_id)
         await server_service.delete_server(db, server_id, user_email=user_email, purge_metrics=purge_metrics)
+        db.commit()
+        db.close()
         return {
             "status": "success",
             "message": f"Server {server_id} deleted successfully",
@@ -2701,9 +2732,11 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
         # Extract and normalize token teams
         # Returns None if no JWT payload (non-JWT auth), or list if JWT exists
-        token_teams_or_none = _get_token_teams_from_request(request)
-        # Coerce to list for downstream consumers that expect a list
-        token_teams = token_teams_or_none if token_teams_or_none is not None else []
+        # SECURITY: Preserve None vs [] distinction for admin bypass:
+        # - None: unrestricted (admin keeps bypass, non-admin gets their accessible resources)
+        # - []: public-only (admin bypass disabled)
+        # - [...]: team-scoped access
+        token_teams = _get_token_teams_from_request(request)
 
         # Preserve is_admin from user object (for cookie-authenticated admins)
         is_admin = False
@@ -2715,7 +2748,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         # Create enriched user dict
         user_with_token = dict(user) if isinstance(user, dict) else {"email": getattr(user, "email", str(user))}
         user_with_token["auth_token"] = auth_token
-        user_with_token["token_teams"] = token_teams  # Always a list, never None
+        user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
         # Defensive cleanup callback - runs immediately on client disconnect
@@ -3127,16 +3160,28 @@ async def create_a2a_agent(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new A2A agent for team {team_id}")
         if a2a_service is None:
@@ -3479,6 +3524,9 @@ async def list_tools(
         visibility=visibility,
         token_teams=token_teams,
     )
+    # Release transaction before response serialization
+    db.commit()
+    db.close()
 
     if apijsonpath is None:
         if include_pagination:
@@ -3527,19 +3575,31 @@ async def create_tool(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and tool.visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new tool for team {team_id}")
-        return await tool_service.register_tool(
+        result = await tool_service.register_tool(
             db,
             tool,
             created_by=metadata["created_by"],
@@ -3552,6 +3612,9 @@ async def create_tool(
             owner_email=user_email,
             visibility=tool.visibility,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
         if isinstance(ex, ToolNameConflictError):
@@ -3645,7 +3708,7 @@ async def update_tool(
 
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        return await tool_service.update_tool(
+        result = await tool_service.update_tool(
             db,
             tool_id,
             tool,
@@ -3655,6 +3718,9 @@ async def update_tool(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as ex:
         if isinstance(ex, PermissionError):
             raise HTTPException(status_code=403, detail=str(ex))
@@ -3699,6 +3765,8 @@ async def delete_tool(
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await tool_service.delete_tool(db, tool_id, user_email=user_email, purge_metrics=purge_metrics)
+        db.commit()
+        db.close()
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -3980,6 +4048,9 @@ async def list_resources(
         visibility=visibility,
         token_teams=token_teams,
     )
+    # Release transaction before response serialization
+    db.commit()
+    db.close()
 
     if include_pagination:
         payload = {"resources": [resource.model_dump(by_alias=True) if hasattr(resource, "model_dump") else resource for resource in data]}
@@ -4025,19 +4096,31 @@ async def create_resource(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new resource for team {team_id}")
-        return await resource_service.register_resource(
+        result = await resource_service.register_resource(
             db,
             resource,
             created_by=metadata["created_by"],
@@ -4050,6 +4133,9 @@ async def create_resource(
             owner_email=user_email,
             visibility=visibility,
         )
+        db.commit()
+        db.close()
+        return result
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ResourceError as e:
@@ -4115,6 +4201,9 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
+        # Release transaction before response serialization
+        db.commit()
+        db.close()
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -4233,6 +4322,8 @@ async def update_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    db.commit()
+    db.close()
     await invalidate_resource_cache(resource_id)
     return result
 
@@ -4264,6 +4355,8 @@ async def delete_resource(
         logger.debug(f"User {user} is deleting resource with id {resource_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await resource_service.delete_resource(db, resource_id, user_email=user_email, purge_metrics=purge_metrics)
+        db.commit()
+        db.close()
         await invalidate_resource_cache(resource_id)
         return {"status": "success", "message": f"Resource {resource_id} deleted"}
     except PermissionError as e:
@@ -4441,6 +4534,9 @@ async def list_prompts(
         visibility=visibility,
         token_teams=token_teams,
     )
+    # Release transaction before response serialization
+    db.commit()
+    db.close()
 
     if include_pagination:
         payload = {"prompts": [prompt.model_dump(by_alias=True) if hasattr(prompt, "model_dump") else prompt for prompt in data]}
@@ -4488,19 +4584,31 @@ async def create_prompt(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
-        # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and team_id is not None and token_team_id is not None and team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = team_id or token_team_id
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new prompt for team {team_id}")
-        return await prompt_service.register_prompt(
+        result = await prompt_service.register_prompt(
             db,
             prompt,
             created_by=metadata["created_by"],
@@ -4513,6 +4621,9 @@ async def create_prompt(
             owner_email=user_email,
             visibility=visibility,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as e:
         if isinstance(e, PromptNameConflictError):
             # If the prompt name already exists, return a 409 Conflict error
@@ -4690,7 +4801,7 @@ async def update_prompt(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        return await prompt_service.update_prompt(
+        result = await prompt_service.update_prompt(
             db,
             prompt_id,
             prompt,
@@ -4700,6 +4811,9 @@ async def update_prompt(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as e:
         if isinstance(e, PermissionError):
             raise HTTPException(status_code=403, detail=str(e))
@@ -4749,6 +4863,8 @@ async def delete_prompt(
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, purge_metrics=purge_metrics)
+        db.commit()
+        db.close()
         return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
         if isinstance(e, PermissionError):
@@ -4877,6 +4993,7 @@ async def list_gateways(
 
     # Check team_id from token
     token_team_id = getattr(request.state, "team_id", None)
+    token_teams = getattr(request.state, "token_teams", None)
 
     # Check for team ID mismatch
     if team_id is not None and token_team_id is not None and team_id != token_team_id:
@@ -4888,17 +5005,29 @@ async def list_gateways(
     # Determine final team ID
     team_id = team_id or token_team_id
 
+    # SECURITY: token_teams is normalized in auth.py:
+    # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
+    # - []: public-only (missing teams or explicit empty) - sees only public
+    # - [...]: team-scoped - sees public + teams + user's private
+    is_admin_bypass = token_teams is None
+    is_public_only_token = token_teams is not None and len(token_teams) == 0
+
     # Use consolidated gateway listing with optional team filtering
+    # For admin bypass: pass user_email=None and token_teams=None to skip all filtering
     logger.debug(f"User: {user_email} requested gateway list with include_inactive={include_inactive}, team_id={team_id}, visibility={visibility}")
     data, next_cursor = await gateway_service.list_gateways(
         db=db,
         cursor=cursor,
         limit=limit,
         include_inactive=include_inactive,
-        user_email=user_email if (team_id or visibility) else None,
+        user_email=None if is_admin_bypass else user_email,  # Admin bypass: no user filtering
         team_id=team_id,
-        visibility=visibility,
+        visibility="public" if is_public_only_token and not visibility else visibility,
+        token_teams=token_teams,  # None = admin bypass, [] = public-only, [...] = team-scoped
     )
+    # Release transaction before response serialization
+    db.commit()
+    db.close()
 
     if include_pagination:
         payload = {"gateways": [gateway.model_dump(by_alias=True) for gateway in data]}
@@ -4938,18 +5067,30 @@ async def register_gateway(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
         gateway_team_id = gateway.team_id
+        visibility = gateway.visibility
 
-        # Check for team ID mismatch
-        if gateway_team_id is not None and token_team_id is not None and gateway_team_id != token_team_id:
+        # SECURITY: Public-only tokens (teams == []) cannot create team/private resources
+        is_public_only_token = token_teams is not None and len(token_teams) == 0
+        if is_public_only_token and visibility in ("team", "private"):
+            return ORJSONResponse(
+                content={"message": "Public-only tokens cannot create team or private resources. Use visibility='public' or obtain a team-scoped token."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check for team ID mismatch (only for non-public-only tokens)
+        if not is_public_only_token and gateway_team_id is not None and token_team_id is not None and gateway_team_id != token_team_id:
             return ORJSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
-        # Determine final team ID
-        team_id = gateway_team_id or token_team_id
-        visibility = gateway.visibility
+        # Determine final team ID (public-only tokens get no team)
+        if is_public_only_token:
+            team_id = None
+        else:
+            team_id = gateway_team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new gateway for team {team_id}")
 
@@ -5034,7 +5175,7 @@ async def update_gateway(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        return await gateway_service.update_gateway(
+        result = await gateway_service.update_gateway(
             db,
             gateway_id,
             gateway,
@@ -5044,6 +5185,9 @@ async def update_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        db.commit()
+        db.close()
+        return result
     except Exception as ex:
         if isinstance(ex, PermissionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=403)
@@ -5097,6 +5241,8 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
         if has_resources:
             await invalidate_resource_cache()
 
+        db.commit()
+        db.close()
         return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -5344,10 +5490,19 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_gateways":
-            gateways = await gateway_service.list_gateways(db, include_inactive=False)
+            user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+            # Admin bypass - only when token has NO team restrictions
+            if is_admin and token_teams is None:
+                user_email = None
+                token_teams = None  # Admin unrestricted
+            elif token_teams is None:
+                token_teams = []  # Non-admin without teams = public-only (secure default)
+            gateways, next_cursor = await gateway_service.list_gateways(db, include_inactive=False, user_email=user_email, token_teams=token_teams)
             db.commit()
             db.close()
             result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
+            if next_cursor:
+                result["nextCursor"] = next_cursor
         elif method == "list_roots":
             roots = await root_service.list_roots()
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
@@ -5409,9 +5564,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = {"contents": [result]}
             except ValueError:
                 # Resource has no local content, forward to upstream MCP server
-                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+            # Release transaction after resources/read completes
+            db.commit()
+            db.close()
         elif method == "resources/subscribe":
             # MCP spec-compliant resource subscription endpoint
             uri = params.get("uri")
@@ -5421,6 +5579,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
             await resource_service.subscribe_resource(db, subscription)
+            db.commit()
+            db.close()
             result = {}
         elif method == "resources/unsubscribe":
             # MCP spec-compliant resource unsubscription endpoint
@@ -5431,6 +5591,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             user_email = get_user_email(user)
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
             await resource_service.unsubscribe_resource(db, subscription)
+            db.commit()
+            db.close()
             result = {}
         elif method == "prompts/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
@@ -5483,6 +5645,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             )
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
+            # Release transaction after prompts/get completes
+            db.commit()
+            db.close()
         elif method == "ping":
             # Per the MCP spec, a ping returns an empty result.
             result = {}
@@ -5557,7 +5722,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                         )
                     except ValueError:
                         # Fallback to gateway forwarding
-                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
 
                 tool_task = asyncio.create_task(execute_tool())
 
@@ -5580,6 +5745,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 # Unregister the run when done (only if feature enabled)
                 if settings.mcpgateway_tool_cancellation_enabled and run_id:
                     await cancellation_service.unregister_run(run_id)
+                # Release transaction after tools/call completes
+                db.commit()
+                db.close()
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             # MCP spec-compliant resource templates list endpoint
@@ -5597,6 +5765,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 user_email=user_email_rpc,
                 token_teams=token_teams_rpc,
             )
+            db.commit()
+            db.close()
             result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
         elif method == "roots/list":
             # MCP spec-compliant method name
@@ -5782,7 +5952,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:
-                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email)
+                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
                     if hasattr(result, "model_dump"):
                         result = result.model_dump(by_alias=True, exclude_none=True)
                 except Exception:
@@ -5818,34 +5988,37 @@ async def websocket_endpoint(websocket: WebSocket):
     Args:
         websocket: The WebSocket connection instance.
     """
+    # Track auth credentials to forward to /rpc
+    auth_token: Optional[str] = None
+    proxy_user: Optional[str] = None
+
     try:
         # Authenticate WebSocket connection
         if settings.mcp_client_auth_enabled or settings.auth_required:
             # Extract auth from query params or headers
-            token = None
             # Try to get token from query parameter
             if "token" in websocket.query_params:
-                token = websocket.query_params["token"]
+                auth_token = websocket.query_params["token"]
             # Try to get token from Authorization header
             elif "authorization" in websocket.headers:
                 auth_header = websocket.headers["authorization"]
                 if auth_header.startswith("Bearer "):
-                    token = auth_header[7:]
+                    auth_token = auth_header[7:]
 
             # Check for proxy auth if MCP client auth is disabled
             if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
                 proxy_user = websocket.headers.get(settings.proxy_user_header)
-                if not proxy_user and not token:
+                if not proxy_user and not auth_token:
                     await websocket.close(code=1008, reason="Authentication required")
                     return
-            elif settings.auth_required and not token:
+            elif settings.auth_required and not auth_token:
                 await websocket.close(code=1008, reason="Authentication required")
                 return
 
             # Verify JWT token if provided and MCP client auth is enabled
-            if token and settings.mcp_client_auth_enabled:
+            if auth_token and settings.mcp_client_auth_enabled:
                 try:
-                    await verify_jwt_token(token)
+                    await verify_jwt_token(auth_token)
                 except Exception:
                     await websocket.close(code=1008, reason="Invalid authentication")
                     return
@@ -5855,11 +6028,19 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 data = await websocket.receive_text()
                 client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
+
+                # Build headers for /rpc request - forward auth credentials
+                rpc_headers: Dict[str, str] = {"Content-Type": "application/json"}
+                if auth_token:
+                    rpc_headers["Authorization"] = f"Bearer {auth_token}"
+                if proxy_user:
+                    rpc_headers[settings.proxy_user_header] = proxy_user
+
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
                         f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
                         json=orjson.loads(data),
-                        headers={"Content-Type": "application/json"},
+                        headers=rpc_headers,
                     )
                     await websocket.send_text(response.text)
             except JSONRPCError as e:
@@ -5934,9 +6115,11 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
 
         # Extract and normalize token teams
         # Returns None if no JWT payload (non-JWT auth), or list if JWT exists
-        token_teams_or_none = _get_token_teams_from_request(request)
-        # Coerce to list for downstream consumers that expect a list
-        token_teams = token_teams_or_none if token_teams_or_none is not None else []
+        # SECURITY: Preserve None vs [] distinction for admin bypass:
+        # - None: unrestricted (admin keeps bypass, non-admin gets their accessible resources)
+        # - []: public-only (admin bypass disabled)
+        # - [...]: team-scoped access
+        token_teams = _get_token_teams_from_request(request)
 
         # Preserve is_admin from user object (for cookie-authenticated admins)
         is_admin = False
@@ -5948,7 +6131,7 @@ async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_w
         # Create enriched user dict
         user_with_token = dict(user) if isinstance(user, dict) else {"email": getattr(user, "email", str(user))}
         user_with_token["auth_token"] = auth_token
-        user_with_token["token_teams"] = token_teams  # Always a list, never None
+        user_with_token["token_teams"] = token_teams  # None for unrestricted, [] for public-only, [...] for team-scoped
         user_with_token["is_admin"] = is_admin  # Preserve admin status for fallback token
 
         # Create respond task and register for cancellation on disconnect

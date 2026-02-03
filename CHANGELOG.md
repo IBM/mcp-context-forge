@@ -4,6 +4,23 @@
 
 ---
 
+## [Unreleased]
+
+### Security
+
+#### Gateway Credentials No Longer Exposed in API Responses (A-01)
+
+* **Fixed credential leakage** - Gateway authentication credentials (bearer tokens, passwords, custom headers) are no longer exposed in API responses
+* All `*Unmasked` fields (`authTokenUnmasked`, `authPasswordUnmasked`, `authHeaderValueUnmasked`, `authHeadersUnmasked`) now return `null` instead of plaintext values
+* Applied consistently across all gateway endpoints: `POST /gateways`, `GET /gateways/{id}`, `PUT /gateways/{id}`, `GET /gateways` (list)
+* Cache reads also apply masking to prevent stale cache entries from leaking credentials
+
+> **Admin UI Impact**: The "Show" button for password/token fields in the Admin UI will no longer reveal stored credentials. This is intentional - stored secrets are now write-only. To update credentials, enter new values rather than viewing existing ones.
+
+> **Security Rationale**: Credentials should never be retrievable after storage. This follows security best practices where secrets are write-only and can only be replaced, not revealed.
+
+---
+
 ## [1.0.0-RC1] - 2026-01-28 - Authentication Model Updates
 
 ### Overview

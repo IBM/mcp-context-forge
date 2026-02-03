@@ -740,7 +740,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.UPDATE:
                     try:
                         # Find existing gateway by name
-                        gateways = await self.gateway_service.list_gateways(db, include_inactive=True)
+                        gateways, _ = await self.gateway_service.list_gateways(db, include_inactive=True)
                         existing_gateway = next((g for g in gateways if g.name == gateway_name), None)
                         if existing_gateway:
                             update_data = self._convert_to_gateway_update(gateway_data)
@@ -1607,7 +1607,7 @@ class ImportService:
                 existing, _ = await self.tool_service.list_tools(db)
                 item_info["conflicts_with"] = any(t.original_name == item_name for t in existing)
             elif entity_type == "gateways":
-                existing = await self.gateway_service.list_gateways(db)
+                existing, _ = await self.gateway_service.list_gateways(db)
                 item_info["conflicts_with"] = any(g.name == item_name for g in existing)
             elif entity_type == "servers":
                 existing = await self.server_service.list_servers(db)
@@ -1721,7 +1721,7 @@ class ImportService:
 
             # Check gateway conflicts
             if "gateways" in entities:
-                existing_gateways = await self.gateway_service.list_gateways(db)
+                existing_gateways, _ = await self.gateway_service.list_gateways(db)
                 existing_names = {g.name for g in existing_gateways}
 
                 gateway_conflicts = []
