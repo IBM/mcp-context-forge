@@ -15,6 +15,8 @@ import logging
 from pathlib import Path
 import tempfile
 from typing import Dict, Generator
+import uuid
+import re
 
 # Third-Party
 import pytest
@@ -84,7 +86,7 @@ def container_manager(container_runtime) -> Generator[ContainerManager, None, No
     # Ensure required images are available
     try:
         logger.info("📦 Pulling required container images...")
-        cm.pull_images(["0.5.0", "0.6.0", "latest"])  # Start with subset for faster testing
+        cm.pull_images(["1.0.0-BETA-1", "1.0.0-BETA-2", "latest"])  # Start with subset for faster testing
     except Exception as e:
         logger.warning(f"⚠️ Could not pull some images: {e}")
 
@@ -267,7 +269,8 @@ services:
   gateway:
     image: ${IMAGE_LOCAL:-ghcr.io/ibm/mcp-context-forge:latest}
     environment:
-      - DATABASE_URL=postgresql://test_user:test_migration_password_123@postgres:5432/mcp_test
+      - HOST=0.0.0.0
+      - DATABASE_URL=${TEST_DATABASE_URL:-postgresql://test_user:test_migration_password_123@postgres:5432/mcp_test}
       - REDIS_URL=redis://redis:6379/0
       - MCPGATEWAY_UI_ENABLED=false
       - MCPGATEWAY_ADMIN_API_ENABLED=true
@@ -299,6 +302,15 @@ services:
 
     logger.info(f"📄 Created docker-compose file: {compose_file}")
     return str(compose_file)
+
+
+@pytest.fixture
+def docker_compose_project_name(request):
+    """Return an isolated docker-compose project name per test."""
+    base = re.sub(r"[^a-z0-9]+", "-", request.node.name.lower()).strip("-")
+    if not base:
+        base = "migration"
+    return f"migration-{base}-{uuid.uuid4().hex[:6]}"
 
 
 # Performance testing fixtures

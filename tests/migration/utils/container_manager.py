@@ -52,7 +52,7 @@ class ContainerManager:
     - Managing container lifecycle and cleanup
     """
 
-    AVAILABLE_VERSIONS = ["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "latest"]
+    AVAILABLE_VERSIONS = ["1.0.0-BETA-1", "1.0.0-BETA-2", "latest"]
 
     def __init__(self, runtime: str = "docker", verbose: bool = True):
         """Initialize container manager.
@@ -64,13 +64,36 @@ class ContainerManager:
         self.runtime = runtime
         self.verbose = verbose
         self.active_containers: List[str] = []
+        self.compose_cmd = self._detect_compose_cmd()
 
         # Set up logging
         if verbose:
             logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
-        logger.info(f"🚀 Initialized ContainerManager with runtime={runtime}")
+        logger.info(f"🚀 Initialized ContainerManager with runtime={runtime}, compose={' '.join(self.compose_cmd)}")
         self._verify_runtime()
+
+    def _detect_compose_cmd(self) -> List[str]:
+        """Detect the available compose command for the chosen runtime."""
+        def _command_works(cmd: List[str]) -> bool:
+            try:
+                subprocess.run(cmd, capture_output=True, check=True, timeout=5)
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                return False
+
+        if self.runtime == "docker":
+            if _command_works([self.runtime, "compose", "version"]):
+                return [self.runtime, "compose"]
+            if _command_works(["docker-compose", "version"]):
+                return ["docker-compose"]
+        elif self.runtime == "podman":
+            if _command_works([self.runtime, "compose", "version"]):
+                return [self.runtime, "compose"]
+            if _command_works(["podman-compose", "version"]):
+                return ["podman-compose"]
+
+        return [f"{self.runtime}-compose"]
 
     def _verify_runtime(self) -> None:
         """Verify that the container runtime is available."""
@@ -304,7 +327,7 @@ class ContainerManager:
 
         return container_id
 
-    def _wait_for_container_ready(self, container_id: str, timeout: int = 60) -> None:
+    def _wait_for_container_ready(self, container_id: str, timeout: int = 120) -> None:
         """Wait for container to be ready and accepting connections.
 
         Args:
@@ -326,17 +349,21 @@ class ContainerManager:
                     logger.error(f"📋 Container logs:\n{logs}")
                     raise RuntimeError("Container failed to start")
 
-                # Try to connect to health endpoint
+                # Try to connect to health endpoint (accept any HTTP response)
                 port = self._get_container_port(container_id, "4444")
                 health_url = f"http://localhost:{port}/health"
 
-                curl_result = self._run_command(["curl", "-f", "-s", "--max-time", "5", health_url], capture_output=True, check=False)
+                curl_result = self._run_command(
+                    ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "5", health_url],
+                    capture_output=True,
+                    check=False,
+                )
 
-                if curl_result.returncode == 0:
-                    logger.info(f"✅ Container {container_id[:12]} is ready and healthy (response: {curl_result.stdout.strip()[:50]})")
+                http_code = (curl_result.stdout or "").strip()
+                if http_code and http_code != "000":
+                    logger.info(f"✅ Container {container_id[:12]} is responding (HTTP {http_code})")
                     return
-                else:
-                    logger.debug(f"❌ Health check failed with return code {curl_result.returncode}, stderr: {curl_result.stderr.strip()[:100]}")
+                logger.debug(f"❌ Health check failed with HTTP code {http_code or '000'}, stderr: {curl_result.stderr.strip()[:100]}")
 
             except Exception as e:
                 logger.debug(f"Error checking container status: {e}")
@@ -368,12 +395,13 @@ class ContainerManager:
             return port_mapping.split(":")[-1]
         return port_mapping
 
-    def start_compose_stack(self, version: str, compose_file: str) -> Dict[str, str]:
+    def start_compose_stack(self, version: str, compose_file: str, project_name: str | None = None) -> Dict[str, str]:
         """Start docker-compose stack for PostgreSQL testing.
 
         Args:
             version: MCP Gateway version to use
             compose_file: Path to docker-compose file
+            project_name: Optional compose project name for isolation
 
         Returns:
             Dictionary mapping service names to container IDs
@@ -381,16 +409,26 @@ class ContainerManager:
         logger.info(f"🐙 Starting compose stack for version {version}")
         logger.info(f"📄 Using compose file: {compose_file}")
 
-        env = {"IMAGE_LOCAL": f"ghcr.io/ibm/mcp-context-forge:{version}", "POSTGRES_PASSWORD": "test_migration_password_123", "POSTGRES_USER": "test_user", "POSTGRES_DB": "mcp_test"}
+        driver = "psycopg" if version == "latest" else "psycopg2"
+        env = {
+            "IMAGE_LOCAL": f"ghcr.io/ibm/mcp-context-forge:{version}",
+            "POSTGRES_PASSWORD": "test_migration_password_123",
+            "POSTGRES_USER": "test_user",
+            "POSTGRES_DB": "mcp_test",
+            "TEST_DATABASE_URL": f"postgresql+{driver}://test_user:test_migration_password_123@postgres:5432/mcp_test",
+        }
 
         logger.info(f"🔧 Environment variables: {env}")
 
         # Start the stack
-        cmd = [f"{self.runtime}-compose", "-f", compose_file, "up", "-d"]
+        cmd = [*self.compose_cmd]
+        if project_name:
+            cmd.extend(["-p", project_name])
+        cmd.extend(["-f", compose_file, "up", "-d"])
         self._run_command(cmd, env=env)
 
         # Get container IDs for all services
-        containers = self._get_compose_containers(compose_file)
+        containers = self._get_compose_containers(compose_file, project_name=project_name)
 
         # Wait for services to be ready
         for service_name, container_id in containers.items():
@@ -403,16 +441,20 @@ class ContainerManager:
         logger.info(f"✅ Compose stack started with {len(containers)} services")
         return containers
 
-    def _get_compose_containers(self, compose_file: str) -> Dict[str, str]:
+    def _get_compose_containers(self, compose_file: str, project_name: str | None = None) -> Dict[str, str]:
         """Get container IDs for all services in a compose stack.
 
         Args:
             compose_file: Path to docker-compose file
+            project_name: Optional compose project name for isolation
 
         Returns:
             Dictionary mapping service names to container IDs
         """
-        cmd = [f"{self.runtime}-compose", "-f", compose_file, "ps", "-q"]
+        cmd = [*self.compose_cmd]
+        if project_name:
+            cmd.extend(["-p", project_name])
+        cmd.extend(["-f", compose_file, "ps", "-q"])
         result = self._run_command(cmd, capture_output=True)
 
         container_ids = result.stdout.strip().split("\n")
@@ -421,7 +463,7 @@ class ContainerManager:
         for container_id in container_ids:
             if container_id:
                 # Get service name for this container
-                inspect_cmd = [self.runtime, "inspect", container_id, "--format", '{{.Config.Labels."com.docker.compose.service"}}']
+                inspect_cmd = [self.runtime, "inspect", container_id, "--format", '{{ index .Config.Labels "com.docker.compose.service" }}']
                 inspect_result = self._run_command(inspect_cmd, capture_output=True)
                 service_name = inspect_result.stdout.strip()
                 containers[service_name] = container_id
@@ -458,7 +500,7 @@ class ContainerManager:
         logger.error(f"❌ Timeout waiting for PostgreSQL {container_id[:12]} to be ready")
         raise RuntimeError(f"PostgreSQL failed to become ready within {timeout}s")
 
-    def exec_alembic_command(self, container_id: str, command: str) -> str:
+    def exec_alembic_command(self, container_id: str, command: str, check: bool = True) -> str:
         """Execute Alembic command in container.
 
         Args:
@@ -468,16 +510,17 @@ class ContainerManager:
         Returns:
             Command output
         """
-        full_cmd = f"cd /app && python -m alembic {command}"
+        full_cmd = f"python -m alembic -c /app/mcpgateway/alembic.ini {command}"
         logger.info(f"🔧 Running Alembic in {container_id[:12]}: {command}")
 
-        result = self._run_command([self.runtime, "exec", container_id, "sh", "-c", full_cmd], capture_output=True)
+        result = self._run_command([self.runtime, "exec", container_id, "sh", "-c", full_cmd], capture_output=True, check=check)
 
         logger.info(f"✅ Alembic command completed: {command}")
-        if result.stdout:
-            logger.debug(f"📤 Alembic output: {result.stdout}")
+        output = (result.stdout or "") + (result.stderr or "")
+        if output:
+            logger.debug(f"📤 Alembic output: {output}")
 
-        return result.stdout
+        return output
 
     def get_database_schema(self, container_id: str, db_type: str) -> str:
         """Extract current database schema from container.
@@ -659,6 +702,13 @@ if __name__ == "__main__":
             cleanup_cmd = [self.runtime, "container", "prune", "-f", "--filter", "label=migration-test=true"]
             self._run_command(cleanup_cmd, check=False)
             logger.info("✅ All migration test containers cleaned up")
+            volume_list_cmd = [self.runtime, "volume", "ls", "-q", "--filter", "label=migration-test=true"]
+            volume_result = self._run_command(volume_list_cmd, capture_output=True, check=False)
+            volumes = [vol for vol in volume_result.stdout.splitlines() if vol]
+            if volumes:
+                volume_rm_cmd = [self.runtime, "volume", "rm", "-f", *volumes]
+                self._run_command(volume_rm_cmd, check=False)
+            logger.info("✅ All migration test volumes cleaned up")
         except Exception as e:
             logger.warning(f"⚠️ Error during final cleanup: {e}")
 

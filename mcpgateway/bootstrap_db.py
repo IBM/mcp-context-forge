@@ -42,6 +42,7 @@ from typing import cast
 # Third-Party
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from filelock import FileLock
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection
@@ -456,8 +457,9 @@ async def main() -> None:
     """
     Bootstrap or upgrade the database schema, then log readiness.
 
-    Runs `create_all()` + `alembic stamp head` on an empty DB, otherwise just
-    executes `alembic upgrade head`, leaving application data intact.
+    Runs `create_all()` + `alembic stamp <previous head>` on an empty DB, then
+    executes `alembic upgrade head` to reconcile migration-only objects
+    (e.g., indexes) while leaving application data intact.
     Also creates the platform admin user if email authentication is enabled.
 
     Uses distributed advisory locks (PG/MySQL) or file locking (SQLite)
@@ -507,7 +509,14 @@ async def main() -> None:
                         logger.info("Applied MariaDB compatibility modifications")
 
                     Base.metadata.create_all(bind=conn)
-                    command.stamp(cfg, "head")
+                    script = ScriptDirectory.from_config(cfg)
+                    head_rev = script.get_current_head()
+                    head = script.get_revision(head_rev) if head_rev else None
+                    prev_rev = head.down_revision if head else None
+                    if isinstance(prev_rev, (list, tuple)):
+                        prev_rev = prev_rev[0] if prev_rev else None
+                    command.stamp(cfg, prev_rev or "base")
+                    command.upgrade(cfg, "head")
                 else:
                     versions: list[str] = []
                     if "alembic_version" in table_names:
@@ -518,8 +527,15 @@ async def main() -> None:
                             logger.warning("Failed to read alembic_version table: %s", exc)
 
                     if not versions and _schema_looks_current(insp):
-                        logger.warning("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
-                        command.stamp(cfg, "head")
+                        logger.warning("Existing database has no Alembic revision rows; stamping previous head then applying reconciliation migration")
+                        script = ScriptDirectory.from_config(cfg)
+                        head_rev = script.get_current_head()
+                        head = script.get_revision(head_rev) if head_rev else None
+                        prev_rev = head.down_revision if head else None
+                        if isinstance(prev_rev, (list, tuple)):
+                            prev_rev = prev_rev[0] if prev_rev else None
+                        command.stamp(cfg, prev_rev or "base")
+                        command.upgrade(cfg, "head")
                     else:
                         logger.info("Running Alembic migrations to ensure schema is up to date")
                         command.upgrade(cfg, "head")

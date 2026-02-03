@@ -384,6 +384,9 @@ mcpContextForge:
     # Logs all CRUD operations on resources for compliance (SOC2, HIPAA, etc.)
     # WARNING: Causes a DB write on EVERY API request - disable for load testing!
     AUDIT_TRAIL_ENABLED: "false"     # enable audit trail logging (default: false for performance)
+    # Permission audit logging (RBAC checks)
+    # WARNING: Writes a DB row per permission check - disable for load testing!
+    PERMISSION_AUDIT_ENABLED: "false"
 
     # ─ Execution Metrics Recording ─
     # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).

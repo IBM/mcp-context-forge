@@ -20,6 +20,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_now
 
 logger = logging.getLogger(__name__)
@@ -49,14 +50,16 @@ class PermissionService:
         True
     """
 
-    def __init__(self, db: Session, audit_enabled: bool = True):
+    def __init__(self, db: Session, audit_enabled: Optional[bool] = None):
         """Initialize permission service.
 
         Args:
             db: Database session
-            audit_enabled: Whether to enable permission auditing
+            audit_enabled: Whether to enable permission auditing (defaults to settings.PERMISSION_AUDIT_ENABLED)
         """
         self.db = db
+        if audit_enabled is None:
+            audit_enabled = settings.permission_audit_enabled
         self.audit_enabled = audit_enabled
         self._permission_cache: Dict[str, Set[str]] = {}
         self._cache_timestamps: Dict[str, datetime] = {}

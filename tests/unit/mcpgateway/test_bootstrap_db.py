@@ -929,13 +929,20 @@ class TestMain:
                                         with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
                                             with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
                                                 with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
+                                                    with patch("mcpgateway.bootstrap_db.ScriptDirectory.from_config") as mock_script_dir:
+                                                        mock_script = Mock()
+                                                        mock_revision = Mock()
+                                                        mock_revision.down_revision = "prev-rev"
+                                                        mock_script.get_current_head.return_value = "head-rev"
+                                                        mock_script.get_revision.return_value = mock_revision
+                                                        mock_script_dir.return_value = mock_script
+                                                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                            await main()
 
-                                                        mock_base.metadata.create_all.assert_called_once_with(bind=mock_conn)
-                                                        mock_command.stamp.assert_called_once_with(mock_config, "head")
-                                                        mock_command.upgrade.assert_not_called()
-                                                        mock_logger.info.assert_any_call("Empty DB detected - creating baseline schema")
+                                                            mock_base.metadata.create_all.assert_called_once_with(bind=mock_conn)
+                                                            mock_command.stamp.assert_called_once_with(mock_config, "prev-rev")
+                                                            mock_command.upgrade.assert_called_once_with(mock_config, "head")
+                                                            mock_logger.info.assert_any_call("Empty DB detected - creating baseline schema")
 
     @pytest.mark.asyncio
     async def test_main_existing_database(self, mock_settings):
@@ -1025,15 +1032,22 @@ class TestMain:
                                         with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
                                             with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
                                                 with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
+                                                    with patch("mcpgateway.bootstrap_db.ScriptDirectory.from_config") as mock_script_dir:
+                                                        mock_script = Mock()
+                                                        mock_revision = Mock()
+                                                        mock_revision.down_revision = "prev-rev"
+                                                        mock_script.get_current_head.return_value = "head-rev"
+                                                        mock_script.get_revision.return_value = mock_revision
+                                                        mock_script_dir.return_value = mock_script
+                                                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                            await main()
 
-                                                        mock_base.metadata.create_all.assert_not_called()
-                                                        mock_command.upgrade.assert_not_called()
-                                                        mock_command.stamp.assert_called_once_with(mock_config, "head")
-                                                        mock_logger.warning.assert_any_call(
-                                                            "Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations"
-                                                        )
+                                                            mock_base.metadata.create_all.assert_not_called()
+                                                            mock_command.stamp.assert_called_once_with(mock_config, "prev-rev")
+                                                            mock_command.upgrade.assert_called_once_with(mock_config, "head")
+                                                            mock_logger.warning.assert_any_call(
+                                                                "Existing database has no Alembic revision rows; stamping previous head then applying reconciliation migration"
+                                                            )
 
     @pytest.mark.asyncio
     async def test_main_with_normalization(self, mock_settings):
@@ -1101,8 +1115,15 @@ class TestMain:
                                         with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles:
                                             with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources:
                                                 with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
+                                                    with patch("mcpgateway.bootstrap_db.ScriptDirectory.from_config") as mock_script_dir:
+                                                        mock_script = Mock()
+                                                        mock_revision = Mock()
+                                                        mock_revision.down_revision = "prev-rev"
+                                                        mock_script.get_current_head.return_value = "head-rev"
+                                                        mock_script.get_revision.return_value = mock_revision
+                                                        mock_script_dir.return_value = mock_script
+                                                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                            await main()
 
                                                         # Verify all bootstrap functions were called
                                                         mock_admin.assert_called_once()

@@ -29,42 +29,26 @@ class VersionConfig:
 
     # All available releases in chronological order
     RELEASES = [
-        "0.2.0",  # Legacy - not tested by default
-        "0.3.0",  # Legacy - not tested by default
-        "0.4.0",  # Legacy - not tested by default
-        "0.5.0",  # n-2: Current support baseline
-        "0.6.0",  # n-1: Previous version
+        "1.0.0-BETA-1",  # n-2: Current support baseline
+        "1.0.0-BETA-2",  # n-1: Previous version
         "latest",  # n:   Current development version
     ]
 
     # Current latest numbered version (update when releasing)
-    CURRENT_VERSION = "0.6.0"
+    CURRENT_VERSION = "1.0.0-BETA-2"
 
     # Release metadata for documentation and testing
     RELEASE_INFO = {
-        "0.2.0": {"release_date": "2023-10-01", "major_features": ["basic_mcp_support", "sqlite_database", "simple_auth"], "breaking_changes": [], "support_status": "legacy"},
-        "0.3.0": {
-            "release_date": "2023-11-15",
-            "major_features": ["display_names", "enhanced_annotations", "improved_validation"],
-            "breaking_changes": ["annotation_schema_changes"],
-            "support_status": "legacy",
-        },
-        "0.4.0": {
-            "release_date": "2023-12-20",
-            "major_features": ["uuid_primary_keys", "slug_system", "metadata_tracking"],
-            "breaking_changes": ["primary_key_migration", "slug_introduction"],
-            "support_status": "legacy",
-        },
-        "0.5.0": {
-            "release_date": "2024-01-25",
-            "major_features": ["enhanced_status", "improved_logging", "performance_optimizations"],
-            "breaking_changes": ["status_field_changes"],
+        "1.0.0-BETA-1": {
+            "release_date": "unknown",
+            "major_features": ["beta_milestone_1"],
+            "breaking_changes": [],
             "support_status": "supported",  # n-2
         },
-        "0.6.0": {
-            "release_date": "2024-02-15",
-            "major_features": ["a2a_agents", "oauth_support", "federation_features"],
-            "breaking_changes": ["oauth_table_addition"],
+        "1.0.0-BETA-2": {
+            "release_date": "unknown",
+            "major_features": ["beta_milestone_2"],
+            "breaking_changes": [],
             "support_status": "supported",  # n-1
         },
         "latest": {

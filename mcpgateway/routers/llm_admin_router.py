@@ -866,13 +866,12 @@ async def sync_provider_models(
         Sync results with counts of added/skipped models.
     """
     # First-Party
-    from mcpgateway.llm_schemas import LLMModelCreate
-
     # First fetch models from the provider
     # NOTE: Must pass as kwargs - require_permission decorator only searches kwargs for user context
     # Use a fresh session for model fetch to avoid closing the caller's session.
     # The fetch endpoint now commits/closes its session after response creation.
     from mcpgateway.db import fresh_db_session
+    from mcpgateway.llm_schemas import LLMModelCreate
 
     with fresh_db_session() as fetch_db:
         fetch_result = await fetch_provider_models(

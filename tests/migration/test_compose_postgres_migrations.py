@@ -12,6 +12,7 @@ stacks across different MCP Gateway versions with comprehensive validation.
 
 # Standard
 import logging
+import re
 import time
 
 # Third-Party
@@ -34,7 +35,7 @@ class TestPostgreSQLMigrations:
     - Performance under realistic load
     """
 
-    def test_compose_forward_migrations(self, container_manager, docker_compose_file, sample_test_data, version_pair):
+    def test_compose_forward_migrations(self, container_manager, docker_compose_file, docker_compose_project_name, sample_test_data, version_pair):
         """Test forward migrations using docker-compose stack.
 
         This test validates migrations in a production-like environment with:
@@ -51,7 +52,7 @@ class TestPostgreSQLMigrations:
 
         # Start compose stack with source version
         logger.info(f"🚀 Starting compose stack with {from_version}")
-        containers = container_manager.start_compose_stack(from_version, docker_compose_file)
+        containers = container_manager.start_compose_stack(from_version, docker_compose_file, project_name=docker_compose_project_name)
 
         try:
             gateway_container = containers["gateway"]
@@ -85,11 +86,11 @@ class TestPostgreSQLMigrations:
 
             # Stop compose stack
             logger.info("🛑 Stopping compose stack")
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=False)
 
             # Start compose stack with target version
             logger.info(f"🔄 Starting compose stack with {to_version}")
-            containers = container_manager.start_compose_stack(to_version, docker_compose_file)
+            containers = container_manager.start_compose_stack(to_version, docker_compose_file, project_name=docker_compose_project_name)
 
             gateway_container = containers["gateway"]
             postgres_container = containers["postgres"]
@@ -132,9 +133,9 @@ class TestPostgreSQLMigrations:
         finally:
             # Cleanup compose stack
             logger.info("🧹 Cleaning up compose stack")
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=True)
 
-    def test_compose_service_dependencies(self, container_manager, docker_compose_file):
+    def test_compose_service_dependencies(self, container_manager, docker_compose_file, docker_compose_project_name):
         """Test that service dependencies are properly managed during migrations.
 
         This test validates:
@@ -149,7 +150,7 @@ class TestPostgreSQLMigrations:
         logger.info("🚀 Starting compose stack with dependency monitoring")
         start_time = time.time()
 
-        containers = container_manager.start_compose_stack("latest", docker_compose_file)
+        containers = container_manager.start_compose_stack("latest", docker_compose_file, project_name=docker_compose_project_name)
 
         startup_time = time.time() - start_time
         logger.info(f"✅ Stack started in {startup_time:.2f}s")
@@ -181,9 +182,9 @@ class TestPostgreSQLMigrations:
             logger.info("✅ Service dependencies validation completed")
 
         finally:
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=True)
 
-    def test_compose_concurrent_connections(self, container_manager, docker_compose_file, large_test_data):
+    def test_compose_concurrent_connections(self, container_manager, docker_compose_file, docker_compose_project_name, large_test_data):
         """Test migration behavior under concurrent database connections.
 
         This test validates that migrations work correctly when there are
@@ -194,7 +195,7 @@ class TestPostgreSQLMigrations:
         logger.info(f"📊 Large dataset: {sum(len(entities) for entities in large_test_data.values())} records")
 
         # Start compose stack
-        containers = container_manager.start_compose_stack("latest", docker_compose_file)
+        containers = container_manager.start_compose_stack("latest", docker_compose_file, project_name=docker_compose_project_name)
 
         try:
             gateway_container = containers["gateway"]
@@ -246,9 +247,9 @@ class TestPostgreSQLMigrations:
             assert concurrent_time < 60, "Concurrent operations took too long"
 
         finally:
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=True)
 
-    def test_compose_data_persistence(self, container_manager, docker_compose_file, sample_test_data):
+    def test_compose_data_persistence(self, container_manager, docker_compose_file, docker_compose_project_name, sample_test_data):
         """Test data persistence across container restarts.
 
         This test validates that data persists correctly when containers
@@ -258,7 +259,7 @@ class TestPostgreSQLMigrations:
 
         # Phase 1: Start stack, seed data, capture state
         logger.info("📋 Phase 1: Initial setup and data seeding")
-        containers = container_manager.start_compose_stack("latest", docker_compose_file)
+        containers = container_manager.start_compose_stack("latest", docker_compose_file, project_name=docker_compose_project_name)
 
         try:
             gateway_container = containers["gateway"]
@@ -277,7 +278,7 @@ class TestPostgreSQLMigrations:
         finally:
             # Stop stack
             logger.info("🛑 Stopping stack for restart test")
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=False)
 
         # Phase 2: Restart stack and verify data persistence
         logger.info("📋 Phase 2: Restarting stack and verifying persistence")
@@ -285,7 +286,7 @@ class TestPostgreSQLMigrations:
         # Wait a moment to ensure full cleanup
         time.sleep(5)
 
-        containers = container_manager.start_compose_stack("latest", docker_compose_file)
+        containers = container_manager.start_compose_stack("latest", docker_compose_file, project_name=docker_compose_project_name)
 
         try:
             gateway_container = containers["gateway"]
@@ -319,9 +320,9 @@ class TestPostgreSQLMigrations:
             logger.info("✅ Data persistence validation completed successfully")
 
         finally:
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=True)
 
-    def test_compose_migration_rollback(self, container_manager, docker_compose_file, sample_test_data):
+    def test_compose_migration_rollback(self, container_manager, docker_compose_file, docker_compose_project_name, sample_test_data):
         """Test migration rollback in compose environment.
 
         This test validates rollback capabilities in a full-stack environment
@@ -329,9 +330,9 @@ class TestPostgreSQLMigrations:
         """
         logger.info("🧪 Testing compose migration rollback")
 
-        # Start with 0.6.0, migrate to latest, then rollback
+        # Start with 0.6.0, migrate to latest, then rollback using latest migrations
         logger.info("📋 Phase 1: Setup with version 0.6.0")
-        containers = container_manager.start_compose_stack("0.6.0", docker_compose_file)
+        containers = container_manager.start_compose_stack("0.6.0", docker_compose_file, project_name=docker_compose_project_name)
 
         try:
             gateway_container = containers["gateway"]
@@ -339,6 +340,10 @@ class TestPostgreSQLMigrations:
 
             # Initialize schema for 0.6.0
             container_manager.exec_alembic_command(gateway_container, "upgrade head")
+            head_output = container_manager.exec_alembic_command(gateway_container, "heads")
+            head_line = head_output.strip().splitlines()[0] if head_output.strip() else ""
+            v060_head = head_line.split()[0] if head_line else ""
+            assert v060_head, f"Unable to determine 0.6.0 head revision from: {head_output}"
             self._seed_compose_test_data(container_manager, gateway_container, sample_test_data)
 
             records_v060 = self._count_postgres_records(container_manager, gateway_container)
@@ -347,11 +352,11 @@ class TestPostgreSQLMigrations:
             logger.info(f"📊 Version 0.6.0 state: {sum(records_v060.values())} records")
 
         finally:
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=False)
 
         # Phase 2: Upgrade to latest
         logger.info("📋 Phase 2: Upgrade to latest version")
-        containers = container_manager.start_compose_stack("latest", docker_compose_file)
+        containers = container_manager.start_compose_stack("latest", docker_compose_file, project_name=docker_compose_project_name)
 
         try:
             gateway_container = containers["gateway"]
@@ -369,45 +374,48 @@ class TestPostgreSQLMigrations:
                 count_latest = records_latest.get(table, 0)
                 assert count_latest >= count_v060, f"Data lost during upgrade in {table}"
 
-        finally:
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            # Roll back to the 0.6.0 head using latest migrations
+            logger.info("⬇️ Rolling back to 0.6.0 head using latest migrations")
+            downgrade_cmd = [
+                container_manager.runtime,
+                "exec",
+                gateway_container,
+                "sh",
+                "-c",
+                f"python -m alembic -c /app/mcpgateway/alembic.ini downgrade {v060_head}",
+            ]
+            downgrade_result = container_manager._run_command(downgrade_cmd, capture_output=True, check=False)
+            downgrade_output = (downgrade_result.stdout or "") + (downgrade_result.stderr or "")
+            assert downgrade_result.returncode == 0, f"Rollback failed: {downgrade_output}"
 
-        # Phase 3: Rollback test
-        logger.info("📋 Phase 3: Testing rollback capability")
-        containers = container_manager.start_compose_stack("0.6.0", docker_compose_file)
+        finally:
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=False)
+
+        # Phase 3: Validate rollback with 0.6.0
+        logger.info("📋 Phase 3: Validating rollback with 0.6.0")
+        containers = container_manager.start_compose_stack("0.6.0", docker_compose_file, project_name=docker_compose_project_name)
 
         try:
             gateway_container = containers["gateway"]
             postgres_container = containers["postgres"]
 
-            # Attempt rollback (this might not always be possible depending on migration design)
-            logger.info("⬇️ Attempting rollback migration")
+            current_output = container_manager.exec_alembic_command(gateway_container, "current")
+            assert v060_head in current_output, f"Expected DB at 0.6.0 head {v060_head}, got: {current_output}"
 
-            try:
-                rollback_output = container_manager.exec_alembic_command(gateway_container, "downgrade -1")
-                rollback_successful = "ERROR" not in rollback_output
+            records_rollback = self._count_postgres_records(container_manager, gateway_container)
+            logger.info(f"📊 Rollback state: {sum(records_rollback.values())} records")
 
-                if rollback_successful:
-                    records_rollback = self._count_postgres_records(container_manager, gateway_container)
-                    logger.info(f"📊 Rollback state: {sum(records_rollback.values())} records")
+            # Validate rollback preserved essential data
+            for table in ["tools", "servers", "gateways"]:  # Core tables
+                if table in records_v060:
+                    original_count = records_v060[table]
+                    rollback_count = records_rollback.get(table, 0)
+                    assert rollback_count >= original_count * 0.8, f"Significant data loss in {table} during rollback"
 
-                    # Validate rollback preserved essential data
-                    for table in ["tools", "servers", "gateways"]:  # Core tables
-                        if table in records_v060:
-                            original_count = records_v060[table]
-                            rollback_count = records_rollback.get(table, 0)
-                            assert rollback_count >= original_count * 0.8, f"Significant data loss in {table} during rollback"
-
-                    logger.info("✅ Rollback completed successfully")
-                else:
-                    logger.info("ℹ️ Rollback not supported (expected for some migrations)")
-
-            except Exception as e:
-                logger.info(f"ℹ️ Rollback failed as expected: {str(e)[:100]}...")
-                # This is often expected for migrations that can't be rolled back
+            logger.info("✅ Rollback completed successfully")
 
         finally:
-            self._stop_compose_stack(container_manager, docker_compose_file)
+            self._stop_compose_stack(container_manager, docker_compose_file, project_name=docker_compose_project_name, remove_volumes=True)
 
     # Helper methods for compose testing
 
@@ -511,7 +519,11 @@ class TestPostgreSQLMigrations:
         """Check if gateway can connect to database."""
         try:
             # Try to run alembic current, which requires DB connection
-            result = container_manager._run_command([container_manager.runtime, "exec", gateway_container, "python", "-m", "alembic", "current"], capture_output=True, check=False)
+            result = container_manager._run_command(
+                [container_manager.runtime, "exec", gateway_container, "python", "-m", "alembic", "-c", "/app/mcpgateway/alembic.ini", "current"],
+                capture_output=True,
+                check=False,
+            )
 
             return result.returncode == 0 and "ERROR" not in result.stdout
         except Exception:
@@ -551,10 +563,15 @@ class TestPostgreSQLMigrations:
 
         return True
 
-    def _stop_compose_stack(self, container_manager, compose_file):
+    def _stop_compose_stack(self, container_manager, compose_file, project_name: str | None = None, remove_volumes: bool = True):
         """Stop and clean up compose stack."""
         try:
-            cmd = [f"{container_manager.runtime}-compose", "-f", compose_file, "down", "-v", "--remove-orphans"]
+            cmd = [*container_manager.compose_cmd]
+            if project_name:
+                cmd.extend(["-p", project_name])
+            cmd.extend(["-f", compose_file, "down", "--remove-orphans"])
+            if remove_volumes:
+                cmd.append("-v")
             container_manager._run_command(cmd, check=False)
         except Exception as e:
             logger.warning(f"⚠️ Error stopping compose stack: {e}")
