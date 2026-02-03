@@ -31,7 +31,7 @@
         {% endif %}
 
         <!-- Row 2: Export Config -->
-        <button onclick="showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')" class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors" x-tooltip="'💡Generate client configuration files for this server'">Export Config</button>
+        <button onclick="Admin.showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')" class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors" x-tooltip="'💡Generate client configuration files for this server'">Export Config</button>
 
         {% if can_modify %}
         <!-- Row 3: Activate/Deactivate | Delete -->
