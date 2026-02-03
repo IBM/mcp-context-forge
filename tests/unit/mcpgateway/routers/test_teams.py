@@ -438,7 +438,8 @@ class TestTeamsRouter:
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
-            mock_service.update_team = AsyncMock(return_value=mock_team)
+            mock_service.update_team = AsyncMock(return_value=True)  # Returns bool, not team
+            mock_service.get_team_by_id = AsyncMock(return_value=mock_team)  # Fetches team after update
             MockService.return_value = mock_service
 
             from mcpgateway.routers.teams import update_team
