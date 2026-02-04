@@ -180,7 +180,7 @@ Admin.switchTopPerformersTab = switchTopPerformersTab;
 // ===================================================================
 
 // Import IIFE modules - they self-register on window.Admin
-import './events.js';
 import './app.js';
+import './events.js';
 
 console.log("🚀 ContextForge MCP Gateway Admin API initialized");

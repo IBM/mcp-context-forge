@@ -185,7 +185,6 @@ except ImportError:
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
-
 UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "overview": ("overview",),
     "servers": ("catalog",),
@@ -211,6 +210,38 @@ UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "
 UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
 UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
 
+# Cache for the bundle filename to avoid reading manifest on every request
+_bundle_js_cache: Optional[str] = None
+
+
+def get_bundle_js_filename() -> str:
+    """Get the hashed bundle.js filename from Vite manifest.
+
+    Reads the Vite manifest file to get the current hashed bundle filename.
+    Falls back to 'bundle.js' if manifest doesn't exist (dev mode).
+
+    Returns:
+        str: The bundle filename (e.g., 'bundle-abc123.js')
+    """
+    global _bundle_js_cache
+    if _bundle_js_cache is not None:
+        return _bundle_js_cache
+
+    manifest_path = Path(__file__).parent / "static" / ".vite" / "manifest.json"
+    try:
+        if manifest_path.exists():
+            with open(manifest_path, "r") as f:
+                manifest = orjson.loads(f.read())
+                # The key is the input path relative to the project root
+                entry_key = "mcpgateway/static/js/admin.js"
+                if entry_key in manifest:
+                    _bundle_js_cache = manifest[entry_key].get("file", "bundle.js")
+                    return _bundle_js_cache
+    except Exception as e:
+        LOGGER.warning(f"Failed to read Vite manifest: {e}")
+
+    _bundle_js_cache = "bundle.js"
+    return _bundle_js_cache
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
     """Normalize UI hide values from CSV/list input into a validated set.
@@ -3291,6 +3322,7 @@ async def admin_ui(
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
+            "bundle_js": get_bundle_js_filename(),
             "max_name_length": max_name_length,
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
