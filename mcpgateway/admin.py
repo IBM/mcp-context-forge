@@ -827,20 +827,6 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
 
 admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
-
-def _ensure_db_session(db: Optional[Session]) -> Session:
-    """Return a real database session when called outside FastAPI injection.
-
-    Args:
-        db: Optional session, possibly a FastAPI dependency placeholder.
-
-    Returns:
-        An active SQLAlchemy session to use for queries.
-    """
-    if db is None or not hasattr(db, "query"):
-        return next(get_db())
-    return db
-
 ####################
 # Admin UI Routes  #
 ####################
@@ -998,12 +984,7 @@ async def get_overview_partial(
             "uptime_seconds": uptime_seconds,
         }
 
-        response = request.app.state.templates.TemplateResponse(request, "overview_partial.html", context)
-        try:
-            db.commit()
-        finally:
-            db.close()
-        return response
+        return request.app.state.templates.TemplateResponse(request, "overview_partial.html", context)
 
     except Exception as e:
         LOGGER.error(f"Error rendering overview partial: {e}")
@@ -1013,12 +994,7 @@ async def get_overview_partial(
             <span class="block sm:inline">{html.escape(str(e))}</span>
         </div>
         """
-        response = HTMLResponse(content=error_html, status_code=500)
-        try:
-            db.commit()
-        finally:
-            db.close()
-        return response
+        return HTMLResponse(content=error_html, status_code=500)
 
 
 @admin_router.get("/config/passthrough-headers", response_model=GlobalConfigRead)
@@ -1050,10 +1026,7 @@ async def get_global_passthrough_headers(
     # Use cache for reads (Issue #1715)
     # Pass env defaults so env/merge modes return correct headers
     passthrough_headers = global_config_cache.get_passthrough_headers(db, settings.default_passthrough_headers)
-    response = GlobalConfigRead(passthrough_headers=passthrough_headers)
-    db.commit()
-    db.close()
-    return response
+    return GlobalConfigRead(passthrough_headers=passthrough_headers)
 
 
 @admin_router.put("/config/passthrough-headers", response_model=GlobalConfigRead)
@@ -1099,12 +1072,9 @@ async def update_global_passthrough_headers(
         db.commit()
         # Invalidate cache so changes propagate immediately (Issue #1715)
         global_config_cache.invalidate()
-        response = GlobalConfigRead(passthrough_headers=config.passthrough_headers)
-        db.close()
-        return response
+        return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
     except (IntegrityError, ValidationError, PassthroughHeadersError) as e:
         db.rollback()
-        db.close()
         if isinstance(e, IntegrityError):
             raise HTTPException(status_code=409, detail="Passthrough headers conflict")
         if isinstance(e, ValidationError):
@@ -1146,14 +1116,11 @@ async def invalidate_passthrough_headers_cache(
     """
     global_config_cache.invalidate()
     stats = global_config_cache.stats()
-    response = {
+    return {
         "status": "invalidated",
         "message": "GlobalConfig cache invalidated successfully",
         "cache_stats": stats,
     }
-    _db.commit()
-    _db.close()
-    return response
 
 
 @admin_router.get("/config/passthrough-headers/cache-stats")
@@ -1185,10 +1152,7 @@ async def get_passthrough_headers_cache_stats(
         >>> inspect.iscoroutinefunction(get_passthrough_headers_cache_stats)
         True
     """
-    response = global_config_cache.stats()
-    _db.commit()
-    _db.close()
-    return response
+    return global_config_cache.stats()
 
 
 # ===================================
@@ -1226,14 +1190,11 @@ async def invalidate_a2a_stats_cache(
     """
     a2a_stats_cache.invalidate()
     stats = a2a_stats_cache.stats()
-    response = {
+    return {
         "status": "invalidated",
         "message": "A2A stats cache invalidated successfully",
         "cache_stats": stats,
     }
-    _db.commit()
-    _db.close()
-    return response
 
 
 @admin_router.get("/cache/a2a-stats/stats")
@@ -1263,10 +1224,7 @@ async def get_a2a_stats_cache_stats(
         >>> inspect.iscoroutinefunction(get_a2a_stats_cache_stats)
         True
     """
-    response = a2a_stats_cache.stats()
-    _db.commit()
-    _db.close()
-    return response
+    return a2a_stats_cache.stats()
 
 
 @admin_router.get("/mcp-pool/metrics")
@@ -1314,20 +1272,14 @@ async def get_mcp_session_pool_metrics(
         True
     """
     if not settings.mcp_session_pool_enabled:
-        response = {"enabled": False, "message": "MCP session pool is disabled"}
-        _db.commit()
-        _db.close()
-        return response
+        return {"enabled": False, "message": "MCP session pool is disabled"}
 
     try:
         pool = get_mcp_session_pool()
         metrics = pool.get_metrics()
-        response = {"enabled": True, **metrics}
+        return {"enabled": True, **metrics}
     except RuntimeError as e:
-        response = {"enabled": True, "error": str(e), "message": "Pool not yet initialized"}
-    _db.commit()
-    _db.close()
-    return response
+        return {"enabled": True, "error": str(e), "message": "Pool not yet initialized"}
 
 
 @admin_router.get("/config/settings")
@@ -1476,13 +1428,10 @@ async def get_configuration_settings(
         },
     }
 
-    response = {
+    return {
         "groups": config_groups,
         "security_status": settings.get_security_status(),
     }
-    _db.commit()
-    _db.close()
-    return response
 
 
 @admin_router.get("/servers", response_model=PaginatedResponse)
@@ -1532,14 +1481,14 @@ async def admin_list_servers(
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
-    response = {
+    db.commit()
+
+    # Return standardized paginated response
+    return {
         "data": [server.model_dump(by_alias=True) for server in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.get("/servers/partial", response_class=HTMLResponse)
@@ -1673,7 +1622,7 @@ async def admin_servers_partial_html(
     db.commit()
 
     if render == "controls":
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
             {
@@ -1686,8 +1635,9 @@ async def admin_servers_partial_html(
                 "root_path": request.scope.get("root_path", ""),
             },
         )
-    elif render == "selector":
-        response = request.app.state.templates.TemplateResponse(
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
             request,
             "servers_selector_items.html",
             {
@@ -1697,21 +1647,19 @@ async def admin_servers_partial_html(
                 "root_path": request.scope.get("root_path", ""),
             },
         )
-    else:
-        response = request.app.state.templates.TemplateResponse(
-            request,
-            "servers_partial.html",
-            {
-                "request": request,
-                "data": data,
-                "pagination": pagination.model_dump(),
-                "links": links.model_dump() if links else None,
-                "root_path": request.scope.get("root_path", ""),
-                "include_inactive": include_inactive,
-            },
-        )
-    db.close()
-    return response
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "servers_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
@@ -1741,10 +1689,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
     try:
         LOGGER.debug(f"User {get_user_email(user)} requested details for server ID {server_id}")
         server = await server_service.get_server(db, server_id)
-        response = server.model_dump(by_alias=True)
-        db.commit()
-        db.close()
-        return response
+        return server.model_dump(by_alias=True)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -1873,10 +1818,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
-        response = ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
     try:
         user_email = get_user_email(user)
         # Determine personal team for default assignment
@@ -1901,49 +1843,25 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             team_id=team_id_cast,
             visibility=visibility,
         )
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "Server created successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
 
     except CoreValidationError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
     except ServerNameConflictError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValueError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except ValidationError as ex:
-        response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
-        response = ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/edit")
@@ -2087,55 +2005,28 @@ async def admin_edit_server(
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
 
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "Server updated successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
     except (ValidationError, CoreValidationError) as ex:
         # Catch both Pydantic and pydantic_core validation errors
-        response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except ServerNameConflictError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValueError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except IntegrityError as ex:
-        response = ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        response = ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/servers/{server_id}/state")
@@ -2194,24 +2085,12 @@ async def admin_set_server_state(
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
 
 
 @admin_router.post("/servers/{server_id}/delete")
@@ -2260,24 +2139,12 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
 
 
 @admin_router.get("/resources", response_model=PaginatedResponse)
@@ -2324,14 +2191,11 @@ async def admin_list_resources(
     )
 
     # Return standardized paginated response
-    response = {
+    return {
         "data": [resource.model_dump(by_alias=True) for resource in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.get("/prompts", response_model=PaginatedResponse)
@@ -2381,14 +2245,11 @@ async def admin_list_prompts(
     )
 
     # Return standardized paginated response
-    response = {
+    return {
         "data": [prompt.model_dump(by_alias=True) for prompt in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.get("/gateways", response_model=PaginatedResponse)
@@ -2438,14 +2299,11 @@ async def admin_list_gateways(
     )
 
     # Return standardized paginated response
-    response = {
+    return {
         "data": [gateway.model_dump(by_alias=True) for gateway in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.post("/gateways/{gateway_id}/state")
@@ -2501,24 +2359,12 @@ async def admin_set_gateway_state(
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
@@ -3017,7 +2863,6 @@ async def admin_ui(
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
 
-    db.close()
     return response
 
 
@@ -3114,10 +2959,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = request.scope.get("root_path", "")
-        response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
     try:
         form = await request.form()
@@ -3128,10 +2970,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
         if not email or not password:
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -3145,10 +2984,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
                 root_path = request.scope.get("root_path", "")
-                response = RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
-                db.commit()
-                db.close()
-                return response
+                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
@@ -3200,8 +3036,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 # Set JWT token as secure cookie for the password change process
                 set_auth_cookie(response, token, remember_me=False)
 
-                db.commit()
-                db.close()
                 return response
 
             # Create JWT token with proper audience and issuer claims
@@ -3215,8 +3049,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             set_auth_cookie(response, token, remember_me=False)
 
             LOGGER.info(f"Admin user {email} logged in successfully")
-            db.commit()
-            db.close()
             return response
 
         except Exception as e:
@@ -3226,18 +3058,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
         root_path = request.scope.get("root_path", "")
-        response = RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
 
 
 async def _admin_logout(request: Request) -> Response:
@@ -3445,27 +3271,18 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 
         if not all([current_password, new_password, confirm_password]):
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
 
         if new_password != confirm_password:
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
 
         # Get user from JWT token in cookie
         try:
             jwt_token = request.cookies.get("jwt_token")
             if not jwt_token:
                 root_path = request.scope.get("root_path", "")
-                response = RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
-                db.commit()
-                db.close()
-                return response
+                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
             # Authenticate using the token
             # Create credentials object from cookie
@@ -3475,17 +3292,11 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 
             if not current_user:
                 root_path = request.scope.get("root_path", "")
-                response = RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
-                db.commit()
-                db.close()
-                return response
+                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
         except Exception as e:
             LOGGER.error(f"Authentication error: {e}")
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -3515,18 +3326,12 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         if current_user is None:
                             LOGGER.error(f"User {user_email} not found after successful password change - possible race condition")
                             root_path = request.scope.get("root_path", "")
-                            response = RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
-                            db.commit()
-                            db.close()
-                            return response
+                            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
                 except Exception as e:
                     # Return early to avoid creating token with empty team claims
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
                     root_path = request.scope.get("root_path", "")
-                    response = RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
-                    db.commit()
-                    db.close()
-                    return response
+                    return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
                 # Create new JWT token
                 token, _ = await create_access_token(current_user)
@@ -3539,44 +3344,27 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 set_auth_cookie(response, token, remember_me=False)
 
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
-                db.commit()
-                db.close()
                 return response
 
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
 
         except AuthenticationError:
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
         except PasswordValidationError as e:
             LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
         except Exception as e:
             LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
             root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Password change handler error: {e}")
         root_path = request.scope.get("root_path", "")
-        response = RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
 
 # ============================================================================ #
@@ -3786,10 +3574,7 @@ async def admin_get_all_team_ids(
     current_user = await auth_service.get_user_by_email(user_email)
 
     if not current_user:
-        response = {"team_ids": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"team_ids": [], "count": 0}
 
     # If admin, get all teams (filtered)
     # If regular user, get user teams + accessible public teams?
@@ -3825,10 +3610,7 @@ async def admin_get_all_team_ids(
             filtered.append(t.id)
         team_ids = filtered
 
-    response = {"team_ids": team_ids, "count": len(team_ids)}
-    db.commit()
-    db.close()
-    return response
+    return {"team_ids": team_ids, "count": len(team_ids)}
 
 
 @admin_router.get("/teams/search", response_class=JSONResponse)
@@ -3861,10 +3643,7 @@ async def admin_search_teams(
     current_user = await auth_service.get_user_by_email(user_email)
 
     if not current_user:
-        response = []
-        db.commit()
-        db.close()
-        return response
+        return []
 
     # Use list_teams logic
     # For admin: search globally
@@ -3898,10 +3677,7 @@ async def admin_search_teams(
         teams = filtered[:limit]
 
     # Serialize
-    response = [{"id": t.id, "name": t.name, "slug": t.slug, "description": t.description, "visibility": t.visibility, "is_active": t.is_active} for t in teams]
-    db.commit()
-    db.close()
-    return response
+    return [{"id": t.id, "name": t.name, "slug": t.slug, "description": t.description, "visibility": t.visibility, "is_active": t.is_active} for t in teams]
 
 
 @admin_router.get("/teams/partial")
@@ -3955,10 +3731,7 @@ async def admin_teams_partial_html(
     current_user = await auth_service.get_user_by_email(user_email)
 
     if not current_user:
-        response = HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=404)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=404)
 
     # Get user's teams and public teams for relationship info
     user_teams = await team_service.get_user_teams(user_email, include_personal=True)
@@ -4027,7 +3800,7 @@ async def admin_teams_partial_html(
 
     if render == "controls":
         # Return only pagination controls
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
             {
@@ -4041,9 +3814,6 @@ async def admin_teams_partial_html(
                 "base_url": base_url,
             },
         )
-        db.commit()
-        db.close()
-        return response
 
     if render == "selector":
         # Return team selector items for infinite scroll dropdown
@@ -4057,7 +3827,7 @@ async def admin_teams_partial_html(
         if q:
             query_params_dict["q"] = q
 
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "teams_selector_items.html",
             {
@@ -4068,9 +3838,6 @@ async def admin_teams_partial_html(
                 "query_params": query_params_dict,
             },
         )
-        db.commit()
-        db.close()
-        return response
 
     # Batch count members
     team_ids = [str(t.id) for t in data]
@@ -4114,7 +3881,7 @@ async def admin_teams_partial_html(
     if visibility:
         query_params_dict["visibility"] = visibility
 
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "teams_partial.html",
         {
@@ -4126,9 +3893,6 @@ async def admin_teams_partial_html(
             "query_params": query_params_dict,
         },
     )
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.get("/teams")
@@ -4160,10 +3924,7 @@ async def admin_list_teams(
         HTTPException: If email auth is disabled or user not found
     """
     if not getattr(settings, "email_auth_enabled", False):
-        response = HTMLResponse(content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. Teams feature requires email auth.</p></div>', status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. Teams feature requires email auth.</p></div>', status_code=200)
 
     try:
         auth_service = EmailAuthService(db)
@@ -4173,19 +3934,13 @@ async def admin_list_teams(
         user_email = get_user_email(user)
         current_user = await auth_service.get_user_by_email(user_email)
         if not current_user:
-            response = HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=200)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=200)
 
         root_path = request.scope.get("root_path", "")
 
         if unified:
             # Generate unified team view
-            response = await _generate_unified_teams_view(team_service, current_user, root_path)
-            db.commit()
-            db.close()
-            return response
+            return await _generate_unified_teams_view(team_service, current_user, root_path)
 
         # Traditional admin view refactored to use partial logic
         # We can reuse the logic by calling the service directly or redirecting?
@@ -4220,7 +3975,7 @@ async def admin_list_teams(
             t.member_count = counts.get(str(t.id), 0)
 
         # Render template
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "teams_partial.html",
             {
@@ -4231,16 +3986,10 @@ async def admin_list_teams(
                 "root_path": root_path,
             },
         )
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         LOGGER.error(f"Error listing teams for admin {user}: {e}")
-        response = HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading teams: {html.escape(str(e))}</p></div>', status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading teams: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.post("/teams")
@@ -4268,8 +4017,6 @@ async def admin_create_team(
         response = HTMLResponse(content=error_content, status_code=403)
         response.headers["HX-Retarget"] = "#create-team-error"
         response.headers["HX-Reswap"] = "innerHTML"
-        db.commit()
-        db.close()
         return response
 
     try:
@@ -4289,8 +4036,6 @@ async def admin_create_team(
             )
             response.headers["HX-Retarget"] = "#create-team-error"
             response.headers["HX-Reswap"] = "innerHTML"
-            db.commit()
-            db.close()
             return response
 
         # Create team
@@ -4338,8 +4083,6 @@ async def admin_create_team(
 
         response = HTMLResponse(content=team_html, status_code=201)
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"resetTeamCreateForm": True, "delayMs": 500}}).decode()
-        db.commit()
-        db.close()
         return response
 
     except (ValidationError, CoreValidationError) as e:
@@ -4360,8 +4103,6 @@ async def admin_create_team(
         # Retarget to error container instead of teams list
         response.headers["HX-Retarget"] = "#create-team-error"
         response.headers["HX-Reswap"] = "innerHTML"
-        db.commit()
-        db.close()
         return response
     except IntegrityError as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
@@ -4372,8 +4113,6 @@ async def admin_create_team(
         response = HTMLResponse(content=error_content, status_code=400)
         response.headers["HX-Retarget"] = "#create-team-error"
         response.headers["HX-Reswap"] = "innerHTML"
-        db.commit()
-        db.close()
         return response
     except Exception as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
@@ -4383,8 +4122,6 @@ async def admin_create_team(
         )
         response.headers["HX-Retarget"] = "#create-team-error"
         response.headers["HX-Reswap"] = "innerHTML"
-        db.commit()
-        db.close()
         return response
 
 
@@ -4422,8 +4159,6 @@ async def admin_view_team_members(
         )
         response.headers["HX-Retarget"] = "#edit-team-error"
         response.headers["HX-Reswap"] = "innerHTML"
-        db.commit()
-        db.close()
         return response
 
     try:
@@ -4441,10 +4176,7 @@ async def admin_view_team_members(
         # Get team details
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         # Check if current user is team owner
         current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
@@ -4541,17 +4273,11 @@ async def admin_view_team_members(
         </div>
         """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
-        response = HTMLResponse(content=interface_html)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=interface_html)
 
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error loading members: {html.escape(str(e))}</div>', status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading members: {html.escape(str(e))}</div>', status_code=500)
 
 
 @admin_router.get("/teams/{team_id}/members/add")
@@ -4574,10 +4300,7 @@ async def admin_add_team_members_view(
         HTMLResponse: Rendered add members interface
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # Get root_path from request
@@ -4593,18 +4316,12 @@ async def admin_add_team_members_view(
         # Get team details
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         # Check if current user is team owner
         current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
         if current_user_role != "owner":
-            response = HTMLResponse(content='<div class="text-red-500">Only team owners can add members</div>', status_code=403)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can add members</div>', status_code=403)
 
         # Get current team members to exclude from selection
         team_members = await team_service.get_team_members(team_id)
@@ -4692,17 +4409,11 @@ async def admin_add_team_members_view(
         </div>
         """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
-        response = HTMLResponse(content=add_members_html)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=add_members_html)
 
     except Exception as e:
         LOGGER.error(f"Error loading add members view for team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {html.escape(str(e))}</div>', status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading add members view: {html.escape(str(e))}</div>', status_code=500)
 
 
 @admin_router.get("/teams/{team_id}/edit")
@@ -4723,10 +4434,7 @@ async def admin_get_team_edit(
         HTMLResponse: Rendered team edit form
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # Get root path for URL construction
@@ -4735,10 +4443,7 @@ async def admin_get_team_edit(
 
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         safe_team_name = html.escape(team.name, quote=True)
         safe_description = html.escape(team.description or "")
@@ -4785,17 +4490,11 @@ async def admin_get_team_edit(
             </form>
         </div>
         """
-        response = HTMLResponse(content=edit_form)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=edit_form)
 
     except Exception as e:
         LOGGER.error(f"Error getting team edit form for {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error loading team: {html.escape(str(e))}</div>', status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading team: {html.escape(str(e))}</div>', status_code=500)
 
 
 @admin_router.post("/teams/{team_id}/update")
@@ -4821,10 +4520,7 @@ async def admin_update_team(
     root_path = request.scope.get("root_path", "") if request else ""
 
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -4847,14 +4543,9 @@ async def admin_update_team(
                 )
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
-                db.commit()
-                db.close()
                 return response
             error_msg = urllib.parse.quote("Team name is required")
-            response = RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         # Validate name and description for XSS (same validation as schema)
         if not re.match(settings.validation_name_pattern, name):
@@ -4866,14 +4557,9 @@ async def admin_update_team(
                 )
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
-                db.commit()
-                db.close()
                 return response
             error_msg = urllib.parse.quote("Team name contains invalid characters")
-            response = RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         try:
             SecurityValidator.validate_no_xss(name, "Team name")
@@ -4892,14 +4578,9 @@ async def admin_update_team(
                 )
                 response.headers["HX-Retarget"] = "#edit-team-error"
                 response.headers["HX-Reswap"] = "innerHTML"
-                db.commit()
-                db.close()
                 return response
             error_msg = urllib.parse.quote(str(ve))
-            response = RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
-            db.commit()
-            db.close()
-            return response
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
@@ -4917,14 +4598,9 @@ async def admin_update_team(
             """
             response = HTMLResponse(content=success_html)
             response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshTeamsList": True, "delayMs": 1500}}).decode()
-            db.commit()
-            db.close()
             return response
         # For regular form submission, redirect to admin page with teams section
-        response = RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Error updating team {team_id}: {e}")
@@ -4933,16 +4609,10 @@ async def admin_update_team(
         is_htmx = request.headers.get("HX-Request") == "true"
 
         if is_htmx:
-            response = HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {html.escape(str(e))}</div>', status_code=400)
         # For regular form submission, redirect to admin page with error parameter
         error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
-        response = RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
 
 @admin_router.delete("/teams/{team_id}")
@@ -4964,10 +4634,7 @@ async def admin_delete_team(
         HTMLResponse: Success message or error response
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -4989,16 +4656,11 @@ async def admin_delete_team(
         """
         response = HTMLResponse(content=success_html)
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error deleting team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error deleting team: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error deleting team: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/add-member")
@@ -5023,10 +4685,7 @@ async def admin_add_team_members(
         HTMLResponse: Success message or error response
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # First-Party
@@ -5036,20 +4695,14 @@ async def admin_add_team_members(
         # Check if team exists and validate visibility
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         # For private teams, only team owners can add members directly
         user_email_from_jwt = get_user_email(user)
         if team.visibility == "private":
             user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
             if user_role != "owner":
-                response = HTMLResponse(content='<div class="text-red-500">Only team owners can add members to private teams. Use the invitation system instead.</div>', status_code=403)
-                db.commit()
-                db.close()
-                return response
+                return HTMLResponse(content='<div class="text-red-500">Only team owners can add members to private teams. Use the invitation system instead.</div>', status_code=403)
 
         form = await request.form()
 
@@ -5081,10 +4734,7 @@ async def admin_add_team_members(
                 user_emails.append(cleaned)
             default_role = "member"  # Default if no per-user role specified
         else:
-            response = HTMLResponse(content='<div class="text-red-500">No users selected</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">No users selected</div>', status_code=400)
 
         # Get current team members
         team_members = await team_service.get_team_members(team_id)
@@ -5224,16 +4874,11 @@ async def admin_add_team_members(
                 }
             }
         ).decode()
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error adding member(s) to team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error adding member(s): {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error adding member(s): {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
@@ -5256,10 +4901,7 @@ async def admin_update_team_member_role(
         HTMLResponse: Success message or error response
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -5267,19 +4909,13 @@ async def admin_update_team_member_role(
         # Check if team exists and validate user permissions
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         # Only team owners can modify member roles
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
         if user_role != "owner":
-            response = HTMLResponse(content='<div class="text-red-500">Only team owners can modify member roles</div>', status_code=403)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can modify member roles</div>', status_code=403)
 
         form = await request.form()
         ue_val = form.get("user_email")
@@ -5288,16 +4924,10 @@ async def admin_update_team_member_role(
         new_role = nr_val if isinstance(nr_val, str) else "member"
 
         if not user_email:
-            response = HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
 
         if not new_role:
-            response = HTMLResponse(content='<div class="text-red-500">Role is required</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Role is required</div>', status_code=400)
 
         # Update member role
         await team_service.update_member_role(team_id=team_id, user_email=user_email, new_role=new_role, updated_by=user_email_from_jwt)
@@ -5320,16 +4950,11 @@ async def admin_update_team_member_role(
                 }
             }
         ).decode()
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error updating member role in team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error updating role: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error updating role: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
@@ -5352,10 +4977,7 @@ async def admin_remove_team_member(
         HTMLResponse: Success message or error response
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -5363,45 +4985,30 @@ async def admin_remove_team_member(
         # Check if team exists and validate user permissions
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         # Only team owners can remove members
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
         if user_role != "owner":
-            response = HTMLResponse(content='<div class="text-red-500">Only team owners can remove members</div>', status_code=403)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can remove members</div>', status_code=403)
 
         form = await request.form()
         ue_val = form.get("user_email")
         user_email = ue_val if isinstance(ue_val, str) else None
 
         if not user_email:
-            response = HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
 
         # Remove member from team
 
         try:
             success = await team_service.remove_member_from_team(team_id=team_id, user_email=user_email, removed_by=user_email_from_jwt)
             if not success:
-                response = HTMLResponse(content='<div class="text-red-500">Failed to remove member from team</div>', status_code=400)
-                db.commit()
-                db.close()
-                return response
+                return HTMLResponse(content='<div class="text-red-500">Failed to remove member from team</div>', status_code=400)
         except ValueError as e:
             # Handle specific business logic errors (like last owner)
-            response = HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(e))}</div>', status_code=400)
 
         # Return success message with script to refresh modal
         success_html = f"""
@@ -5420,16 +5027,11 @@ async def admin_remove_team_member(
                 }
             }
         ).decode()
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error removing member from team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error removing member: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error removing member: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/leave")
@@ -5452,10 +5054,7 @@ async def admin_leave_team(
         HTMLResponse: Success message or error response
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -5463,10 +5062,7 @@ async def admin_leave_team(
         # Check if team exists
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         # Get current user email
         user_email = get_user_email(user)
@@ -5474,34 +5070,22 @@ async def admin_leave_team(
         # Check if user is a member of the team
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
         if not user_role:
-            response = HTMLResponse(content='<div class="text-red-500">You are not a member of this team</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">You are not a member of this team</div>', status_code=400)
 
         # Prevent leaving personal teams
         if team.is_personal:
-            response = HTMLResponse(content='<div class="text-red-500">Cannot leave your personal team</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Cannot leave your personal team</div>', status_code=400)
 
         # Check if user is the last owner (use SQL COUNT instead of loading all members)
         if user_role == "owner":
             owner_count = team_service.count_team_owners(team_id)
             if owner_count <= 1:
-                response = HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner. Transfer ownership or delete the team instead.</div>', status_code=400)
-                db.commit()
-                db.close()
-                return response
+                return HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner. Transfer ownership or delete the team instead.</div>', status_code=400)
 
         # Remove user from team
         success = await team_service.remove_member_from_team(team_id=team_id, user_email=user_email, removed_by=user_email)
         if not success:
-            response = HTMLResponse(content='<div class="text-red-500">Failed to leave team</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Failed to leave team</div>', status_code=400)
 
         # Return success message with redirect
         success_html = """
@@ -5511,16 +5095,11 @@ async def admin_leave_team(
         """
         response = HTMLResponse(content=success_html)
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "closeAllModals": True, "delayMs": 1500}}).decode()
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error leaving team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error leaving team: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error leaving team: {html.escape(str(e))}</div>', status_code=400)
 
 
 # ============================================================================ #
@@ -5548,10 +5127,7 @@ async def admin_create_join_request(
         HTML response with success message or error
     """
     if not getattr(settings, "email_auth_enabled", False):
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -5560,30 +5136,21 @@ async def admin_create_join_request(
         # Get team to verify it's public
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         if team.visibility != "public":
-            response = HTMLResponse(content='<div class="text-red-500">Can only request to join public teams</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Can only request to join public teams</div>', status_code=400)
 
         # Check if user is already a member
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
         if user_role:
-            response = HTMLResponse(content='<div class="text-red-500">You are already a member of this team</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">You are already a member of this team</div>', status_code=400)
 
         # Check if user already has a pending request
         existing_requests = await team_service.get_user_join_requests(user_email, team_id)
         pending_request = next((req for req in existing_requests if req.status == "pending"), None)
         if pending_request:
-            response = HTMLResponse(
+            return HTMLResponse(
                 content=f"""
             <div class="text-yellow-600">
                 <p>You already have a pending request to join this team.</p>
@@ -5595,9 +5162,6 @@ async def admin_create_join_request(
             """,
                 status_code=200,
             )
-            db.commit()
-            db.close()
-            return response
 
         # Get form data for optional message
         form = await request.form()
@@ -5607,7 +5171,7 @@ async def admin_create_join_request(
         # Create join request
         join_request = await team_service.create_join_request(team_id=team_id, user_email=user_email, message=message)
 
-        response = HTMLResponse(
+        return HTMLResponse(
             content=f"""
         <div class="text-green-600">
             <p>Join request submitted successfully!</p>
@@ -5619,16 +5183,10 @@ async def admin_create_join_request(
         """,
             status_code=201,
         )
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         LOGGER.error(f"Error creating join request for team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error creating join request: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error creating join request: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.delete("/teams/{team_id}/join-request/{request_id}")
@@ -5651,10 +5209,7 @@ async def admin_cancel_join_request(
         HTML response with updated button state
     """
     if not getattr(settings, "email_auth_enabled", False):
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -5663,13 +5218,10 @@ async def admin_cancel_join_request(
         # Cancel the join request
         success = await team_service.cancel_join_request(request_id, user_email)
         if not success:
-            response = HTMLResponse(content='<div class="text-red-500">Failed to cancel join request</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Failed to cancel join request</div>', status_code=400)
 
         # Return the "Request to Join" button
-        response = HTMLResponse(
+        return HTMLResponse(
             content=f"""
         <button data-team-id="{team_id}" data-team-name="Team" onclick="requestToJoinTeamSafe(this)"
                 class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
@@ -5678,16 +5230,10 @@ async def admin_cancel_join_request(
         """,
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         LOGGER.error(f"Error canceling join request {request_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error canceling join request: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error canceling join request: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.get("/teams/{team_id}/join-requests")
@@ -5710,10 +5256,7 @@ async def admin_list_join_requests(
         HTML response with join requests list
     """
     if not getattr(settings, "email_auth_enabled", False):
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -5723,23 +5266,17 @@ async def admin_list_join_requests(
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
         if user_role != "owner":
-            response = HTMLResponse(content='<div class="text-red-500">Only team owners can view join requests</div>', status_code=403)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can view join requests</div>', status_code=403)
 
         # Get join requests
         join_requests = await team_service.list_join_requests(team_id)
 
         if not join_requests:
-            response = HTMLResponse(
+            return HTMLResponse(
                 content="""
             <div class="text-center py-8">
                 <p class="text-gray-500 dark:text-gray-400">No pending join requests</p>
@@ -5747,9 +5284,6 @@ async def admin_list_join_requests(
             """,
                 status_code=200,
             )
-            db.commit()
-            db.close()
-            return response
 
         requests_html = ""
         for req in join_requests:
@@ -5778,7 +5312,7 @@ async def admin_list_join_requests(
             """
 
         safe_team_name = html.escape(team.name)
-        response = HTMLResponse(
+        return HTMLResponse(
             content=f"""
         <div class="space-y-4">
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Join Requests for {safe_team_name}</h3>
@@ -5787,16 +5321,10 @@ async def admin_list_join_requests(
         """,
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         LOGGER.error(f"Error listing join requests for team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error loading join requests: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading join requests: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/approve")
@@ -5819,10 +5347,7 @@ async def admin_approve_join_request(
         HTML response with success message
     """
     if not getattr(settings, "email_auth_enabled", False):
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -5831,18 +5356,12 @@ async def admin_approve_join_request(
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
         if user_role != "owner":
-            response = HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
         member = await team_service.approve_join_request(request_id, approved_by=user_email)
         if not member:
-            response = HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
 
         response = HTMLResponse(
             content=f"""
@@ -5853,16 +5372,11 @@ async def admin_approve_join_request(
             status_code=200,
         )
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error approving join request {request_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error approving join request: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/reject")
@@ -5885,10 +5399,7 @@ async def admin_reject_join_request(
         HTML response with success message
     """
     if not getattr(settings, "email_auth_enabled", False):
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         team_service = TeamManagementService(db)
@@ -5897,18 +5408,12 @@ async def admin_reject_join_request(
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
         if user_role != "owner":
-            response = HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request
         success = await team_service.reject_join_request(request_id, rejected_by=user_email)
         if not success:
-            response = HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Join request not found</div>', status_code=404)
 
         response = HTMLResponse(
             content="""
@@ -5919,16 +5424,11 @@ async def admin_reject_join_request(
             status_code=200,
         )
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"teamId": team_id, "refreshJoinRequests": True, "delayMs": 1000}}).decode()
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error rejecting join request {request_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error rejecting join request: {html.escape(str(e))}</div>', status_code=400)
 
 
 # ============================================================================ #
@@ -6072,13 +5572,10 @@ async def admin_list_users(
         or JSON response for dropdown population.
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(
+        return HTMLResponse(
             content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>',
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
 
     LOGGER.debug(f"User {get_user_email(user)} requested user list (page={page}, per_page={per_page})")
 
@@ -6092,26 +5589,22 @@ async def admin_list_users(
         # Return JSON for dropdown population - always return first page with 100 users
         paginated_result = await auth_service.list_users(page=1, per_page=100)
         users_data = [{"email": user_obj.email, "full_name": user_obj.full_name, "is_active": user_obj.is_active, "is_admin": user_obj.is_admin} for user_obj in paginated_result.data]
-        response = ORJSONResponse(content={"users": users_data})
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"users": users_data})
 
     # List users with page-based pagination
     paginated_result = await auth_service.list_users(page=page, per_page=per_page)
 
     # End the read-only transaction early to avoid idle-in-transaction under load
+    db.commit()
+
     # Return standardized paginated response (for legacy compatibility)
-    response = ORJSONResponse(
+    return ORJSONResponse(
         content={
             "data": [{"email": u.email, "full_name": u.full_name, "is_active": u.is_active, "is_admin": u.is_admin} for u in paginated_result.data],
             "pagination": paginated_result.pagination.model_dump() if paginated_result.pagination else None,
             "links": paginated_result.links.model_dump() if paginated_result.links else None,
         }
     )
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.get("/users/partial", response_class=HTMLResponse)
@@ -6145,13 +5638,10 @@ async def admin_users_partial_html(
     """
     try:
         if not settings.email_auth_enabled:
-            response = HTMLResponse(
+            return HTMLResponse(
                 content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. User management requires email auth.</p></div>',
                 status_code=200,
             )
-            db.commit()
-            db.close()
-            return response
 
         auth_service = EmailAuthService(db)
 
@@ -6218,7 +5708,7 @@ async def admin_users_partial_html(
         db.commit()
 
         if render == "selector":
-            response = request.app.state.templates.TemplateResponse(
+            return request.app.state.templates.TemplateResponse(
                 request,
                 "team_members_selector.html",
                 {
@@ -6233,9 +5723,10 @@ async def admin_users_partial_html(
                     "team_id": team_id,
                 },
             )
-        elif render == "controls":
+
+        if render == "controls":
             base_url = f"{settings.app_root_path}/admin/users/partial"
-            response = request.app.state.templates.TemplateResponse(
+            return request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
                 {
@@ -6249,28 +5740,23 @@ async def admin_users_partial_html(
                     "root_path": request.scope.get("root_path", ""),
                 },
             )
-        else:
-            # Render template with paginated data
-            response = request.app.state.templates.TemplateResponse(
-                request,
-                "users_partial.html",
-                {
-                    "request": request,
-                    "data": users_data,
-                    "pagination": pagination.model_dump(),
-                    "root_path": request.scope.get("root_path", ""),
-                    "current_user_email": current_user_email,
-                },
-            )
-        db.close()
-        return response
+
+        # Render template with paginated data
+        return request.app.state.templates.TemplateResponse(
+            request,
+            "users_partial.html",
+            {
+                "request": request,
+                "data": users_data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+                "current_user_email": current_user_email,
+            },
+        )
 
     except Exception as e:
         LOGGER.error(f"Error loading users partial for admin {user}: {e}")
-        response = HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading users: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/teams/{team_id}/members/partial", response_class=HTMLResponse)
@@ -6298,13 +5784,10 @@ async def admin_team_members_partial_html(
     """
     try:
         if not settings.email_auth_enabled:
-            response = HTMLResponse(
+            return HTMLResponse(
                 content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
                 status_code=200,
             )
-            db.commit()
-            db.close()
-            return response
 
         team_service = TeamManagementService(db)
         current_user_email = get_user_email(user)
@@ -6312,24 +5795,15 @@ async def admin_team_members_partial_html(
         try:
             team_id = _normalize_team_id(team_id)
         except ValueError:
-            response = HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
 
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
         if current_user_role != "owner":
-            response = HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
 
         # Get paginated team members
         paginated_result = await team_service.get_team_members(team_id, page=page, per_page=per_page)
@@ -6344,7 +5818,7 @@ async def admin_team_members_partial_html(
 
         root_path = request.scope.get("root_path", "")
         next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
             {
@@ -6361,15 +5835,10 @@ async def admin_team_members_partial_html(
                 "next_page_url": next_page_url,
             },
         )
-        db.close()
-        return response
 
     except Exception as e:
         LOGGER.error(f"Error loading team members partial for team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading members: {html.escape(str(e))}</p></div>', status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading members: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/teams/{team_id}/non-members/partial", response_class=HTMLResponse)
@@ -6397,13 +5866,10 @@ async def admin_team_non_members_partial_html(
     """
     try:
         if not settings.email_auth_enabled:
-            response = HTMLResponse(
+            return HTMLResponse(
                 content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled.</p></div>',
                 status_code=200,
             )
-            db.commit()
-            db.close()
-            return response
 
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
@@ -6412,24 +5878,15 @@ async def admin_team_non_members_partial_html(
         try:
             team_id = _normalize_team_id(team_id)
         except ValueError:
-            response = HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Invalid team ID</div>', status_code=400)
 
         team = await team_service.get_team_by_id(team_id)
         if not team:
-            response = HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         current_user_role = await team_service.get_user_role_in_team(current_user_email, team_id)
         if current_user_role != "owner":
-            response = HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can manage members</div>', status_code=403)
 
         # Get paginated non-members
         paginated_result = await auth_service.list_users_not_in_team(team_id, page=page, per_page=per_page)
@@ -6441,7 +5898,7 @@ async def admin_team_non_members_partial_html(
 
         root_path = request.scope.get("root_path", "")
         next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
             {
@@ -6458,15 +5915,10 @@ async def admin_team_non_members_partial_html(
                 "next_page_url": next_page_url,
             },
         )
-        db.close()
-        return response
 
     except Exception as e:
         LOGGER.error(f"Error loading team non-members partial for team {team_id}: {e}")
-        response = HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading non-members: {html.escape(str(e))}</p></div>', status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-center py-8"><p class="text-red-500">Error loading non-members: {html.escape(str(e))}</p></div>', status_code=200)
 
 
 @admin_router.get("/users/search", response_class=JSONResponse)
@@ -6492,20 +5944,14 @@ async def admin_search_users(
         JSONResponse: Dictionary containing list of matching users and count
     """
     if not settings.email_auth_enabled:
-        response = {"users": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"users": [], "count": 0}
 
     user_email = get_user_email(user)
     search_query = q.strip().lower()
 
     if not search_query:
         # If no search query, return empty list
-        response = {"users": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"users": [], "count": 0}
 
     LOGGER.debug(f"User {user_email} searching users with query: {search_query}")
 
@@ -6526,10 +5972,7 @@ async def admin_search_users(
         for user_obj in users_list
     ]
 
-    response = {"users": results, "count": len(results)}
-    db.commit()
-    db.close()
-    return response
+    return {"users": results, "count": len(results)}
 
 
 @admin_router.post("/users")
@@ -6557,10 +6000,7 @@ async def admin_create_user(
         if password:
             is_valid, error_msg = validate_password_strength(password)
             if not is_valid:
-                response = HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
-                db.commit()
-                db.close()
-                return response
+                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
 
         # First-Party
 
@@ -6584,16 +6024,11 @@ async def admin_create_user(
         # This will trigger a reload of the users-list-container
         response = HTMLResponse(content='<div class="text-green-500">User created successfully!</div>', status_code=201)
         response.headers["HX-Trigger"] = "userCreated"
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error creating user by admin {user}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error creating user: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error creating user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.get("/users/{user_email}/edit")
@@ -6614,10 +6049,7 @@ async def admin_get_user_edit(
         HTMLResponse: User edit form HTML
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # Get root path for URL construction
@@ -6633,10 +6065,7 @@ async def admin_get_user_edit(
 
         user_obj = await auth_service.get_user_by_email(decoded_email)
         if not user_obj:
-            response = HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
 
         # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
         if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
@@ -6752,17 +6181,11 @@ async def admin_get_user_edit(
             </form>
         </div>
         """
-        response = HTMLResponse(content=edit_form)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=edit_form)
 
     except Exception as e:
         LOGGER.error(f"Error getting user edit form for {user_email}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error loading user: {html.escape(str(e))}</div>', status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error loading user: {html.escape(str(e))}</div>', status_code=500)
 
 
 @admin_router.post("/users/{user_email}/update")
@@ -6784,10 +6207,7 @@ async def admin_update_user(
         HTMLResponse: Success message or error response
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # First-Party
@@ -6806,20 +6226,14 @@ async def admin_update_user(
 
         # Validate password confirmation if password is being changed
         if password and password != confirm_password:
-            response = HTMLResponse(content='<div class="text-red-500">Passwords do not match</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Passwords do not match</div>', status_code=400)
 
         # Check if trying to remove admin privileges from last admin
         user_obj = await auth_service.get_user_by_email(decoded_email)
         if user_obj and user_obj.is_admin and not is_admin:
             # This user is currently an admin and we're trying to remove admin privileges
             if await auth_service.is_last_active_admin(decoded_email):
-                response = HTMLResponse(content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400)
-                db.commit()
-                db.close()
-                return response
+                return HTMLResponse(content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400)
 
         # Update user
         fn_val = form.get("full_name")
@@ -6831,10 +6245,7 @@ async def admin_update_user(
         if password:
             is_valid, error_msg = validate_password_strength(password)
             if not is_valid:
-                response = HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
-                db.commit()
-                db.close()
-                return response
+                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
 
         await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password)
 
@@ -6846,16 +6257,11 @@ async def admin_update_user(
         """
         response = HTMLResponse(content=success_html)
         response.headers["HX-Trigger"] = orjson.dumps({"adminUserAction": {"closeUserEditModal": True, "refreshUsersList": True, "delayMs": 1500}}).decode()
-        db.commit()
-        db.close()
         return response
 
     except Exception as e:
         LOGGER.error(f"Error updating user {user_email}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/activate")
@@ -6877,10 +6283,7 @@ async def admin_activate_user(
         HTMLResponse: Success message or error response
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # Get root path for URL construction
@@ -6899,17 +6302,11 @@ async def admin_activate_user(
 
         user_obj = await auth_service.activate_user(decoded_email)
         admin_count = await auth_service.count_active_admin_users()
-        response = HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 
     except Exception as e:
         LOGGER.error(f"Error activating user {user_email}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error activating user: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error activating user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/deactivate")
@@ -6931,10 +6328,7 @@ async def admin_deactivate_user(
         HTMLResponse: Success message or error response
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # Get root path for URL construction
@@ -6953,31 +6347,19 @@ async def admin_deactivate_user(
 
         # Prevent self-deactivation
         if decoded_email == current_user_email:
-            response = HTMLResponse(content='<div class="text-red-500">Cannot deactivate your own account</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Cannot deactivate your own account</div>', status_code=400)
 
         # Prevent deactivating the last active admin user
         if await auth_service.is_last_active_admin(decoded_email):
-            response = HTMLResponse(content='<div class="text-red-500">Cannot deactivate the last remaining admin user</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Cannot deactivate the last remaining admin user</div>', status_code=400)
 
         user_obj = await auth_service.deactivate_user(decoded_email)
         admin_count = await auth_service.count_active_admin_users()
-        response = HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 
     except Exception as e:
         LOGGER.error(f"Error deactivating user {user_email}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error deactivating user: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error deactivating user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.delete("/users/{user_email}")
@@ -7000,10 +6382,7 @@ async def admin_delete_user(
         HTMLResponse: Success/error message
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # First-Party
@@ -7019,32 +6398,20 @@ async def admin_delete_user(
 
         # Prevent self-deletion
         if decoded_email == current_user_email:
-            response = HTMLResponse(content='<div class="text-red-500">Cannot delete your own account</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Cannot delete your own account</div>', status_code=400)
 
         # Prevent deleting the last active admin user
         if await auth_service.is_last_active_admin(decoded_email):
-            response = HTMLResponse(content='<div class="text-red-500">Cannot delete the last remaining admin user</div>', status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">Cannot delete the last remaining admin user</div>', status_code=400)
 
         await auth_service.delete_user(decoded_email)
 
         # Return empty content to remove the user from the list
-        response = HTMLResponse(content="", status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content="", status_code=200)
 
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/force-password-change")
@@ -7091,10 +6458,7 @@ async def admin_force_password_change(
         True
     """
     if not settings.email_auth_enabled:
-        response = HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
         # Get root path for URL construction
@@ -7111,10 +6475,7 @@ async def admin_force_password_change(
         # Get the user to update
         user_obj = await auth_service.get_user_by_email(decoded_email)
         if not user_obj:
-            response = HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
 
         # Set password_change_required flag
         user_obj.password_change_required = True
@@ -7123,16 +6484,11 @@ async def admin_force_password_change(
         LOGGER.info(f"Admin {current_user_email} forced password change for user {decoded_email}")
 
         admin_count = await auth_service.count_active_admin_users()
-        response = HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
-        db.close()
-        return response
+        return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 
     except Exception as e:
         LOGGER.error(f"Error forcing password change for user {user_email}: {e}")
-        response = HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {html.escape(str(e))}</div>', status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {html.escape(str(e))}</div>', status_code=400)
 
 
 @admin_router.get("/tools", response_model=PaginatedResponse)
@@ -7174,15 +6530,14 @@ async def admin_list_tools(
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
+    db.commit()
+
     # Return standardized paginated response
-    response = {
+    return {
         "data": [tool.model_dump(by_alias=True) for tool in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.get("/tools/partial", response_class=HTMLResponse)
@@ -7332,7 +6687,7 @@ async def admin_tools_partial_html(
 
     # If render=controls, return only pagination controls
     if render == "controls":
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
             {
@@ -7347,8 +6702,8 @@ async def admin_tools_partial_html(
         )
 
     # If render=selector, return tool selector items for infinite scroll
-    elif render == "selector":
-        response = request.app.state.templates.TemplateResponse(
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
             request,
             "tools_selector_items.html",
             {
@@ -7361,21 +6716,18 @@ async def admin_tools_partial_html(
         )
 
     # Render template with paginated data
-    else:
-        response = request.app.state.templates.TemplateResponse(
-            request,
-            "tools_partial.html",
-            {
-                "request": request,
-                "data": data,
-                "pagination": pagination.model_dump(),
-                "links": links.model_dump() if links else None,
-                "root_path": request.scope.get("root_path", ""),
-                "include_inactive": include_inactive,
-            },
-        )
-    db.close()
-    return response
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "tools_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
 
 
 @admin_router.get("/tool-ops/partial", response_class=HTMLResponse)
@@ -7474,7 +6826,7 @@ async def admin_tool_ops_partial(
 
     db.commit()
 
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "toolops_partial.html",
         {
@@ -7483,8 +6835,6 @@ async def admin_tool_ops_partial(
             "root_path": request.scope.get("root_path", ""),
         },
     )
-    db.close()
-    return response
 
 
 @admin_router.get("/tools/ids", response_class=JSONResponse)
@@ -7567,10 +6917,7 @@ async def admin_get_all_tool_ids(
     # Get all IDs
     tool_ids = [row[0] for row in db.execute(query).all()]
 
-    response = {"tool_ids": tool_ids, "count": len(tool_ids)}
-    db.commit()
-    db.close()
-    return response
+    return {"tool_ids": tool_ids, "count": len(tool_ids)}
 
 
 @admin_router.get("/tools/search", response_class=JSONResponse)
@@ -7607,10 +6954,7 @@ async def admin_search_tools(
 
     if not search_query:
         # If no search query, return empty list
-        response = {"tools": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"tools": [], "count": 0}
 
     # Build base query
     team_service = TeamManagementService(db)
@@ -7694,10 +7038,7 @@ async def admin_search_tools(
     for row in results:
         tools.append({"id": row.id, "name": row.original_name, "display_name": row.display_name, "custom_name": row.custom_name})  # original_name for search matching
 
-    response = {"tools": tools, "count": len(tools)}
-    db.commit()
-    db.close()
-    return response
+    return {"tools": tools, "count": len(tools)}
 
 
 @admin_router.get("/prompts/partial", response_class=HTMLResponse)
@@ -7856,7 +7197,7 @@ async def admin_prompts_partial_html(
     db.commit()
 
     if render == "controls":
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
             {
@@ -7870,8 +7211,8 @@ async def admin_prompts_partial_html(
             },
         )
 
-    elif render == "selector":
-        response = request.app.state.templates.TemplateResponse(
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
             request,
             "prompts_selector_items.html",
             {
@@ -7883,21 +7224,18 @@ async def admin_prompts_partial_html(
             },
         )
 
-    else:
-        response = request.app.state.templates.TemplateResponse(
-            request,
-            "prompts_partial.html",
-            {
-                "request": request,
-                "data": data,
-                "pagination": pagination.model_dump(),
-                "links": links.model_dump() if links else None,
-                "root_path": request.scope.get("root_path", ""),
-                "include_inactive": include_inactive,
-            },
-        )
-    db.close()
-    return response
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "prompts_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
 
 
 @admin_router.get("/gateways/partial", response_class=HTMLResponse)
@@ -8024,7 +7362,7 @@ async def admin_gateways_partial_html(
     LOGGER.info(f"🔷 GATEWAYS PARTIAL RESPONSE - Returning {len(data)} gateways, render mode: {render or 'default'}, team_id used in query: {team_id}")
 
     if render == "controls":
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
             {
@@ -8038,28 +7376,25 @@ async def admin_gateways_partial_html(
             },
         )
 
-    elif render == "selector":
-        response = request.app.state.templates.TemplateResponse(
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
             request,
             "gateways_selector_items.html",
             {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
         )
 
-    else:
-        response = request.app.state.templates.TemplateResponse(
-            request,
-            "gateways_partial.html",
-            {
-                "request": request,
-                "data": data,
-                "pagination": pagination.model_dump(),
-                "links": links.model_dump() if links else None,
-                "root_path": request.scope.get("root_path", ""),
-                "include_inactive": include_inactive,
-            },
-        )
-    db.close()
-    return response
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "gateways_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
 
 
 @admin_router.get("/gateways/ids", response_class=JSONResponse)
@@ -8121,10 +7456,7 @@ async def admin_get_all_gateways_ids(
         query = query.where(or_(*access_conditions))
 
     gateway_ids = [row[0] for row in db.execute(query).all()]
-    response = {"gateway_ids": gateway_ids, "count": len(gateway_ids)}
-    db.commit()
-    db.close()
-    return response
+    return {"gateway_ids": gateway_ids, "count": len(gateway_ids)}
 
 
 @admin_router.get("/gateways/search", response_class=JSONResponse)
@@ -8159,10 +7491,7 @@ async def admin_search_gateways(
     user_email = get_user_email(user)
     search_query = q.strip().lower()
     if not search_query:
-        response = {"gateways": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"gateways": [], "count": 0}
 
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
@@ -8225,10 +7554,7 @@ async def admin_search_gateways(
             }
         )
 
-    response = {"gateways": gateways, "count": len(gateways)}
-    db.commit()
-    db.close()
-    return response
+    return {"gateways": gateways, "count": len(gateways)}
 
 
 @admin_router.get("/servers/ids", response_class=JSONResponse)
@@ -8292,10 +7618,7 @@ async def admin_get_all_server_ids(
         query = query.where(or_(*access_conditions))
 
     server_ids = [row[0] for row in db.execute(query).all()]
-    response = {"server_ids": server_ids, "count": len(server_ids)}
-    db.commit()
-    db.close()
-    return response
+    return {"server_ids": server_ids, "count": len(server_ids)}
 
 
 @admin_router.get("/servers/search", response_class=JSONResponse)
@@ -8330,10 +7653,7 @@ async def admin_search_servers(
     user_email = get_user_email(user)
     search_query = q.strip().lower()
     if not search_query:
-        response = {"servers": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"servers": [], "count": 0}
 
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
@@ -8395,10 +7715,7 @@ async def admin_search_servers(
             }
         )
 
-    response = {"servers": servers, "count": len(servers)}
-    db.commit()
-    db.close()
-    return response
+    return {"servers": servers, "count": len(servers)}
 
 
 @admin_router.get("/resources/partial", response_class=HTMLResponse)
@@ -8558,7 +7875,7 @@ async def admin_resources_partial_html(
     db.commit()
 
     if render == "controls":
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
             {
@@ -8572,8 +7889,8 @@ async def admin_resources_partial_html(
             },
         )
 
-    elif render == "selector":
-        response = request.app.state.templates.TemplateResponse(
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
             request,
             "resources_selector_items.html",
             {
@@ -8585,21 +7902,18 @@ async def admin_resources_partial_html(
             },
         )
 
-    else:
-        response = request.app.state.templates.TemplateResponse(
-            request,
-            "resources_partial.html",
-            {
-                "request": request,
-                "data": data,
-                "pagination": pagination.model_dump(),
-                "links": links.model_dump() if links else None,
-                "root_path": request.scope.get("root_path", ""),
-                "include_inactive": include_inactive,
-            },
-        )
-    db.close()
-    return response
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "resources_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
 
 
 @admin_router.get("/prompts/ids", response_class=JSONResponse)
@@ -8681,10 +7995,7 @@ async def admin_get_all_prompt_ids(
         query = query.where(or_(*access_conditions))
 
     prompt_ids = [row[0] for row in db.execute(query).all()]
-    response = {"prompt_ids": prompt_ids, "count": len(prompt_ids)}
-    db.commit()
-    db.close()
-    return response
+    return {"prompt_ids": prompt_ids, "count": len(prompt_ids)}
 
 
 @admin_router.get("/resources/ids", response_class=JSONResponse)
@@ -8766,10 +8077,7 @@ async def admin_get_all_resource_ids(
         query = query.where(or_(*access_conditions))
 
     resource_ids = [row[0] for row in db.execute(query).all()]
-    response = {"resource_ids": resource_ids, "count": len(resource_ids)}
-    db.commit()
-    db.close()
-    return response
+    return {"resource_ids": resource_ids, "count": len(resource_ids)}
 
 
 @admin_router.get("/resources/search", response_class=JSONResponse)
@@ -8806,10 +8114,7 @@ async def admin_search_resources(
     user_email = get_user_email(user)
     search_query = q.strip().lower()
     if not search_query:
-        response = {"resources": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"resources": [], "count": 0}
 
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
@@ -8878,10 +8183,7 @@ async def admin_search_resources(
     for row in results:
         resources.append({"id": row.id, "name": row.name, "description": row.description})
 
-    response = {"resources": resources, "count": len(resources)}
-    db.commit()
-    db.close()
-    return response
+    return {"resources": resources, "count": len(resources)}
 
 
 @admin_router.get("/prompts/search", response_class=JSONResponse)
@@ -8918,10 +8220,7 @@ async def admin_search_prompts(
     user_email = get_user_email(user)
     search_query = q.strip().lower()
     if not search_query:
-        response = {"prompts": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"prompts": [], "count": 0}
 
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
@@ -9003,10 +8302,7 @@ async def admin_search_prompts(
             }
         )
 
-    response = {"prompts": prompts, "count": len(prompts)}
-    db.commit()
-    db.close()
-    return response
+    return {"prompts": prompts, "count": len(prompts)}
 
 
 @admin_router.get("/a2a/partial", response_class=HTMLResponse)
@@ -9151,7 +8447,7 @@ async def admin_a2a_partial_html(
     db.commit()
 
     if render == "controls":
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "pagination_controls.html",
             {
@@ -9165,8 +8461,8 @@ async def admin_a2a_partial_html(
             },
         )
 
-    elif render == "selector":
-        response = request.app.state.templates.TemplateResponse(
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
             request,
             "agents_selector_items.html",
             {
@@ -9178,21 +8474,18 @@ async def admin_a2a_partial_html(
             },
         )
 
-    else:
-        response = request.app.state.templates.TemplateResponse(
-            request,
-            "agents_partial.html",
-            {
-                "request": request,
-                "data": data,
-                "pagination": pagination.model_dump(),
-                "links": links.model_dump() if links else None,
-                "root_path": request.scope.get("root_path", ""),
-                "include_inactive": include_inactive,
-            },
-        )
-    db.close()
-    return response
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "agents_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
 
 
 @admin_router.get("/a2a/ids", response_class=JSONResponse)
@@ -9254,10 +8547,7 @@ async def admin_get_all_agent_ids(
         query = query.where(or_(*access_conditions))
 
     agent_ids = [row[0] for row in db.execute(query).all()]
-    response = {"agent_ids": agent_ids, "count": len(agent_ids)}
-    db.commit()
-    db.close()
-    return response
+    return {"agent_ids": agent_ids, "count": len(agent_ids)}
 
 
 @admin_router.get("/a2a/search", response_class=JSONResponse)
@@ -9292,10 +8582,7 @@ async def admin_search_a2a_agents(
     user_email = get_user_email(user)
     search_query = q.strip().lower()
     if not search_query:
-        response = {"agents": [], "count": 0}
-        db.commit()
-        db.close()
-        return response
+        return {"agents": [], "count": 0}
 
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
@@ -9358,10 +8645,7 @@ async def admin_search_a2a_agents(
             }
         )
 
-    response = {"agents": agents, "count": len(agents)}
-    db.commit()
-    db.close()
-    return response
+    return {"agents": agents, "count": len(agents)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
@@ -9395,10 +8679,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
     try:
         tool = await tool_service.get_tool(db, tool_id)
-        response = tool.model_dump(by_alias=True)
-        db.commit()
-        db.close()
-        return response
+        return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -9527,43 +8808,25 @@ async def admin_add_tool(
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
         )
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
         LOGGER.error(f"IntegrityError in admin_add_tool: {error_message}")
-        response = ORJSONResponse(status_code=409, content=error_message)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(status_code=409, content=error_message)
     except ToolNameConflictError as ex:
         LOGGER.error(f"ToolNameConflictError in admin_add_tool: {str(ex)}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ToolError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
         LOGGER.error(f"ValidationError in admin_add_tool: {str(ex)}")
-        response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:
         LOGGER.error(f"Unexpected error in admin_add_tool: {str(ex)}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
@@ -9684,50 +8947,29 @@ async def admin_edit_tool(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        response = ORJSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": str(e), "success": False},
             status_code=403,
         )
-        db.commit()
-        db.close()
-        return response
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
         LOGGER.error(f"IntegrityError in admin_tool_resource: {error_message}")
-        response = ORJSONResponse(status_code=409, content=error_message)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(status_code=409, content=error_message)
     except ToolNameConflictError as ex:
         LOGGER.error(f"ToolNameConflictError in admin_edit_tool: {str(ex)}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ToolError as ex:
         LOGGER.error(f"ToolError in admin_edit_tool: {str(ex)}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # Catch Pydantic validation errors
         LOGGER.error(f"ValidationError in admin_edit_tool: {str(ex)}")
-        response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:  # Generic catch-all for unexpected errors
         LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/delete")
@@ -9777,24 +9019,12 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#tools", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
 @admin_router.post("/tools/{tool_id}/state")
@@ -9853,24 +9083,12 @@ async def admin_set_tool_state(
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#tools", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
@@ -9899,10 +9117,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
     LOGGER.debug(f"User {get_user_email(user)} requested details for gateway ID {gateway_id}")
     try:
         gateway = await gateway_service.get_gateway(db, gateway_id)
-        response = gateway.model_dump(by_alias=True)
-        db.commit()
-        db.close()
-        return response
+        return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -10089,26 +9304,17 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
-        response = ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
 
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
         error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
-        response = ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     except RuntimeError as err:
         # --- Getting only the custom message from the RuntimeError ---
         error_ctx = [str(err)]
-        response = ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     user_email = get_user_email(user)
     team_id = form.get("team_id", None)
@@ -10147,54 +9353,27 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 "4. Return to the admin panel\n\n"
                 "Tools will not work until OAuth authorization is completed."
             )
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": message, "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
 
     except GatewayConnectionError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
     except GatewayDuplicateConflictError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ValueError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
-        response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
-        response = ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
@@ -10372,52 +9551,28 @@ async def admin_edit_gateway(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "Gateway updated successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": str(e), "success": False},
             status_code=403,
         )
-        db.commit()
-        db.close()
-        return response
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
-            response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, ValueError):
-            response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         if isinstance(ex, RuntimeError):
-            response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
         if isinstance(ex, ValidationError):
-            response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
-            response = ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
-            db.commit()
-            db.close()
-            return response
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+            return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
@@ -10466,24 +9621,12 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
 @admin_router.get("/resources/test/{resource_uri:path}")
@@ -10527,10 +9670,7 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
             user=None if is_admin else user_email,
             token_teams=None,
         )
-        response = {"content": resource_content}
-        db.commit()
-        db.close()
-        return response
+        return {"content": resource_content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -10565,10 +9705,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
     try:
         resource = await resource_service.get_resource_by_id(db, resource_id, include_inactive=True)
         # content = await resource_service.read_resource(db, resource_id=resource_id)
-        response = {"resource": resource.model_dump(by_alias=True)}  # , "content": None}
-        db.commit()
-        db.close()
-        return response
+        return {"resource": resource.model_dump(by_alias=True)}  # , "content": None}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -10656,13 +9793,10 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             owner_email=user_email,
             visibility=visibility,
         )
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "Add resource registered successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
     except Exception as ex:
         # Roll back only when a transaction is active to avoid sqlite3 "no transaction" errors.
         try:
@@ -10677,28 +9811,16 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
 
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
-            response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
-            response = ORJSONResponse(status_code=409, content=error_message)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(status_code=409, content=error_message)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
-            response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         LOGGER.error(f"Error in admin_add_resource: {ex}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/resources/{resource_id}/edit")
@@ -10764,44 +9886,26 @@ async def admin_edit_resource(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=get_user_email(user),
         )
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "Resource updated successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        response = ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
-            response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_resource: {error_message}")
-            response = ORJSONResponse(status_code=409, content=error_message)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(status_code=409, content=error_message)
         if isinstance(ex, ResourceURIConflictError):
             LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
-            response = ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_resource: {ex}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/resources/{resource_id}/delete")
@@ -10856,24 +9960,12 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#resources", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
 @admin_router.post("/resources/{resource_id}/state")
@@ -10929,24 +10021,12 @@ async def admin_set_resource_state(
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#resources", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
 @admin_router.get("/prompts/{prompt_id}")
@@ -10976,10 +10056,7 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
     try:
         prompt_details = await prompt_service.get_prompt_details(db, prompt_id)
         prompt = PromptRead.model_validate(prompt_details)
-        response = prompt.model_dump(by_alias=True)
-        db.commit()
-        db.close()
-        return response
+        return prompt.model_dump(by_alias=True)
     except PromptNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -11058,38 +10135,23 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             owner_email=user_email,
             visibility=visibility,
         )
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "Prompt registered successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
-            response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_add_prompt: {error_message}")
-            response = ORJSONResponse(status_code=409, content=error_message)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(status_code=409, content=error_message)
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_add_prompt: {ex}")
-            response = ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_add_prompt: {ex}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{prompt_id}/edit")
@@ -11163,44 +10225,26 @@ async def admin_edit_prompt(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "Prompt updated successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
-        response = ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
-            response = ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_prompt: {error_message}")
-            response = ORJSONResponse(status_code=409, content=error_message)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(status_code=409, content=error_message)
         if isinstance(ex, PromptNameConflictError):
             LOGGER.error(f"PromptNameConflictError in admin_edit_prompt: {ex}")
-            response = ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_prompt: {ex}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{prompt_id}/delete")
@@ -11249,24 +10293,12 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
 @admin_router.post("/prompts/{prompt_id}/state")
@@ -11322,24 +10354,12 @@ async def admin_set_prompt_state(
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
-            response = RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
-            db.commit()
-            db.close()
-            return response
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
-        db.commit()
-        db.close()
-        return response
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
 
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-        db.commit()
-        db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
-    db.commit()
-    db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
 @admin_router.post("/roots")
@@ -11374,10 +10394,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         name = name_value
     await root_service.add_root(uri, name)
     root_path = request.scope.get("root_path", "")
-    response = RedirectResponse(f"{root_path}/admin#roots", status_code=303)
-    _db.commit()
-    _db.close()
-    return response
+    return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
 
 
 @admin_router.post("/roots/{uri:path}/delete")
@@ -11412,14 +10429,8 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
     root_path = request.scope.get("root_path", "")
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     if is_inactive_checked.lower() == "true":
-        response = RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
-        _db.commit()
-        _db.close()
-        return response
-    response = RedirectResponse(f"{root_path}/admin#roots", status_code=303)
-    _db.commit()
-    _db.close()
-    return response
+        return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
+    return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
 
 
 # Metrics
@@ -11501,8 +10512,6 @@ async def get_aggregated_metrics(
             "servers": await server_service.get_top_servers(db, limit=10),
         },
     }
-    db.commit()
-    db.close()
     return metrics
 
 
@@ -11576,7 +10585,7 @@ async def admin_metrics_partial_html(
     )
 
     # Render template
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "metrics_top_performers_partial.html",
         {
@@ -11587,9 +10596,6 @@ async def admin_metrics_partial_html(
             "root_path": request.scope.get("root_path", ""),
         },
     )
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
@@ -11617,10 +10623,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
     await resource_service.reset_metrics(db)
     await server_service.reset_metrics(db)
     await prompt_service.reset_metrics(db)
-    response = {"message": "All metrics reset successfully", "success": True}
-    db.commit()
-    db.close()
-    return response
+    return {"message": "All metrics reset successfully", "success": True}
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
@@ -11675,12 +10678,9 @@ async def admin_test_gateway(
                     # Get user-specific OAuth token
                     if not user_email:
                         latency_ms = int((time.monotonic() - start_time) * 1000)
-                        response = GatewayTestResponse(
+                        return GatewayTestResponse(
                             status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."}
                         )
-                        db.commit()
-                        db.close()
-                        return response
 
                     access_token: str = await token_storage.get_user_token(gateway.id, user_email)
 
@@ -11688,19 +10688,13 @@ async def admin_test_gateway(
                         headers["Authorization"] = f"Bearer {access_token}"
                     else:
                         latency_ms = int((time.monotonic() - start_time) * 1000)
-                        response = GatewayTestResponse(
+                        return GatewayTestResponse(
                             status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."}
                         )
-                        db.commit()
-                        db.close()
-                        return response
                 except Exception as e:
                     LOGGER.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
                     latency_ms = int((time.monotonic() - start_time) * 1000)
-                    response = GatewayTestResponse(status_code=500, latency_ms=latency_ms, body={"error": f"OAuth token retrieval failed for gateway: {str(e)}"})
-                    db.commit()
-                    db.close()
-                    return response
+                    return GatewayTestResponse(status_code=500, latency_ms=latency_ms, body={"error": f"OAuth token retrieval failed for gateway: {str(e)}"})
             else:
                 # For Client Credentials flow, get token directly
                 try:
@@ -11762,10 +10756,7 @@ async def admin_test_gateway(
             db=db,
         )
 
-        response_out = GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
-        db.commit()
-        db.close()
-        return response_out
+        return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
         LOGGER.warning(f"Gateway test failed: {e}")
@@ -11793,10 +10784,7 @@ async def admin_test_gateway(
             db=db,
         )
 
-        response_out = GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
-        db.commit()
-        db.close()
-        return response_out
+        return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
 
 # Event Streaming via SSE to the Admin UI
@@ -11997,7 +10985,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
             await asyncio.gather(*tasks, return_exceptions=True)
             LOGGER.debug("Background event subscription tasks cleaned up")
 
-    response = StreamingResponse(
+    return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
         headers={
@@ -12006,9 +10994,6 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
             "X-Accel-Buffering": "no",
         },
     )
-    _db.commit()
-    _db.close()
-    return response
 
 
 ####################
@@ -12090,8 +11075,6 @@ async def admin_list_tags(
 
             result.append(tag_dict)
 
-        db.commit()
-        db.close()
         return result
     except Exception as e:
         LOGGER.error(f"Failed to retrieve tags for admin: {str(e)}")
@@ -12155,19 +11138,13 @@ async def admin_import_tools(
                 payload = await _read_request_json(request)
             except Exception as ex:
                 LOGGER.exception("Invalid JSON body")
-                response = ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
-                db.commit()
-                db.close()
-                return response
+                return ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
         else:
             try:
                 form = await request.form()
             except Exception as ex:
                 LOGGER.exception("Invalid form body")
-                response = ORJSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
-                db.commit()
-                db.close()
-                return response
+                return ORJSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
             # Check for file upload first
             if "tools_file" in form:
                 file = form["tools_file"]
@@ -12177,45 +11154,27 @@ async def admin_import_tools(
                         payload = orjson.loads(content.decode("utf-8"))
                     except (orjson.JSONDecodeError, UnicodeDecodeError) as ex:
                         LOGGER.exception("Invalid JSON file")
-                        response = ORJSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
-                        db.commit()
-                        db.close()
-                        return response
+                        return ORJSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
                 else:
-                    response = ORJSONResponse({"success": False, "message": "Invalid file upload"}, status_code=422)
-                    db.commit()
-                    db.close()
-                    return response
+                    return ORJSONResponse({"success": False, "message": "Invalid file upload"}, status_code=422)
             else:
                 # Check for JSON in form fields
                 raw_val = form.get("tools") or form.get("tools_json") or form.get("json") or form.get("payload")
                 raw = raw_val if isinstance(raw_val, str) else None
                 if not raw:
-                    response = ORJSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
-                    db.commit()
-                    db.close()
-                    return response
+                    return ORJSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
                 try:
                     payload = orjson.loads(raw)
                 except Exception as ex:
                     LOGGER.exception("Invalid JSON in form field")
-                    response = ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
-                    db.commit()
-                    db.close()
-                    return response
+                    return ORJSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
 
         if not isinstance(payload, list):
-            response = ORJSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse({"success": False, "message": "Payload must be a JSON array of tools."}, status_code=422)
 
         max_batch = settings.mcpgateway_bulk_import_max_tools
         if len(payload) > max_batch:
-            response = ORJSONResponse({"success": False, "message": f"Too many tools ({len(payload)}). Max {max_batch}."}, status_code=413)
-            db.commit()
-            db.close()
-            return response
+            return ORJSONResponse({"success": False, "message": f"Too many tools ({len(payload)}). Max {max_batch}."}, status_code=413)
 
         created, errors = [], []
 
@@ -12285,13 +11244,10 @@ async def admin_import_tools(
         else:
             rd["message"] = f"Imported {len(created)} of {len(payload)} tools. {len(errors)} failed."
 
-        response = ORJSONResponse(
+        return ORJSONResponse(
             response_data,
             status_code=200,  # Always return 200, success field indicates if all succeeded
         )
-        db.commit()
-        db.close()
-        return response
 
     except HTTPException:
         # let FastAPI semantics (e.g., auth) pass through
@@ -12299,10 +11255,7 @@ async def admin_import_tools(
     except Exception as ex:
         # absolute catch-all: report instead of crashing
         LOGGER.exception("Fatal error in admin_import_tools")
-        response = ORJSONResponse({"success": False, "message": str(ex)}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse({"success": False, "message": str(ex)}, status_code=500)
 
 
 ####################
@@ -12351,10 +11304,7 @@ async def admin_get_logs(
     # Get log storage from logging service
     storage = typing_cast(Any, logging_service).get_storage()
     if not storage:
-        response = {"logs": [], "total": 0, "stats": {}}
-        _db.commit()
-        _db.close()
-        return response
+        return {"logs": [], "total": 0, "stats": {}}
 
     # Parse timestamps if provided
     start_dt = None
@@ -12399,14 +11349,11 @@ async def admin_get_logs(
     # Get statistics
     stats = storage.get_stats()
 
-    response = {
+    return {
         "logs": logs,
         "total": stats.get("total_logs", 0),
         "stats": stats,
     }
-    _db.commit()
-    _db.close()
-    return response
 
 
 @admin_router.get("/logs/stream")
@@ -12488,7 +11435,7 @@ async def admin_stream_logs(
             LOGGER.error(f"Error in log streaming: {e}")
             yield f"event: error\ndata: {orjson.dumps({'error': str(e)}).decode()}\n\n"
 
-    response = StreamingResponse(
+    return StreamingResponse(
         generate(),
         media_type="text/event-stream",
         headers={
@@ -12496,9 +11443,6 @@ async def admin_stream_logs(
             "X-Accel-Buffering": "no",  # Disable Nginx buffering
         },
     )
-    _db.commit()
-    _db.close()
-    return response
 
 
 @admin_router.get("/logs/file")
@@ -12554,15 +11498,12 @@ async def admin_get_log_file(
         try:
             file_stat = file_path.stat()
             LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
-            response = FileResponse(
+            return FileResponse(
                 path=file_path,
                 media_type="application/octet-stream",
                 filename=file_path.name,
                 stat_result=file_stat,
             )
-            _db.commit()
-            _db.close()
-            return response
         except FileNotFoundError:
             LOGGER.error(f"Log file disappeared before streaming: {filename}")
             raise HTTPException(404, f"Log file not found: {filename}")
@@ -12622,14 +11563,11 @@ async def admin_get_log_file(
         LOGGER.error(f"Error listing log files: {e}")
         raise HTTPException(500, f"Error listing log files: {e}")
 
-    response = {
+    return {
         "log_directory": str(log_dir),
         "files": log_files,
         "total": len(log_files),
     }
-    _db.commit()
-    _db.close()
-    return response
 
 
 @admin_router.get("/logs/export")
@@ -12720,16 +11658,13 @@ async def admin_export_logs(
     if export_format == "json":
         # Export as JSON
         content = orjson.dumps(logs, default=str, option=orjson.OPT_INDENT_2).decode()
-        response = Response(
+        return Response(
             content=content,
             media_type="application/json",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
             },
         )
-        _db.commit()
-        _db.close()
-        return response
 
     # CSV format
     # Create CSV content
@@ -12758,16 +11693,13 @@ async def admin_export_logs(
 
     content = output.getvalue()
 
-    response = Response(
+    return Response(
         content=content,
         media_type="text/csv",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
-    _db.commit()
-    _db.close()
-    return response
 
 
 @admin_router.get("/export/configuration")
@@ -12841,16 +11773,13 @@ async def admin_export_configuration(
 
         # Return as downloadable file
         content = orjson.dumps(export_data, option=orjson.OPT_INDENT_2).decode()
-        response = Response(
+        return Response(
             content=content,
             media_type="application/json",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
             },
         )
-        db.commit()
-        db.close()
-        return response
 
     except ExportError as e:
         LOGGER.error(f"Admin export failed for user {user}: {str(e)}")
@@ -12908,16 +11837,13 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
 
         # Return as downloadable file
         content = orjson.dumps(export_data, option=orjson.OPT_INDENT_2).decode()
-        response = Response(
+        return Response(
             content=content,
             media_type="application/json",
             headers={
                 "Content-Disposition": f'attachment; filename="{filename}"',
             },
         )
-        db.commit()
-        db.close()
-        return response
 
     except ExportError as e:
         LOGGER.error(f"Admin selective export failed for user {user}: {str(e)}")
@@ -12971,10 +11897,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
         # Generate preview
         preview_data = await import_service.preview_import(db=db, import_data=import_data)
 
-        response = ORJSONResponse(content={"success": True, "preview": preview_data, "message": f"Import preview generated. Found {preview_data['summary']['total_items']} total items."})
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"success": True, "preview": preview_data, "message": f"Import preview generated. Found {preview_data['summary']['total_items']} total items."})
 
     except ImportValidationError as e:
         LOGGER.error(f"Import validation failed for user {user}: {str(e)}")
@@ -13038,10 +11961,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
             db=db, import_data=import_data, conflict_strategy=conflict_strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username, selected_entities=selected_entities
         )
 
-        response = ORJSONResponse(content=status.to_dict())
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=status.to_dict())
 
     except ImportServiceError as e:
         LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
@@ -13073,10 +11993,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
     if not status:
         raise HTTPException(status_code=404, detail=f"Import {import_id} not found")
 
-    response = ORJSONResponse(content=status.to_dict())
-    _db.commit()
-    _db.close()
-    return response
+    return ORJSONResponse(content=status.to_dict())
 
 
 @admin_router.get("/import/status")
@@ -13094,10 +12011,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
     LOGGER.debug(f"Admin user {user} requested all import statuses")
 
     statuses = import_service.list_import_statuses()
-    response = ORJSONResponse(content=[status.to_dict() for status in statuses])
-    _db.commit()
-    _db.close()
-    return response
+    return ORJSONResponse(content=[status.to_dict() for status in statuses])
 
 
 # ============================================================================ #
@@ -13135,10 +12049,7 @@ async def admin_get_agent(
     LOGGER.debug(f"User {get_user_email(user)} requested details for agent ID {agent_id}")
     try:
         agent = await a2a_service.get_agent(db, agent_id)
-        response = agent.model_dump(by_alias=True)
-        db.commit()
-        db.close()
-        return response
+        return agent.model_dump(by_alias=True)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -13188,14 +12099,11 @@ async def admin_list_a2a_agents(
         LOGGER.warning("A2A features are disabled, returning empty paginated response")
         # First-Party
 
-        response = {
+        return {
             "data": [],
             "pagination": PaginationMeta(page=page, per_page=per_page, total_items=0, total_pages=0, has_next=False, has_prev=False).model_dump(),
             "links": None,
         }
-        db.commit()
-        db.close()
-        return response
 
     LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
@@ -13210,14 +12118,11 @@ async def admin_list_a2a_agents(
     )
 
     # Return standardized paginated response
-    response = {
+    return {
         "data": [agent.model_dump(by_alias=True) for agent in paginated_result["data"]],
         "pagination": paginated_result["pagination"].model_dump(),
         "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
     }
-    db.commit()
-    db.close()
-    return response
 
 
 @admin_router.post("/a2a")
@@ -13244,13 +12149,10 @@ async def admin_add_a2a_agent(
 
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         LOGGER.warning("A2A agent creation attempted but A2A features are disabled")
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "A2A features are disabled!", "success": False},
             status_code=403,
         )
-        db.commit()
-        db.close()
-        return response
 
     form = await request.form()
     try:
@@ -13405,54 +12307,33 @@ async def admin_add_a2a_agent(
             visibility=form.get("visibility", "private"),
         )
 
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={"message": "A2A agent created successfully!", "success": True},
             status_code=200,
         )
-        db.commit()
-        db.close()
-        return response
 
     except CoreValidationError as ex:
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
     except A2AAgentNameConflictError as ex:
         LOGGER.error(f"A2A agent name conflict: {ex}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except A2AAgentError as ex:
         LOGGER.error(f"A2A agent error: {ex}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
         LOGGER.error(f"Validation error while creating A2A agent: {ex}")
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content=ErrorFormatter.format_validation_error(ex),
             status_code=422,
         )
-        db.commit()
-        db.close()
-        return response
     except IntegrityError as ex:
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content=ErrorFormatter.format_database_error(ex),
             status_code=409,
         )
-        db.commit()
-        db.close()
-        return response
     except Exception as ex:
         LOGGER.error(f"Error creating A2A agent: {ex}")
-        response = ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/a2a/{agent_id}/edit")
@@ -13662,26 +12543,14 @@ async def admin_edit_a2a_agent(
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
 
-        response = ORJSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
 
     except ValidationError as ve:
-        response = ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
     except IntegrityError as ie:
-        response = ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
     except Exception as e:
-        response = ORJSONResponse({"message": str(e), "success": False}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse({"message": str(e), "success": False}, status_code=500)
 
 
 @admin_router.post("/a2a/{agent_id}/state")
@@ -13708,10 +12577,7 @@ async def admin_set_a2a_agent_state(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = request.scope.get("root_path", "")
-        response = RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     error_message = None
     try:
@@ -13723,10 +12589,7 @@ async def admin_set_a2a_agent_state(
 
         await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
         root_path = request.scope.get("root_path", "")
-        response = RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
@@ -13745,15 +12608,9 @@ async def admin_set_a2a_agent_state(
     # Build redirect URL with error message if present
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
 
-    response = RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-    db.commit()
-    db.close()
-    return response
+    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/delete")
@@ -13780,10 +12637,7 @@ async def admin_delete_a2a_agent(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = request.scope.get("root_path", "")
-        response = RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     form = await request.form()
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
@@ -13806,15 +12660,9 @@ async def admin_delete_a2a_agent(
     # Build redirect URL with error message if present
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
-        response = RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
 
-    response = RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-    db.commit()
-    db.close()
-    return response
+    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/test")
@@ -13840,10 +12688,7 @@ async def admin_test_a2a_agent(
         HTTPException: If A2A features are disabled
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        response = ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
 
     try:
         user_email = get_user_email(user)
@@ -13880,17 +12725,11 @@ async def admin_test_a2a_agent(
             user_id=user_email,
         )
 
-        response = ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
     except Exception as e:
         LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
-        response = ORJSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
 
 
 # gRPC Service Management Endpoints
@@ -13922,10 +12761,7 @@ async def admin_list_grpc_services(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     user_email = get_user_email(user)
-    response = await grpc_service_mgr.list_services(db, include_inactive, user_email, team_id)
-    db.commit()
-    db.close()
-    return response
+    return await grpc_service_mgr.list_services(db, include_inactive, user_email, team_id)
 
 
 @admin_router.post("/grpc")
@@ -13957,10 +12793,7 @@ async def admin_create_grpc_service(
         metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
         user_email = get_user_email(user)
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
-        response = ORJSONResponse(content=jsonable_encoder(result), status_code=201)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
     except GrpcServiceNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except GrpcServiceError as e:
@@ -13993,10 +12826,7 @@ async def admin_get_grpc_service(
 
     try:
         user_email = get_user_email(user)
-        response = await grpc_service_mgr.get_service(db, service_id, user_email)
-        db.commit()
-        db.close()
-        return response
+        return await grpc_service_mgr.get_service(db, service_id, user_email)
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -14032,10 +12862,7 @@ async def admin_update_grpc_service(
         metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
         user_email = get_user_email(user)
         result = await grpc_service_mgr.update_service(db, service_id, service, user_email, metadata)
-        response = ORJSONResponse(content=jsonable_encoder(result))
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except GrpcServiceNameConflictError as e:
@@ -14076,10 +12903,7 @@ async def admin_set_grpc_service_state(
             service = await grpc_service_mgr.get_service(db, service_id)
             activate = not service.enabled
         result = await grpc_service_mgr.set_service_state(db, service_id, activate)
-        response = ORJSONResponse(content=jsonable_encoder(result))
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -14109,10 +12933,7 @@ async def admin_delete_grpc_service(
 
     try:
         await grpc_service_mgr.delete_service(db, service_id)
-        response = Response(status_code=204)
-        db.commit()
-        db.close()
-        return response
+        return Response(status_code=204)
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -14142,10 +12963,7 @@ async def admin_reflect_grpc_service(
 
     try:
         result = await grpc_service_mgr.reflect_service(db, service_id)
-        response = ORJSONResponse(content=jsonable_encoder(result))
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except GrpcServiceError as e:
@@ -14178,10 +12996,7 @@ async def admin_get_grpc_methods(
 
     try:
         methods = await grpc_service_mgr.get_service_methods(db, service_id)
-        response = ORJSONResponse(content={"methods": methods})
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"methods": methods})
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -14234,17 +13049,11 @@ async def get_resources_section(
             )
             resources.append(resource_dict)
 
-        response = ORJSONResponse(content={"resources": resources, "team_id": team_id})
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"resources": resources, "team_id": team_id})
 
     except Exception as e:
         LOGGER.error(f"Error loading resources section: {e}")
-        response = ORJSONResponse(content={"error": str(e)}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @admin_router.get("/sections/prompts")
@@ -14296,17 +13105,11 @@ async def get_prompts_section(
             )
             prompts.append(prompt_dict)
 
-        response = ORJSONResponse(content={"prompts": prompts, "team_id": team_id})
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"prompts": prompts, "team_id": team_id})
 
     except Exception as e:
         LOGGER.error(f"Error loading prompts section: {e}")
-        response = ORJSONResponse(content={"error": str(e)}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @admin_router.get("/sections/servers")
@@ -14358,17 +13161,11 @@ async def get_servers_section(
             )
             servers.append(server_dict)
 
-        response = ORJSONResponse(content={"servers": servers, "team_id": team_id})
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"servers": servers, "team_id": team_id})
 
     except Exception as e:
         LOGGER.error(f"Error loading servers section: {e}")
-        response = ORJSONResponse(content={"error": str(e)}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @admin_router.get("/sections/gateways")
@@ -14425,17 +13222,11 @@ async def get_gateways_section(
                 }
             gateways.append(gateway_dict)
 
-        response = ORJSONResponse(content={"gateways": gateways, "team_id": team_id})
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"gateways": gateways, "team_id": team_id})
 
     except Exception as e:
         LOGGER.error(f"Error loading gateways section: {e}")
-        response = ORJSONResponse(content={"error": str(e)}, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content={"error": str(e)}, status_code=500)
 
 
 ####################
@@ -14479,10 +13270,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": request.scope.get("root_path", "")}
 
         # Render the partial template
-        response = request.app.state.templates.TemplateResponse(request, "plugins_partial.html", context)
-        db.commit()
-        db.close()
-        return response
+        return request.app.state.templates.TemplateResponse(request, "plugins_partial.html", context)
 
     except Exception as e:
         LOGGER.error(f"Error rendering plugins partial: {e}")
@@ -14493,10 +13281,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
             <span class="block sm:inline">{html.escape(str(e))}</span>
         </div>
         """
-        response = HTMLResponse(content=error_html, status_code=500)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=error_html, status_code=500)
 
 
 @admin_router.get("/plugins", response_model=PluginListResponse)
@@ -14571,10 +13356,7 @@ async def list_plugins(
             db=db,
         )
 
-        response = PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
-        db.commit()
-        db.close()
-        return response
+        return PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
 
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
@@ -14635,10 +13417,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
             db=db,
         )
 
-        response = PluginStatsResponse(**stats)
-        db.commit()
-        db.close()
-        return response
+        return PluginStatsResponse(**stats)
 
     except Exception as e:
         LOGGER.error(f"Error getting plugin statistics: {e}")
@@ -14720,10 +13499,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
             user_id=get_user_id(user), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace", db=db
         )
 
-        response = PluginDetail(**plugin)
-        db.commit()
-        db.close()
-        return response
+        return PluginDetail(**plugin)
 
     except HTTPException:
         raise
@@ -14793,10 +13569,7 @@ async def list_catalog_servers(
         offset=offset,
     )
 
-    response = await catalog_service.get_catalog_servers(catalog_request, db)
-    db.commit()
-    db.close()
-    return response
+    return await catalog_service.get_catalog_servers(catalog_request, db)
 
 
 @admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
@@ -14855,8 +13628,6 @@ async def register_catalog_server(
                 # Trigger refresh - template will show yellow state from requires_oauth_config field
                 response = HTMLResponse(content=button_fragment)
                 response.headers["HX-Trigger-After-Swap"] = orjson.dumps({"catalogRegistrationSuccess": {"delayMs": 1500}}).decode()
-                db.commit()
-                db.close()
                 return response
             # Success: Show success button state
             button_fragment = f"""
@@ -14874,8 +13645,6 @@ async def register_catalog_server(
             # Only non-OAuth success triggers delayed table refresh
             response = HTMLResponse(content=button_fragment)
             response.headers["HX-Trigger-After-Swap"] = orjson.dumps({"catalogRegistrationSuccess": {"delayMs": 1500}}).decode()
-            db.commit()
-            db.close()
             return response
         # Error: Show error state with retry button (no auto-refresh so retry persists)
         error_msg = html.escape(result.error or result.message, quote=True)
@@ -14898,14 +13667,9 @@ async def register_catalog_server(
         </button>
         """
         # No HX-Trigger for errors - let the retry button persist
-        response = HTMLResponse(content=button_fragment)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content=button_fragment)
 
     # Return JSON for non-HTMX requests (API clients)
-    db.commit()
-    db.close()
     return result
 
 
@@ -14932,10 +13696,7 @@ async def check_catalog_server_status(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    response = await catalog_service.check_server_availability(server_id)
-    _db.commit()
-    _db.close()
-    return response
+    return await catalog_service.check_server_availability(server_id)
 
 
 @admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
@@ -14961,10 +13722,7 @@ async def bulk_register_catalog_servers(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    response = await catalog_service.bulk_register_servers(request, db)
-    db.commit()
-    db.close()
-    return response
+    return await catalog_service.bulk_register_servers(request, db)
 
 
 @admin_router.get("/mcp-registry/partial")
@@ -15056,10 +13814,7 @@ async def catalog_partial(
         "filter_params": filter_params,
     }
 
-    response = request.app.state.templates.TemplateResponse(request, "mcp_registry_partial.html", context)
-    db.commit()
-    db.close()
-    return response
+    return request.app.state.templates.TemplateResponse(request, "mcp_registry_partial.html", context)
 
 
 # ===================================
@@ -15115,7 +13870,7 @@ async def get_system_stats(
         # Check if this is an HTMX request for HTML partial
         if request.headers.get("hx-request"):
             # Return HTML partial for HTMX
-            response = request.app.state.templates.TemplateResponse(
+            return request.app.state.templates.TemplateResponse(
                 request,
                 "metrics_partial.html",
                 {
@@ -15125,15 +13880,9 @@ async def get_system_stats(
                     "db_metrics_recording_enabled": settings.db_metrics_recording_enabled,
                 },
             )
-            db.commit()
-            db.close()
-            return response
 
         # Return JSON for API requests
-        response = ORJSONResponse(content=stats)
-        db.commit()
-        db.close()
-        return response
+        return ORJSONResponse(content=stats)
 
     except Exception as e:
         LOGGER.error(f"System metrics retrieval failed for user {user}: {str(e)}", exc_info=True)
@@ -15208,16 +13957,13 @@ async def admin_generate_support_bundle(
         LOGGER.info(f"Support bundle generated successfully for user {user}: {filename} ({bundle_stat.st_size} bytes)")
 
         # Use BackgroundTask to clean up temp file after response is sent
-        response = FileResponse(
+        return FileResponse(
             path=bundle_path,
             media_type="application/zip",
             filename=filename,
             stat_result=bundle_stat,
             background=BackgroundTask(lambda: bundle_path.unlink(missing_ok=True)),
         )
-        _db.commit()
-        _db.close()
-        return response
 
     except Exception as e:
         LOGGER.error(f"Support bundle generation failed for user {user}: {str(e)}", exc_info=True)
@@ -15267,14 +14013,11 @@ async def get_maintenance_partial(
         }
     }
 
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "maintenance_partial.html",
         {"request": request, "payload": payload, "root_path": root_path},
     )
-    _db.commit()
-    _db.close()
-    return response
 
 
 # ============================================================================
@@ -15296,10 +14039,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
         HTMLResponse: Rendered observability dashboard template
     """
     root_path = request.scope.get("root_path", "")
-    response = request.app.state.templates.TemplateResponse(request, "observability_partial.html", {"request": request, "root_path": root_path})
-    _db.commit()
-    _db.close()
-    return response
+    return request.app.state.templates.TemplateResponse(request, "observability_partial.html", {"request": request, "root_path": root_path})
 
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
@@ -15316,10 +14056,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
         HTMLResponse: Rendered metrics dashboard template
     """
     root_path = request.scope.get("root_path", "")
-    response = request.app.state.templates.TemplateResponse(request, "observability_metrics.html", {"request": request, "root_path": root_path})
-    _db.commit()
-    _db.close()
-    return response
+    return request.app.state.templates.TemplateResponse(request, "observability_metrics.html", {"request": request, "root_path": root_path})
 
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
@@ -15336,7 +14073,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
     Returns:
         HTMLResponse: Rendered statistics template with trace counts and averages
     """
-    db = _ensure_db_session(db)
+    db = next(get_db())
     try:
         cutoff_time = datetime.now() - timedelta(hours=hours)
 
@@ -15404,7 +14141,7 @@ async def get_observability_traces(
     Returns:
         HTMLResponse: Rendered traces list template
     """
-    db = _ensure_db_session(db)
+    db = next(get_db())
     try:
         # Parse time range
         time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
@@ -15485,7 +14222,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
     Raises:
         HTTPException: 404 if trace not found
     """
-    db = _ensure_db_session(db)
+    db = next(get_db())
     try:
         trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
 
@@ -15530,7 +14267,7 @@ async def save_observability_query(
     Raises:
         HTTPException: 400 if validation fails
     """
-    db = _ensure_db_session(db)
+    db = next(get_db())
     try:
         # Get user email from authenticated user
         user_email = user.email if hasattr(user, "email") else "unknown"
@@ -15570,7 +14307,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
     Returns:
         list: List of saved query dictionaries
     """
-    db = _ensure_db_session(db)
+    db = next(get_db())
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -15621,7 +14358,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
     Raises:
         HTTPException: 404 if query not found or unauthorized
     """
-    db = _ensure_db_session(db)
+    db = next(get_db())
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -15683,7 +14420,6 @@ async def update_observability_query(
         HTTPException: 404 if query not found, 403 if unauthorized
     """
     db = next(get_db())
-    db = _ensure_db_session(db)
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -15743,7 +14479,6 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
         HTTPException: 404 if query not found, 403 if unauthorized
     """
     db = next(get_db())
-    db = _ensure_db_session(db)
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -15781,7 +14516,6 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         HTTPException: 404 if query not found or unauthorized
     """
     db = next(get_db())
-    db = _ensure_db_session(db)
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -16862,7 +15596,7 @@ async def get_tools_partial(
         HTMLResponse: Rendered tool metrics dashboard partial
     """
     root_path = request.scope.get("root_path", "")
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "observability_tools.html",
         {
@@ -16870,9 +15604,6 @@ async def get_tools_partial(
             "root_path": root_path,
         },
     )
-    _db.commit()
-    _db.close()
-    return response
 
 
 # ==============================================================================
@@ -17087,7 +15818,7 @@ async def get_prompts_partial(
         HTMLResponse: Rendered prompt metrics dashboard partial
     """
     root_path = request.scope.get("root_path", "")
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "observability_prompts.html",
         {
@@ -17095,9 +15826,6 @@ async def get_prompts_partial(
             "root_path": root_path,
         },
     )
-    _db.commit()
-    _db.close()
-    return response
 
 
 # ==============================================================================
@@ -17312,7 +16040,7 @@ async def get_resources_partial(
         HTMLResponse: Rendered resource metrics dashboard partial
     """
     root_path = request.scope.get("root_path", "")
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "observability_resources.html",
         {
@@ -17320,9 +16048,6 @@ async def get_resources_partial(
             "root_path": root_path,
         },
     )
-    _db.commit()
-    _db.close()
-    return response
 
 
 # ===================================
@@ -17355,10 +16080,7 @@ async def get_performance_stats(
     """
     if not settings.mcpgateway_performance_tracking:
         if request.headers.get("hx-request"):
-            response = HTMLResponse(content='<div class="text-center py-8 text-gray-500">Performance tracking is disabled. Enable with MCPGATEWAY_PERFORMANCE_TRACKING=true</div>')
-            db.commit()
-            db.close()
-            return response
+            return HTMLResponse(content='<div class="text-center py-8 text-gray-500">Performance tracking is disabled. Enable with MCPGATEWAY_PERFORMANCE_TRACKING=true</div>')
         raise HTTPException(status_code=404, detail="Performance monitoring is disabled")
 
     try:
@@ -17379,7 +16101,7 @@ async def get_performance_stats(
 
         if request.headers.get("hx-request"):
             root_path = request.scope.get("root_path", "")
-            response = request.app.state.templates.TemplateResponse(
+            return request.app.state.templates.TemplateResponse(
                 request,
                 "performance_partial.html",
                 {
@@ -17388,11 +16110,8 @@ async def get_performance_stats(
                     "root_path": root_path,
                 },
             )
-        else:
-            response = ORJSONResponse(content=dashboard_data)
-        db.commit()
-        db.close()
-        return response
+
+        return ORJSONResponse(content=dashboard_data)
 
     except Exception as e:
         LOGGER.error(f"Performance metrics retrieval failed: {str(e)}", exc_info=True)
@@ -17422,10 +16141,7 @@ async def get_performance_system(
 
     service = get_performance_service(db)
     metrics = service.get_system_metrics()
-    response = metrics.model_dump()
-    db.commit()
-    db.close()
-    return response
+    return metrics.model_dump()
 
 
 @admin_router.get("/performance/workers")
@@ -17451,10 +16167,7 @@ async def get_performance_workers(
 
     service = get_performance_service(db)
     workers = service.get_worker_metrics()
-    response = [w.model_dump() for w in workers]
-    db.commit()
-    db.close()
-    return response
+    return [w.model_dump() for w in workers]
 
 
 @admin_router.get("/performance/requests")
@@ -17480,10 +16193,7 @@ async def get_performance_requests(
 
     service = get_performance_service(db)
     metrics = service.get_request_metrics()
-    response = metrics.model_dump()
-    db.commit()
-    db.close()
-    return response
+    return metrics.model_dump()
 
 
 @admin_router.get("/performance/cache")
@@ -17509,10 +16219,7 @@ async def get_performance_cache(
 
     service = get_performance_service(db)
     metrics = await service.get_cache_metrics()
-    response = metrics.model_dump()
-    db.commit()
-    db.close()
-    return response
+    return metrics.model_dump()
 
 
 @admin_router.get("/performance/history")
@@ -17549,7 +16256,4 @@ async def get_performance_history(
         start_time=start_time,
     )
 
-    response = history.model_dump()
-    db.commit()
-    db.close()
-    return response
+    return history.model_dump()

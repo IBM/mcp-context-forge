@@ -97,8 +97,6 @@ async def generate_testcases_for_tool(
     try:
         # logger.debug(f"Authenticated user {user} is initializing the protocol.")
         test_cases = await validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
-        db.commit()
-        db.close()
         return test_cases
 
     except orjson.JSONDecodeError:
@@ -135,8 +133,6 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
         tool_id = tool_nl_test_input.tool_id
         tool_nl_test_cases = tool_nl_test_input.tool_nl_test_cases
         tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db)
-        db.commit()
-        db.close()
         return tool_nl_test_cases_output
 
     except orjson.JSONDecodeError:
@@ -171,8 +167,6 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
         result["original_desc"] = tool_schema.description
         result["enriched_desc"] = enriched_tool_description
         # logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
-        db.commit()
-        db.close()
         return result
 
     except Exception as e:

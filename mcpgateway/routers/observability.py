@@ -102,13 +102,11 @@ async def list_traces(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
-        >>> from datetime import datetime
         >>> class FakeTrace:
         ...     def __init__(self, trace_id='t1'):
         ...         self.trace_id = trace_id
         ...         self.name = 'n'
-        ...         self.start_time = datetime(2025, 1, 1)
-        ...         self.created_at = datetime(2025, 1, 1)
+        ...         self.start_time = None
         ...         self.end_time = None
         ...         self.duration_ms = 100
         ...         self.status = 'ok'
@@ -116,17 +114,12 @@ async def list_traces(
         ...         self.http_url = '/'
         ...         self.http_status_code = 200
         ...         self.user_email = 'u'
-        >>> class FakeDB:
-        ...     def commit(self):
-        ...         pass
-        ...     def close(self):
-        ...         pass
         >>> class FakeService:
         ...     def query_traces(self, **kwargs):
         ...         return [FakeTrace('t1')]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_list_traces():
-        ...     traces = await obs.list_traces(db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     traces = await obs.list_traces(db=None, _user={"email": settings.platform_admin_email, "db": None})
         ...     return traces[0].trace_id
         >>> asyncio.run(run_list_traces())
         't1'
@@ -146,10 +139,7 @@ async def list_traces(
         limit=limit,
         offset=offset,
     )
-    trace_responses = [ObservabilityTraceRead.model_validate(trace) for trace in traces]
-    db.commit()
-    db.close()
-    return trace_responses
+    return traces
 
 
 @router.post("/traces/query", response_model=List[ObservabilityTraceRead])
@@ -207,25 +197,17 @@ async def query_traces_advanced(
         (400, True)
 
         >>> import mcpgateway.routers.observability as obs
-        >>> from datetime import datetime
-        >>> class FakeDB:
-        ...     def commit(self):
-        ...         pass
-        ...     def close(self):
-        ...         pass
         >>> class FakeTrace:
         ...     def __init__(self):
         ...         self.trace_id = 'tx'
         ...         self.name = 'n'
-        ...         self.start_time = datetime(2025, 1, 1)
-        ...         self.created_at = datetime(2025, 1, 1)
 
         >>> class FakeService2:
         ...     def query_traces(self, **kwargs):
         ...         return [FakeTrace()]
         >>> obs.ObservabilityService = FakeService2
         >>> async def run_query_traces():
-        ...     traces = await obs.query_traces_advanced({}, db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     traces = await obs.query_traces_advanced({}, db=None, _user={"email": settings.platform_admin_email, "db": None})
         ...     return traces[0].trace_id
         >>> asyncio.run(run_query_traces())
         'tx'
@@ -269,10 +251,7 @@ async def query_traces_advanced(
             limit=request_body.get("limit", 100),
             offset=request_body.get("offset", 0),
         )
-        trace_responses = [ObservabilityTraceRead.model_validate(trace) for trace in traces]
-        db.commit()
-        db.close()
-        return trace_responses
+        return traces
     except (ValidationError, ValueError) as e:
         raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
 
@@ -299,35 +278,24 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
-        >>> from datetime import datetime
-        >>> class FakeDB:
-        ...     def commit(self):
-        ...         pass
-        ...     def close(self):
-        ...         pass
         >>> class FakeService:
         ...     def get_trace_with_spans(self, db, trace_id):
         ...         return None
         >>> obs.ObservabilityService = FakeService
         >>> async def run_missing_trace():
         ...     try:
-        ...         await obs.get_trace("missing", db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...         await obs.get_trace("missing", db=None, _user={"email": settings.platform_admin_email, "db": None})
         ...     except obs.HTTPException as e:
         ...         return e.status_code
         >>> asyncio.run(run_missing_trace())
         404
         >>> class FakeService2:
         ...     def get_trace_with_spans(self, db, trace_id):
-        ...         return {
-        ...             'trace_id': trace_id,
-        ...             'name': 'n',
-        ...             'start_time': datetime(2025, 1, 1),
-        ...             'created_at': datetime(2025, 1, 1),
-        ...         }
+        ...         return {'trace_id': trace_id}
         >>> obs.ObservabilityService = FakeService2
         >>> async def run_found_trace():
-        ...     trace = await obs.get_trace("found", db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
-        ...     return trace.trace_id
+        ...     trace = await obs.get_trace("found", db=None, _user={"email": settings.platform_admin_email, "db": None})
+        ...     return trace["trace_id"]
         >>> asyncio.run(run_found_trace())
         'found'
     """
@@ -335,10 +303,7 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
     trace = service.get_trace_with_spans(db, trace_id)
     if not trace:
         raise HTTPException(status_code=404, detail="Trace not found")
-    response = ObservabilityTraceWithSpans.model_validate(trace)
-    db.commit()
-    db.close()
-    return response
+    return trace
 
 
 @router.get("/spans", response_model=List[ObservabilitySpanRead])
@@ -376,25 +341,17 @@ async def list_spans(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
-        >>> from datetime import datetime
         >>> class FakeSpan:
         ...     def __init__(self):
         ...         self.span_id = 's1'
         ...         self.trace_id = 't1'
         ...         self.name = 'op'
-        ...         self.start_time = datetime(2025, 1, 1)
-        ...         self.created_at = datetime(2025, 1, 1)
-        >>> class FakeDB:
-        ...     def commit(self):
-        ...         pass
-        ...     def close(self):
-        ...         pass
         >>> class FakeService:
         ...     def query_spans(self, **kwargs):
         ...         return [FakeSpan()]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_list_spans():
-        ...     spans = await obs.list_spans(db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     spans = await obs.list_spans(db=None, _user={"email": settings.platform_admin_email, "db": None})
         ...     return spans[0].span_id
         >>> asyncio.run(run_list_spans())
         's1'
@@ -410,10 +367,7 @@ async def list_spans(
         limit=limit,
         offset=offset,
     )
-    span_responses = [ObservabilitySpanRead.model_validate(span) for span in spans]
-    db.commit()
-    db.close()
-    return span_responses
+    return spans
 
 
 @router.delete("/traces/cleanup")
@@ -439,17 +393,12 @@ async def cleanup_old_traces(
         >>> import asyncio
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
-        >>> class FakeDB:
-        ...     def commit(self):
-        ...         pass
-        ...     def close(self):
-        ...         pass
         >>> class FakeService:
         ...     def delete_old_traces(self, db, cutoff):
         ...         return 5
         >>> obs.ObservabilityService = FakeService
         >>> async def run_cleanup():
-        ...     res = await obs.cleanup_old_traces(days=7, db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     res = await obs.cleanup_old_traces(days=7, db=None, _user={"email": settings.platform_admin_email, "db": None})
         ...     return res["deleted"]
         >>> asyncio.run(run_cleanup())
         5
@@ -457,10 +406,7 @@ async def cleanup_old_traces(
     service = ObservabilityService()
     cutoff_time = datetime.now() - timedelta(days=days)
     deleted = service.delete_old_traces(db, cutoff_time)
-    result = {"deleted": deleted, "cutoff_time": cutoff_time}
-    db.commit()
-    db.close()
-    return result
+    return {"deleted": deleted, "cutoff_time": cutoff_time}
 
 
 @router.get("/stats")
@@ -513,7 +459,7 @@ async def get_stats(
         .all()
     )
 
-    result = {
+    return {
         "time_window_hours": hours,
         "total_traces": total_traces,
         "success_count": success_count,
@@ -522,9 +468,6 @@ async def get_stats(
         "avg_duration_ms": round(avg_duration, 2),
         "slowest_endpoints": [{"name": row[0], "avg_duration_ms": round(row[1], 2), "count": row[2]} for row in slowest],
     }
-    db.commit()
-    db.close()
-    return result
 
 
 @router.post("/traces/export")
@@ -562,11 +505,6 @@ async def export_traces(
         >>> from fastapi import HTTPException
         >>> import mcpgateway.routers.observability as obs
         >>> from mcpgateway.config import settings
-        >>> class FakeDB:
-        ...     def commit(self):
-        ...         pass
-        ...     def close(self):
-        ...         pass
         >>> async def run_invalid_export():
         ...     try:
         ...         await export_traces({}, format="xml", db=None, _user={"email": settings.platform_admin_email, "db": None})
@@ -591,17 +529,17 @@ async def export_traces(
         ...         return [FakeTrace()]
         >>> obs.ObservabilityService = FakeService
         >>> async def run_json_export():
-        ...     out = await obs.export_traces({}, format="json", db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     out = await obs.export_traces({}, format="json", db=None, _user={"email": settings.platform_admin_email, "db": None})
         ...     return out[0]["trace_id"]
         >>> asyncio.run(run_json_export())
         'tx'
         >>> async def run_csv_export():
-        ...     resp = await obs.export_traces({}, format="csv", db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     resp = await obs.export_traces({}, format="csv", db=None, _user={"email": settings.platform_admin_email, "db": None})
         ...     return hasattr(resp, "media_type") and "csv" in resp.media_type
         >>> asyncio.run(run_csv_export())
         True
         >>> async def run_ndjson_export():
-        ...     resp2 = await obs.export_traces({}, format="ndjson", db=FakeDB(), _user={"email": settings.platform_admin_email, "db": None})
+        ...     resp2 = await obs.export_traces({}, format="ndjson", db=None, _user={"email": settings.platform_admin_email, "db": None})
         ...     return type(resp2).__name__
         >>> asyncio.run(run_ndjson_export())
         'StreamingResponse'
@@ -646,27 +584,23 @@ async def export_traces(
             offset=request_body.get("offset", 0),
         )
 
-        traces_data = [
-            {
-                "trace_id": t.trace_id,
-                "name": t.name,
-                "start_time": t.start_time.isoformat() if t.start_time else None,
-                "end_time": t.end_time.isoformat() if t.end_time else None,
-                "duration_ms": t.duration_ms,
-                "status": t.status,
-                "http_method": t.http_method,
-                "http_url": t.http_url,
-                "http_status_code": t.http_status_code,
-                "user_email": t.user_email,
-            }
-            for t in traces
-        ]
-        db.commit()
-        db.close()
-
         if format == "json":
             # Standard JSON response
-            return traces_data
+            return [
+                {
+                    "trace_id": t.trace_id,
+                    "name": t.name,
+                    "start_time": t.start_time.isoformat() if t.start_time else None,
+                    "end_time": t.end_time.isoformat() if t.end_time else None,
+                    "duration_ms": t.duration_ms,
+                    "status": t.status,
+                    "http_method": t.http_method,
+                    "http_url": t.http_url,
+                    "http_status_code": t.http_status_code,
+                    "user_email": t.user_email,
+                }
+                for t in traces
+            ]
 
         elif format == "csv":
             # CSV export
@@ -677,18 +611,9 @@ async def export_traces(
             writer.writerow(["trace_id", "name", "start_time", "duration_ms", "status", "http_method", "http_status_code", "user_email"])
 
             # Write data
-            for t in traces_data:
+            for t in traces:
                 writer.writerow(
-                    [
-                        t["trace_id"],
-                        t["name"],
-                        t["start_time"] or "",
-                        t["duration_ms"] or "",
-                        t["status"],
-                        t["http_method"] or "",
-                        t["http_status_code"] or "",
-                        t["user_email"] or "",
-                    ]
+                    [t.trace_id, t.name, t.start_time.isoformat() if t.start_time else "", t.duration_ms or "", t.status, t.http_method or "", t.http_status_code or "", t.user_email or ""]
                 )
 
             output.seek(0)
@@ -704,8 +629,19 @@ async def export_traces(
                 Yields:
                     str: A JSON-encoded line (with trailing newline) for a trace.
                 """
-                for t in traces_data:
-                    yield orjson.dumps(t).decode() + "\n"
+                for t in traces:
+                    yield orjson.dumps(
+                        {
+                            "trace_id": t.trace_id,
+                            "name": t.name,
+                            "start_time": t.start_time.isoformat() if t.start_time else None,
+                            "duration_ms": t.duration_ms,
+                            "status": t.status,
+                            "http_method": t.http_method,
+                            "http_status_code": t.http_status_code,
+                            "user_email": t.user_email,
+                        }
+                    ).decode() + "\n"
 
             return StreamingResponse(generate(), media_type="application/x-ndjson", headers={"Content-Disposition": "attachment; filename=traces.ndjson"})
 
@@ -751,10 +687,6 @@ async def get_query_performance(
         ...         return self
         ...     def all(self):
         ...         return []
-        ...     def commit(self):
-        ...         pass
-        ...     def close(self):
-        ...         pass
         >>> async def run_empty_stats():
         ...     return (await obs.get_query_performance(hours=1, db=EmptyDB(), _user={"email": settings.platform_admin_email, "db": None}))["total_traces"]
         >>> asyncio.run(run_empty_stats())
@@ -769,10 +701,6 @@ async def get_query_performance(
         ...         return self
         ...     def all(self):
         ...         return [(10,), (20,), (30,), (40,)]
-        ...     def commit(self):
-        ...         pass
-        ...     def close(self):
-        ...         pass
         >>> async def run_small_stats():
         ...     return await obs.get_query_performance(hours=1, db=SmallDB(), _user={"email": settings.platform_admin_email, "db": None})
         >>> res = asyncio.run(run_small_stats())
@@ -789,12 +717,8 @@ async def get_query_performance(
     # Use SQL aggregation for PostgreSQL, Python fallback for SQLite
     dialect_name = db.get_bind().dialect.name
     if dialect_name == "postgresql":
-        result = _get_query_performance_postgresql(db, cutoff_time, hours)
-    else:
-        result = _get_query_performance_python(db, cutoff_time, hours)
-    db.commit()
-    db.close()
-    return result
+        return _get_query_performance_postgresql(db, cutoff_time, hours)
+    return _get_query_performance_python(db, cutoff_time, hours)
 
 
 def _get_query_performance_postgresql(db: Session, cutoff_time: datetime, hours: int) -> dict:

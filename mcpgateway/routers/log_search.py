@@ -421,10 +421,7 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
             for log in results
         ]
 
-        response = LogSearchResponse(total=total, results=log_entries)
-        db.commit()
-        db.close()
-        return response
+        return LogSearchResponse(total=total, results=log_entries)
 
     except Exception as e:
         logger.error(f"Log search failed: {e}")
@@ -490,7 +487,7 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
                         "error_rate": perf.error_rate,
                     }
 
-        response = CorrelationTraceResponse(
+        return CorrelationTraceResponse(
             correlation_id=correlation_id,
             total_duration_ms=total_duration,
             log_count=len(logs),
@@ -538,9 +535,6 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
             ],
             performance_metrics=perf_metrics,
         )
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         logger.error(f"Correlation trace failed: {e}", exc_info=True)
@@ -601,7 +595,7 @@ async def get_security_events(
 
         events = db.execute(stmt).scalars().all()
 
-        response = [
+        return [
             SecurityEventResponse(
                 id=str(event.id),
                 timestamp=event.timestamp,
@@ -617,9 +611,6 @@ async def get_security_events(
             )
             for event in events
         ]
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         logger.error(f"Security events query failed: {e}", exc_info=True)
@@ -684,7 +675,7 @@ async def get_audit_trails(
 
         trails = db.execute(stmt).scalars().all()
 
-        response = [
+        return [
             AuditTrailResponse(
                 id=str(trail.id),
                 timestamp=trail.timestamp,
@@ -701,9 +692,6 @@ async def get_audit_trails(
             )
             for trail in trails
         ]
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         logger.error(f"Audit trails query failed: {e}", exc_info=True)
@@ -768,7 +756,7 @@ async def get_performance_metrics(
 
         metrics = _deduplicate_metrics(metrics)
 
-        response = [
+        return [
             PerformanceMetricResponse(
                 id=str(metric.id),
                 timestamp=metric.timestamp,
@@ -788,9 +776,6 @@ async def get_performance_metrics(
             )
             for metric in metrics
         ]
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         logger.error(f"Performance metrics query failed: {e}")

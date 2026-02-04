@@ -124,10 +124,7 @@ async def list_sso_providers(
     sso_service = SSOService(db)
     providers = sso_service.list_enabled_providers()
 
-    response = [SSOProviderResponse(id=provider.id, name=provider.name, display_name=provider.display_name) for provider in providers]
-    db.commit()
-    db.close()
-    return response
+    return [SSOProviderResponse(id=provider.id, name=provider.name, display_name=provider.display_name) for provider in providers]
 
 
 def _normalize_origin(scheme: str, host: str, port: int | None) -> str:
@@ -270,10 +267,7 @@ async def initiate_sso_login(
     params = urllib.parse.parse_qs(parsed.query)
     state = params.get("state", [""])[0]
 
-    response = SSOLoginResponse(authorization_url=auth_url, state=state)
-    db.commit()
-    db.close()
-    return response
+    return SSOLoginResponse(authorization_url=auth_url, state=state)
 
 
 @sso_router.get("/callback/{provider_id}")
@@ -321,10 +315,7 @@ async def handle_sso_callback(
         # Third-Party
         from fastapi.responses import RedirectResponse
 
-        response = RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(url=f"{root_path}/admin/login?error=sso_failed", status_code=302)
 
     # Authenticate or create user
     access_token = await sso_service.authenticate_or_create_user(user_info)
@@ -333,10 +324,7 @@ async def handle_sso_callback(
         # Third-Party
         from fastapi.responses import RedirectResponse
 
-        response = RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(url=f"{root_path}/admin/login?error=user_creation_failed", status_code=302)
 
     # Create redirect response
     # Third-Party
@@ -350,8 +338,6 @@ async def handle_sso_callback(
 
     set_auth_cookie(redirect_response, access_token, remember_me=False)
 
-    db.commit()
-    db.close()
     return redirect_response
 
 
@@ -631,7 +617,7 @@ async def list_pending_approvals(
     result = db.execute(query)
     pending_approvals = result.scalars().all()
 
-    response = [
+    return [
         PendingUserApprovalResponse(
             id=approval.id,
             email=approval.email,
@@ -644,9 +630,6 @@ async def list_pending_approvals(
         )
         for approval in pending_approvals
     ]
-    db.commit()
-    db.close()
-    return response
 
 
 @sso_router.post("/pending-approvals/{approval_id}/action")
@@ -689,7 +672,6 @@ async def handle_approval_request(
     if approval.is_expired():
         approval.status = "expired"
         db.commit()
-        db.close()
         raise HTTPException(status_code=400, detail="Approval request has expired")
 
     admin_email = user["email"]
@@ -697,18 +679,14 @@ async def handle_approval_request(
     if request.action == "approve":
         approval.approve(admin_email, request.notes)
         db.commit()
-        response = {"message": f"User {approval.email} approved successfully"}
-        db.close()
-        return response
+        return {"message": f"User {approval.email} approved successfully"}
 
     elif request.action == "reject":
         if not request.reason:
             raise HTTPException(status_code=400, detail="Rejection reason is required")
         approval.reject(admin_email, request.reason, request.notes)
         db.commit()
-        response = {"message": f"User {approval.email} rejected"}
-        db.close()
-        return response
+        return {"message": f"User {approval.email} rejected"}
 
     else:
         raise HTTPException(status_code=400, detail="Invalid action. Must be 'approve' or 'reject'")

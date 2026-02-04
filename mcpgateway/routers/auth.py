@@ -169,12 +169,9 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
         logger.info(f"User {email} authenticated successfully")
 
         # Return session token for UI access and API key management
-        response = AuthenticationResponse(
+        return AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
         )  # nosec B106 - OAuth2 token type, not a password
-        db.commit()
-        db.close()
-        return response
 
     except ValueError as e:
         logger.warning(f"Login validation error: {e}")

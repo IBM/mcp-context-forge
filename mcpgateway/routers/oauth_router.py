@@ -236,10 +236,7 @@ async def initiate_oauth_flow(
         logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.get('email')}")
 
         # Redirect user to OAuth provider
-        response = RedirectResponse(url=auth_data["authorization_url"])
-        db.commit()
-        db.close()
-        return response
+        return RedirectResponse(url=auth_data["authorization_url"])
 
     except HTTPException:
         raise
@@ -316,17 +313,14 @@ async def oauth_callback(
             # Fallback to legacy format (gateway_id_random)
             logger.warning(f"Failed to decode state as JSON, trying legacy format: {e}")
             if "_" not in state:
-                response = HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
-                db.commit()
-                db.close()
-                return response
+                return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
             gateway_id = state.split("_")[0]
 
         # Get gateway configuration
         gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 
         if not gateway:
-            response = HTMLResponse(
+            return HTMLResponse(
                 content="""
                 <!DOCTYPE html>
                 <html>
@@ -340,12 +334,9 @@ async def oauth_callback(
                 """,
                 status_code=404,
             )
-            db.commit()
-            db.close()
-            return response
 
         if not gateway.oauth_config:
-            response = HTMLResponse(
+            return HTMLResponse(
                 content="""
                 <!DOCTYPE html>
                 <html>
@@ -359,9 +350,6 @@ async def oauth_callback(
                 """,
                 status_code=400,
             )
-            db.commit()
-            db.close()
-            return response
 
         # Complete OAuth flow
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
@@ -391,7 +379,7 @@ async def oauth_callback(
         logger.info(f"Completed OAuth flow for gateway {gateway_id}, user {result.get('user_id')}")
 
         # Return success page with option to return to admin
-        response = HTMLResponse(
+        return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
         <html>
@@ -480,13 +468,10 @@ async def oauth_callback(
         </html>
         """
         )
-        db.commit()
-        db.close()
-        return response
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
-        response = HTMLResponse(
+        return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
         <html>
@@ -517,13 +502,10 @@ async def oauth_callback(
         """,
             status_code=400,
         )
-        db.commit()
-        db.close()
-        return response
 
     except Exception as e:
         logger.error(f"Unexpected error in OAuth callback: {str(e)}")
-        response = HTMLResponse(
+        return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
         <html>
@@ -554,9 +536,6 @@ async def oauth_callback(
         """,
             status_code=500,
         )
-        db.commit()
-        db.close()
-        return response
 
 
 @oauth_router.get("/status/{gateway_id}")
@@ -607,10 +586,7 @@ async def get_oauth_status(
                 raise HTTPException(status_code=403, detail="You don't have access to this gateway")
 
         if not gateway.oauth_config:
-            response = {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
-            db.commit()
-            db.close()
-            return response
+            return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
 
         # Get OAuth configuration info
         oauth_config = gateway.oauth_config
@@ -619,7 +595,7 @@ async def get_oauth_status(
         if grant_type == "authorization_code":
             # For now, return basic info - in a real implementation you might want to
             # show authorized users, token status, etc.
-            response = {
+            return {
                 "oauth_enabled": True,
                 "grant_type": grant_type,
                 "client_id": oauth_config.get("client_id"),
@@ -629,16 +605,13 @@ async def get_oauth_status(
                 "message": "Gateway configured for Authorization Code flow",
             }
         else:
-            response = {
+            return {
                 "oauth_enabled": True,
                 "grant_type": grant_type,
                 "client_id": oauth_config.get("client_id"),
                 "scopes": oauth_config.get("scopes", []),
                 "message": f"Gateway configured for {grant_type} flow",
             }
-        db.commit()
-        db.close()
-        return response
 
     except HTTPException:
         raise
@@ -670,10 +643,7 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
         result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, current_user.get("email"))
         tools_count = len(result.get("tools", []))
 
-        response = {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
-        db.commit()
-        db.close()
-        return response
+        return {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
 
     except Exception as e:
         logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
@@ -728,10 +698,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
                 }
             )
 
-        response = {"total": len(clients_data), "clients": clients_data}
-        db.commit()
-        db.close()
-        return response
+        return {"total": len(clients_data), "clients": clients_data}
 
     except Exception as e:
         logger.error(f"Failed to list registered OAuth clients: {e}")
@@ -767,7 +734,7 @@ async def get_registered_client_for_gateway(
         if not client:
             raise HTTPException(status_code=404, detail=f"No registered OAuth client found for gateway {gateway_id}")
 
-        response = {
+        return {
             "id": client.id,
             "gateway_id": client.gateway_id,
             "issuer": client.issuer,
@@ -781,9 +748,6 @@ async def get_registered_client_for_gateway(
             "expires_at": client.expires_at.isoformat() if client.expires_at else None,
             "is_active": client.is_active,
         }
-        db.commit()
-        db.close()
-        return response
 
     except HTTPException:
         raise

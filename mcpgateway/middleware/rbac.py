@@ -346,12 +346,8 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
         ... async def demo(user=None):
         ...     return "ok"
         >>> from unittest.mock import patch
-        >>> from contextlib import contextmanager
-        >>> @contextmanager
-        ... def dummy_session():
-        ...     yield object()
-        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS), patch('mcpgateway.middleware.rbac.fresh_db_session', dummy_session):
-        ...     asyncio.run(demo(user={"email": "u"}))
+        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
+        ...     asyncio.run(demo(user={"email": "u", "db": object()}))
         'ok'
     """
 
@@ -444,9 +440,11 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     )
 
             # No plugin handled it, fall through to standard RBAC check
-            # Always use a fresh db session to avoid holding the request transaction
-            with fresh_db_session() as db:
-                permission_service = PermissionService(db)
+            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
+            db_session = kwargs.get("db") or user_context.get("db")
+            if db_session:
+                # Use existing session from endpoint or user_context
+                permission_service = PermissionService(db_session)
                 granted = await permission_service.check_permission(
                     user_email=user_context["email"],
                     permission=permission,
@@ -456,6 +454,19 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     user_agent=user_context.get("user_agent"),
                     allow_admin_bypass=allow_admin_bypass,
                 )
+            else:
+                # Create fresh db session for permission check
+                with fresh_db_session() as db:
+                    permission_service = PermissionService(db)
+                    granted = await permission_service.check_permission(
+                        user_email=user_context["email"],
+                        permission=permission,
+                        resource_type=resource_type,
+                        team_id=team_id,
+                        ip_address=user_context.get("ip_address"),
+                        user_agent=user_context.get("user_agent"),
+                        allow_admin_bypass=allow_admin_bypass,
+                    )
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
@@ -491,12 +502,8 @@ def require_admin_permission():
         ... async def demo(user=None):
         ...     return "admin-ok"
         >>> from unittest.mock import patch
-        >>> from contextlib import contextmanager
-        >>> @contextmanager
-        ... def dummy_session():
-        ...     yield object()
-        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS), patch('mcpgateway.middleware.rbac.fresh_db_session', dummy_session):
-        ...     asyncio.run(demo(user={"email": "u"}))
+        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
+        ...     asyncio.run(demo(user={"email": "u", "db": object()}))
         'admin-ok'
     """
 
@@ -529,10 +536,17 @@ def require_admin_permission():
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
-            # Always use a fresh db session to avoid holding the request transaction
-            with fresh_db_session() as db:
-                permission_service = PermissionService(db)
+            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
+            db_session = kwargs.get("db") or user_context.get("db")
+            if db_session:
+                # Use existing session from endpoint or user_context
+                permission_service = PermissionService(db_session)
                 has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
+            else:
+                # Create fresh db session for permission check
+                with fresh_db_session() as db:
+                    permission_service = PermissionService(db)
+                    has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
@@ -574,12 +588,8 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
         ... async def demo(user=None):
         ...     return "any-ok"
         >>> from unittest.mock import patch
-        >>> from contextlib import contextmanager
-        >>> @contextmanager
-        ... def dummy_session():
-        ...     yield object()
-        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS), patch('mcpgateway.middleware.rbac.fresh_db_session', dummy_session):
-        ...     asyncio.run(demo(user={"email": "u"}))
+        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
+        ...     asyncio.run(demo(user={"email": "u", "db": object()}))
         'any-ok'
     """
 
@@ -620,9 +630,11 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                 # check if user_context has team_id
                 team_id = user_context.get("team_id", None)
 
-            # Always use a fresh db session to avoid holding the request transaction
-            with fresh_db_session() as db:
-                permission_service = PermissionService(db)
+            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
+            db_session = kwargs.get("db") or user_context.get("db")
+            if db_session:
+                # Use existing session from endpoint or user_context
+                permission_service = PermissionService(db_session)
                 # Check if user has any of the required permissions
                 granted = False
                 for permission in permissions:
@@ -637,6 +649,24 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                     ):
                         granted = True
                         break
+            else:
+                # Create fresh db session for permission check
+                with fresh_db_session() as db:
+                    permission_service = PermissionService(db)
+                    # Check if user has any of the required permissions
+                    granted = False
+                    for permission in permissions:
+                        if await permission_service.check_permission(
+                            user_email=user_context["email"],
+                            permission=permission,
+                            resource_type=resource_type,
+                            team_id=team_id,
+                            ip_address=user_context.get("ip_address"),
+                            user_agent=user_context.get("user_agent"),
+                            allow_admin_bypass=allow_admin_bypass,
+                        ):
+                            granted = True
+                            break
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permissions={permissions}, resource_type={resource_type}")

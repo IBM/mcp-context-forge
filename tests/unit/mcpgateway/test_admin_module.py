@@ -244,7 +244,7 @@ async def test_global_passthrough_headers_endpoints(monkeypatch):
     stats = {"hits": 1}
     monkeypatch.setattr(admin.global_config_cache, "stats", lambda: stats)
     invalidate_func = _unwrap(admin.invalidate_passthrough_headers_cache)
-    cache_result = await invalidate_func(_user={"email": "user@example.com"}, _db=db)
+    cache_result = await invalidate_func(_user={"email": "user@example.com"})
     assert cache_result["status"] == "invalidated"
     assert cache_result["cache_stats"] == stats
 
@@ -325,6 +325,7 @@ async def test_admin_login_handler_paths(monkeypatch):
 async def test_admin_login_handler_default_password(monkeypatch):
     request = _make_request(root_path="/root")
     mock_db = MagicMock()
+    mock_db.commit = MagicMock(side_effect=Exception("commit failed"))
 
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", True)

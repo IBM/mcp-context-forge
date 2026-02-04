@@ -31,11 +31,6 @@ def mock_request():
     return req
 
 
-@pytest.fixture
-def mock_db():
-    return MagicMock()
-
-
 def _provider():
     return SimpleNamespace(
         id="p1",
@@ -75,100 +70,87 @@ def _model():
 
 
 @pytest.mark.asyncio
-async def test_get_providers_partial(mock_request, mock_db, monkeypatch: pytest.MonkeyPatch):
+async def test_get_providers_partial(mock_request, monkeypatch: pytest.MonkeyPatch):
     provider = _provider()
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_providers", lambda **kwargs: ([provider], 1))
 
-    response = await llm_admin_router.get_providers_partial(
-        mock_request,
-        page=1,
-        per_page=50,
-        db=mock_db,
-        current_user_ctx={"db": mock_db, "email": "user@example.com"},
-    )
+    response = await llm_admin_router.get_providers_partial(mock_request, page=1, per_page=50, current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
 
     assert isinstance(response, HTMLResponse)
     mock_request.app.state.templates.TemplateResponse.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_get_models_partial_missing_provider(mock_request, mock_db, monkeypatch: pytest.MonkeyPatch):
+async def test_get_models_partial_missing_provider(mock_request, monkeypatch: pytest.MonkeyPatch):
     model = _model()
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_models", lambda **kwargs: ([model], 1))
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", MagicMock(side_effect=LLMProviderNotFoundError("missing")))
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_providers", lambda *args, **kwargs: ([], 0))
 
-    response = await llm_admin_router.get_models_partial(
-        mock_request,
-        provider_id=None,
-        page=1,
-        per_page=50,
-        db=mock_db,
-        current_user_ctx={"db": mock_db, "email": "user@example.com"},
-    )
+    response = await llm_admin_router.get_models_partial(mock_request, provider_id=None, page=1, per_page=50, current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
 
     assert isinstance(response, HTMLResponse)
 
 
 @pytest.mark.asyncio
-async def test_set_provider_state_html(mock_request, mock_db, monkeypatch: pytest.MonkeyPatch):
+async def test_set_provider_state_html(mock_request, monkeypatch: pytest.MonkeyPatch):
     provider = _provider()
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "set_provider_state", lambda *args, **kwargs: provider)
 
-    response = await llm_admin_router.set_provider_state_html(mock_request, "p1", db=mock_db, current_user_ctx={"db": mock_db, "email": "user@example.com"})
+    response = await llm_admin_router.set_provider_state_html(mock_request, "p1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
 
     assert isinstance(response, HTMLResponse)
 
 
 @pytest.mark.asyncio
-async def test_delete_provider_html_not_found(mock_request, mock_db, monkeypatch: pytest.MonkeyPatch):
+async def test_delete_provider_html_not_found(mock_request, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "delete_provider", MagicMock(side_effect=LLMProviderNotFoundError("missing")))
 
     with pytest.raises(HTTPException) as excinfo:
-        await llm_admin_router.delete_provider_html(mock_request, "missing", db=mock_db, current_user_ctx={"db": mock_db, "email": "user@example.com"})
+        await llm_admin_router.delete_provider_html(mock_request, "missing", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
 
     assert excinfo.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_check_provider_health(mock_request, mock_db, monkeypatch: pytest.MonkeyPatch):
+async def test_check_provider_health(mock_request, monkeypatch: pytest.MonkeyPatch):
     health = ProviderHealthCheck(provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.HEALTHY, response_time_ms=1.0, error=None, checked_at=datetime.now(timezone.utc))
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "check_provider_health", AsyncMock(return_value=health))
 
-    result = await llm_admin_router.check_provider_health(mock_request, "p1", db=mock_db, current_user_ctx={"db": mock_db, "email": "user@example.com"})
+    result = await llm_admin_router.check_provider_health(mock_request, "p1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
     assert result["status"] == "healthy"
 
 
 @pytest.mark.asyncio
-async def test_set_model_state_html(mock_request, mock_db, monkeypatch: pytest.MonkeyPatch):
+async def test_set_model_state_html(mock_request, monkeypatch: pytest.MonkeyPatch):
     model = _model()
     provider = _provider()
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "set_model_state", lambda *args, **kwargs: model)
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *args, **kwargs: provider)
 
-    response = await llm_admin_router.set_model_state_html(mock_request, "m1", db=mock_db, current_user_ctx={"db": mock_db, "email": "user@example.com"})
+    response = await llm_admin_router.set_model_state_html(mock_request, "m1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
 
     assert isinstance(response, HTMLResponse)
 
 
 @pytest.mark.asyncio
-async def test_delete_model_html_success(mock_request, mock_db, monkeypatch: pytest.MonkeyPatch):
+async def test_delete_model_html_success(mock_request, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "delete_model", lambda *args, **kwargs: None)
 
-    response = await llm_admin_router.delete_model_html(mock_request, "m1", db=mock_db, current_user_ctx={"db": mock_db, "email": "user@example.com"})
+    response = await llm_admin_router.delete_model_html(mock_request, "m1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
 
     assert response.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_get_api_info_partial(mock_request, mock_db, monkeypatch: pytest.MonkeyPatch):
+async def test_get_api_info_partial(mock_request, monkeypatch: pytest.MonkeyPatch):
     provider = _provider()
     model = _model()
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_providers", lambda *args, **kwargs: ([provider], 1))
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_models", lambda *args, **kwargs: ([model], 1))
     monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *args, **kwargs: provider)
 
-    response = await llm_admin_router.get_api_info_partial(mock_request, db=mock_db, current_user_ctx={"db": mock_db, "email": "user@example.com"})
+    response = await llm_admin_router.get_api_info_partial(mock_request, current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
 
     assert isinstance(response, HTMLResponse)
     mock_request.app.state.templates.TemplateResponse.assert_called()

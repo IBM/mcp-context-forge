@@ -102,7 +102,7 @@ async def get_providers_partial(
             }
         )
 
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "llm_providers_partial.html",
         {
@@ -113,9 +113,6 @@ async def get_providers_partial(
             "root_path": request.scope.get("root_path", ""),
         },
     )
-    db.commit()
-    db.close()
-    return response
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +200,7 @@ async def get_models_partial(
     providers, _ = llm_provider_service.list_providers(db, enabled_only=True)
     provider_options = [{"id": p.id, "name": p.name} for p in providers]
 
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "llm_models_partial.html",
         {
@@ -215,9 +212,6 @@ async def get_models_partial(
             "root_path": request.scope.get("root_path", ""),
         },
     )
-    db.commit()
-    db.close()
-    return response
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +244,7 @@ async def set_provider_state_html(
     try:
         provider = llm_provider_service.set_provider_state(db, provider_id)
 
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "llm_provider_row.html",
             {
@@ -268,9 +262,6 @@ async def set_provider_state_html(
                 "root_path": request.scope.get("root_path", ""),
             },
         )
-        db.commit()
-        db.close()
-        return response
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -300,15 +291,12 @@ async def check_provider_health(
     try:
         health = await llm_provider_service.check_provider_health(db, provider_id)
 
-        response = {
+        return {
             "status": health.status.value,
             "provider_id": health.provider_id,
             "latency_ms": int(health.response_time_ms) if health.response_time_ms else None,
             "error": health.error,
         }
-        db.commit()
-        db.close()
-        return response
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -337,10 +325,7 @@ async def delete_provider_html(
     """
     try:
         llm_provider_service.delete_provider(db, provider_id)
-        response = HTMLResponse(content="", status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content="", status_code=200)
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -381,7 +366,7 @@ async def set_model_state_html(
         except LLMProviderNotFoundError:
             provider_name = "Unknown"
 
-        response = request.app.state.templates.TemplateResponse(
+        return request.app.state.templates.TemplateResponse(
             request,
             "llm_model_row.html",
             {
@@ -400,9 +385,6 @@ async def set_model_state_html(
                 "root_path": request.scope.get("root_path", ""),
             },
         )
-        db.commit()
-        db.close()
-        return response
     except LLMModelNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -431,10 +413,7 @@ async def delete_model_html(
     """
     try:
         llm_provider_service.delete_model(db, model_id)
-        response = HTMLResponse(content="", status_code=200)
-        db.commit()
-        db.close()
-        return response
+        return HTMLResponse(content="", status_code=200)
     except LLMModelNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
@@ -492,7 +471,7 @@ async def get_api_info_partial(
         "total_models": total_models,
     }
 
-    response = request.app.state.templates.TemplateResponse(
+    return request.app.state.templates.TemplateResponse(
         request,
         "llm_api_info_partial.html",
         {
@@ -504,9 +483,6 @@ async def get_api_info_partial(
             "root_path": request.scope.get("root_path", ""),
         },
     )
-    db.commit()
-    db.close()
-    return response
 
 
 # ---------------------------------------------------------------------------
@@ -561,7 +537,7 @@ async def admin_test_api(
 
             model_list = [{"id": m.model_id, "owned_by": m.provider_name} for m in models]
 
-            response = ORJSONResponse(
+            return ORJSONResponse(
                 content={
                     "success": True,
                     "test_type": "models",
@@ -572,9 +548,6 @@ async def admin_test_api(
                     },
                 }
             )
-            db.commit()
-            db.close()
-            return response
 
         elif test_type == "chat":
             if not model_id:
@@ -603,7 +576,7 @@ async def admin_test_api(
             if response.choices and len(response.choices) > 0:
                 assistant_message = response.choices[0].message.content or ""
 
-            response = ORJSONResponse(
+            return ORJSONResponse(
                 content={
                     "success": True,
                     "test_type": "chat",
@@ -618,9 +591,6 @@ async def admin_test_api(
                     },
                 }
             )
-            db.commit()
-            db.close()
-            return response
 
         else:
             raise HTTPException(
@@ -633,7 +603,7 @@ async def admin_test_api(
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
         logger.error(f"Admin test failed: {e}")
-        response = ORJSONResponse(
+        return ORJSONResponse(
             content={
                 "success": False,
                 "error": str(e),
@@ -641,9 +611,6 @@ async def admin_test_api(
             },
             status_code=500,
         )
-        db.commit()
-        db.close()
-        return response
 
 
 # ---------------------------------------------------------------------------
@@ -729,26 +696,20 @@ async def fetch_provider_models(
     provider_config = defaults.get(provider.provider_type, {})
 
     if not provider_config.get("supports_model_list"):
-        response = {
+        return {
             "success": False,
             "error": f"Provider type '{provider.provider_type}' does not support model listing",
             "models": [],
         }
-        db.commit()
-        db.close()
-        return response
 
     # Build API URL
     base_url = provider.api_base or provider_config.get("api_base", "")
     if not base_url:
-        response = {
+        return {
             "success": False,
             "error": "No API base URL configured",
             "models": [],
         }
-        db.commit()
-        db.close()
-        return response
 
     models_endpoint = provider_config.get("models_endpoint", "/models")
     url = f"{base_url.rstrip('/')}{models_endpoint}"
@@ -805,42 +766,30 @@ async def fetch_provider_models(
                         }
                     )
 
-        response = {
+        return {
             "success": True,
             "models": models,
             "count": len(models),
         }
-        db.commit()
-        db.close()
-        return response
 
     except httpx.HTTPStatusError as e:
-        response = {
+        return {
             "success": False,
             "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
             "models": [],
         }
-        db.commit()
-        db.close()
-        return response
     except httpx.RequestError as e:
-        response = {
+        return {
             "success": False,
             "error": f"Connection error: {str(e)}",
             "models": [],
         }
-        db.commit()
-        db.close()
-        return response
     except Exception as e:
-        response = {
+        return {
             "success": False,
             "error": str(e),
             "models": [],
         }
-        db.commit()
-        db.close()
-        return response
 
 
 @llm_admin_router.post("/providers/{provider_id}/sync-models")
@@ -866,37 +815,28 @@ async def sync_provider_models(
         Sync results with counts of added/skipped models.
     """
     # First-Party
-    # First fetch models from the provider
-    # NOTE: Must pass as kwargs - require_permission decorator only searches kwargs for user context
-    # Use a fresh session for model fetch to avoid closing the caller's session.
-    # The fetch endpoint now commits/closes its session after response creation.
-    from mcpgateway.db import fresh_db_session
     from mcpgateway.llm_schemas import LLMModelCreate
 
-    with fresh_db_session() as fetch_db:
-        fetch_result = await fetch_provider_models(
-            request=request,
-            provider_id=provider_id,
-            db=fetch_db,
-            current_user_ctx=current_user_ctx,
-        )
+    # First fetch models from the provider
+    # NOTE: Must pass as kwargs - require_permission decorator only searches kwargs for user context
+    fetch_result = await fetch_provider_models(
+        request=request,
+        provider_id=provider_id,
+        db=db,
+        current_user_ctx=current_user_ctx,
+    )
 
     if not fetch_result.get("success"):
-        db.commit()
-        db.close()
         return fetch_result
 
     models = fetch_result.get("models", [])
     if not models:
-        response = {
+        return {
             "success": True,
             "message": "No models found to sync",
             "added": 0,
             "skipped": 0,
         }
-        db.commit()
-        db.close()
-        return response
 
     # Get existing models for this provider
     existing_models, _ = llm_provider_service.list_models(db, provider_id=provider_id)
@@ -931,13 +871,10 @@ async def sync_provider_models(
             logger.warning(f"Failed to create model {model_id}: {e}")
             skipped += 1
 
-    response = {
+    return {
         "success": True,
         "message": f"Synced models: {added} added, {skipped} skipped",
         "added": added,
         "skipped": skipped,
         "total": len(models),
     }
-    db.commit()
-    db.close()
-    return response

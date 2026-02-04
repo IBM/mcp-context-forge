@@ -202,8 +202,6 @@ async def get_oauth_protected_resource(
     headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
 
     logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
-    db.commit()
-    db.close()
     return JSONResponse(content=response_data, headers=headers)
 
 
