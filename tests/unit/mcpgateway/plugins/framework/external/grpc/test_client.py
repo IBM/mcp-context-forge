@@ -19,6 +19,7 @@ try:
     import grpc
     from google.protobuf import json_format
     from google.protobuf.struct_pb2 import Struct
+    from mcpgateway.plugins.framework.external.grpc.client import GrpcExternalPlugin
 
     HAS_GRPC = True
 except ImportError:
@@ -32,7 +33,6 @@ pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed")
 # First-Party
 from mcpgateway.plugins.framework import ToolPreInvokePayload
 from mcpgateway.plugins.framework.errors import PluginError
-from mcpgateway.plugins.framework.external.grpc.client import GrpcExternalPlugin
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
     GRPCClientConfig,

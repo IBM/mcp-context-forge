@@ -9,16 +9,19 @@ Tests for UnixSocketPluginServer message handling.
 """
 
 # Standard
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 # Third-Party
 import pytest
 
 # Check if grpc/protobuf is available
 try:
+    # Third-Party
     from google.protobuf import json_format
     from google.protobuf.struct_pb2 import Struct
+    #First-Party
+    from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+    from mcpgateway.plugins.framework.external.unix.server.server import UnixSocketPluginServer
 
     HAS_GRPC = True
 except ImportError:
@@ -29,9 +32,7 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed (required for protobuf)")
 
 # First-Party
-from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
-from mcpgateway.plugins.framework.external.unix.server.server import UnixSocketPluginServer
-from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginContext
+from mcpgateway.plugins.framework.models import GlobalContext, PluginContext
 
 
 @pytest.fixture

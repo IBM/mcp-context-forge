@@ -15,6 +15,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Third-Party
 import pytest
 
+# Check if grpc is available
+try:
+    import grpc  # noqa: F401
+
+    HAS_GRPC = True
+except ImportError:
+    HAS_GRPC = False
+
+pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed")
+
 # First-Party
 from mcpgateway.plugins.framework.models import GRPCServerConfig, GRPCServerTLSConfig
 

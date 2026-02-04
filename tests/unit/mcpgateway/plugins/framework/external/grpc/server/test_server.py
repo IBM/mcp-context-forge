@@ -8,17 +8,30 @@ Unit tests for gRPC plugin server.
 Tests for GrpcPluginServicer and GrpcHealthServicer.
 """
 
+import pytest
+
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch
 
+try:
+    from google.protobuf import json_format
+    from google.protobuf.struct_pb2 import Struct
+    from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+    from mcpgateway.plugins.framework.external.grpc.server.server import GrpcHealthServicer, GrpcPluginServicer
+
+    HAS_PROTOBUF = True
+except ImportError:
+    HAS_PROTOBUF = False
+    grpc = None  # type: ignore
+    json_format = None  # type: ignore
+    Struct = None  # type: ignore
+
+pytestmark = pytest.mark.skipif(not HAS_PROTOBUF, reason="google protobuf not installed")
+
 # Third-Party
-from google.protobuf import json_format
-from google.protobuf.struct_pb2 import Struct
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
-from mcpgateway.plugins.framework.external.grpc.server.server import GrpcHealthServicer, GrpcPluginServicer
 from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginContext
 
 

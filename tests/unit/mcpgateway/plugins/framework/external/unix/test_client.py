@@ -19,6 +19,7 @@ import pytest
 try:
     from google.protobuf import json_format
     from google.protobuf.struct_pb2 import Struct
+    from mcpgateway.plugins.framework.external.unix.client import UnixSocketExternalPlugin
 
     HAS_GRPC = True
 except ImportError:
@@ -31,7 +32,6 @@ pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed (requir
 # First-Party
 from mcpgateway.plugins.framework import ToolPreInvokePayload
 from mcpgateway.plugins.framework.errors import PluginError
-from mcpgateway.plugins.framework.external.unix.client import UnixSocketExternalPlugin
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
     PluginConfig,
