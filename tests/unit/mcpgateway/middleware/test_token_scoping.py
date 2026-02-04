@@ -364,6 +364,56 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/servers/server-123", "PUT", [Permissions.SERVERS_READ]) == False
 
     @pytest.mark.asyncio
+    async def test_virtual_mcp_server_permission_pattern(self, middleware):
+        """Test that Virtual MCP Server access doesn't require servers.create permission.
+
+        Bug fix: The regex pattern ^/servers(?:$|/) was too broad, matching all paths
+        starting with /servers/ including /servers/{id}/mcp. This caused Virtual MCP
+        Server access to incorrectly require servers.create permission.
+
+        The fix changes the pattern to ^/servers/?$ to only match exact paths.
+        """
+        # servers.create should be required ONLY for creating servers (exact path match)
+        assert middleware._check_permission_restrictions(
+            "/servers", "POST", [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == False, "POST /servers should require servers.create"
+
+        assert middleware._check_permission_restrictions(
+            "/servers/", "POST", [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == False, "POST /servers/ should require servers.create"
+
+        assert middleware._check_permission_restrictions(
+            "/servers", "POST", [Permissions.SERVERS_CREATE]
+        ) == True, "POST /servers should succeed with servers.create"
+
+        # Virtual MCP Server access should NOT require servers.create (this is the fix!)
+        assert middleware._check_permission_restrictions(
+            "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
+            "POST",
+            [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == True, "POST /servers/{id}/mcp should NOT require servers.create"
+
+        assert middleware._check_permission_restrictions(
+            "/servers/abc123/sse",
+            "POST",
+            [Permissions.SERVERS_READ]
+        ) == True, "POST /servers/{id}/sse should NOT require servers.create"
+
+        # Other Virtual MCP Server endpoints should also not require servers.create
+        assert middleware._check_permission_restrictions(
+            "/servers/test-server/mcp/",
+            "POST",
+            [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == True, "POST /servers/{id}/mcp/ should NOT require servers.create"
+
+        # Verify that servers.create works for Virtual MCP Server too (backward compatibility)
+        assert middleware._check_permission_restrictions(
+            "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
+            "POST",
+            [Permissions.SERVERS_CREATE, Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == True, "POST /servers/{id}/mcp should still work with servers.create (backward compat)"
+
+    @pytest.mark.asyncio
     async def test_regex_pattern_segment_boundaries(self, middleware):
         """Test that regex patterns respect path segment boundaries."""
         # Test that similar-but-different paths use default allow (proving pattern precision)

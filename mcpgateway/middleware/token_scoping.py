@@ -77,7 +77,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_DELETE),
     # Server management permissions
     ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
-    ("POST", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_CREATE),
+    ("POST", re.compile(r"^/servers/?$"), Permissions.SERVERS_CREATE),
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
     # Gateway permissions
