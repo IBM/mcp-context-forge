@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Decision cache – TTL-aware LRU with optional Redis back-end.
 
 Architecture

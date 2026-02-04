@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Native RBAC / ABAC engine adapter – pure Python, zero external deps.
 
 Design goals

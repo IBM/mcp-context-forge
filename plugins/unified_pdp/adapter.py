@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Abstract base class that every policy-engine adapter must implement.
 
 Design notes

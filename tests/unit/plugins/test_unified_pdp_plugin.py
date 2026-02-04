@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for the UnifiedPDPPlugin class (unified_pdp.py)."""
 
 import pytest
