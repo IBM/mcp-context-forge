@@ -22117,7 +22117,7 @@ window.rejectJoinRequest = rejectJoinRequest;
  * Validate password match in user edit form
  */
 function getPasswordPolicy() {
-    const policyEl = document.getElementById("password-policy-data");
+    const policyEl = document.getElementById("edit-password-policy-data");
     if (!policyEl) {
         return null;
     }
@@ -22159,22 +22159,22 @@ function validatePasswordRequirements() {
 
     const password = passwordField.value || "";
     const lengthCheck = password.length >= policy.minLength;
-    updateRequirementIcon("req-length", lengthCheck);
+    updateRequirementIcon("edit-req-length", lengthCheck);
 
     const uppercaseCheck = !policy.requireUppercase || /[A-Z]/.test(password);
-    updateRequirementIcon("req-uppercase", uppercaseCheck);
+    updateRequirementIcon("edit-req-uppercase", uppercaseCheck);
 
     const lowercaseCheck = !policy.requireLowercase || /[a-z]/.test(password);
-    updateRequirementIcon("req-lowercase", lowercaseCheck);
+    updateRequirementIcon("edit-req-lowercase", lowercaseCheck);
 
     const numbersCheck = !policy.requireNumbers || /[0-9]/.test(password);
-    updateRequirementIcon("req-numbers", numbersCheck);
+    updateRequirementIcon("edit-req-numbers", numbersCheck);
 
     const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
     const specialCheck =
         !policy.requireSpecial ||
         [...password].some((char) => specialChars.includes(char));
-    updateRequirementIcon("req-special", specialCheck);
+    updateRequirementIcon("edit-req-special", specialCheck);
 
     const submitButton = document.querySelector(
         '#user-edit-modal-content button[type="submit"]',
