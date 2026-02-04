@@ -1,3 +1,14 @@
+import { 
+  validateInputName, 
+  validateJson, 
+  validateUrl,
+} from './security';
+import { 
+  isInactiveChecked, 
+  safeGetElement, 
+  showErrorMessage,
+} from './utils'
+
 // ===================================================================
 // ENHANCED FORM HANDLERS with Input Validation
 // ===================================================================

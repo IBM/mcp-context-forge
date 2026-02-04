@@ -1,15 +1,14 @@
 import { AppState } from './appState.js';
 import { handleAuthTypeSelection } from './auth.js';
-import { DEFAULT_TEAMS_PER_PAGE, HEADER_NAME_REGEX, PERFORMANCE_AGGREGATION_OPTIONS, PERFORMANCE_HISTORY_HOURS } from './constants.js';
+import { DEFAULT_TEAMS_PER_PAGE, PERFORMANCE_AGGREGATION_OPTIONS, PERFORMANCE_HISTORY_HOURS } from './constants.js';
 import { handleA2AFormSubmit, handleEditA2AAgentFormSubmit, handleEditGatewayFormSubmit, handleEditPromptFormSubmit, handleEditResFormSubmit, handleEditServerFormSubmit, handleEditToolFormSubmit, handleGatewayFormSubmit, handlePromptFormSubmit, handleResourceFormSubmit, handleServerFormSubmit, handleToolFormSubmit } from './formSubmitHandlers.js';
 import { closeModal, openModal } from './modals.js';
 import { initPromptSelect } from './prompts.js';
 import { initResourceSelect } from './resources.js';
 import { escapeHtml, escapeHtmlChat, parseErrorResponse, safeSetInnerHTML, validateInputName, validateJson, validateUrl } from './security.js';
 import { showTab } from './tabs.js';
-import { extractAvailableTags, updateAvailableTags } from './tags.js';
 import { initToolSelect } from './tools.js';
-import { createMemoizedInit, fetchWithTimeout, isAdminUser, isInactiveChecked, safeGetElement, showErrorMessage, showSuccessMessage } from './utils.js';
+import { createMemoizedInit, fetchWithTimeout, isAdminUser, safeGetElement, showErrorMessage, showSuccessMessage } from './utils.js';
 
 ((Admin) => {
   // ===================================================================
