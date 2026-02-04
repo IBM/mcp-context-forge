@@ -26,55 +26,48 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, get_request_session
+from contextlib import contextmanager
+from mcpgateway.db import SessionLocal, get_request_session
 from mcpgateway.services.permission_service import PermissionService
 
 # Backwards-compatible alias for tests and older modules that patch
-# `SessionLocal` in middleware modules.
-SessionLocal = get_request_session
->>>>>>> e368b7a0 (pylint fix)
-
-logger = logging.getLogger(__name__)
+# `get_request_session` is a request-scoped getter; keep it available
+request_session = get_request_session
 
 
-def get_db() -> Generator[Session, None, None]:
-    """Local DB dependency for middleware module.
+@contextmanager
+def fresh_db_session():
+    """Context manager that yields a fresh, short-lived DB session.
 
-    Uses the module-level `SessionLocal` alias so tests can patch it.
-
-    Yields:
-        Session: SQLAlchemy session instance. If `SessionLocal` is the
-        request-scoped `get_request_session`, the yielded session is the
-        shared request session and will not be closed by this generator.
-
-    Raises:
-        Exception: Re-raises any exception after attempting rollback and
-            session invalidation.
+    Use this for permission checks that should not reuse the request-scoped
+    session (avoids session accumulation under high load).
     """
-    session = SessionLocal()
-    # Determine whether SessionLocal is the request-scoped getter
-    close_after = SessionLocal is not get_request_session
+    db = SessionLocal()
     try:
-        yield session
+        yield db
         try:
-            session.commit()
+            db.commit()
         except Exception:
-            logger.debug("Failed to commit middleware session: %s", Exception())
+            try:
+                db.invalidate()
+            except Exception:
+                pass
     except Exception:
         try:
-            session.rollback()
+            db.rollback()
         except Exception:
             try:
-                session.invalidate()
-            except Exception as e:
-                logger.debug("Failed to invalidate middleware session during rollback cleanup: %s", e)
+                db.invalidate()
+            except Exception:
+                pass
         raise
     finally:
-        if close_after:
-            try:
-                session.close()
-            except Exception:
-                logger.debug("Failed to close middleware ephemeral session: %s", Exception())
+        try:
+            db.close()
+        except Exception:
+            pass
+
+logger = logging.getLogger(__name__)
 
 
 # HTTP Bearer security scheme for token extraction
