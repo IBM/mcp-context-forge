@@ -57,8 +57,9 @@ class TestGrpcPluginRuntimeGetServerConfig:
         runtime = GrpcPluginRuntime()
 
         mock_plugin_server = MagicMock()
-        mock_plugin_server._config = MagicMock()
-        mock_plugin_server._config.grpc_server_settings = GRPCServerConfig(host="192.168.1.1", port=50053)
+        mock_plugin_server.get_grpc_server_config = MagicMock(
+            return_value=GRPCServerConfig(host="192.168.1.1", port=50053)
+        )
         runtime._plugin_server = mock_plugin_server
 
         config = runtime._get_server_config()
@@ -72,8 +73,7 @@ class TestGrpcPluginRuntimeGetServerConfig:
         runtime = GrpcPluginRuntime()
 
         mock_plugin_server = MagicMock()
-        mock_plugin_server._config = MagicMock()
-        mock_plugin_server._config.grpc_server_settings = None
+        mock_plugin_server.get_grpc_server_config = MagicMock(return_value=None)
         runtime._plugin_server = mock_plugin_server
 
         env_vars = {
@@ -93,15 +93,14 @@ class TestGrpcPluginRuntimeGetServerConfig:
         runtime = GrpcPluginRuntime()
 
         mock_plugin_server = MagicMock()
-        mock_plugin_server._config = MagicMock()
-        mock_plugin_server._config.grpc_server_settings = None
+        mock_plugin_server.get_grpc_server_config = MagicMock(return_value=None)
         runtime._plugin_server = mock_plugin_server
 
         with patch.dict(os.environ, {}, clear=True):
             with patch.object(GRPCServerConfig, "from_env", return_value=None):
                 config = runtime._get_server_config()
                 # Should return default config
-                assert config.host == "0.0.0.0"
+                assert config.host == "127.0.0.1"
                 assert config.port == 50051
 
 
@@ -116,8 +115,7 @@ class TestGrpcPluginRuntimeStart:
         runtime = GrpcPluginRuntime()
 
         mock_plugin_server = AsyncMock()
-        mock_plugin_server._config = MagicMock()
-        mock_plugin_server._config.grpc_server_settings = GRPCServerConfig()
+        mock_plugin_server.get_grpc_server_config = MagicMock(return_value=GRPCServerConfig())
         mock_plugin_server.get_plugin_configs = AsyncMock(return_value=[])
 
         mock_grpc_server = MagicMock()
@@ -145,8 +143,7 @@ class TestGrpcPluginRuntimeStart:
         runtime = GrpcPluginRuntime()
 
         mock_plugin_server = AsyncMock()
-        mock_plugin_server._config = MagicMock()
-        mock_plugin_server._config.grpc_server_settings = GRPCServerConfig(uds=uds_path)
+        mock_plugin_server.get_grpc_server_config = MagicMock(return_value=GRPCServerConfig(uds=uds_path))
         mock_plugin_server.get_plugin_configs = AsyncMock(return_value=[])
 
         mock_grpc_server = MagicMock()
@@ -185,8 +182,7 @@ class TestGrpcPluginRuntimeStart:
         runtime = GrpcPluginRuntime()
 
         mock_plugin_server = AsyncMock()
-        mock_plugin_server._config = MagicMock()
-        mock_plugin_server._config.grpc_server_settings = GRPCServerConfig(tls=tls_config)
+        mock_plugin_server.get_grpc_server_config = MagicMock(return_value=GRPCServerConfig(tls=tls_config))
         mock_plugin_server.get_plugin_configs = AsyncMock(return_value=[])
 
         mock_grpc_server = MagicMock()
@@ -266,8 +262,7 @@ plugin_settings:
         runtime = GrpcPluginRuntime(config_path=str(config_file))
 
         mock_plugin_server = AsyncMock()
-        mock_plugin_server._config = MagicMock()
-        mock_plugin_server._config.grpc_server_settings = GRPCServerConfig()
+        mock_plugin_server.get_grpc_server_config = MagicMock(return_value=GRPCServerConfig())
         mock_plugin_server.get_plugin_configs = AsyncMock(return_value=[])
 
         mock_grpc_server = MagicMock()

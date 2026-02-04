@@ -140,6 +140,11 @@ class GrpcPluginRuntime:
 
         # Start serving
         await self._server.start()
+
+        # Set restrictive permissions on Unix socket (owner read/write only)
+        if is_uds and server_config.uds and os.path.exists(server_config.uds):
+            os.chmod(server_config.uds, 0o600)
+
         logger.info("gRPC plugin server started on %s", address)
         logger.info("Loaded %d plugins", len(await self._plugin_server.get_plugin_configs()))
 

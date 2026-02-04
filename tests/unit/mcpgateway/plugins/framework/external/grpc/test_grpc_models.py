@@ -223,7 +223,7 @@ class TestGRPCServerConfig:
     def test_default_values(self):
         """Test default server configuration values."""
         config = GRPCServerConfig()
-        assert config.host == "0.0.0.0"
+        assert config.host == "127.0.0.1"
         assert config.port == 50051
         assert config.uds is None
         assert config.tls is None

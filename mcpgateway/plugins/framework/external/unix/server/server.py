@@ -340,6 +340,10 @@ class UnixSocketPluginServer:
             path=self._socket_path,
         )
 
+        # Set restrictive permissions on the socket file (owner read/write only)
+        if os.path.exists(self._socket_path):
+            os.chmod(self._socket_path, 0o600)
+
         self._running = True
         logger.info("Unix socket plugin server started on %s", self._socket_path)
 
