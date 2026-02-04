@@ -10,6 +10,7 @@ Use `uvx` to run the gateway instantly without manual installation.
 
 ```bash
 BASIC_AUTH_PASSWORD=pass \
+JWT_SECRET_KEY=my-test-key \
 MCPGATEWAY_UI_ENABLED=true \
 MCPGATEWAY_ADMIN_API_ENABLED=true \
 PLATFORM_ADMIN_EMAIL=admin@example.com \
@@ -22,6 +23,7 @@ uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 
 ```powershell
 $Env:BASIC_AUTH_PASSWORD="pass"
+$Env:JWT_SECRET_KEY="my-test-key"
 $Env:MCPGATEWAY_UI_ENABLED="true"
 $Env:MCPGATEWAY_ADMIN_API_ENABLED="true"
 $Env:PLATFORM_ADMIN_EMAIL="admin@example.com"
@@ -60,7 +62,7 @@ $token = python -m mcpgateway.utils.create_jwt_token `
 
 $headers = @{ Authorization = "Bearer $token" }
 
-Invoke-RestMethod -Uri "http://localhost:4444/version" -Headers $headers | ConvertTo-Json
+Invoke-RestMethod -Uri "http://127.0.0.1:4444/version" -Headers $headers | ConvertTo-Json
 ```
 
 ---
