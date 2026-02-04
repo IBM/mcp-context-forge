@@ -16,10 +16,11 @@
 #    # gRPC-specific settings:
 #    PLUGINS_GRPC_SERVER_HOST      : gRPC server host (default: 0.0.0.0)
 #    PLUGINS_GRPC_SERVER_PORT      : gRPC server port (default: 50051)
-#    PLUGINS_GRPC_SERVER_TLS_CERTFILE : Path to server certificate (optional, enables TLS)
-#    PLUGINS_GRPC_SERVER_TLS_KEYFILE  : Path to server private key (optional)
-#    PLUGINS_GRPC_SERVER_TLS_CA_BUNDLE : Path to CA bundle for client verification (optional, enables mTLS)
-#    PLUGINS_GRPC_SERVER_TLS_CLIENT_AUTH : Client auth mode: 'none', 'optional', 'require' (default: require)
+#    PLUGINS_GRPC_SERVER_SSL_ENABLED  : Enable TLS (true/false, required to enable TLS)
+#    PLUGINS_GRPC_SERVER_SSL_CERTFILE : Path to server certificate (required when SSL_ENABLED=true)
+#    PLUGINS_GRPC_SERVER_SSL_KEYFILE  : Path to server private key (required when SSL_ENABLED=true)
+#    PLUGINS_GRPC_SERVER_SSL_CA_CERTS : Path to CA bundle for client verification (enables mTLS)
+#    PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH : Client auth mode: 'none', 'optional', 'require' (default: require)
 #
 #    # Unix socket-specific settings:
 #    UNIX_SOCKET_PATH              : Path to Unix socket file (default: /tmp/mcpgateway-plugins.sock)
@@ -57,7 +58,17 @@ case "${PLUGINS_TRANSPORT}" in
 
     grpc)
         # gRPC transport (requires grpc extras)
+        # Set sensible defaults for gRPC if not already configured
+        export PLUGINS_GRPC_SERVER_HOST="${PLUGINS_GRPC_SERVER_HOST:-0.0.0.0}"
+        export PLUGINS_GRPC_SERVER_PORT="${PLUGINS_GRPC_SERVER_PORT:-50051}"
+
         echo "✓  Starting gRPC plugin server..."
+        echo "   Host: ${PLUGINS_GRPC_SERVER_HOST}"
+        echo "   Port: ${PLUGINS_GRPC_SERVER_PORT}"
+        if [[ -n "${PLUGINS_GRPC_SERVER_UDS:-}" ]]; then
+            echo "   UDS: ${PLUGINS_GRPC_SERVER_UDS}"
+        fi
+
         python -c "import grpc" 2>/dev/null || {
             echo "ERROR: gRPC dependencies not installed. Install with: pip install .[grpc]"
             exit 1

@@ -433,6 +433,32 @@ build-grpc:
 start:
 	@$(MAKE) container-run
 
+.PHONY: start-grpc
+start-grpc:
+	@echo "🚀 Starting container with gRPC transport on port 50051..."
+	@$(MAKE) container-run CONTAINER_PORT=50051 CONTAINER_INTERNAL_PORT=50051
+
+.PHONY: start-grpc-tls
+start-grpc-tls: container-check-image
+	@echo "🚀 Starting container with gRPC + mTLS on port 50051..."
+	@if [ ! -d "certs/grpc" ]; then \
+		echo "❌ certs/grpc directory not found"; \
+		echo "💡 Generate certificates first (see docs/using/plugins/lifecycle.md)"; \
+		exit 1; \
+	fi
+	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
+	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
+	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
+		--env-file=.env \
+		-p 50051:50051 \
+		-v $(PWD)/certs:/opt/app-root/src/certs:ro \
+		--restart=always \
+		--memory=$(CONTAINER_MEMORY) --cpus=$(CONTAINER_CPUS) \
+		-d $(call get_image_name)
+	@sleep 2
+	@echo "✅ Container started with gRPC + mTLS on port 50051"
+	@echo "📁 Mounted certs from $(PWD)/certs"
+
 .PHONY: stop
 stop:
 	@$(MAKE) container-stop
@@ -459,7 +485,9 @@ help:
 	@echo "...serve             Start API server locally"
 	@echo "...build             Build API server container image"
 	@echo "...build-grpc        Build container image with gRPC support"
-	@echo "...start             Start the API server container"
+	@echo "...start             Start the API server container (port 8000)"
+	@echo "...start-grpc        Start the API server container with gRPC (port 50051)"
+	@echo "...start-grpc-tls    Start with gRPC + mTLS (mounts certs/)"
 	@echo "...stop              Stop the API server container"
 	@echo "...lock              Lock dependencies"
 	@echo "...lint-fix          Check and fix lint errors"
