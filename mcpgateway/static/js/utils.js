@@ -108,6 +108,7 @@ export function createMemoizedInit(fn, debounceMs = 300, name = "Init") {
 
 // ===================================================================
 // Safe element getter with logging
+// ===================================================================
 export function safeGetElement(id, suppressWarning = false) {
   try {
     const element = document.getElementById(id);
