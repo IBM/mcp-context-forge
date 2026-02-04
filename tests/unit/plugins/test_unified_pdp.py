@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for the Unified PDP – all engines, cache, orchestrator.
 
 Run::

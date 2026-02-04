@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """MAC (Bell–LaPadula) engine adapter – mandatory access control.
 
 Bell–LaPadula model
