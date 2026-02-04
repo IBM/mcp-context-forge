@@ -63,7 +63,15 @@ async def read_message(reader: asyncio.StreamReader, timeout: Optional[float] = 
     """
 
     async def _read() -> bytes:
-        """Read and validate a length-prefixed message from the stream."""
+        """Read and validate a length-prefixed message from the stream.
+
+        Returns:
+            The data read from the message stream as bytes.
+
+        Raises:
+            ProtocolError: If the message is too large.
+
+        """
         # Read 4-byte length prefix
         length_bytes = await reader.readexactly(LENGTH_SIZE)
         length = struct.unpack(LENGTH_FORMAT, length_bytes)[0]
