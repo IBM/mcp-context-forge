@@ -530,7 +530,6 @@ class PermissionService:
             bool: True if user is admin
         """
         # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
         from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
 
         # Special case for platform admin (virtual user)

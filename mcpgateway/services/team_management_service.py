@@ -225,7 +225,7 @@ class TeamManagementService:
             # Flush pending changes so member count reflects new/updated membership
             self.db.flush()
             member_count = (
-                self.db.query(func.count(EmailTeamMember.id))
+                self.db.query(func.count(EmailTeamMember.id))  # pylint: disable=not-callable
                 .filter(EmailTeamMember.team_id == team.id, EmailTeamMember.is_active.is_(True))
                 .scalar()
                 or 0
