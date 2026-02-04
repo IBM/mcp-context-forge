@@ -51,7 +51,7 @@ def fresh_db_session():
             try:
                 db.invalidate()
             except Exception:
-                pass
+                logger.debug("fresh_db_session: failed to invalidate DB after commit", exc_info=True)
     except Exception:
         try:
             db.rollback()
@@ -59,13 +59,14 @@ def fresh_db_session():
             try:
                 db.invalidate()
             except Exception:
-                pass
+                logger.debug("fresh_db_session: failed to invalidate DB after rollback", exc_info=True)
         raise
     finally:
         try:
             db.close()
         except Exception:
-            pass
+            logger.debug("fresh_db_session: failed to close DB session", exc_info=True)
+
 
 logger = logging.getLogger(__name__)
 
