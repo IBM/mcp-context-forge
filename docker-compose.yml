@@ -744,10 +744,11 @@ services:
       - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
-      # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
-      # can stick unless the reset query clears them; DISCARD ALL is safest.
-      - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
-      - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
+      # NOTE: Analysis shows app only uses transaction-scoped state (SET LOCAL) and
+      # explicitly unlocks advisory locks in migrations. DISCARD ALL overhead removed.
+      # See: https://github.com/yourorg/yourrepo/issues/2669
+      - SERVER_RESET_QUERY=               # Disabled for performance (no session state used)
+      - SERVER_RESET_QUERY_ALWAYS=0       # Only reset on connection errors
       - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
