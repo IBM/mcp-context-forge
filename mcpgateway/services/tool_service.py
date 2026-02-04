@@ -1027,6 +1027,7 @@ class ToolService:
             >>> db = MagicMock()
             >>> tool = MagicMock()
             >>> tool.name = 'test'
+            >>> tool.gateway_id = None
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> mock_gateway = MagicMock()
             >>> mock_gateway.name = 'test_gateway'
@@ -1114,8 +1115,10 @@ class ToolService:
                 plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
             )
             db.add(db_tool)
+            db.flush()
+            tool_read = self.convert_tool_to_read(db_tool)
+            tool_name = db_tool.name
             db.commit()
-            db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
 
             # Structured logging: Audit trail for tool creation
@@ -1124,13 +1127,13 @@ class ToolService:
                 action="create_tool",
                 resource_type="tool",
                 resource_id=db_tool.id,
-                resource_name=db_tool.name,
+                resource_name=tool_name,
                 user_email=owner_email,
                 team_id=team_id,
                 client_ip=created_from_ip,
                 user_agent=created_user_agent,
                 new_values={
-                    "name": db_tool.name,
+                    "name": tool_name,
                     "display_name": db_tool.display_name,
                     "visibility": visibility,
                     "integration_type": db_tool.integration_type,
@@ -1140,7 +1143,7 @@ class ToolService:
                     "import_batch_id": import_batch_id,
                     "federation_source": federation_source,
                 },
-                db=db,
+                db=None,
             )
 
             # Structured logging: Log successful tool creation
@@ -1155,28 +1158,25 @@ class ToolService:
                 resource_type="tool",
                 resource_id=db_tool.id,
                 custom_fields={
-                    "tool_name": db_tool.name,
+                    "tool_name": tool_name,
                     "visibility": visibility,
                     "integration_type": db_tool.integration_type,
                 },
-                db=db,
+                db=None,
             )
-
-            # Refresh db_tool after logging commits (they expire the session objects)
-            db.refresh(db_tool)
 
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
             await cache.invalidate_tools()
             tool_lookup_cache = _get_tool_lookup_cache()
-            await tool_lookup_cache.invalidate(db_tool.name, gateway_id=str(db_tool.gateway_id) if db_tool.gateway_id else None)
+            await tool_lookup_cache.invalidate(tool_name, gateway_id=str(db_tool.gateway_id) if db_tool.gateway_id else None)
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
 
             await admin_stats_cache.invalidate_tags()
 
-            return self.convert_tool_to_read(db_tool)
+            return tool_read
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
@@ -2366,11 +2366,12 @@ class ToolService:
                 tool.reachable = reachable
                 is_reachable = True
 
+            tool_read = None
             if is_activated or is_reachable:
                 tool.updated_at = datetime.now(timezone.utc)
 
+                tool_read = self.convert_tool_to_read(tool)
                 db.commit()
-                db.refresh(tool)
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -2407,7 +2408,7 @@ class ToolService:
                     context={
                         "action": "activate" if activate else "deactivate",
                     },
-                    db=db,
+                    db=None,
                 )
 
                 # Structured logging: Log successful tool state change
@@ -2425,10 +2426,12 @@ class ToolService:
                         "enabled": tool.enabled,
                         "reachable": tool.reachable,
                     },
-                    db=db,
+                    db=None,
                 )
 
-            return self.convert_tool_to_read(tool)
+            if tool_read is None:
+                tool_read = self.convert_tool_to_read(tool)
+            return tool_read
         except PermissionError as e:
             # Structured logging: Log permission error
             structured_logger.log(
@@ -3800,8 +3803,8 @@ class ToolService:
             logger.info(f"Update tool: {tool.name} (output_schema: {tool.output_schema})")
 
             tool.updated_at = datetime.now(timezone.utc)
+            tool_read = self.convert_tool_to_read(tool)
             db.commit()
-            db.refresh(tool)
             await self._notify_tool_updated(tool)
             logger.info(f"Updated tool: {tool.name}")
 
@@ -3833,7 +3836,7 @@ class ToolService:
                     "modified_via": modified_via,
                     "changes": ", ".join(changes) if changes else "metadata only",
                 },
-                db=db,
+                db=None,
             )
 
             # Structured logging: Log successful tool update
@@ -3851,7 +3854,7 @@ class ToolService:
                     "tool_name": tool.name,
                     "version": tool.version,
                 },
-                db=db,
+                db=None,
             )
 
             # Invalidate cache after successful update
@@ -3866,7 +3869,7 @@ class ToolService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return self.convert_tool_to_read(tool)
+            return tool_read
         except PermissionError as pe:
             db.rollback()
 

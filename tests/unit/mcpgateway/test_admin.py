@@ -3257,7 +3257,15 @@ async def test_admin_create_team_success(monkeypatch, mock_db, allow_permission)
     request = MagicMock(spec=Request)
     request.scope = {"root_path": "/root"}
     request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "slug": "team-one", "description": "Desc", "visibility": "private"}))
-    team = SimpleNamespace(id="team-1", name="Team One", slug="team-one", visibility="private", description="Desc", is_personal=False)
+    team = SimpleNamespace(
+        id="team-1",
+        name="Team One",
+        slug="team-one",
+        visibility="private",
+        description="Desc",
+        is_personal=False,
+        get_member_count=lambda: 1,
+    )
     team_service = MagicMock()
     team_service.create_team = AsyncMock(return_value=team)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)

@@ -484,10 +484,12 @@ class ResourceService:
 
             # Add to DB
             db.add(db_resource)
+            db.flush()
+            db_resource.team = self._get_team_name(db, db_resource.team_id)
+            resource_read = self.convert_resource_to_read(db_resource)
             db.commit()
-            db.refresh(db_resource)
 
-            # Notify subscribers
+            # Notify subscribers (after commit to avoid open transactions during async I/O)
             await self._notify_resource_added(db_resource)
 
             logger.info(f"Registered resource: {resource.uri}")
@@ -514,7 +516,7 @@ class ResourceService:
                     "import_batch_id": import_batch_id,
                     "federation_source": federation_source,
                 },
-                db=db,
+                db=None,
             )
 
             # Structured logging: Log successful resource creation
@@ -533,11 +535,9 @@ class ResourceService:
                     "resource_name": db_resource.name,
                     "visibility": visibility,
                 },
-                db=db,
+                db=None,
             )
-
-            db_resource.team = self._get_team_name(db, db_resource.team_id)
-            return self.convert_resource_to_read(db_resource)
+            return resource_read
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
 
@@ -2397,8 +2397,9 @@ class ResourceService:
             if resource.enabled != activate:
                 resource.enabled = activate
                 resource.updated_at = datetime.now(timezone.utc)
+                resource.team = self._get_team_name(db, resource.team_id)
+                resource_read = self.convert_resource_to_read(resource)
                 db.commit()
-                db.refresh(resource)
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -2428,7 +2429,7 @@ class ResourceService:
                     context={
                         "action": "activate" if activate else "deactivate",
                     },
-                    db=db,
+                    db=None,
                 )
 
                 # Structured logging: Log successful resource state change
@@ -2445,8 +2446,9 @@ class ResourceService:
                         "resource_uri": resource.uri,
                         "enabled": resource.enabled,
                     },
-                    db=db,
+                    db=None,
                 )
+                return resource_read
 
             resource.team = self._get_team_name(db, resource.team_id)
             return self.convert_resource_to_read(resource)
@@ -2692,8 +2694,8 @@ class ResourceService:
                 resource.version = resource.version + 1
             else:
                 resource.version = 1
+            resource_read = self.convert_resource_to_read(resource)
             db.commit()
-            db.refresh(resource)
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
@@ -2742,7 +2744,7 @@ class ResourceService:
                     "modified_via": modified_via,
                     "changes": ", ".join(changes) if changes else "metadata only",
                 },
-                db=db,
+                db=None,
             )
 
             # Structured logging: Log successful resource update
@@ -2760,10 +2762,10 @@ class ResourceService:
                     "resource_uri": resource.uri,
                     "version": resource.version,
                 },
-                db=db,
+                db=None,
             )
 
-            return self.convert_resource_to_read(resource)
+            return resource_read
         except PermissionError as pe:
             db.rollback()
 

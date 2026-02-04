@@ -1491,6 +1491,9 @@ class EmailTeam(Base):
             >>> team.get_member_count()
             0
         """
+        cached_count = getattr(self, "_member_count_cached", None)
+        if cached_count is not None:
+            return cached_count
         # Third-Party
         from sqlalchemy.orm import object_session  # pylint: disable=import-outside-toplevel
 

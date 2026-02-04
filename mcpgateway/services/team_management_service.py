@@ -222,6 +222,16 @@ class TeamManagementService:
                 membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="owner", joined_at=utc_now(), is_active=True)
                 self.db.add(membership)
 
+            # Flush pending changes so member count reflects new/updated membership
+            self.db.flush()
+            member_count = (
+                self.db.query(func.count(EmailTeamMember.id))
+                .filter(EmailTeamMember.team_id == team.id, EmailTeamMember.is_active.is_(True))
+                .scalar()
+                or 0
+            )
+            setattr(team, "_member_count_cached", member_count)
+
             self.db.commit()
 
             # Invalidate member count cache for the new team

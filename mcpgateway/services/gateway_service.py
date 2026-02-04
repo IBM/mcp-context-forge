@@ -2190,7 +2190,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.version = 1
 
                 db.commit()
-                db.refresh(gateway)
+                gateway_read = GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
                 # Invalidate cache after successful update
                 cache = _get_registry_cache()
@@ -2227,7 +2227,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     context={
                         "modified_via": modified_via,
                     },
-                    db=db,
+                    db=None,
                 )
 
                 # Structured logging: Log successful gateway update
@@ -2245,10 +2245,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         "gateway_name": gateway.name,
                         "version": gateway.version,
                     },
-                    db=db,
+                    db=None,
                 )
 
-                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+                return gateway_read
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -2602,7 +2602,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     self._active_gateways.discard(gateway.url)
 
                 db.commit()
-                db.refresh(gateway)
 
                 # Invalidate cache after status change
                 cache = _get_registry_cache()
@@ -2684,7 +2683,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         "action": "activate" if activate else "deactivate",
                         "only_update_reachable": only_update_reachable,
                     },
-                    db=db,
+                    db=None,
                 )
 
                 # Structured logging: Log successful gateway state change
@@ -2702,7 +2701,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         "enabled": gateway.enabled,
                         "reachable": gateway.reachable,
                     },
-                    db=db,
+                    db=None,
                 )
 
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()

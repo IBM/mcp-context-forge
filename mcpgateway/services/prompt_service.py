@@ -536,8 +536,10 @@ class PromptService:
 
             # Add to DB
             db.add(db_prompt)
+            db.flush()
+            db_prompt.team = self._get_team_name(db, db_prompt.team_id)
+            prompt_read = self.convert_prompt_to_read(db_prompt)
             db.commit()
-            db.refresh(db_prompt)
             # Notify subscribers
             await self._notify_prompt_added(db_prompt)
 
@@ -563,7 +565,7 @@ class PromptService:
                     "import_batch_id": import_batch_id,
                     "federation_source": federation_source,
                 },
-                db=db,
+                db=None,
             )
 
             # Structured logging: Log successful prompt creation
@@ -581,11 +583,8 @@ class PromptService:
                     "prompt_name": db_prompt.name,
                     "visibility": visibility,
                 },
-                db=db,
+                db=None,
             )
-
-            db_prompt.team = self._get_team_name(db, db_prompt.team_id)
-            prompt_dict = self.convert_prompt_to_read(db_prompt)
 
             # Invalidate cache after successful creation
             cache = _get_registry_cache()
@@ -601,7 +600,7 @@ class PromptService:
             metrics_cache.invalidate_prefix("top_prompts:")
             metrics_cache.invalidate("prompts")
 
-            return PromptRead.model_validate(prompt_dict)
+            return prompt_read
 
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -1872,8 +1871,9 @@ class PromptService:
             else:
                 prompt.version = 1
 
+            prompt.team = self._get_team_name(db, prompt.team_id)
+            prompt_read = self.convert_prompt_to_read(prompt)
             db.commit()
-            db.refresh(prompt)
 
             await self._notify_prompt_updated(prompt)
 
@@ -1890,7 +1890,7 @@ class PromptService:
                 user_agent=modified_user_agent,
                 new_values={"name": prompt.name, "version": prompt.version},
                 context={"modified_via": modified_via},
-                db=db,
+                db=None,
             )
 
             structured_logger.log(
@@ -1904,10 +1904,8 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt.id),
                 custom_fields={"prompt_name": prompt.name, "version": prompt.version},
-                db=db,
+                db=None,
             )
-
-            prompt.team = self._get_team_name(db, prompt.team_id)
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
@@ -1918,7 +1916,7 @@ class PromptService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return self.convert_prompt_to_read(prompt)
+            return prompt_read
 
         except PermissionError as pe:
             db.rollback()
@@ -2059,8 +2057,9 @@ class PromptService:
             if prompt.enabled != activate:
                 prompt.enabled = activate
                 prompt.updated_at = datetime.now(timezone.utc)
+                prompt.team = self._get_team_name(db, prompt.team_id)
+                prompt_read = self.convert_prompt_to_read(prompt)
                 db.commit()
-                db.refresh(prompt)
 
                 # Invalidate cache after status change (skip for batch operations)
                 if not skip_cache_invalidation:
@@ -2084,7 +2083,7 @@ class PromptService:
                     team_id=prompt.team_id,
                     new_values={"enabled": prompt.enabled},
                     context={"action": "activate" if activate else "deactivate"},
-                    db=db,
+                    db=None,
                 )
 
                 structured_logger.log(
@@ -2097,8 +2096,9 @@ class PromptService:
                     resource_type="prompt",
                     resource_id=str(prompt.id),
                     custom_fields={"prompt_name": prompt.name, "enabled": prompt.enabled},
-                    db=db,
+                    db=None,
                 )
+                return prompt_read
 
             prompt.team = self._get_team_name(db, prompt.team_id)
             return self.convert_prompt_to_read(prompt)

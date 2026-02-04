@@ -801,7 +801,7 @@ class TestGatewayService:
 
         # Assertions
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
         gateway_service._initialize_gateway.assert_called_once()
         gateway_service._notify_gateway_updated.assert_called_once()
         assert mock_gateway.name == "updated_gateway"

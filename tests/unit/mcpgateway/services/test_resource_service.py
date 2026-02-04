@@ -273,7 +273,7 @@ class TestResourceRegistration:
             # Verify database operations
             mock_db.add.assert_called_once()
             mock_db.commit.assert_called_once()
-            mock_db.refresh.assert_called_once()
+            mock_db.refresh.assert_not_called()
 
             # Verify result
             assert result.uri == sample_resource_create.uri

@@ -4293,7 +4293,7 @@ async def admin_create_team(
         team = await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
 
         # Return HTML for the new team
-        member_count = 1  # Creator is automatically a member
+        member_count = team.get_member_count()
         safe_team_name = html.escape(team.name)
         safe_description = html.escape(team.description) if team.description else ""
         team_html = f"""

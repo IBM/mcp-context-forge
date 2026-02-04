@@ -601,11 +601,12 @@ class ServerService:
                     db_server.a2a_agents.append(agent_obj)
                     logger.info(f"A2A agent {agent_obj.name} associated with server {db_server.name}")
 
-            # Commit the new record and refresh.
-            db.commit()
-            db.refresh(db_server)
+            # Flush to populate defaults/ids, then build response before commit
+            db.flush()
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
+            server_read = self.convert_server_to_read(db_server)
+            db.commit()
 
             # Assemble response data with associated item IDs.
             server_data = {
@@ -660,7 +661,7 @@ class ServerService:
             )
 
             # Team name is loaded via db_server.team property from email_team relationship
-            return self.convert_server_to_read(db_server)
+            return server_read
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -1301,10 +1302,10 @@ class ServerService:
             else:
                 server.version = 1
 
-            db.commit()
-            db.refresh(server)
-            # Force loading relationships
+            # Force load relationships and build response before commit
             _ = server.tools, server.resources, server.prompts
+            server_read = self.convert_server_to_read(server)
+            db.commit()
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
@@ -1356,23 +1357,7 @@ class ServerService:
                 user_email=user_email,
             )
 
-            # Build a dictionary with associated IDs
-            # Team name is loaded via server.team property from email_team relationship
-            server_data = {
-                "id": server.id,
-                "name": server.name,
-                "description": server.description,
-                "icon": server.icon,
-                "team": server.team,
-                "created_at": server.created_at,
-                "updated_at": server.updated_at,
-                "enabled": server.enabled,
-                "associated_tools": [tool.id for tool in server.tools],
-                "associated_resources": [res.id for res in server.resources],
-                "associated_prompts": [prompt.id for prompt in server.prompts],
-            }
-            logger.debug(f"Server Data: {server_data}")
-            return self.convert_server_to_read(server)
+            return server_read
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -1494,8 +1479,8 @@ class ServerService:
             if server.enabled != activate:
                 server.enabled = activate
                 server.updated_at = datetime.now(timezone.utc)
+                server_read = self.convert_server_to_read(server)
                 db.commit()
-                db.refresh(server)
 
                 # Invalidate cache after status change
                 cache = _get_registry_cache()
@@ -1532,21 +1517,8 @@ class ServerService:
                     user_email=user_email,
                 )
 
-            # Team name is loaded via server.team property from email_team relationship
-            server_data = {
-                "id": server.id,
-                "name": server.name,
-                "description": server.description,
-                "icon": server.icon,
-                "team": server.team,
-                "created_at": server.created_at,
-                "updated_at": server.updated_at,
-                "enabled": server.enabled,
-                "associated_tools": [tool.id for tool in server.tools],
-                "associated_resources": [res.id for res in server.resources],
-                "associated_prompts": [prompt.id for prompt in server.prompts],
-            }
-            logger.info(f"Server Data: {server_data}")
+                return server_read
+
             return self.convert_server_to_read(server)
         except PermissionError as e:
             # Structured logging: Log permission error

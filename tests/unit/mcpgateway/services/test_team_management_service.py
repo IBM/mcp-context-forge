@@ -174,7 +174,7 @@ class TestTeamManagementService:
 
             assert result == mock_team
             mock_db.add.assert_called()
-            mock_db.flush.assert_called_once()
+            assert mock_db.flush.call_count == 2
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -1081,7 +1081,7 @@ class TestTeamManagementService:
             result = await service.approve_join_request("req-1", "admin@example.com")
 
         assert result is member
-        mock_db.flush.assert_called_once()
+        assert mock_db.flush.call_count == 1
         mock_db.refresh.assert_called_once_with(member)
         mock_log_action.assert_called_once()
         mock_invalidate.assert_awaited_once_with("team-1")

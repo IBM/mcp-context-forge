@@ -1,9 +1,19 @@
 # -*- coding: utf-8 -*-
 import pytest
 import asyncio
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException, Request, status
 from mcpgateway.middleware import rbac
+
+
+@pytest.fixture(autouse=True)
+def patch_fresh_db_session(monkeypatch):
+    @contextmanager
+    def dummy_db_session():
+        yield MagicMock()
+
+    monkeypatch.setattr(rbac, "fresh_db_session", dummy_db_session)
 
 
 @pytest.mark.asyncio

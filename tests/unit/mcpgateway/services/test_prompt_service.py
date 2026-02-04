@@ -195,7 +195,7 @@ class TestPromptService:
 
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
         prompt_service._notify_prompt_added.assert_called_once()
         assert res["name"] == "hello"
         assert res["template"] == "Hello {{ name }}!"

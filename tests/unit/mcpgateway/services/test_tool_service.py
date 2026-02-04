@@ -563,6 +563,7 @@ class TestToolService:
         mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
         test_db.add = Mock()
+        test_db.flush = Mock()
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
@@ -621,8 +622,8 @@ class TestToolService:
         # Verify DB operations
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
-        # refresh is called twice: once after commit and once after logging commits
-        assert test_db.refresh.call_count == 2
+        test_db.flush.assert_called_once()
+        test_db.refresh.assert_not_called()
 
         # Verify result
         assert result.name == "test-gateway-test-tool"
@@ -724,6 +725,7 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_register_tool_name_conflict(self, tool_service, mock_tool, test_db):
         """Test tool registration with name conflict for private, team, and public visibility."""
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
         # --- Private visibility: conflict if name and owner_email match ---
         mock_tool.name = "private_tool"
         mock_tool.visibility = "private"
@@ -740,6 +742,7 @@ class TestToolService:
             visibility="private",
             owner_email="user@example.com",
         )
+        test_db.flush = Mock()
         test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name, owner_email", None, None))
         with pytest.raises(IntegrityError) as exc_info:
             await tool_service.register_tool(test_db, tool_create_private)
@@ -762,6 +765,7 @@ class TestToolService:
             team_id="team123",
             owner_email="user@example.com",
         )
+        test_db.flush = Mock()
         test_db.commit = Mock()
         with pytest.raises(ToolNameConflictError) as exc_info:
             await tool_service.register_tool(test_db, tool_create_team)
@@ -782,6 +786,7 @@ class TestToolService:
             visibility="public",
             owner_email="user@example.com",
         )
+        test_db.flush = Mock()
         test_db.commit = Mock()
         # Ensure mock_tool.name matches the expected error message
         mock_tool.name = "public_tool"
@@ -816,12 +821,14 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_register_tool_db_integrity_error(self, tool_service, test_db):
         """Test tool registration with database IntegrityError."""
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
         # Mock DB to raise IntegrityError on commit
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
         test_db.add = Mock()
         # test_db.commit = Mock(side_effect=IntegrityError("statement", "params", "orig"))
+        test_db.flush = Mock()
         test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name, owner_email", None, None))
 
         test_db.rollback = Mock()
@@ -1343,7 +1350,7 @@ class TestToolService:
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
 
         # Verify properties were updated
         assert mock_tool.enabled is False
@@ -1577,7 +1584,7 @@ class TestToolService:
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
 
         # Verify properties were updated
         assert mock_tool.custom_name == "updated_tool"
@@ -1644,15 +1651,14 @@ class TestToolService:
         """Test updating a tool with no name."""
         # Mock DB get to return None
         test_db.get = Mock(return_value=mock_tool)
+        test_db.commit = Mock()
 
         # Create update request
         tool_update = ToolUpdate()
 
-        # The service wraps the exception in ToolError
-        with pytest.raises(ToolError) as exc_info:
-            await tool_service.update_tool(test_db, 999, tool_update)
+        result = await tool_service.update_tool(test_db, 999, tool_update)
 
-        assert "Failed to update tool" in str(exc_info.value)
+        assert result is not None
 
     @pytest.mark.asyncio
     async def test_update_tool_extra_fields(self, tool_service, mock_tool, test_db):

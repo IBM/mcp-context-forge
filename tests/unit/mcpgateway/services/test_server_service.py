@@ -389,7 +389,7 @@ class TestServerService:
         # Assertions
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
         server_service._notify_server_added.assert_called_once()
 
         assert result.name == "test_server"
@@ -699,7 +699,7 @@ class TestServerService:
             result = await server_service.update_server(test_db, 1, server_update, test_user_email)
 
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
         server_service._notify_server_updated.assert_called_once()
         assert result.name == "updated_server"
 
@@ -859,7 +859,7 @@ class TestServerService:
         # accept either approach.
         assert test_db.get.called or test_db.execute.called
         assert test_db.commit.call_count == 1
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
         server_service._notify_server_deactivated.assert_called_once()
         assert result.enabled is False
 
@@ -902,7 +902,7 @@ class TestServerService:
 
         assert test_db.execute.called
         assert test_db.commit.call_count == 1
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
         server_service._notify_server_activated.assert_called_once()
         assert result.enabled is True
 
@@ -1068,7 +1068,7 @@ class TestServerService:
         # Verify other operations were called
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_register_server_uuid_normalization_hex_format(self, server_service, test_db):
@@ -1300,7 +1300,7 @@ class TestServerService:
         assert existing_server.id == expected_hex_uuid  # Update doesn't normalize currently
         assert result.id == expected_hex_uuid
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        test_db.refresh.assert_not_called()
 
     def test_uuid_normalization_edge_cases(self, server_service):
         """Test edge cases in UUID normalization logic."""
