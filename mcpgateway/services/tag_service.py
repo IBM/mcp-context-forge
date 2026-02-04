@@ -115,10 +115,10 @@ class TagService:
 
             >>> # Mock result with tag data
             >>> mock_result = MagicMock()
-            >>> mock_result.__iter__ = lambda self: iter([
+            >>> mock_result.fetchall.return_value = [
             ...     (["api", "database"],),
             ...     (["api", "web"],),
-            ... ])
+            ... ]
             >>> mock_db.execute.return_value = mock_result
             >>>
             >>> # Test with tag data
@@ -132,7 +132,7 @@ class TagService:
             >>> from types import SimpleNamespace
             >>> entity = SimpleNamespace(id='1', name='E', description='d', tags=['api'])
             >>> mock_result2 = MagicMock()
-            >>> mock_result2.scalars.return_value = [entity]
+            >>> mock_result2.scalars.return_value.all.return_value = [entity]
             >>> mock_db.execute.return_value = mock_result2
             >>> async def test_with_entities():
             ...     tags = await service.get_all_tags(mock_db, entity_types=["tools"], include_entities=True)
@@ -183,8 +183,11 @@ class TagService:
                 # Get full entity details
                 stmt = select(model).where(model.tags.isnot(None))
                 result = db.execute(stmt)
+                scalars = result.scalars()
+                entities = scalars.all() if hasattr(scalars, "all") else list(scalars)
+                db.commit()  # Release transaction before Python-side tag aggregation
 
-                for entity in result.scalars():
+                for entity in entities:
                     tags = entity.tags if entity.tags else []
                     for raw_tag in tags:
                         tag = self._get_tag_id(raw_tag)
@@ -224,8 +227,12 @@ class TagService:
                 # Just get tags without entity details
                 stmt = select(model.tags).where(model.tags.isnot(None))
                 result = db.execute(stmt)
+                rows = result.fetchall() if hasattr(result, "fetchall") else None
+                if not isinstance(rows, (list, tuple)):
+                    rows = list(result)
+                db.commit()  # Release transaction before Python-side tag aggregation
 
-                for row in result:
+                for row in rows:
                     tags = row[0] if row[0] else []
                     for raw_tag in tags:
                         tag = self._get_tag_id(raw_tag)
@@ -353,7 +360,7 @@ class TagService:
             >>>
             >>> # Mock database result
             >>> mock_result = MagicMock()
-            >>> mock_result.scalars.return_value = [mock_entity]
+            >>> mock_result.scalars.return_value.all.return_value = [mock_entity]
             >>> mock_db.execute.return_value = mock_result
             >>>
             >>> # Test entity lookup by tag
@@ -402,8 +409,11 @@ class TagService:
             # Using json_contains_tag_expr for cross-database compatibility (PostgreSQL/SQLite)
             stmt = select(model).where(json_contains_tag_expr(db, model.tags, [tag_name], match_any=True))
             result = db.execute(stmt)
+            scalars = result.scalars()
+            db_entities = scalars.all() if hasattr(scalars, "all") else list(scalars)
+            db.commit()  # Release transaction before Python-side tag filtering
 
-            for entity in result.scalars():
+            for entity in db_entities:
                 entity_tags = entity.tags or []
                 entity_tag_ids = [self._get_tag_id(t) for t in entity_tags]
                 if tag_name in entity_tag_ids:

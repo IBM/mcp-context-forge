@@ -218,6 +218,7 @@ class LogAggregator:
                         "window_minutes": str(window_minutes),
                     },
                 ).fetchall()
+                db.commit()  # Release read transaction before Python-side aggregation
 
                 created_metrics: List[PerformanceMetric] = []
                 for row in rows:
@@ -426,6 +427,7 @@ class LogAggregator:
             )
 
             pairs = db.execute(stmt).all()
+            db.commit()  # Release read transaction before Python-side aggregation
 
             metrics = []
             for component, operation in pairs:
@@ -802,6 +804,7 @@ class LogAggregator:
         )
 
         results = db.execute(stmt).scalars().all()
+        db.commit()  # Release read transaction before Python-side statistics
 
         if not results:
             return None

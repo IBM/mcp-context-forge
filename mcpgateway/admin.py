@@ -827,6 +827,20 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
 
 admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
+
+def _ensure_db_session(db: Optional[Session]) -> Session:
+    """Return a real database session when called outside FastAPI injection.
+
+    Args:
+        db: Optional session, possibly a FastAPI dependency placeholder.
+
+    Returns:
+        An active SQLAlchemy session to use for queries.
+    """
+    if db is None or not hasattr(db, "query"):
+        return next(get_db())
+    return db
+
 ####################
 # Admin UI Routes  #
 ####################
@@ -15322,7 +15336,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
     Returns:
         HTMLResponse: Rendered statistics template with trace counts and averages
     """
-    db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         cutoff_time = datetime.now() - timedelta(hours=hours)
 
@@ -15390,7 +15404,7 @@ async def get_observability_traces(
     Returns:
         HTMLResponse: Rendered traces list template
     """
-    db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         # Parse time range
         time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
@@ -15471,7 +15485,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
     Raises:
         HTTPException: 404 if trace not found
     """
-    db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
 
@@ -15516,7 +15530,7 @@ async def save_observability_query(
     Raises:
         HTTPException: 400 if validation fails
     """
-    db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         # Get user email from authenticated user
         user_email = user.email if hasattr(user, "email") else "unknown"
@@ -15556,7 +15570,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
     Returns:
         list: List of saved query dictionaries
     """
-    db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -15607,7 +15621,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
     Raises:
         HTTPException: 404 if query not found or unauthorized
     """
-    db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -15669,6 +15683,7 @@ async def update_observability_query(
         HTTPException: 404 if query not found, 403 if unauthorized
     """
     db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -15728,6 +15743,7 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
         HTTPException: 404 if query not found, 403 if unauthorized
     """
     db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
@@ -15765,6 +15781,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         HTTPException: 404 if query not found or unauthorized
     """
     db = next(get_db())
+    db = _ensure_db_session(db)
     try:
         user_email = user.email if hasattr(user, "email") else "unknown"
 
