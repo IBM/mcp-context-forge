@@ -6,80 +6,48 @@ Authors: Team C
 
 Semantic Search Service for Tool Discovery.
 
-This module provides semantic search capabilities for tool discovery using
-embeddings and vector similarity search. It serves as an abstraction layer
-over the embedding generation and vector search implementations.
+This module orchestrates semantic search by coordinating between:
+- Team A's embedding service (mcpgateway/services/embedding_service.py)
+- Team B's vector search service (mcpgateway/services/vector_search_service.py)
 
-The service coordinates between:
-- Embedding generation (Team A implementation)
-- Vector similarity search (Team B implementation with pgvector)
+Team C is responsible for:
+- Validating search parameters
+- Orchestrating the embedding + search workflow
+- Exposing the GET /tools/semantic endpoint (in main.py)
 """
 
 # Standard
 from typing import List, Optional
 
-# Third-Party
-from pydantic import BaseModel
-
 # First-Party
 from mcpgateway.schemas import ToolSearchResult
 
+# Import Team A's embedding service
+# Team A will implement embed_query() in this file
+try:
+    from mcpgateway.services.embedding_service import EmbeddingService
+except ImportError:
+    # Fallback stub if Team A hasn't created the file yet
+    class EmbeddingService:
+        """Temporary stub until Team A implements embedding_service.py"""
+        async def embed_query(self, query: str) -> List[float]:
+            return [0.0] * 768
 
-class EmbeddingService:
-    """Service for generating text embeddings.
-
-    This is a stub interface for Team A's embedding implementation.
-    The actual implementation will be provided by Team A.
-    """
-
-    async def embed_query(self, query: str) -> List[float]:
-        """Generate embedding vector for a query string.
-
-        Args:
-            query: The text query to embed
-
-        Returns:
-            List of floats representing the embedding vector
-
-        Raises:
-            RuntimeError: If embedding generation fails
-        """
-        # TODO: Team A will implement actual embedding generation
-        # For now, return a stub embedding (768-dimensional vector of zeros)
-        # This allows Team C to develop and test the API endpoint structure
-        return [0.0] * 768
-
-
-class VectorSearchService:
-    """Service for vector similarity search over tool embeddings.
-
-    This is a stub interface for Team B's vector search implementation.
-    The actual implementation will use PostgreSQL with pgvector extension.
-    """
-
-    async def search_similar_tools(
-        self,
-        embedding: List[float],
-        limit: int = 10,
-        threshold: Optional[float] = None,
-    ) -> List[ToolSearchResult]:
-        """Search for tools similar to the given embedding vector.
-
-        Args:
-            embedding: Query embedding vector
-            limit: Maximum number of results to return
-            threshold: Optional similarity threshold (0-1). Only return results
-                      with similarity >= threshold
-
-        Returns:
-            List of ToolSearchResult objects ranked by similarity (highest first)
-
-        Raises:
-            RuntimeError: If vector search fails
-        """
-        # TODO: Team B will implement actual vector search with pgvector
-        # For now, return empty results to allow API development
-        return []
+# Import Team B's vector search service
+# Team B will implement search_similar_tools() in this file
+try:
+    from mcpgateway.services.vector_search_service import VectorSearchService
+except ImportError:
+    # Fallback stub if Team B hasn't created the file yet
+    class VectorSearchService:
+        """Temporary stub until Team B implements vector_search_service.py"""
+        async def search_similar_tools(
+            self,
+            embedding: List[float],
+            limit: int = 10,
+            threshold: Optional[float] = None,
+        ) -> List[ToolSearchResult]:
+            return []
 
 
 class SemanticSearchService:
