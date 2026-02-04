@@ -19,6 +19,16 @@ import uuid
 # Third-Party
 import pytest
 
+# Check if grpc/protobuf is available (Unix socket uses protobuf from grpc package)
+try:
+    import grpc  # noqa: F401
+
+    HAS_GRPC = True
+except ImportError:
+    HAS_GRPC = False
+
+pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed (required for protobuf)")
+
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework import (

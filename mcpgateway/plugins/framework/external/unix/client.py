@@ -26,6 +26,7 @@ Examples:
     >>> # await plugin.initialize()
     >>> # result = await plugin.invoke_hook(hook_type, payload, context)
 """
+# pylint: disable=no-member,no-name-in-module
 
 # Standard
 import asyncio
@@ -124,7 +125,7 @@ class UnixSocketExternalPlugin(Plugin):
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
-            except Exception:
+            except Exception:  # nosec B110 - cleanup code, exceptions should not propagate
                 pass
         self._writer = None
         self._reader = None
@@ -186,9 +187,6 @@ class UnixSocketExternalPlugin(Plugin):
                 except asyncio.TimeoutError as e:
                     logger.warning("Request timed out after %s seconds", self._timeout)
                     raise PluginError(error=PluginErrorModel(message=f"Request timed out after {self._timeout}s", plugin_name=self.name)) from e
-
-                except PluginError:
-                    raise
 
                 except (OSError, asyncio.IncompleteReadError, BrokenPipeError) as e:
                     logger.warning("Connection error on attempt %d: %s", attempt + 1, e)

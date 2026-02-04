@@ -40,8 +40,6 @@ MAX_MESSAGE_SIZE = 16 * 1024 * 1024
 class ProtocolError(Exception):
     """Raised when a protocol-level error occurs."""
 
-    pass
-
 
 async def read_message(reader: asyncio.StreamReader, timeout: Optional[float] = None) -> bytes:
     """Read a length-prefixed message from the stream.
@@ -65,6 +63,7 @@ async def read_message(reader: asyncio.StreamReader, timeout: Optional[float] = 
     """
 
     async def _read() -> bytes:
+        """Read and validate a length-prefixed message from the stream."""
         # Read 4-byte length prefix
         length_bytes = await reader.readexactly(LENGTH_SIZE)
         length = struct.unpack(LENGTH_FORMAT, length_bytes)[0]

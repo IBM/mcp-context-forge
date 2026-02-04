@@ -18,6 +18,16 @@ import time
 # Third-Party
 import pytest
 
+# Check if grpc is available
+try:
+    import grpc  # noqa: F401
+
+    HAS_GRPC = True
+except ImportError:
+    HAS_GRPC = False
+
+pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed")
+
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework import (

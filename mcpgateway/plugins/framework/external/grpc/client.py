@@ -7,6 +7,7 @@ Authors: Teryl Taylor
 External plugin client which connects to a remote server through gRPC.
 Module that contains plugin gRPC client code to serve external plugins.
 """
+# pylint: disable=no-member,no-name-in-module
 
 # Standard
 import asyncio

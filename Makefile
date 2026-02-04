@@ -2535,7 +2535,7 @@ unimport:                           ## 📦  Unused import detection
 	@echo "📦  unimport $(TARGET)…" && $(VENV_DIR)/bin/unimport --check --diff $(TARGET)
 
 vulture:                            ## 🧹  Dead code detection
-	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80
+	@echo "🧹  vulture $(TARGET) …" && $(VENV_DIR)/bin/vulture $(TARGET) --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
 
 # Shell script linting for individual files
 shell-lint-file:                    ## 🐚  Lint shell script

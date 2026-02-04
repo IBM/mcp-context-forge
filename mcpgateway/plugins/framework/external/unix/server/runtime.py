@@ -50,7 +50,7 @@ async def run() -> None:
     )
     socket_path = os.environ.get(
         "UNIX_SOCKET_PATH",
-        "/tmp/mcpgateway-plugins.sock",
+        "/tmp/mcpgateway-plugins.sock",  # nosec B108 - configurable via env var
     )
 
     logger.info("Starting Unix socket plugin server")

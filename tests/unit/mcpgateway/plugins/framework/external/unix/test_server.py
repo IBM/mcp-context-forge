@@ -13,9 +13,20 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from google.protobuf import json_format
-from google.protobuf.struct_pb2 import Struct
 import pytest
+
+# Check if grpc/protobuf is available
+try:
+    from google.protobuf import json_format
+    from google.protobuf.struct_pb2 import Struct
+
+    HAS_GRPC = True
+except ImportError:
+    HAS_GRPC = False
+    json_format = None  # type: ignore
+    Struct = None  # type: ignore
+
+pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed (required for protobuf)")
 
 # First-Party
 from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2

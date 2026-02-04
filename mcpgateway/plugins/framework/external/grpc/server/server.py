@@ -9,6 +9,7 @@ gRPC servicer implementations for external plugin server.
 This module provides gRPC servicer classes that adapt gRPC calls to the
 ExternalPluginServer, which handles the actual plugin loading and execution.
 """
+# pylint: disable=no-member,no-name-in-module
 
 # Standard
 import logging
@@ -53,7 +54,7 @@ class GrpcPluginServicer(plugin_service_pb2_grpc.PluginServiceServicer):
         """
         self._plugin_server = plugin_server
 
-    async def GetPluginConfig(
+    async def GetPluginConfig(  # pylint: disable=invalid-overridden-method
         self,
         request: plugin_service_pb2.GetPluginConfigRequest,
         context: grpc.aio.ServicerContext,
@@ -87,7 +88,7 @@ class GrpcPluginServicer(plugin_service_pb2_grpc.PluginServiceServicer):
             context.set_details(str(e))
             return plugin_service_pb2.GetPluginConfigResponse(found=False)
 
-    async def GetPluginConfigs(
+    async def GetPluginConfigs(  # pylint: disable=invalid-overridden-method
         self,
         request: plugin_service_pb2.GetPluginConfigsRequest,
         context: grpc.aio.ServicerContext,
@@ -120,7 +121,7 @@ class GrpcPluginServicer(plugin_service_pb2_grpc.PluginServiceServicer):
             context.set_details(str(e))
             return plugin_service_pb2.GetPluginConfigsResponse()
 
-    async def InvokeHook(
+    async def InvokeHook(  # pylint: disable=invalid-overridden-method
         self,
         request: plugin_service_pb2.InvokeHookRequest,
         context: grpc.aio.ServicerContext,
@@ -233,7 +234,7 @@ class GrpcHealthServicer(plugin_service_pb2_grpc.HealthServicer):
         """
         self._plugin_server = plugin_server
 
-    async def Check(
+    async def Check(  # pylint: disable=invalid-overridden-method
         self,
         request: plugin_service_pb2.HealthCheckRequest,
         context: grpc.aio.ServicerContext,

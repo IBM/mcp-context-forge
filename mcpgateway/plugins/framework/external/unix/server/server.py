@@ -26,6 +26,7 @@ Examples:
 
     >>> # asyncio.run(main())
 """
+# pylint: disable=no-member,no-name-in-module
 
 # Standard
 import asyncio
@@ -36,6 +37,7 @@ from typing import Optional
 
 # Third-Party
 from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Struct
 
 # First-Party
 from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
@@ -72,7 +74,7 @@ class UnixSocketPluginServer:
     def __init__(
         self,
         config_path: str,
-        socket_path: str = "/tmp/mcpgateway-plugins.sock",
+        socket_path: str = "/tmp/mcpgateway-plugins.sock",  # nosec B108 - configurable default
     ) -> None:
         """Initialize the Unix socket server.
 
@@ -150,7 +152,7 @@ class UnixSocketPluginServer:
             try:
                 writer.close()
                 await writer.wait_closed()
-            except Exception:
+            except Exception:  # nosec B110 - cleanup code, exceptions should not propagate
                 pass
 
     async def _handle_message(self, data: bytes) -> bytes:
@@ -169,7 +171,7 @@ class UnixSocketPluginServer:
 
             if request.hook_type and request.plugin_name:
                 return await self._handle_invoke_hook(request)
-        except Exception:
+        except Exception:  # nosec B110 - protobuf parse attempt, try next message type
             pass
 
         # Try GetPluginConfigRequest
@@ -179,7 +181,7 @@ class UnixSocketPluginServer:
 
             if request.name:
                 return await self._handle_get_plugin_config(request)
-        except Exception:
+        except Exception:  # nosec B110 - protobuf parse attempt, try next message type
             pass
 
         # Try GetPluginConfigsRequest
@@ -189,7 +191,7 @@ class UnixSocketPluginServer:
             # This request has no required fields, so check if data is minimal
             if len(data) <= 2:  # Empty or near-empty message
                 return await self._handle_get_plugin_configs(request)
-        except Exception:
+        except Exception:  # nosec B110 - protobuf parse attempt, fall through to error
             pass
 
         # Unknown message type
@@ -291,12 +293,12 @@ class UnixSocketPluginServer:
 
     async def _handle_get_plugin_configs(
         self,
-        request: plugin_service_pb2.GetPluginConfigsRequest,
+        _request: plugin_service_pb2.GetPluginConfigsRequest,
     ) -> bytes:
         """Handle a GetPluginConfigs request.
 
         Args:
-            request: The GetPluginConfigsRequest.
+            _request: The GetPluginConfigsRequest (unused, included for API consistency).
 
         Returns:
             Serialized GetPluginConfigsResponse.
@@ -307,9 +309,6 @@ class UnixSocketPluginServer:
             configs = await self._plugin_server.get_plugin_configs()
 
             for config in configs:
-                # Third-Party
-                from google.protobuf.struct_pb2 import Struct
-
                 config_struct = Struct()
                 json_format.ParseDict(config, config_struct)
                 response.configs.append(config_struct)
@@ -382,7 +381,7 @@ class UnixSocketPluginServer:
 
 async def run_server(
     config_path: str,
-    socket_path: str = "/tmp/mcpgateway-plugins.sock",
+    socket_path: str = "/tmp/mcpgateway-plugins.sock",  # nosec B108 - configurable default
 ) -> None:
     """Run the Unix socket server until interrupted.
 
@@ -397,6 +396,7 @@ async def run_server(
     stop_event = asyncio.Event()
 
     def signal_handler() -> None:
+        """Handle SIGINT/SIGTERM by setting the stop event."""
         logger.info("Received shutdown signal")
         stop_event.set()
 

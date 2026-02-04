@@ -958,7 +958,7 @@ class GRPCServerConfig(BaseModel):
         'unix:///tmp/grpc-plugin.sock'
     """
 
-    host: str = Field(default="0.0.0.0", description="Server host to bind to")
+    host: str = Field(default="127.0.0.1", description="Server host to bind to")
     port: int = Field(default=50051, description="Server port to bind to")
     uds: Optional[str] = Field(default=None, description="Unix domain socket path")
     tls: Optional[GRPCServerTLSConfig] = Field(default=None, description="Server-side TLS configuration")
@@ -1118,7 +1118,7 @@ class UnixSocketServerConfig(BaseModel):
         '/tmp/plugin.sock'
     """
 
-    path: str = Field(default="/tmp/mcpgateway-plugins.sock", description="Path to the Unix domain socket")
+    path: str = Field(default="/tmp/mcpgateway-plugins.sock", description="Path to the Unix domain socket")  # nosec B108 - configurable default
 
     @classmethod
     def from_env(cls) -> Optional["UnixSocketServerConfig"]:

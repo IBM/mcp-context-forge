@@ -74,7 +74,7 @@ from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, PLUGIN_NAME, 
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import MCPServerConfig, PluginContext
+from mcpgateway.plugins.framework.models import GRPCServerConfig, MCPServerConfig, PluginContext
 
 P = TypeVar("P", bound=BaseModel)
 
@@ -277,3 +277,17 @@ class ExternalPluginServer:
             8000
         """
         return self._config.server_settings or MCPServerConfig.from_env() or MCPServerConfig()
+
+    def get_grpc_server_config(self) -> GRPCServerConfig | None:
+        """Return the gRPC server configuration if defined.
+
+        Returns:
+            The gRPC server configuration from the config file, or None if not defined.
+
+        Examples:
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml")
+            >>> config = server.get_grpc_server_config()
+            >>> config is None or isinstance(config, GRPCServerConfig)
+            True
+        """
+        return self._config.grpc_server_settings

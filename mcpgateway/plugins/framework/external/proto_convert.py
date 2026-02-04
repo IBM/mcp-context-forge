@@ -9,6 +9,7 @@ Conversion utilities between Pydantic models and protobuf messages.
 This module provides efficient conversion functions that use explicit protobuf
 messages where possible, falling back to Struct for dynamic fields.
 """
+# pylint: disable=no-member
 
 # Standard
 

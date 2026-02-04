@@ -179,8 +179,10 @@ class GrpcPluginRuntime:
             GRPCServerConfig with server settings.
         """
         # Check if config has gRPC server settings
-        if self._plugin_server and self._plugin_server._config.grpc_server_settings:
-            return self._plugin_server._config.grpc_server_settings
+        if self._plugin_server:
+            grpc_config = self._plugin_server.get_grpc_server_config()
+            if grpc_config:
+                return grpc_config
 
         # Fall back to environment variables
         env_config = GRPCServerConfig.from_env()
@@ -213,6 +215,7 @@ async def run_server(
     loop = asyncio.get_running_loop()
 
     def signal_handler() -> None:
+        """Handle SIGINT/SIGTERM by requesting graceful shutdown."""
         logger.info("Received shutdown signal")
         runtime.request_shutdown()
 

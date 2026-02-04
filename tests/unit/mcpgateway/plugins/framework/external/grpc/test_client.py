@@ -12,10 +12,22 @@ Tests for GrpcExternalPlugin initialization, hook invocation, and error handling
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from google.protobuf import json_format
-from google.protobuf.struct_pb2 import Struct
-import grpc
 import pytest
+
+# Check if grpc is available
+try:
+    import grpc
+    from google.protobuf import json_format
+    from google.protobuf.struct_pb2 import Struct
+
+    HAS_GRPC = True
+except ImportError:
+    HAS_GRPC = False
+    grpc = None  # type: ignore
+    json_format = None  # type: ignore
+    Struct = None  # type: ignore
+
+pytestmark = pytest.mark.skipif(not HAS_GRPC, reason="grpc not installed")
 
 # First-Party
 from mcpgateway.plugins.framework import ToolPreInvokePayload
