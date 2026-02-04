@@ -133,6 +133,61 @@ def upgrade() -> None:
 
     print(f"Found {len(users_without_roles)} users without role assignments.")
 
+    # Find an admin user to use as granted_by, or use first user
+    # granted_by has a foreign key constraint to email_users.email
+    if dialect_name == "postgresql":
+        admin_user_query = text(
+            """
+            SELECT email FROM email_users
+            WHERE is_admin = TRUE
+            ORDER BY created_at ASC
+            LIMIT 1
+        """
+        )
+    else:
+        admin_user_query = text(
+            """
+            SELECT email FROM email_users
+            WHERE is_admin = 1
+            ORDER BY created_at ASC
+            LIMIT 1
+        """
+        )
+    
+    admin_user_result = bind.execute(admin_user_query).fetchone()
+    
+    if admin_user_result:
+        granted_by_email = admin_user_result[0]
+        print(f"Using admin user '{granted_by_email}' as granted_by for role assignments.")
+    else:
+        # No admin user found, use first active user
+        if dialect_name == "postgresql":
+            first_user_query = text(
+                """
+                SELECT email FROM email_users
+                WHERE is_active = TRUE
+                ORDER BY created_at ASC
+                LIMIT 1
+            """
+            )
+        else:
+            first_user_query = text(
+                """
+                SELECT email FROM email_users
+                WHERE is_active = 1
+                ORDER BY created_at ASC
+                LIMIT 1
+            """
+            )
+        
+        first_user_result = bind.execute(first_user_query).fetchone()
+        if first_user_result:
+            granted_by_email = first_user_result[0]
+            print(f"No admin found. Using first user '{granted_by_email}' as granted_by for role assignments.")
+        else:
+            print("No users found to use as granted_by. Cannot assign roles.")
+            return
+
     # Assign viewer role to each user
     now = datetime.now(timezone.utc)
     assigned_count = 0
@@ -160,7 +215,7 @@ def upgrade() -> None:
                     "role_id": viewer_role_id,
                     "scope": "global",
                     "scope_id": None,
-                    "granted_by": "system",
+                    "granted_by": granted_by_email,
                     "granted_at": now,
                     "expires_at": None,
                     "is_active": True,
@@ -198,21 +253,22 @@ def downgrade() -> None:
         print("user_roles table not found. Nothing to downgrade.")
         return
 
-    print("Removing system-assigned 'viewer' roles...")
+    print("Removing migration-assigned 'viewer' roles...")
 
     try:
         # Use parameterized query to prevent SQL injection (Bandit B608)
-        # Only remove viewer roles that were granted by 'system'
+        # Remove viewer roles with global scope (these were assigned by this migration)
+        # Note: We can't filter by granted_by since it could be any admin/user
         delete_query = text(
             """
             DELETE FROM user_roles
             WHERE role_id IN (SELECT id FROM roles WHERE name = :role_name)
-            AND granted_by = :granted_by
             AND scope = :scope
         """
         )
 
-        result = bind.execute(delete_query, {"role_name": "viewer", "granted_by": "system", "scope": "global"})
-        print(f"✅ Removed {result.rowcount} system-assigned 'viewer' role assignments.")
+        result = bind.execute(delete_query, {"role_name": "viewer", "scope": "global"})
+        print(f"✅ Removed {result.rowcount} migration-assigned 'viewer' role assignments.")
+        print("⚠️  Note: This removes ALL global viewer roles, not just migration-created ones.")
     except Exception as e:
-        print(f"Warning: Could not remove system-assigned viewer roles: {e}")
+        print(f"Warning: Could not remove migration-assigned viewer roles: {e}")
