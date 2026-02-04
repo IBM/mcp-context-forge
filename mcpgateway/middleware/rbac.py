@@ -41,6 +41,13 @@ def fresh_db_session():
 
     Use this for permission checks that should not reuse the request-scoped
     session (avoids session accumulation under high load).
+
+    Yields:
+        Session: a new SQLAlchemy ``Session`` instance (short-lived).
+
+    Raises:
+        Exception: Re-raises any exception after attempting rollback and
+            session invalidation/cleanup.
     """
     db = SessionLocal()
     try:
