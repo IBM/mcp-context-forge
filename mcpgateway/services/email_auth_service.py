@@ -298,17 +298,7 @@ class EmailAuthService:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
 
-    async def create_user(
-        self,
-        email: str,
-        password: str,
-        full_name: Optional[str] = None,
-        is_admin: bool = False,
-        is_active: bool = True,
-        password_change_required: bool = False,
-        auth_provider: str = "local",
-        skip_password_validation: bool = False,
-    ) -> EmailUser:
+    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local", skip_password_validation: bool = False, granted_by: Optional[str] = None) -> EmailUser:
         """Create a new user with email authentication.
 
         Args:
@@ -320,6 +310,7 @@ class EmailAuthService:
             password_change_required: Whether user must change password on next login (default: False)
             auth_provider: Authentication provider ('local', 'github', etc.)
             skip_password_validation: Skip password policy validation (for bootstrap)
+            granted_by: Email of user creating this user (for role assignment audit trail)
 
         Returns:
             EmailUser: The created user object
@@ -376,6 +367,54 @@ class EmailAuthService:
             self.db.refresh(user)
 
             logger.info(f"Created new user: {email}")
+
+            # Auto-assign default role for admin UI access
+            try:
+                # Import here to avoid circular imports
+                # First-Party
+                from mcpgateway.db import Role, UserRole  # pylint: disable=import-outside-toplevel
+
+                # Determine which role to assign based on is_admin flag
+                if is_admin:
+                    # Assign platform_admin role for admin users
+                    default_role_name = "platform_admin"
+                else:
+                    # Assign viewer role for non-admin users (read-only access)
+                    default_role_name = "viewer"
+
+                # Find the default role
+                default_role = self.db.execute(select(Role).where(and_(Role.name == default_role_name, Role.is_active.is_(True)))).scalar_one_or_none()
+
+                if default_role:
+                    # Check if role assignment already exists (shouldn't happen for new user, but be safe)
+                    existing_assignment = self.db.execute(
+                        select(UserRole).where(and_(UserRole.user_email == email, UserRole.role_id == default_role.id, UserRole.scope == "global"))
+                    ).scalar_one_or_none()
+
+                    if not existing_assignment:
+                        # Create role assignment
+                        # Use global scope for platform_admin, team scope for viewer
+                        role_scope = "global" if is_admin else "team"
+                        user_role = UserRole(
+                            user_email=email,
+                            role_id=default_role.id,
+                            scope=role_scope,
+                            scope_id=None,  # No specific team - applies to all teams
+                            granted_by=granted_by or email,  # Use granted_by if provided, otherwise self-granted
+                            granted_at=utc_now(),
+                            is_active=True,
+                        )
+                        self.db.add(user_role)
+                        self.db.commit()
+                        logger.info(f"Assigned default role '{default_role_name}' to user {email}")
+                    else:
+                        logger.debug(f"User {email} already has role '{default_role_name}' assigned")
+                else:
+                    logger.warning(f"Default role '{default_role_name}' not found in database. User {email} created without role assignment. " "Run bootstrap_db.py to create default roles.")
+            except Exception as role_error:
+                logger.error(f"Failed to assign default role to user {email}: {role_error}")
+                # Don't fail user creation if role assignment fails
+                # User can be assigned a role manually later
 
             # Create personal team if enabled
             if getattr(settings, "auto_create_personal_teams", True):
