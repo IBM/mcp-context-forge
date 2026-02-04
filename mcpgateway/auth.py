@@ -15,7 +15,9 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import logging
-from typing import Any, Dict, Generator, List, Never, Optional
+import threading
+import time
+from typing import Any, Dict, Generator, List, Never, Optional, Tuple
 import uuid
 
 # Third-Party
@@ -32,6 +34,13 @@ from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
+
+# Thread-safe in-memory cache for _is_api_token_jti_sync.
+# Maps JTI -> (is_api_token: bool, expiry: float).
+# This avoids a fresh_db_session + DB query on every request for legacy tokens.
+_api_token_jti_cache: Dict[str, Tuple[bool, float]] = {}
+_api_token_jti_cache_lock = threading.Lock()
+_API_TOKEN_JTI_CACHE_TTL = 60  # seconds
 
 
 def _log_auth_event(
@@ -328,6 +337,9 @@ def _is_api_token_jti_sync(jti: str) -> bool:
     Used for tokens created before auth_provider was added to the payload.
     Called via asyncio.to_thread() to avoid blocking the event loop.
 
+    Results are cached in-memory with a 60-second TTL to avoid opening a
+    fresh DB session on every request for legacy tokens without auth_provider.
+
     SECURITY: Fail-closed on DB errors. If we can't verify the token isn't
     an API token, treat it as one to preserve the hard-block policy.
 
@@ -337,6 +349,16 @@ def _is_api_token_jti_sync(jti: str) -> bool:
     Returns:
         bool: True if JTI exists in email_api_tokens table OR if lookup fails
     """
+    now = time.monotonic()
+
+    # Fast path: check in-memory cache
+    with _api_token_jti_cache_lock:
+        cached = _api_token_jti_cache.get(jti)
+        if cached is not None:
+            result_val, expiry = cached
+            if now < expiry:
+                return result_val
+
     # Third-Party
     from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
@@ -346,10 +368,21 @@ def _is_api_token_jti_sync(jti: str) -> bool:
     try:
         with fresh_db_session() as db:
             result = db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti).limit(1))
-            return result.scalar_one_or_none() is not None
+            is_api_token = result.scalar_one_or_none() is not None
     except Exception as e:
         logging.getLogger(__name__).warning(f"Legacy API token check failed, failing closed: {e}")
         return True  # FAIL-CLOSED: treat as API token to preserve hard-block
+
+    # Store in cache
+    with _api_token_jti_cache_lock:
+        _api_token_jti_cache[jti] = (is_api_token, now + _API_TOKEN_JTI_CACHE_TTL)
+        # Periodic eviction when cache grows large
+        if len(_api_token_jti_cache) > 500:
+            expired = [k for k, (_, exp) in _api_token_jti_cache.items() if now >= exp]
+            for k in expired:
+                del _api_token_jti_cache[k]
+
+    return is_api_token
 
 
 def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
@@ -388,10 +421,11 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
 def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dict[str, Any]:
     """Batched auth context lookup in a single DB session.
 
-    Combines what were 3 separate asyncio.to_thread calls into 1:
+    Combines what were 3-4 separate asyncio.to_thread calls into 1:
     1. _get_user_by_email_sync - user data
     2. _get_personal_team_sync - personal team ID
     3. _check_token_revoked_sync - token revocation status
+    4. _is_api_token_jti_sync - legacy API token detection (primes cache)
 
     This reduces thread pool contention and DB connection overhead.
 
@@ -401,7 +435,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
 
     Returns:
         Dict with keys: user (dict or None), personal_team_id (str or None),
-        is_token_revoked (bool)
+        is_token_revoked (bool), is_api_token_jti (bool or None)
 
     Examples:
         >>> # This function runs in a thread pool
@@ -413,12 +447,13 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import EmailTeam, EmailTeamMember, TokenRevocation  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailApiToken, EmailTeam, EmailTeamMember, TokenRevocation  # pylint: disable=import-outside-toplevel
 
-        result = {
+        result: Dict[str, Any] = {
             "user": None,
             "personal_team_id": None,
             "is_token_revoked": False,  # nosec B105 - boolean flag, not a password
+            "is_api_token_jti": None,
         }
 
         # Query 1: Get user data
@@ -455,6 +490,17 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         if jti:
             revoke_result = db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
             result["is_token_revoked"] = revoke_result.scalar_one_or_none() is not None
+
+            # Query 4: Check if JTI belongs to an API token (legacy detection).
+            # Reuses the same session instead of opening a fresh one later.
+            api_token_result = db.execute(select(EmailApiToken.id).where(EmailApiToken.jti == jti).limit(1))
+            is_api = api_token_result.scalar_one_or_none() is not None
+            result["is_api_token_jti"] = is_api
+
+            # Prime the in-memory cache so _is_api_token_jti_sync skips its DB call
+            now = time.monotonic()
+            with _api_token_jti_cache_lock:
+                _api_token_jti_cache[jti] = (is_api, now + _API_TOKEN_JTI_CACHE_TTL)
 
         return result
 
