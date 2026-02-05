@@ -302,10 +302,10 @@ services:
       # TCP + SCRAM-SHA-256 overhead that NullPool incurs.
       - DB_POOL_CLASS=queue
       - DB_POOL_PRE_PING=true           # Validate connections before use (SELECT 1); catches dead connections
-      - DB_POOL_SIZE=20                # Pool size per worker
-      - DB_MAX_OVERFLOW=10             # Extra connections under load
-      - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
-      - DB_POOL_RECYCLE=120            # Recycle connections before PgBouncer CLIENT_IDLE_TIMEOUT (300s)
+      - DB_POOL_SIZE=10                # Pool size per worker (72 workers × 10 = 720 base connections)
+      - DB_MAX_OVERFLOW=5              # Extra connections under load (72 × 15 = 1,080 max; within PgBouncer 600+150 reserve)
+      - DB_POOL_TIMEOUT=30             # Fail fast if pool exhausted (must be < PgBouncer query_wait_timeout)
+      - DB_POOL_RECYCLE=60             # Recycle connections before PgBouncer CLIENT_IDLE_TIMEOUT (300s)
       # ═══════════════════════════════════════════════════════════════════════════
       # Database Startup Resilience (prevents crash-loop on DB outage)
       # ═══════════════════════════════════════════════════════════════════════════
@@ -726,7 +726,7 @@ services:
       # RESET ALL does NOT release advisory locks, causing bootstrap deadlocks.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset full connection state including advisory locks
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=60    # Kill transactions idle > 60s to prevent connection pool exhaustion
+      - IDLE_TRANSACTION_TIMEOUT=120   # Kill sessions idle within a transaction > 120s (safety net, not traffic cop)
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
