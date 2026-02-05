@@ -1845,7 +1845,6 @@ else:
 # Database query logging middleware (for N+1 detection)
 if settings.db_query_log_enabled:
     # First-Party
-    from mcpgateway.db import engine
     from mcpgateway.middleware.db_query_logging import setup_query_logging
 
     setup_query_logging(app, engine)
