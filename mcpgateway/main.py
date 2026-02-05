@@ -74,6 +74,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
 from mcpgateway.middleware.compression import SSEAwareCompressMiddleware
 from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
@@ -1851,6 +1852,12 @@ if settings.db_query_log_enabled:
     logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
 else:
     logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
+
+# Client disconnect middleware — MUST be outermost (added last, runs first).
+# Cancels in-flight request handlers when the client (nginx) closes the connection,
+# preventing CLOSE_WAIT accumulation and associated memory leaks.
+app.add_middleware(ClientDisconnectMiddleware)
+logger.info("Client disconnect middleware enabled - cancels handlers on nginx timeout")
 
 # Set up Jinja2 templates and store in app state for later use
 # auto_reload=False in production prevents re-parsing templates on each request (performance)
