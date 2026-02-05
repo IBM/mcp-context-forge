@@ -301,7 +301,7 @@ services:
       # QueuePool + pre_ping - reuses persistent connections, avoids per-request
       # TCP + SCRAM-SHA-256 overhead that NullPool incurs.
       - DB_POOL_CLASS=queue
-      - DB_POOL_PRE_PING=false          # Disabled: each pre_ping is a separate PgBouncer txn (~3k extra txn/s)
+      - DB_POOL_PRE_PING=true           # Validate connections before use (SELECT 1); catches dead connections
       - DB_POOL_SIZE=20                # Pool size per worker
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing
@@ -722,13 +722,11 @@ services:
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
-      # can stick unless the reset query clears them; DISCARD ALL is safest but
-      # runs ~3000 extra statements/sec under load. RESET ALL is lighter: it
-      # resets runtime GUCs without discarding prepared statements or temp tables.
-      # SQLAlchemy manages its own client-side state, so full DISCARD is unnecessary.
-      - SERVER_RESET_QUERY=RESET ALL   # Lighter reset: GUCs only, skip DEALLOCATE/DISCARD
+      # can stick unless the reset query clears them; DISCARD ALL is safest.
+      # RESET ALL does NOT release advisory locks, causing bootstrap deadlocks.
+      - SERVER_RESET_QUERY=DISCARD ALL # Reset full connection state including advisory locks
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
+      - IDLE_TRANSACTION_TIMEOUT=60    # Kill transactions idle > 60s to prevent connection pool exhaustion
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:

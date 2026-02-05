@@ -109,6 +109,7 @@ def _ensure_performance_indexes(conn: Connection) -> int:
     """
     try:
         # pylint: disable=import-outside-toplevel
+        # First-Party
         from mcpgateway.alembic.versions.c2d3e4f5g6h7_reconcile_missing_indexes import INDEX_SPECS
     except ImportError:
         return 0

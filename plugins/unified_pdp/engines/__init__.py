@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Engine adapters – one module per back-end."""
 
 from .cedar_engine import CedarEngineAdapter

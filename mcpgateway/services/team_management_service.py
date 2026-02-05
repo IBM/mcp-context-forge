@@ -224,12 +224,7 @@ class TeamManagementService:
 
             # Flush pending changes so member count reflects new/updated membership
             self.db.flush()
-            member_count = (
-                self.db.query(func.count(EmailTeamMember.id))  # pylint: disable=not-callable
-                .filter(EmailTeamMember.team_id == team.id, EmailTeamMember.is_active.is_(True))
-                .scalar()
-                or 0
-            )
+            member_count = self.db.query(func.count(EmailTeamMember.id)).filter(EmailTeamMember.team_id == team.id, EmailTeamMember.is_active.is_(True)).scalar() or 0  # pylint: disable=not-callable
             setattr(team, "_member_count_cached", member_count)
 
             self.db.commit()

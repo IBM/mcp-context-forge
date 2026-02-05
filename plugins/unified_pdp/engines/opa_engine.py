@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """OPA (Open Policy Agent) engine adapter.
 
 How it works
