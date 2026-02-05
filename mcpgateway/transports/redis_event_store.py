@@ -194,4 +194,3 @@ class RedisEventStore(EventStore):
             await send_callback(msg)
 
         return stream_id
-
