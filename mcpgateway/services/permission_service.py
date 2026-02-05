@@ -441,7 +441,7 @@ class PermissionService:
         """Get user roles for permission checking.
 
         Includes global roles, personal roles, and team-specific roles.
-        
+
         When team_id is provided, only includes roles for that specific team.
         When team_id is None, includes ALL team roles the user has (important for
         admin dashboard access where users may have team-scoped admin permissions).
