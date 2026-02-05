@@ -254,7 +254,8 @@ class TestUserRoles:
         # Mock database result
         mock_result = MagicMock()
         mock_roles = [MagicMock(spec=UserRole)]
-        mock_result.scalars.return_value.all.return_value = mock_roles
+        # _get_user_roles() uses result.unique().scalars().all() when eager loading roles.
+        mock_result.unique.return_value.scalars.return_value.all.return_value = mock_roles
         permission_service.db.execute.return_value = mock_result
 
         result = await permission_service._get_user_roles(user_email, team_id)
@@ -341,9 +342,8 @@ class TestAuditLogging:
         assert audit_log.permission == "tools.create"
         assert audit_log.granted == True
 
-    @pytest.mark.asyncio
-    async def test_get_roles_for_audit(self, permission_service):
-        """Test _get_roles_for_audit returns role information."""
+    def test_get_roles_for_audit(self, permission_service):
+        """Test _get_roles_for_audit returns role information from cached roles."""
         # Mock user roles
         mock_role = MagicMock()
         mock_role.id = "role-123"
@@ -355,14 +355,15 @@ class TestAuditLogging:
         mock_user_role.role = mock_role
         mock_user_role.scope = "global"
 
-        with patch.object(permission_service, "_get_user_roles", return_value=[mock_user_role]):
-            result = await permission_service._get_roles_for_audit("user@example.com", None)
+        cache_key = "user@example.com:global"
+        permission_service._roles_cache[cache_key] = [mock_user_role]
+        result = permission_service._get_roles_for_audit("user@example.com", None)
 
-            assert "roles" in result
-            assert len(result["roles"]) == 1
-            assert result["roles"][0]["id"] == "role-123"
-            assert result["roles"][0]["name"] == "TestRole"
-            assert result["roles"][0]["scope"] == "global"
+        assert "roles" in result
+        assert len(result["roles"]) == 1
+        assert result["roles"][0]["id"] == "role-123"
+        assert result["roles"][0]["name"] == "TestRole"
+        assert result["roles"][0]["scope"] == "global"
 
 
 class TestTeamFallbackPermissions:
