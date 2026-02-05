@@ -674,6 +674,188 @@ class TestAuthHooksOptimization:
                         assert user.email == mock_user.email
 
 
+class TestUpdateApiTokenLastUsed:
+    """Test cases for _update_api_token_last_used_sync helper function."""
+
+    def test_update_api_token_last_used_sync_updates_timestamp(self):
+        """Test that _update_api_token_last_used_sync updates last_used timestamp."""
+        # Third-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-123"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            with patch("mcpgateway.db.utc_now") as mock_utc_now:
+                mock_time = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+                mock_utc_now.return_value = mock_time
+
+                _update_api_token_last_used_sync("jti-123")
+
+                # Verify last_used was updated
+                assert mock_api_token.last_used == mock_time
+                mock_db.commit.assert_called_once()
+
+    def test_update_api_token_last_used_sync_handles_missing_token(self):
+        """Test that _update_api_token_last_used_sync handles missing token gracefully."""
+        # Third-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None  # Token not found
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            # Should not raise exception
+            _update_api_token_last_used_sync("jti-nonexistent")
+
+            # Should not commit if token not found
+            mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_api_token_last_used_updated_on_jwt_auth(self, monkeypatch):
+        """Test that last_used is updated when API token is authenticated via JWT."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_jwt")
+
+        jwt_payload = {
+            "sub": "api@example.com",
+            "jti": "jti-api-456",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "user": {"auth_provider": "api_token"},
+        }
+
+        mock_user = EmailUser(
+            email="api@example.com",
+            password_hash="hash",
+            full_name="API User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._update_api_token_last_used_sync") as mock_update:
+                        with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                            user = await get_current_user(credentials=credentials, request=request)
+
+                            # Verify user was authenticated
+                            assert user.email == "api@example.com"
+
+                            # Verify auth_method was set to api_token
+                            assert request.state.auth_method == "api_token"
+
+                            # Verify last_used update was called
+                            mock_update.assert_called_once_with("jti-api-456")
+
+    @pytest.mark.asyncio
+    async def test_api_token_jti_stored_in_request_state(self, monkeypatch):
+        """Test that JTI is stored in request.state for middleware use."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
+
+        jwt_payload = {
+            "sub": "test@example.com",
+            "jti": "jti-store-test-789",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value="team_123"):
+                    user = await get_current_user(credentials=credentials, request=request)
+
+                    # Verify user was authenticated
+                    assert user.email == "test@example.com"
+
+                    # Verify JTI was stored in request.state
+                    assert hasattr(request.state, "jti")
+                    assert request.state.jti == "jti-store-test-789"
+
+    @pytest.mark.asyncio
+    async def test_legacy_api_token_last_used_updated(self, monkeypatch):
+        """Test that last_used is updated for legacy API tokens (DB lookup path)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_api_token")
+
+        # JWT payload without auth_provider (legacy format)
+        jwt_payload = {
+            "sub": "legacy@example.com",
+            "jti": "jti-legacy-999",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="legacy@example.com",
+            password_hash="hash",
+            full_name="Legacy User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
+                        with patch("mcpgateway.auth._update_api_token_last_used_sync") as mock_update:
+                            with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                user = await get_current_user(credentials=credentials, request=request)
+
+                                # Verify user was authenticated
+                                assert user.email == "legacy@example.com"
+
+                                # Verify auth_method was set to api_token
+                                assert request.state.auth_method == "api_token"
+
+                                # Verify last_used update was called for legacy token
+                                assert mock_update.call_count == 1
+                                mock_update.assert_called_with("jti-legacy-999")
+
+
 # ============================================================================
 # Coverage improvement tests
 # ============================================================================

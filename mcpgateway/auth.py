@@ -466,6 +466,33 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _update_api_token_last_used_sync(jti: str) -> None:
+    """Update last_used timestamp for an API token.
+
+    This function is called when an API token is successfully validated via JWT,
+    ensuring the last_used field stays current for monitoring and security audits.
+
+    Args:
+        jti: JWT ID of the API token
+
+    Note:
+        Called via asyncio.to_thread() to avoid blocking the event loop.
+        Uses fresh_db_session() for thread-safe database access.
+    """
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti))
+        api_token = result.scalar_one_or_none()
+        if api_token:
+            api_token.last_used = utc_now()
+            db.commit()
+
+
 def _is_api_token_jti_sync(jti: str) -> bool:
     """Check if JTI belongs to an API token (legacy fallback) - SYNC version.
 
@@ -677,6 +704,9 @@ async def get_current_user(
 
         if auth_provider == "api_token":
             request.state.auth_method = "api_token"
+            jti = payload.get("jti")
+            if jti:
+                await asyncio.to_thread(_update_api_token_last_used_sync, jti)
             return
 
         if auth_provider:
@@ -692,6 +722,7 @@ async def get_current_user(
             if is_legacy_api_token:
                 request.state.auth_method = "api_token"
                 logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
+                await asyncio.to_thread(_update_api_token_last_used_sync, jti_for_check)
             else:
                 request.state.auth_method = "jwt"
         else:
@@ -1099,6 +1130,9 @@ async def get_current_user(
             request.state.token_teams = normalized_teams
             request.state.team_id = team_id
             request.state.token_use = token_use
+            # Store JTI for use in middleware (e.g., token usage logging)
+            if jti:
+                request.state.jti = jti
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:
@@ -1139,6 +1173,9 @@ async def get_current_user(
                 # Set auth_method for database API tokens
                 if request:
                     request.state.auth_method = "api_token"
+                    # Store JTI for use in middleware
+                    if "jti" in api_token_info:
+                        request.state.jti = api_token_info["jti"]
             else:
                 logger.debug("API token not found in database")
                 logger.debug("No valid authentication method found")
