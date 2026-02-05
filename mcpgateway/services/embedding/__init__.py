@@ -3,23 +3,27 @@
 SPDX-License-Identifier: Apache-2.0
 
 Embedding Services Package.
-Provides embedding generation functionality with pluggable providers.
+Provides embedding generation functionality.
 """
 
-from mcpgateway.services.embedding.providers import (
-    DummyProvider,
-    EmbeddingAPIError,
-    EmbeddingProvider,
-    EmbeddingProviderError,
-    EmbeddingRateLimitError,
-    OpenAIProvider,
+from mcpgateway.services.embedding.embedding_service import (
+    MAX_BATCH_SIZE,
+    MAX_TEXT_LENGTH,
+    BatchTooLargeError,
+    EmbeddingValidationError,
+    EmptyTextError,
+    TextTooLongError,
+    embed_text,
+    embed_texts,
 )
 
 __all__ = [
-    "DummyProvider",
-    "EmbeddingAPIError",
-    "EmbeddingProvider",
-    "EmbeddingProviderError",
-    "EmbeddingRateLimitError",
-    "OpenAIProvider",
+    "MAX_BATCH_SIZE",
+    "MAX_TEXT_LENGTH",
+    "BatchTooLargeError",
+    "EmbeddingValidationError",
+    "EmptyTextError",
+    "TextTooLongError",
+    "embed_text",
+    "embed_texts",
 ]
