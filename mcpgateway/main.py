@@ -4208,9 +4208,6 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
-        # Release transaction before response serialization
-        db.commit()
-        db.close()
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
