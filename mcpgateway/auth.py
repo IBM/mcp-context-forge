@@ -721,6 +721,7 @@ async def get_current_user(
             is_legacy_api_token = await asyncio.to_thread(_is_api_token_jti_sync, jti_for_check)
             if is_legacy_api_token:
                 request.state.auth_method = "api_token"
+                request.state.jti = jti_for_check
                 logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
                 await asyncio.to_thread(_update_api_token_last_used_sync, jti_for_check)
             else:
