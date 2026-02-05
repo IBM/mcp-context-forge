@@ -522,16 +522,11 @@ class TestResourceReading:
 
     @pytest.mark.asyncio
     async def test_read_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):
-        """Test reading inactive resource."""
-        # First query (for active) returns None, second (for inactive) returns resource
-        mock_scalar1 = MagicMock()
-        mock_scalar1.scalar_one_or_none.return_value = None
-        mock_scalar2 = MagicMock()
-        mock_scalar2.scalar_one_or_none.return_value = mock_inactive_resource
-        mock_db.execute.side_effect = [mock_scalar1, mock_scalar2]
+        """Test reading inactive resource by ID — db.get() returns resource with enabled=False."""
+        mock_db.get.return_value = mock_inactive_resource  # enabled=False
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            await resource_service.read_resource(mock_db, "test://inactive")
+            await resource_service.read_resource(mock_db, resource_id="test-inactive-id")
 
         assert "exists but is inactive" in str(exc_info.value)
 

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Cedar engine adapter.
 
 How it works

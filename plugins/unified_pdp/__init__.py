@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Unified Policy Decision Point (PDP) – public API.
 
 Typical usage::
