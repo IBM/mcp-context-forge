@@ -54,6 +54,11 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
 ]
 
+# Resource types whose services perform their own access checks (visibility/team/owner).
+# The middleware skips its DB-backed ownership check for these types to avoid opening
+# a separate DB session — the route handler's service layer does the equivalent check.
+_SERVICE_CHECKED_TYPES: frozenset = frozenset({"resource"})
+
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
 _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
@@ -538,6 +543,13 @@ class TokenScopingMiddleware:
         # If no resource ID in path, allow (general endpoints like /health, /tokens, /metrics)
         if not resource_id or not resource_type:
             logger.debug(f"No resource ID found in path {request_path}, allowing access")
+            return True
+
+        # Skip DB-backed check for resource types whose services do their own access checks.
+        # This avoids opening a separate DB session in middleware when the route handler's
+        # service layer (e.g., read_resource → _check_resource_access) performs the same check.
+        if resource_type in _SERVICE_CHECKED_TYPES:
+            logger.debug(f"Skipping middleware ownership check for {resource_type} {resource_id} (deferred to service layer)")
             return True
 
         # Import database models

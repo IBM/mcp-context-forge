@@ -143,7 +143,11 @@ def app():
 
     yield app
 
-    # 6) teardown
+    # 6) teardown — stop the background span writer before disposing the engine
+    # to avoid a race where the writer executes SQL on a closing connection (segfault).
+    from mcpgateway.instrumentation.sqlalchemy import shutdown_instrumentation  # pylint: disable=import-outside-toplevel
+
+    shutdown_instrumentation()
     mp.undo()
     engine.dispose()
     os.close(fd)
@@ -227,7 +231,11 @@ def app_with_temp_db():
 
     yield app
 
-    # 6) teardown
+    # 6) teardown — stop the background span writer before disposing the engine
+    # to avoid a race where the writer executes SQL on a closing connection (segfault).
+    from mcpgateway.instrumentation.sqlalchemy import shutdown_instrumentation  # pylint: disable=import-outside-toplevel
+
+    shutdown_instrumentation()
     mp.undo()
     engine.dispose()
     os.close(fd)
@@ -236,6 +244,13 @@ def app_with_temp_db():
 
 def pytest_sessionfinish(session, exitstatus):
     """Clean up resources at the end of the test session."""
+    # Stop background span writer before disposing connections
+    try:
+        from mcpgateway.instrumentation.sqlalchemy import shutdown_instrumentation  # pylint: disable=import-outside-toplevel
+
+        shutdown_instrumentation()
+    except Exception:
+        pass
     # Dispose the module-level engine to close all SQLite connections
     # This prevents ResourceWarning about unclosed database connections
     try:

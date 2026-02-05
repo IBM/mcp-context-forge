@@ -119,6 +119,36 @@ def _span_writer_worker() -> None:
     logger.info("Span writer worker stopped")
 
 
+def shutdown_instrumentation(timeout: float = 2.0) -> None:
+    """Stop the background span writer thread and drain the queue.
+
+    Must be called before disposing the SQLAlchemy engine to avoid
+    a race condition where the writer thread executes a query on a
+    connection that is being closed, which can cause a segfault in
+    SQLAlchemy's C extensions.
+
+    Args:
+        timeout: Maximum seconds to wait for the writer thread to stop.
+    """
+    global _span_writer_thread  # pylint: disable=global-statement
+
+    _shutdown_event.set()
+
+    # Drain any remaining items so the worker doesn't block on a full queue
+    while not _span_queue.empty():
+        try:
+            _span_queue.get_nowait()
+            _span_queue.task_done()
+        except queue.Empty:
+            break
+
+    if _span_writer_thread is not None and _span_writer_thread.is_alive():
+        _span_writer_thread.join(timeout=timeout)
+
+    _span_writer_thread = None
+    _shutdown_event.clear()
+
+
 def instrument_sqlalchemy(engine: Engine) -> None:
     """Instrument a SQLAlchemy engine to capture query spans.
 

@@ -3603,8 +3603,15 @@ class TestToolListingGracefulErrorHandling:
 
         service = ToolService()
 
+        # Mock the registry cache to avoid stale cached results from other tests
+        mock_cache = MagicMock()
+        mock_cache.hash_filters = Mock(return_value="test")
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+
         # Use patch.object to properly mock the instance method
-        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert), \
+             patch('mcpgateway.services.tool_service._get_registry_cache', return_value=mock_cache):
             # Call list_tools - should NOT raise an exception
             result, next_cursor = await service.list_tools(mock_db)
 

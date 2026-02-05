@@ -12,6 +12,7 @@ error handlers, and startup logic.
 
 # Standard
 import asyncio
+import contextlib
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -202,28 +203,30 @@ class TestApplicationStartupPaths:
         monkeypatch.setattr(settings, "mcpgateway_elicitation_enabled", False)
         monkeypatch.setattr(settings, "sso_enabled", False)
 
-        # Mock all required services
-        with (
-            patch("mcpgateway.main.tool_service") as mock_tool,
-            patch("mcpgateway.main.resource_service") as mock_resource,
-            patch("mcpgateway.main.prompt_service") as mock_prompt,
-            patch("mcpgateway.main.gateway_service") as mock_gateway,
-            patch("mcpgateway.main.root_service") as mock_root,
-            patch("mcpgateway.main.completion_service") as mock_completion,
-            patch("mcpgateway.main.sampling_handler") as mock_sampling,
-            patch("mcpgateway.main.resource_cache") as mock_cache,
-            patch("mcpgateway.main.streamable_http_session") as mock_session,
-            patch("mcpgateway.main.session_registry") as mock_session_registry,
-            patch("mcpgateway.main.export_service") as mock_export,
-            patch("mcpgateway.main.import_service") as mock_import,
-            patch("mcpgateway.main.a2a_service") as mock_a2a,
-            patch("mcpgateway.main.refresh_slugs_on_startup") as mock_refresh,
-            patch("mcpgateway.main.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
-            patch("mcpgateway.main.close_redis_client", new_callable=AsyncMock) as mock_close_redis,
-            patch("mcpgateway.routers.llmchat_router.init_redis", new_callable=AsyncMock) as mock_init_llmchat,
-            patch("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", new_callable=AsyncMock) as mock_shared_http,
-            patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new_callable=AsyncMock) as mock_shared_http_shutdown,
-        ):
+        # Mock all required services — use ExitStack to avoid a single with()
+        # block with 19 context managers, which triggers a CPython 3.12
+        # compiler segfault due to deeply nested AST.
+        with contextlib.ExitStack() as stack:
+            mock_tool = stack.enter_context(patch("mcpgateway.main.tool_service"))
+            mock_resource = stack.enter_context(patch("mcpgateway.main.resource_service"))
+            mock_prompt = stack.enter_context(patch("mcpgateway.main.prompt_service"))
+            mock_gateway = stack.enter_context(patch("mcpgateway.main.gateway_service"))
+            mock_root = stack.enter_context(patch("mcpgateway.main.root_service"))
+            mock_completion = stack.enter_context(patch("mcpgateway.main.completion_service"))
+            mock_sampling = stack.enter_context(patch("mcpgateway.main.sampling_handler"))
+            mock_cache = stack.enter_context(patch("mcpgateway.main.resource_cache"))
+            mock_session = stack.enter_context(patch("mcpgateway.main.streamable_http_session"))
+            mock_session_registry = stack.enter_context(patch("mcpgateway.main.session_registry"))
+            mock_export = stack.enter_context(patch("mcpgateway.main.export_service"))
+            mock_import = stack.enter_context(patch("mcpgateway.main.import_service"))
+            mock_a2a = stack.enter_context(patch("mcpgateway.main.a2a_service"))
+            stack.enter_context(patch("mcpgateway.main.refresh_slugs_on_startup"))
+            mock_get_redis = stack.enter_context(patch("mcpgateway.main.get_redis_client", new_callable=AsyncMock))
+            mock_close_redis = stack.enter_context(patch("mcpgateway.main.close_redis_client", new_callable=AsyncMock))
+            mock_init_llmchat = stack.enter_context(patch("mcpgateway.routers.llmchat_router.init_redis", new_callable=AsyncMock))
+            mock_shared_http = stack.enter_context(patch("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", new_callable=AsyncMock))
+            mock_shared_http_shutdown = stack.enter_context(patch("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", new_callable=AsyncMock))
+
             # Setup all mocks
             services = [mock_tool, mock_resource, mock_prompt, mock_gateway, mock_root, mock_completion, mock_sampling, mock_cache, mock_session, mock_session_registry, mock_export, mock_import]
             for service in services:

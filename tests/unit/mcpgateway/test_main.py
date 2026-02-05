@@ -438,34 +438,15 @@ class TestHealthAndInfrastructure:
         assert response.json()["status"] == "ready"
 
     def test_health_check_db_error(self):
-        """Test health check error path with rollback failure."""
+        """Test health check error path when engine.connect() fails."""
         # First-Party
         from mcpgateway import main as mcpgateway_main
 
-        class DummySession:
-            def __init__(self):
-                self.invalidate_called = False
-
-            def execute(self, *_args, **_kwargs):
-                raise Exception("boom")
-
-            def commit(self):
-                pass
-
-            def rollback(self):
-                raise Exception("rollback failed")
-
-            def invalidate(self):
-                self.invalidate_called = True
-
-            def close(self):
-                pass
-
-        session = DummySession()
-        with patch("mcpgateway.main.SessionLocal", return_value=session):
+        with patch("mcpgateway.main.engine") as mock_engine:
+            mock_engine.connect.side_effect = Exception("connection failed")
             response = mcpgateway_main.healthcheck()
         assert response["status"] == "unhealthy"
-        assert session.invalidate_called is True
+        assert "connection failed" in response["error"]
 
     @pytest.mark.asyncio
     async def test_ready_check_db_error(self):

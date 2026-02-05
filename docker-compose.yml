@@ -594,9 +594,9 @@ services:
       # Application code now properly closes transactions via get_db() commit-on-success pattern
       # This timeout is a safety net for any edge cases
       - "-c"
-      - "idle_in_transaction_session_timeout=300s"  # Kill stuck transactions after 300s (aligned with PgBouncer)
+      - "idle_in_transaction_session_timeout=180s"  # Kill stuck transactions after 180s (safety net, above proxy_read_timeout)
       - "-c"
-      - "statement_timeout=120s"           # Kill runaway queries after 120s
+      - "statement_timeout=60s"            # Kill runaway queries after 60s (> query_wait_timeout, < proxy_read_timeout)
       - "-c"
       - "synchronous_commit=off"           # Async WAL writes (2-10x faster commits)
       - "-c"

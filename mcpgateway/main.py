@@ -71,7 +71,7 @@ from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import engine, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
@@ -4191,11 +4191,19 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     try:
         # Extract user email and admin status for authorization
         user_email = get_user_email(user)
-        is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+        is_admin = user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)
 
-        # Admin bypass: pass user=None to trigger unrestricted access
-        # Non-admin: pass user_email and let service look up teams
-        auth_user_email = None if is_admin else user_email
+        if is_admin:
+            # Admin bypass: pass user=None and token_teams=None for unrestricted access
+            auth_user_email = None
+            token_teams = None
+        else:
+            # Non-admin: extract real token_teams so the service layer enforces
+            # token-level scoping (the middleware now skips resource endpoints).
+            auth_user_email = user_email
+            token_teams = _get_token_teams_from_request(request)
+            if token_teams is None:
+                token_teams = []  # No teams = public-only (secure default)
 
         # Call service with context for plugin support
         content = await resource_service.read_resource(
@@ -4204,7 +4212,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             request_id=request_id,
             user=auth_user_email,
             server_id=server_id,
-            token_teams=None,  # Admin: bypass; Non-admin: lookup teams
+            token_teams=token_teams,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -4684,7 +4692,7 @@ async def get_prompt(
 
     # Extract user email, admin status, and server_id for authorization
     user_email = get_user_email(user)
-    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    is_admin = user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)
     server_id = request.headers.get("X-Server-ID")
 
     # Admin bypass: pass user=None to trigger unrestricted access
@@ -4749,7 +4757,7 @@ async def get_prompt_no_args(
 
     # Extract user email, admin status, and server_id for authorization
     user_email = get_user_email(user)
-    is_admin = user.get("is_admin", False) if isinstance(user, dict) else False
+    is_admin = user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)
     server_id = request.headers.get("X-Server-ID")
 
     # Admin bypass: pass user=None to trigger unrestricted access
@@ -6327,32 +6335,22 @@ def healthcheck():
     Perform a basic health check to verify database connectivity.
 
     Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
-    Uses a dedicated session to avoid cross-thread issues and double-commit
-    from get_db dependency. All DB operations happen in the same thread.
+    Uses engine.connect() for a lightweight connection that doesn't compete with
+    the SessionLocal pool under high load. The connection is returned to the pool
+    immediately via the context manager.
 
     Returns:
         A dictionary with the health status and optional error message.
     """
-    db = SessionLocal()
     try:
-        db.execute(text("SELECT 1"))
-        # Explicitly commit to release PgBouncer backend connection in transaction mode.
-        db.commit()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            conn.commit()
         return {"status": "healthy"}
     except Exception as e:
-        # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
         error_message = f"Database connection error: {str(e)}"
         logger.error(error_message)
         return {"status": "unhealthy", "error": error_message}
-    finally:
-        db.close()
 
 
 @app.get("/ready")

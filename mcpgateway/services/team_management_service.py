@@ -229,16 +229,15 @@ class TeamManagementService:
 
             self.db.commit()
 
-            # Invalidate member count cache for the new team
-            await self.invalidate_team_member_count_cache(str(team.id))
-
-            # Invalidate auth cache for creator's team membership
-            # Without this, the cache won't know the user belongs to this new team
+            # Invalidate caches concurrently for the new team
             try:
-                await auth_cache.invalidate_user_teams(created_by)
-                await auth_cache.invalidate_team_membership(created_by)
-                await auth_cache.invalidate_user_role(created_by, str(team.id))
-                await admin_stats_cache.invalidate_teams()
+                await asyncio.gather(
+                    self.invalidate_team_member_count_cache(str(team.id)),
+                    auth_cache.invalidate_user_teams(created_by),
+                    auth_cache.invalidate_team_membership(created_by),
+                    auth_cache.invalidate_user_role(created_by, str(team.id)),
+                    admin_stats_cache.invalidate_teams(),
+                )
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on team create: {cache_error}")
 

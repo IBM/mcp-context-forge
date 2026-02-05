@@ -672,29 +672,23 @@ def test_check_resource_team_ownership_tool_private_and_unknown():
 def test_check_resource_team_ownership_resource_branches():
     middleware = TokenScopingMiddleware()
 
-    # Public resource allows
     db = MagicMock()
     resource = MagicMock()
     resource.visibility = "public"
     db.execute.return_value.scalar_one_or_none.return_value = resource
+
+    # Resource endpoints are deferred to the service layer (_check_resource_access in read_resource).
+    # The middleware returns True for all /resources/ paths without opening a DB session.
     assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-2"], db=db, _user_email="user@example.com") is True
 
-    # Public-only token denied for team resource
-    resource.visibility = "team"
-    resource.team_id = "team-1"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
-
-    # Team mismatch denied
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-2"], db=db, _user_email="user@example.com") is False
-
-    # Private resource denied for non-owner
     resource.visibility = "private"
     resource.owner_email = "owner@example.com"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is True
 
-    # Unknown visibility denies
     resource.visibility = "mystery"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
 
 
 def test_check_resource_team_ownership_exception_returns_false():
