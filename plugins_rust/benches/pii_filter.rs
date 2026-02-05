@@ -3,8 +3,8 @@
 //
 // Criterion benchmarks for PII filter performance
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 // Import the PII filter modules
 use plugins_rust::pii_filter::{
     config::{MaskingStrategy, PIIConfig},
