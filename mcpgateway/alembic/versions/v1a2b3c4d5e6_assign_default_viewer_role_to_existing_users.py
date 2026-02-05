@@ -67,38 +67,63 @@ def upgrade() -> None:
 
     # Step 1: Update existing roles to include 'admin.dashboard' permission
     print("Updating role permissions to include 'admin.dashboard'...")
-    
+
     # Get all roles except platform_admin
     roles_query = text("SELECT id, name, permissions FROM roles WHERE name != :platform_admin")
     roles_to_update = bind.execute(roles_query, {"platform_admin": "platform_admin"}).fetchall()
-    
+
     updated_roles_count = 0
+    import json
+
     for role_row in roles_to_update:
         role_id = role_row[0]
         role_name = role_row[1]
-        permissions_json = role_row[2]
-        
-        # Parse permissions JSON
-        import json
+        permissions_raw = role_row[2]
+
+        # Parse permissions - handle both string JSON and native list/dict types
         try:
-            permissions = json.loads(permissions_json) if permissions_json else []
-        except (json.JSONDecodeError, TypeError):
+            if isinstance(permissions_raw, str):
+                # SQLite stores as JSON string
+                permissions = json.loads(permissions_raw) if permissions_raw else []
+            elif isinstance(permissions_raw, list):
+                # PostgreSQL JSONB returns as native Python list
+                permissions = permissions_raw
+            else:
+                # Fallback for other types
+                permissions = []
+        except (json.JSONDecodeError, TypeError, ValueError):
             permissions = []
-        
+
+        # Ensure permissions is a list
+        if not isinstance(permissions, list):
+            permissions = []
+
         # Check if admin.dashboard is already present
         if "admin.dashboard" not in permissions:
-            # Add admin.dashboard to permissions
-            permissions.insert(0, "admin.dashboard")  # Add at the beginning
-            
+            # Append admin.dashboard to the end of existing permissions
+            permissions.append("admin.dashboard")
+
             # Update the role with new permissions
-            update_role_query = text(
-                """
-                UPDATE roles
-                SET permissions = :permissions, updated_at = :updated_at
-                WHERE id = :role_id
-                """
-            )
-            
+            # Use database-specific JSON handling
+            if dialect_name == "postgresql":
+                # PostgreSQL: Cast to JSONB
+                update_role_query = text(
+                    """
+                    UPDATE roles
+                    SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
+                    WHERE id = :role_id
+                    """
+                )
+            else:
+                # SQLite: Store as JSON string
+                update_role_query = text(
+                    """
+                    UPDATE roles
+                    SET permissions = :permissions, updated_at = :updated_at
+                    WHERE id = :role_id
+                    """
+                )
+
             bind.execute(
                 update_role_query,
                 {
@@ -108,13 +133,13 @@ def upgrade() -> None:
                 },
             )
             updated_roles_count += 1
-            print(f"  ✓ Added 'admin.dashboard' permission to role: {role_name}")
-    
+            print(f"  ✓ Added 'admin.dashboard' permission to role '{role_name}': {permissions}")
+
     if updated_roles_count > 0:
         print(f"✅ Updated {updated_roles_count} role(s) with 'admin.dashboard' permission.")
     else:
         print("All roles already have 'admin.dashboard' permission.")
-    
+
     print("\nAssigning default roles to existing users (team_admin for admins, viewer for others)...")
 
     # Get the viewer role ID (using parameterized query for security)
@@ -342,7 +367,7 @@ def downgrade() -> None:
     This migration downgrade:
     1. Removes 'admin.dashboard' permission from all roles except 'platform_admin'
     2. Removes all role assignments EXCEPT those with platform_admin role
-    
+
     Supports both PostgreSQL and SQLite databases.
     """
     bind = op.get_bind()
@@ -360,37 +385,62 @@ def downgrade() -> None:
 
     # Step 1: Remove 'admin.dashboard' permission from roles (except platform_admin)
     print("Removing 'admin.dashboard' permission from roles...")
-    
+
     # Get all roles except platform_admin
     roles_query = text("SELECT id, name, permissions FROM roles WHERE name != :platform_admin")
     roles_to_update = bind.execute(roles_query, {"platform_admin": "platform_admin"}).fetchall()
-    
+
     updated_roles_count = 0
+    import json
+
     for role_row in roles_to_update:
         role_id = role_row[0]
         role_name = role_row[1]
-        permissions_json = role_row[2]
-        
-        # Parse permissions JSON
-        import json
+        permissions_raw = role_row[2]
+
+        # Parse permissions - handle both string JSON and native list/dict types
         try:
-            permissions = json.loads(permissions_json) if permissions_json else []
-        except (json.JSONDecodeError, TypeError):
+            if isinstance(permissions_raw, str):
+                # SQLite stores as JSON string
+                permissions = json.loads(permissions_raw) if permissions_raw else []
+            elif isinstance(permissions_raw, list):
+                # PostgreSQL JSONB returns as native Python list
+                permissions = permissions_raw
+            else:
+                # Fallback for other types
+                permissions = []
+        except (json.JSONDecodeError, TypeError, ValueError):
             permissions = []
-        
+
+        # Ensure permissions is a list
+        if not isinstance(permissions, list):
+            permissions = []
+
         # Check if admin.dashboard is present and remove it
         if "admin.dashboard" in permissions:
             permissions.remove("admin.dashboard")
-            
+
             # Update the role with new permissions
-            update_role_query = text(
-                """
-                UPDATE roles
-                SET permissions = :permissions, updated_at = :updated_at
-                WHERE id = :role_id
-                """
-            )
-            
+            # Use database-specific JSON handling
+            if dialect_name == "postgresql":
+                # PostgreSQL: Cast to JSONB
+                update_role_query = text(
+                    """
+                    UPDATE roles
+                    SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
+                    WHERE id = :role_id
+                    """
+                )
+            else:
+                # SQLite: Store as JSON string
+                update_role_query = text(
+                    """
+                    UPDATE roles
+                    SET permissions = :permissions, updated_at = :updated_at
+                    WHERE id = :role_id
+                    """
+                )
+
             bind.execute(
                 update_role_query,
                 {
@@ -400,13 +450,13 @@ def downgrade() -> None:
                 },
             )
             updated_roles_count += 1
-            print(f"  ✓ Removed 'admin.dashboard' permission from role: {role_name}")
-    
+            print(f"  ✓ Removed 'admin.dashboard' permission from role '{role_name}': {permissions}")
+
     if updated_roles_count > 0:
         print(f"✅ Removed 'admin.dashboard' permission from {updated_roles_count} role(s).")
     else:
         print("No roles had 'admin.dashboard' permission to remove.")
-    
+
     # Step 2: Remove migration-assigned role assignments (keeping platform_admin roles)
     print("\nRemoving migration-assigned roles (keeping platform_admin roles)...")
 
