@@ -35,13 +35,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Assign default roles to existing users without roles.
+    """Assign default roles to existing users without roles and update role permissions.
 
     This migration:
     1. Checks if the roles and user_roles tables exist
-    2. Ensures the 'viewer' and 'team_admin' roles exist
-    3. Assigns 'team_admin' role to users with is_admin=true (with team scope)
-    4. Assigns 'viewer' role to regular users without role assignments (with team scope)
+    2. Adds 'admin.dashboard' permission to all roles except 'platform_admin'
+    3. Ensures the 'viewer' and 'team_admin' roles exist with correct permissions
+    4. Assigns 'team_admin' role to users with is_admin=true (with team scope)
+    5. Assigns 'viewer' role to regular users without role assignments (with team scope)
 
     The migration is idempotent and safe to run multiple times.
     Supports both PostgreSQL and SQLite databases.
@@ -64,7 +65,57 @@ def upgrade() -> None:
         print("email_users table not found. Skipping default role assignment.")
         return
 
-    print("Assigning default roles to existing users (team_admin for admins, viewer for others)...")
+    # Step 1: Update existing roles to include 'admin.dashboard' permission
+    print("Updating role permissions to include 'admin.dashboard'...")
+    
+    # Get all roles except platform_admin
+    roles_query = text("SELECT id, name, permissions FROM roles WHERE name != :platform_admin")
+    roles_to_update = bind.execute(roles_query, {"platform_admin": "platform_admin"}).fetchall()
+    
+    updated_roles_count = 0
+    for role_row in roles_to_update:
+        role_id = role_row[0]
+        role_name = role_row[1]
+        permissions_json = role_row[2]
+        
+        # Parse permissions JSON
+        import json
+        try:
+            permissions = json.loads(permissions_json) if permissions_json else []
+        except (json.JSONDecodeError, TypeError):
+            permissions = []
+        
+        # Check if admin.dashboard is already present
+        if "admin.dashboard" not in permissions:
+            # Add admin.dashboard to permissions
+            permissions.insert(0, "admin.dashboard")  # Add at the beginning
+            
+            # Update the role with new permissions
+            update_role_query = text(
+                """
+                UPDATE roles
+                SET permissions = :permissions, updated_at = :updated_at
+                WHERE id = :role_id
+                """
+            )
+            
+            bind.execute(
+                update_role_query,
+                {
+                    "permissions": json.dumps(permissions),
+                    "updated_at": datetime.now(timezone.utc),
+                    "role_id": role_id,
+                },
+            )
+            updated_roles_count += 1
+            print(f"  ✓ Added 'admin.dashboard' permission to role: {role_name}")
+    
+    if updated_roles_count > 0:
+        print(f"✅ Updated {updated_roles_count} role(s) with 'admin.dashboard' permission.")
+    else:
+        print("All roles already have 'admin.dashboard' permission.")
+    
+    print("\nAssigning default roles to existing users (team_admin for admins, viewer for others)...")
 
     # Get the viewer role ID (using parameterized query for security)
     viewer_role_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
@@ -94,7 +145,7 @@ def upgrade() -> None:
                 "name": "viewer",
                 "description": "Read-only access to team resources",
                 "scope": "team",
-                "permissions": '["tools.read", "resources.read"]',
+                "permissions": '["admin.dashboard", "teams.join", "tools.read", "resources.read", "prompts.read"]',
                 "inherits_from": None,
                 "created_by": "system",
                 "is_system_role": True,
@@ -126,7 +177,7 @@ def upgrade() -> None:
                 "name": "team_admin",
                 "description": "Team administration access",
                 "scope": "team",
-                "permissions": '["teams.*", "tools.read", "tools.execute", "resources.read"]',
+                "permissions": '["admin.dashboard", "teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"]',
                 "inherits_from": None,
                 "created_by": "system",
                 "is_system_role": True,
@@ -286,9 +337,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Remove role assignments created by this migration.
+    """Remove role assignments and permission updates created by this migration.
 
-    This removes all role assignments EXCEPT those with platform_admin role.
+    This migration downgrade:
+    1. Removes 'admin.dashboard' permission from all roles except 'platform_admin'
+    2. Removes all role assignments EXCEPT those with platform_admin role
+    
     Supports both PostgreSQL and SQLite databases.
     """
     bind = op.get_bind()
@@ -304,7 +358,57 @@ def downgrade() -> None:
         print("Required tables not found. Nothing to downgrade.")
         return
 
-    print("Removing migration-assigned roles (keeping platform_admin roles)...")
+    # Step 1: Remove 'admin.dashboard' permission from roles (except platform_admin)
+    print("Removing 'admin.dashboard' permission from roles...")
+    
+    # Get all roles except platform_admin
+    roles_query = text("SELECT id, name, permissions FROM roles WHERE name != :platform_admin")
+    roles_to_update = bind.execute(roles_query, {"platform_admin": "platform_admin"}).fetchall()
+    
+    updated_roles_count = 0
+    for role_row in roles_to_update:
+        role_id = role_row[0]
+        role_name = role_row[1]
+        permissions_json = role_row[2]
+        
+        # Parse permissions JSON
+        import json
+        try:
+            permissions = json.loads(permissions_json) if permissions_json else []
+        except (json.JSONDecodeError, TypeError):
+            permissions = []
+        
+        # Check if admin.dashboard is present and remove it
+        if "admin.dashboard" in permissions:
+            permissions.remove("admin.dashboard")
+            
+            # Update the role with new permissions
+            update_role_query = text(
+                """
+                UPDATE roles
+                SET permissions = :permissions, updated_at = :updated_at
+                WHERE id = :role_id
+                """
+            )
+            
+            bind.execute(
+                update_role_query,
+                {
+                    "permissions": json.dumps(permissions),
+                    "updated_at": datetime.now(timezone.utc),
+                    "role_id": role_id,
+                },
+            )
+            updated_roles_count += 1
+            print(f"  ✓ Removed 'admin.dashboard' permission from role: {role_name}")
+    
+    if updated_roles_count > 0:
+        print(f"✅ Removed 'admin.dashboard' permission from {updated_roles_count} role(s).")
+    else:
+        print("No roles had 'admin.dashboard' permission to remove.")
+    
+    # Step 2: Remove migration-assigned role assignments (keeping platform_admin roles)
+    print("\nRemoving migration-assigned roles (keeping platform_admin roles)...")
 
     try:
         # Find role IDs for platform_admin to EXCLUDE them from deletion
