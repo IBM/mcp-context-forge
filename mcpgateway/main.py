@@ -1883,7 +1883,8 @@ else:
 # Add token usage logging middleware
 # This tracks API token usage for analytics and security monitoring
 # Note: Runs after AuthContextMiddleware so request.state.auth_method is available
-from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware
+# First-Party
+from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # pylint: disable=wrong-import-position
 
 app.add_middleware(TokenUsageMiddleware)
 logger.info("📊 Token usage logging middleware enabled - tracking API token usage")

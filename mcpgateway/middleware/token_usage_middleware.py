@@ -84,11 +84,11 @@ class TokenUsageMiddleware(BaseHTTPMiddleware):
         # If not available, try to decode token
         jti = getattr(request.state, "jti", None)
         user_email = None
-        
+
         # Try to get user email from request.state.user first
         if hasattr(request.state, "user") and request.state.user is not None:
             user_email = getattr(request.state.user, "email", None)
-        
+
         # If we don't have JTI or email, we need to decode the token
         if not jti or not user_email:
             try:

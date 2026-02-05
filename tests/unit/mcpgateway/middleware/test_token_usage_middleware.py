@@ -100,7 +100,8 @@ async def test_logs_api_token_usage_fallback_to_token_decode():
     request.url.path = "/api/resources"
     request.method = "POST"
     request.state.auth_method = "api_token"
-    # No request.state.jti or request.state.user
+    request.state.jti = None  # Explicitly set to None
+    request.state.user = None  # Explicitly set to None
     request.client.host = "10.0.0.1"
     request.headers = {
         "authorization": "Bearer test_token_here",
@@ -138,6 +139,8 @@ async def test_handles_missing_authorization_header():
     request = MagicMock(spec=Request)
     request.url.path = "/api/tools"
     request.state.auth_method = "api_token"
+    request.state.jti = None
+    request.state.user = None
     request.headers = {}  # No authorization header
     
     with patch("mcpgateway.middleware.token_usage_middleware.SessionLocal") as mock_session:
@@ -157,6 +160,8 @@ async def test_handles_token_decode_failure():
     request = MagicMock(spec=Request)
     request.url.path = "/api/prompts"
     request.state.auth_method = "api_token"
+    request.state.jti = None
+    request.state.user = None
     request.headers = {"authorization": "Bearer invalid_token"}
     
     with patch("mcpgateway.middleware.token_usage_middleware.SessionLocal") as mock_session, \
@@ -177,6 +182,8 @@ async def test_handles_missing_jti_in_payload():
     request = MagicMock(spec=Request)
     request.url.path = "/api/servers"
     request.state.auth_method = "api_token"
+    request.state.jti = None
+    request.state.user = None
     request.headers = {"authorization": "Bearer token_without_jti"}
     
     mock_payload = {"sub": "user@example.com"}  # No JTI

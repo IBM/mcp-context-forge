@@ -779,6 +779,10 @@ class TestUpdateApiTokenLastUsed:
             "sub": "test@example.com",
             "jti": "jti-store-test-789",
             "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "user": {
+                "email": "test@example.com",
+                "auth_provider": "email",
+            },
         }
 
         mock_user = EmailUser(
