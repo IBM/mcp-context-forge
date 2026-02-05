@@ -157,10 +157,7 @@ def _ensure_performance_indexes(conn: Connection) -> int:
         try:
             existing = list(insp.get_indexes(pg_partial_table))
             if not any(idx.get("name") == pg_partial_index_name for idx in existing):
-                conn.execute(text(
-                    f"CREATE INDEX IF NOT EXISTS {pg_partial_index_name} "
-                    f"ON {pg_partial_table} (team_id) WHERE is_active = true"
-                ))
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {pg_partial_index_name} " f"ON {pg_partial_table} (team_id) WHERE is_active = true"))
                 created += 1
         except Exception as exc:
             logger.debug(f"Could not create partial index {pg_partial_index_name}: {exc}")
