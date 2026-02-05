@@ -57,6 +57,7 @@ class ClientDisconnectMiddleware:
     """
 
     def __init__(self, app: ASGIApp) -> None:
+        """Initialize with the wrapped ASGI application."""
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
