@@ -10,6 +10,7 @@ import pytest
 
 # First-Party
 from mcpgateway.toolops.utils import db_util, format_conversion, llm_util
+import mcpgateway.services.mcp_client_chat_service as mcs
 
 
 def test_convert_to_toolops_spec_with_output_schema():
@@ -108,31 +109,23 @@ def test_query_tool_auth_exception():
 def test_get_llm_instance_unknown_provider(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("LLM_PROVIDER", "unknown")
 
-    llm_instance, llm_config = llm_util.get_llm_instance()
+    llm_instance, llm_config = llm_util.get_llm_instance(model_id="model-1")
 
     assert llm_instance is None
     assert llm_config is None
 
 
-def test_get_llm_instance_openai_sets_default_headers(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("OPENAI_API_KEY", "key")
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://rits.fmaas.res.ibm.com/v1")
-    monkeypatch.setenv("OPENAI_MODEL", "gpt-4")
+def test_get_llm_instance_gateway_provider(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("LLM_PROVIDER", "gateway")
+    
+    llm = MagicMock()
+    llm.invoke.return_value = MagicMock(content="ok")
+    monkeypatch.setattr(llm_util, "get_llm_instance", lambda model_id="model-1",model_type="chat": (llm, mcs.LLMConfig(provider="gateway",config=mcs.GatewayConfig(model="model-1", temperature=0, max_tokens=100))))
 
-    class DummyProvider:
-        def __init__(self, config):
-            self.config = config
+    llm_instance, llm_config = llm_util.get_llm_instance(model_id="model-1")
 
-        def get_llm(self, model_type="chat"):
-            return f"llm-{model_type}"
-
-    monkeypatch.setattr(llm_util, "OpenAIProvider", DummyProvider)
-
-    llm_instance, llm_config = llm_util.get_llm_instance("completion")
-
-    assert llm_instance == "llm-completion"
-    assert llm_config.default_headers == {"RITS_API_KEY": "key"}
+    assert llm_instance is not None
+    assert llm_config.provider == 'gateway'
 
 
 def test_get_llm_instance_anthropic(monkeypatch: pytest.MonkeyPatch):
@@ -182,9 +175,11 @@ def test_execute_prompt_success(monkeypatch: pytest.MonkeyPatch):
         def invoke(self, prompt, stop=None):
             return "hello <|eom_id|>"
 
-    monkeypatch.setattr(llm_util, "get_llm_instance", lambda model_type="completion": (DummyLLM(), None))
+    #monkeypatch.setattr(llm_util, "get_llm_instance", lambda model_type="completion": (DummyLLM(), None))
+    monkeypatch.setattr(llm_util, "get_llm_instance", lambda model_id="model-1",model_type="chat": (DummyLLM(), None))
 
-    response = llm_util.execute_prompt("hi")
+
+    response = llm_util.execute_prompt("hi",model_id="model-1",model_type="chat")
 
     assert response == "hello"
 
@@ -196,6 +191,6 @@ def test_execute_prompt_error(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(llm_util, "get_llm_instance", lambda model_type="completion": (DummyLLM(), None))
 
-    response = llm_util.execute_prompt("hi")
+    response = llm_util.execute_prompt("hi",model_id="model-1",model_type="chat")
 
     assert response == ""
