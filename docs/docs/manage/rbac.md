@@ -63,10 +63,24 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | teams.read, teams.update, teams.join, teams.manage_members, tools.read, tools.execute, resources.read, prompts.read |
-| `developer` | team | teams.join, tools.read, tools.execute, resources.read, prompts.read |
-| `viewer` | team | teams.join, tools.read, resources.read, prompts.read |
+| `team_admin` | team | teams.read, teams.update, teams.join, teams.manage_members, tools.read, tools.execute, resources.read, prompts.read, admin.dashboard |
+| `developer` | team | teams.join, tools.read, tools.execute, resources.read, prompts.read, admin.dashboard |
+| `viewer` | team | teams.join, tools.read, resources.read, prompts.read, admin.dashboard |
 
+!!! info "Default Role Assignment"
+    **New users automatically receive default roles upon creation:**
+    
+    - **Admin users** (`is_admin: true`): Assigned the `team_admin` role with team scope
+    - **Non-admin users** (`is_admin: false`) with team scope: Assigned the `viewer` role with team scope
+    
+    This ensures all users have appropriate baseline access to the Admin UI and resources. The `granted_by` field tracks which admin created the user for audit purposes.
+
+!!! note "Existing Users"
+    An Alembic migration ensures that existing users without roles receive appropriate default role assignments:
+    
+    - Admin users without roles are assigned the `team_admin` role with team scope
+    - Non-admin users with team scope but without roles are assigned the `viewer` role with team scope
+   
 ### Resources
 Protected entities:
 
