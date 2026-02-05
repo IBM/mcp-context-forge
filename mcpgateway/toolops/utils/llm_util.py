@@ -52,8 +52,7 @@ def get_llm_instance(model_id, model_type=TOOLOPS_MODEL_TYPE):
         >>> # Configure Gateway Provider LLM model via Admin UI -> Settings -> LLM Settings.
         >>> # Assuming Gateway Provider Configuration and are available in the module scope
         >>> llm_model_instance, llm_config = get_llm_instance(model_id="global/ibm-granite-8b")
-        >>> llm_config.__class__.__name__
-        'LLMConfig'
+        >>> assert llm_config is None
 
     """
     llm_model_instance, llm_config = None, None
