@@ -435,25 +435,36 @@ class PermissionService:
     async def _get_user_roles(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False) -> List[UserRole]:
         """Get user roles for permission checking.
 
-        Includes global roles and team-specific roles if team_id is provided.
+        Includes global roles, personal roles, and team-specific roles.
+        
+        When team_id is provided, only includes roles for that specific team.
+        When team_id is None, includes ALL team roles the user has (important for
+        admin dashboard access where users may have team-scoped admin permissions).
 
         Args:
             user_email: Email address of the user
             team_id: Optional team ID to include team-specific roles
             include_all_teams: If True, include ALL team-scoped roles (for list/read with session tokens)
+            team_id: Optional team ID to filter to a specific team's roles.
+                    If None, includes all team roles the user has.
 
         Returns:
             List[UserRole]: List of active roles for the user
         """
         query = select(UserRole).join(Role).options(contains_eager(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
-        # Include global roles and team-specific roles
+        # Include global roles and personal roles
         scope_conditions = [UserRole.scope == "global", UserRole.scope == "personal"]
 
         if team_id:
+            # Filter to specific team's roles only
             scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id == team_id))
         elif include_all_teams:
             scope_conditions.append(UserRole.scope == "team")  # All team roles
+        else:
+            # Include ALL team roles (no team_id filter)
+            # This ensures users with team-scoped roles can access admin dashboard
+            scope_conditions.append(UserRole.scope == "team")
 
         query = query.where(or_(*scope_conditions))
 
