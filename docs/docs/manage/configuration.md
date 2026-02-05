@@ -700,6 +700,7 @@ MCP Gateway includes automatic response compression middleware that reduces band
 | `LOG_MAX_SIZE_MB`       | Max file size before rotation (MB) | `1`               | int                        |
 | `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | int                        |
 | `LOG_BUFFER_SIZE_MB`    | Size of in-memory log buffer (MB)  | `1.0`             | float > 0                  |
+| `PERMISSION_AUDIT_ENABLED` | Enable permission audit logging (writes a row per permission check) | `false` | bool |
 
 ### Observability (OpenTelemetry)
 
