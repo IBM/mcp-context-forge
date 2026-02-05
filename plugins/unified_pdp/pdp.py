@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Unified Policy Decision Point (PDP) – the orchestrator.
 
 This is the **only** class that gateway code (hooks, routers, services)
