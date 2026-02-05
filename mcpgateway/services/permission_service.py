@@ -431,7 +431,7 @@ class PermissionService:
         """Get user roles for permission checking.
 
         Includes global roles, personal roles, and team-specific roles.
-        
+
         When team_id is provided, only includes roles for that specific team.
         When team_id is None, includes ALL team roles the user has (important for
         admin dashboard access where users may have team-scoped admin permissions).
@@ -453,15 +453,7 @@ class PermissionService:
             # Filter to specific team's roles only
             # IMPORTANT: Also include team roles with NULL scope_id
             # These are "global team roles" that apply to all teams
-            scope_conditions.append(
-                and_(
-                    UserRole.scope == "team",
-                    or_(
-                        UserRole.scope_id == team_id,
-                        UserRole.scope_id.is_(None)
-                    )
-                )
-            )
+            scope_conditions.append(and_(UserRole.scope == "team", or_(UserRole.scope_id == team_id, UserRole.scope_id.is_(None))))
         else:
             # Include ALL team roles (no team_id filter)
             # This ensures users with team-scoped roles can access admin dashboard
