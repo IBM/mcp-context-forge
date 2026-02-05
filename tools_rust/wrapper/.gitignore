@@ -1,0 +1,10 @@
+/target
+.idea
+.project
+*.log
+*.dump
+*.pcap
+**/.bob
+headers-sdk.txt
+.settings
+*.pem
