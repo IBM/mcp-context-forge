@@ -11,8 +11,8 @@ Create Date: 2026-02-04 12:30:00.000000
 
 This migration assigns appropriate default roles to all existing users
 who don't have any role assignments yet:
-- Users with is_admin=true get 'platform_admin' role
-- Regular users get 'viewer' role
+- Users with is_admin=true get 'team_admin' role with team scope
+- Regular users get 'viewer' role with team scope
 
 This ensures backward compatibility when RBAC is enabled on an existing system.
 """
@@ -39,9 +39,9 @@ def upgrade() -> None:
 
     This migration:
     1. Checks if the roles and user_roles tables exist
-    2. Ensures the 'viewer' and 'platform_admin' roles exist
-    3. Assigns 'platform_admin' role to users with is_admin=true
-    4. Assigns 'viewer' role to regular users without role assignments
+    2. Ensures the 'viewer' and 'team_admin' roles exist
+    3. Assigns 'team_admin' role to users with is_admin=true (with team scope)
+    4. Assigns 'viewer' role to regular users without role assignments (with team scope)
 
     The migration is idempotent and safe to run multiple times.
     Supports both PostgreSQL and SQLite databases.
@@ -64,7 +64,7 @@ def upgrade() -> None:
         print("email_users table not found. Skipping default role assignment.")
         return
 
-    print("Assigning default roles to existing users (platform_admin for admins, viewer for others)...")
+    print("Assigning default roles to existing users (team_admin for admins, viewer for others)...")
 
     # Get the viewer role ID (using parameterized query for security)
     viewer_role_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
@@ -108,25 +108,25 @@ def upgrade() -> None:
         viewer_role_id = viewer_role_result[0]
         print(f"Found existing 'viewer' role with ID: {viewer_role_id}")
 
-    # Get the platform_admin role ID
-    platform_admin_role_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
-    platform_admin_role_result = bind.execute(platform_admin_role_query, {"role_name": "platform_admin"}).fetchone()
+    # Get the team_admin role ID
+    team_admin_role_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
+    team_admin_role_result = bind.execute(team_admin_role_query, {"role_name": "team_admin"}).fetchone()
 
-    if not platform_admin_role_result:
-        print("Warning: 'platform_admin' role not found. Creating it now...")
+    if not team_admin_role_result:
+        print("Warning: 'team_admin' role not found. Creating it now...")
 
-        # Create platform_admin role if it doesn't exist
-        platform_admin_role_id = uuid.uuid4().hex
+        # Create team_admin role if it doesn't exist
+        team_admin_role_id = uuid.uuid4().hex
         now = datetime.now(timezone.utc)
 
         bind.execute(
             insert_role,
             {
-                "id": platform_admin_role_id,
-                "name": "platform_admin",
-                "description": "Full platform administration access",
-                "scope": "global",
-                "permissions": '["*"]',
+                "id": team_admin_role_id,
+                "name": "team_admin",
+                "description": "Team administration access",
+                "scope": "team",
+                "permissions": '["teams.*", "tools.read", "tools.execute", "resources.read"]',
                 "inherits_from": None,
                 "created_by": "system",
                 "is_system_role": True,
@@ -135,10 +135,10 @@ def upgrade() -> None:
                 "updated_at": now,
             },
         )
-        print(f"Created 'platform_admin' role with ID: {platform_admin_role_id}")
+        print(f"Created 'team_admin' role with ID: {team_admin_role_id}")
     else:
-        platform_admin_role_id = platform_admin_role_result[0]
-        print(f"Found existing 'platform_admin' role with ID: {platform_admin_role_id}")
+        team_admin_role_id = team_admin_role_result[0]
+        print(f"Found existing 'team_admin' role with ID: {team_admin_role_id}")
 
     # Find users without any role assignments, including their is_admin status
     # Use database-specific boolean comparison for compatibility
@@ -224,7 +224,8 @@ def upgrade() -> None:
             print("No users found to use as granted_by. Cannot assign roles.")
             return
 
-    # Assign appropriate role to each user (platform_admin for admins, viewer for others)
+    # Assign appropriate role to each user (team_admin for admins, viewer for others)
+    # All users get team scope
     now = datetime.now(timezone.utc)
     assigned_admin_count = 0
     assigned_viewer_count = 0
@@ -246,7 +247,7 @@ def upgrade() -> None:
 
         # Determine which role to assign based on is_admin flag
         if is_admin:
-            role_id = platform_admin_role_id
+            role_id = team_admin_role_id
         else:
             role_id = viewer_role_id
 
@@ -257,7 +258,7 @@ def upgrade() -> None:
                     "id": user_role_id,
                     "user_email": user_email,
                     "role_id": role_id,
-                    "scope": "global",
+                    "scope": "team",
                     "scope_id": None,
                     "granted_by": granted_by_email,
                     "granted_at": now,
@@ -267,7 +268,7 @@ def upgrade() -> None:
             )
             if is_admin:
                 assigned_admin_count += 1
-                print(f"  ✓ Assigned 'platform_admin' role to: {user_email}")
+                print(f"  ✓ Assigned 'team_admin' role to: {user_email}")
             else:
                 assigned_viewer_count += 1
                 print(f"  ✓ Assigned 'viewer' role to: {user_email}")
@@ -275,20 +276,19 @@ def upgrade() -> None:
             print(f"  ✗ Failed to assign role to {user_email}: {e}")
 
     print(f"\n✅ Successfully assigned roles to {assigned_admin_count + assigned_viewer_count} users:")
-    print(f"   • {assigned_admin_count} platform_admin role(s)")
+    print(f"   • {assigned_admin_count} team_admin role(s)")
     print(f"   • {assigned_viewer_count} viewer role(s)")
     print("\n💡 Next steps:")
-    print("   • Regular users can be upgraded to 'developer' or 'team_admin' roles via:")
+    print("   • Regular users can be upgraded to 'developer' role via:")
     print("     POST /rbac/users/{user_email}/roles")
-    print("   • Admin users now have full platform_admin access")
+    print("   • Admin users now have team_admin access")
     print("   • Or use the Admin UI when role management is implemented")
 
 
 def downgrade() -> None:
     """Remove role assignments created by this migration.
 
-    This removes viewer and platform_admin role assignments that
-    were created during this migration.
+    This removes all role assignments EXCEPT those with platform_admin role.
     Supports both PostgreSQL and SQLite databases.
     """
     bind = op.get_bind()
@@ -300,37 +300,33 @@ def downgrade() -> None:
     print(f"Detected database dialect: {dialect_name}")
 
     # Skip if tables don't exist
-    if "user_roles" not in existing_tables:
-        print("user_roles table not found. Nothing to downgrade.")
+    if "user_roles" not in existing_tables or "roles" not in existing_tables:
+        print("Required tables not found. Nothing to downgrade.")
         return
 
-    print("Removing migration-assigned roles...")
+    print("Removing migration-assigned roles (keeping platform_admin roles)...")
 
     try:
-        # Find role IDs for viewer and platform_admin explicitly to avoid driver-specific
-        # parameter binding issues with SQL IN lists.
-        protected_email = "admin@example.com"
+        # Find role IDs for platform_admin to EXCLUDE them from deletion
+        platform_admin_role_query = text("SELECT id FROM roles WHERE name = :role_name")
+        platform_admin_rows = bind.execute(platform_admin_role_query, {"role_name": "platform_admin"}).fetchall()
 
-        # Collect ALL role IDs that match the names, there may be multiple (team/global)
-        role_rows = bind.execute(text("SELECT id, name FROM roles WHERE name IN ('viewer','platform_admin')")).fetchall()
+        platform_admin_role_ids = [r[0] for r in platform_admin_rows]
 
-        role_ids = [r[0] for r in role_rows]
+        # Use SQLAlchemy Core to perform a parameterized delete
+        # Delete all user_roles EXCEPT those with platform_admin role
+        user_roles_table = sa.table("user_roles", sa.column("role_id"))
 
-        if not role_ids:
-            print("No viewer or platform_admin roles found; nothing to remove.")
-            return
-
-        # Use SQLAlchemy Core to perform a parameterized delete and avoid
-        # constructing SQL with f-strings (Bandit B608).
-        user_roles_table = sa.table("user_roles", sa.column("role_id"), sa.column("user_email"))
-
-        delete_stmt = sa.delete(user_roles_table).where(
-            user_roles_table.c.role_id.in_(role_ids),
-            sa.or_(user_roles_table.c.user_email.is_(None), user_roles_table.c.user_email != protected_email),
-        )
+        if platform_admin_role_ids:
+            # Delete all roles except platform_admin
+            delete_stmt = sa.delete(user_roles_table).where(user_roles_table.c.role_id.notin_(platform_admin_role_ids))
+            print(f"Deleting all role assignments except platform_admin roles (IDs: {platform_admin_role_ids})...")
+        else:
+            # No platform_admin role found, delete all role assignments
+            delete_stmt = sa.delete(user_roles_table)
+            print("No platform_admin role found. Deleting all role assignments...")
 
         result = bind.execute(delete_stmt)
-        print(f"✅ Removed {result.rowcount} migration-assigned role assignments (excluding admin@example.com).")
-        print("⚠️  Note: This removes viewer and platform_admin roles except for the protected admin account admin@example.com.")
+        print(f"✅ Removed {result.rowcount} role assignments (preserved platform_admin roles).")
     except Exception as e:
         print(f"Warning: Could not remove migration-assigned roles: {e}")

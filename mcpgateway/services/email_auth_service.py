@@ -378,8 +378,8 @@ class EmailAuthService:
 
                 # Determine which role to assign based on is_admin flag
                 if is_admin:
-                    # Assign platform_admin role for admin users
-                    default_role_name = "platform_admin"
+                    # Assign team_admin role for admin users
+                    default_role_name = "team_admin"
                 else:
                     # Assign viewer role for non-admin users (read-only access)
                     default_role_name = "viewer"
@@ -395,8 +395,8 @@ class EmailAuthService:
 
                     if not existing_assignment:
                         # Create role assignment
-                        # Use global scope for platform_admin, team scope for viewer
-                        role_scope = "global" if is_admin else "team"
+                        # Use team scope
+                        role_scope = "team"
                         user_role = UserRole(
                             user_email=email,
                             role_id=default_role.id,
