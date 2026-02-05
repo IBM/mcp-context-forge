@@ -1127,6 +1127,10 @@ class Settings(BaseSettings):
     # When enabled, it logs all CRUD operations (create, read, update, delete) on resources.
     # WARNING: This causes a database write on every API request and can cause significant load.
     audit_trail_enabled: bool = Field(default=False, description="Enable audit trail logging to database for compliance")
+    permission_audit_enabled: bool = Field(
+        default=False,
+        description="Enable permission audit logging for RBAC checks (writes a row per permission check)",
+    )
 
     # Security Logging Configuration
     # Security event logging is disabled by default for performance.

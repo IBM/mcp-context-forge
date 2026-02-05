@@ -773,6 +773,12 @@
               "description": "Enable DB lookup for user identity during request logging",
               "default": "false"
             },
+            "PERMISSION_AUDIT_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable permission audit logging for RBAC checks",
+              "default": "false"
+            },
             "TRANSPORT_TYPE": {
               "type": "string",
               "description": "Transport types (comma-separated)",
