@@ -205,12 +205,15 @@ def _index_exists(inspector: sa.Inspector, table_name: str, index_name: str) -> 
 
 
 def _index_exists_on_columns(inspector: sa.Inspector, table_name: str, columns: list[str]) -> bool:
-    """Return True if an index exists that covers exactly the given columns.
+    """Return True if an index exists that covers exactly the given columns in order.
+
+    Column order matters for B-tree indexes: (a, b) supports queries on (a)
+    and (a, b) but not (b) alone, so (a, b) != (b, a).
 
     Args:
         inspector: SQLAlchemy inspector bound to the current connection.
         table_name: Name of the table to inspect.
-        columns: Column names that should be indexed.
+        columns: Column names that should be indexed (order matters).
 
     Returns:
         bool: True when a matching index exists, otherwise False.
@@ -219,10 +222,9 @@ def _index_exists_on_columns(inspector: sa.Inspector, table_name: str, columns: 
         existing = inspector.get_indexes(table_name)
     except Exception:
         return False
-    target = set(columns)
     for idx in existing:
         cols = idx.get("column_names") or []
-        if set(cols) == target:
+        if list(cols) == list(columns):
             return True
     return False
 

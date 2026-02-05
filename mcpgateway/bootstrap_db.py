@@ -91,6 +91,58 @@ def _schema_looks_current(inspector) -> bool:
     return _column_exists(inspector, "tools", "display_name") and _column_exists(inspector, "gateways", "oauth_config") and _column_exists(inspector, "prompts", "custom_name")
 
 
+def _ensure_performance_indexes(conn: Connection) -> int:
+    """Create performance indexes that are defined only in migrations, not ORM models.
+
+    Runs after every bootstrap/migration path to guarantee that indexes from
+    the reconciliation migration exist even when that migration is no longer
+    the Alembic head (i.e. newer migrations were added after it).
+
+    Uses ``CREATE INDEX IF NOT EXISTS`` which is supported by SQLite and
+    PostgreSQL (≥ 9.5) so the operation is fully idempotent.
+
+    Args:
+        conn: Active SQLAlchemy connection (inside the advisory lock).
+
+    Returns:
+        Number of indexes created (0 when all already exist).
+    """
+    try:
+        # pylint: disable=import-outside-toplevel
+        from mcpgateway.alembic.versions.c2d3e4f5g6h7_reconcile_missing_indexes import INDEX_SPECS
+    except ImportError:
+        return 0
+
+    created = 0
+    try:
+        insp = inspect(conn)
+        tables = insp.get_table_names()
+    except Exception:
+        return 0
+
+    for name, table, columns, unique in INDEX_SPECS:
+        try:
+            if table not in tables:
+                continue
+
+            existing = list(insp.get_indexes(table))
+
+            # Check if index already exists (by name or by column match)
+            if any(idx.get("name") == name for idx in existing):
+                continue
+            if any(list(idx.get("column_names", [])) == list(columns) for idx in existing):
+                continue
+
+            unique_clause = "UNIQUE " if unique else ""
+            cols = ", ".join(columns)
+            conn.execute(text(f"CREATE {unique_clause}INDEX IF NOT EXISTS {name} ON {table} ({cols})"))
+            created += 1
+        except Exception as exc:
+            logger.debug(f"Could not create index {name} on {table}: {exc}")
+
+    return created
+
+
 @contextmanager
 def advisory_lock(conn: Connection):
     """
@@ -527,7 +579,7 @@ async def main() -> None:
                             logger.warning("Failed to read alembic_version table: %s", exc)
 
                     if not versions and _schema_looks_current(insp):
-                        logger.warning("Existing database has no Alembic revision rows; stamping previous head then applying reconciliation migration")
+                        logger.warning("Existing database has no Alembic revision rows; stamping previous head then applying latest migration")
                         script = ScriptDirectory.from_config(cfg)
                         head_rev = script.get_current_head()
                         head = script.get_revision(head_rev) if head_rev else None
@@ -539,6 +591,13 @@ async def main() -> None:
                     else:
                         logger.info("Running Alembic migrations to ensure schema is up to date")
                         command.upgrade(cfg, "head")
+
+                # Ensure performance indexes exist regardless of migration path.
+                # Handles fresh DBs where create_all() skips migration-only indexes
+                # and existing DBs where the reconciliation migration was superseded.
+                idx_count = _ensure_performance_indexes(conn)
+                if idx_count:
+                    logger.info(f"Created {idx_count} missing performance index(es)")
 
                 # Post-upgrade normalization passes (inside lock to be safe)
                 updated = normalize_team_visibility(conn)

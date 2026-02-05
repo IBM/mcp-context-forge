@@ -182,11 +182,14 @@ def _drop_duplicate_ix_indexes() -> None:
 
 
 def _index_exists_on_columns(table_name: str, columns: list[str]) -> tuple[bool, str | None]:
-    """Check if an index already exists on the specified columns.
+    """Check if an index already exists on the specified columns in order.
+
+    Column order matters for B-tree indexes: (a, b) supports queries on (a)
+    and (a, b) but not (b) alone, so (a, b) != (b, a).
 
     Args:
         table_name: Name of the table to check
-        columns: List of column names to check for existing index
+        columns: List of column names to check for existing index (order matters)
 
     Returns:
         Tuple of (exists: bool, existing_index_name: str | None)
@@ -200,10 +203,9 @@ def _index_exists_on_columns(table_name: str, columns: list[str]) -> tuple[bool,
         # Table might not exist yet, or other error
         return False, None
 
-    # Check if any existing index covers these exact columns
-    columns_set = set(columns)
+    # Check if any existing index covers these exact columns in order
     for idx in existing_indexes:
-        if set(idx["column_names"]) == columns_set:
+        if list(idx["column_names"]) == list(columns):
             return True, idx["name"]
 
     return False, None

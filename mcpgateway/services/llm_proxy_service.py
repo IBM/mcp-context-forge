@@ -472,6 +472,9 @@ class LLMProxyService:
             await self.initialize()
 
         provider, model = self._resolve_model(db, request.model)
+        # Release DB connection before long-lived streaming
+        db.commit()
+        db.close()
 
         # Build request based on provider type
         if provider.provider_type == LLMProviderType.AZURE_OPENAI:

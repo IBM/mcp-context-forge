@@ -1046,7 +1046,7 @@ class TestMain:
                                                             mock_command.stamp.assert_called_once_with(mock_config, "prev-rev")
                                                             mock_command.upgrade.assert_called_once_with(mock_config, "head")
                                                             mock_logger.warning.assert_any_call(
-                                                                "Existing database has no Alembic revision rows; stamping previous head then applying reconciliation migration"
+                                                                "Existing database has no Alembic revision rows; stamping previous head then applying latest migration"
                                                             )
 
     @pytest.mark.asyncio

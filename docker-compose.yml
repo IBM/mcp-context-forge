@@ -298,9 +298,8 @@ services:
       #   - "auto": Automatic - NullPool if PgBouncer detected in URL, else QueuePool
       #
       # WITH PgBouncer (default in docker-compose):
-      # Option A: NullPool - safest, eliminates stale connection errors, ~10% slower
-      # - DB_POOL_CLASS=null
-      # Option B: QueuePool + pre_ping - better performance, validates before use
+      # QueuePool + pre_ping - reuses persistent connections, avoids per-request
+      # TCP + SCRAM-SHA-256 overhead that NullPool incurs.
       - DB_POOL_CLASS=queue
       - DB_POOL_PRE_PING=true          # Validate connections before use (SELECT 1)
       - DB_POOL_SIZE=20                # Pool size per worker
@@ -741,10 +740,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
+          cpus: '4'
           memory: 256M
         reservations:
-          cpus: '1'
+          cpus: '2'
           memory: 128M
 
   # migration:

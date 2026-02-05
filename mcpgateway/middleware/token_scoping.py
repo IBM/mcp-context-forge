@@ -898,9 +898,19 @@ class TokenScopingMiddleware:
                     logger.warning("Token rejected: User no longer member of associated team(s)")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 
-                if not self._check_resource_team_ownership(request.url.path, token_teams, _user_email=user_email):
-                    logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                # First-Party
+                from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+
+                db = next(get_db())
+                try:
+                    if not self._check_resource_team_ownership(request.url.path, token_teams, db=db, _user_email=user_email):
+                        logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
+                        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                finally:
+                    try:
+                        db.commit()
+                    finally:
+                        db.close()
 
             # Extract scopes from payload
             scopes = payload.get("scopes", {})
