@@ -41,7 +41,7 @@ import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload, Session
 
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
@@ -1417,6 +1417,8 @@ class ResourceService:
         resource_template_uri: Optional[str] = None,
         user_identity: Optional[Union[str, Dict[str, Any]]] = None,
         meta_data: Optional[Dict[str, Any]] = None,  # Reserved for future MCP SDK support
+        resource_obj: Optional[Any] = None,
+        gateway_obj: Optional[Any] = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1449,6 +1451,10 @@ class ResourceService:
                 OAuth token lookup always uses platform_admin_email (service account).
             meta_data (Optional[Dict[str, Any]]):
                 Additional metadata to pass to the gateway during invocation.
+            resource_obj (Optional[Any]):
+                Pre-fetched DbResource object to skip the internal resource lookup query.
+            gateway_obj (Optional[Any]):
+                Pre-fetched DbGateway object to skip the internal gateway lookup query.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` if the
@@ -1527,8 +1533,10 @@ class ResourceService:
 
         logger.info(f"Invoking the resource: {uri}")
         gateway_id = None
-        resource_info = None
-        resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+        # Use pre-fetched resource if provided (avoids Q5 re-fetch)
+        resource_info = resource_obj
+        if resource_info is None:
+            resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
 
         # Release transaction immediately after resource lookup to prevent idle-in-transaction
         # This is especially important when resource isn't found - we don't want to hold the transaction
@@ -1549,8 +1557,9 @@ class ResourceService:
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
             resource_name = getattr(resource_info, "name", None)
-            gateway = None
-            if gateway_id:
+            # Use pre-fetched gateway if provided (avoids Q6 re-fetch)
+            gateway = gateway_obj
+            if gateway is None and gateway_id:
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
 
             # ═══════════════════════════════════════════════════════════════════════════
@@ -2027,11 +2036,20 @@ class ResourceService:
         success = False
         error_message = None
         resource_db = None
+        resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
         content = None
         uri = resource_uri or "unknown"
         if resource_id:
-            resource_db = db.get(DbResource, resource_id)
-            uri = resource_db.uri if resource_db else None
+            resource_db = db.get(DbResource, resource_id, options=[joinedload(DbResource.gateway)])
+            if resource_db:
+                uri = resource_db.uri
+                resource_db_gateway = resource_db.gateway  # Eager-loaded, safe to access
+                # Check enabled status in Python (avoids redundant Q3/Q4 re-fetches)
+                if not include_inactive and not resource_db.enabled:
+                    raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
+                content = resource_db.content
+            else:
+                uri = None
 
         # Create database span for observability dashboard
         trace_id = current_trace_id.get()
@@ -2147,7 +2165,7 @@ class ResourceService:
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
                 # Check for template
 
-                if uri is not None:  # and "{" in uri and "}" in uri:
+                if resource_db is None and uri is not None:  # and "{" in uri and "}" in uri:
                     # Matches uri (modified value from pluggins if applicable)
                     # with uri from resource DB
                     # if uri is of type resource template then resource is retreived from DB
@@ -2189,9 +2207,9 @@ class ResourceService:
                     if content is None and resource_db is None:
                         raise ResourceNotFoundError(f"Resource template not found for '{resource_uri}'")
 
-                if resource_id:
-                    # if resource_id provided instead of resource_uri
-                    # retrieves resource based on resource_id
+                if resource_id and resource_db is None:
+                    # if resource_id provided but not found by Q2 (shouldn't normally happen,
+                    # but handles race conditions where resource is deleted between requests)
                     query = select(DbResource).where(DbResource.id == str(resource_id)).where(DbResource.enabled)
                     if include_inactive:
                         query = select(DbResource).where(DbResource.id == str(resource_id))
@@ -2264,6 +2282,8 @@ class ResourceService:
                         resource_template_uri=getattr(content, "text") or None,
                         user_identity=user,
                         meta_data=meta_data,
+                        resource_obj=resource_db,
+                        gateway_obj=resource_db_gateway,
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
@@ -2278,6 +2298,8 @@ class ResourceService:
                             resource_template_uri=getattr(content, "blob") or None,
                             user_identity=user,
                             meta_data=meta_data,
+                            resource_obj=resource_db,
+                            gateway_obj=resource_db_gateway,
                         )
                         setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
@@ -2288,6 +2310,8 @@ class ResourceService:
                             resource_template_uri=getattr(content, "text") or None,
                             user_identity=user,
                             meta_data=meta_data,
+                            resource_obj=resource_db,
+                            gateway_obj=resource_db_gateway,
                         )
                         setattr(content, "text", resource_response)
                     return content
