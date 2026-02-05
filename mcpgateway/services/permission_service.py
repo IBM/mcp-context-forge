@@ -55,7 +55,7 @@ class PermissionService:
 
         Args:
             db: Database session
-            audit_enabled: Whether to enable permission auditing (defaults to settings.PERMISSION_AUDIT_ENABLED)
+            audit_enabled: Whether to enable permission auditing (defaults to settings.permission_audit_enabled / PERMISSION_AUDIT_ENABLED)
         """
         self.db = db
         if audit_enabled is None:
