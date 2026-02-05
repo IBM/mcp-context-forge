@@ -60,6 +60,16 @@ class ClientDisconnectMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Intercept HTTP requests to cancel processing on client disconnect.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+
+        Raises:
+            asyncio.CancelledError: Re-raised when cancellation is not from a disconnect.
+        """
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -107,6 +117,11 @@ class ClientDisconnectMiddleware:
                 return {"type": "http.disconnect"}
 
         async def _send_wrapper(message: Message) -> None:
+            """Forward ASGI send messages, suppressing errors after disconnect.
+
+            Args:
+                message: ASGI message to send.
+            """
             nonlocal response_started
             if message["type"] == "http.response.start":
                 response_started = True
