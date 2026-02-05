@@ -7612,3 +7612,30 @@ class PerformanceHistoryResponse(BaseModel):
     aggregates: List[PerformanceAggregateRead] = Field(default_factory=list, description="Historical aggregates")
     period_type: str = Field(..., description="Aggregation period type")
     total_count: int = Field(0, description="Total matching records")
+
+
+# --- Semantic Search Schemas ---
+
+
+class ToolSearchResult(BaseModelWithConfigDict):
+    """Schema for a single tool search result from semantic search.
+
+    Includes essential tool information and similarity score for ranking.
+    """
+
+    tool_name: str = Field(..., description="Tool name")
+    description: Optional[str] = Field(None, description="Tool description")
+    server_id: Optional[str] = Field(None, description="Server/gateway ID providing this tool")
+    server_name: Optional[str] = Field(None, description="Server/gateway name providing this tool")
+    similarity_score: float = Field(..., ge=0.0, le=1.0, description="Similarity score (0-1, higher = more relevant)")
+
+
+class SemanticSearchResponse(BaseModelWithConfigDict):
+    """Response schema for semantic tool search endpoint.
+
+    Returns a list of ranked tools matching the semantic query.
+    """
+
+    results: List[ToolSearchResult] = Field(..., description="Ranked list of matching tools")
+    query: str = Field(..., description="Original search query")
+    total_results: int = Field(..., ge=0, description="Total number of results returned")

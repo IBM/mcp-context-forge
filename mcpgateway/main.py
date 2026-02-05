@@ -87,6 +87,7 @@ from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
+from mcpgateway import schemas
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
@@ -3491,6 +3492,66 @@ async def list_tools(
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
 
     return jsonpath_modifier(tools_dict_list, apijsonpath.jsonpath, apijsonpath.mapping)
+
+
+@tool_router.get("/semantic", response_model=schemas.SemanticSearchResponse)
+@require_permission("tools.read")
+async def semantic_tool_search(
+    query: str = Query(..., min_length=1, description="Natural language search query"),
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of results to return"),
+    threshold: Optional[float] = Query(None, ge=0.0, le=1.0, description="Optional similarity threshold (0-1)"),
+    user=Depends(get_current_user_with_permissions),
+) -> schemas.SemanticSearchResponse:
+    """Semantic search for tools using natural language queries.
+
+    This endpoint enables semantic tool discovery by converting the query to an embedding
+    and searching for similar tools using vector similarity.
+
+    Args:
+        query: Natural language search query (required, non-empty)
+        limit: Maximum number of results (1-50, default: 10)
+        threshold: Optional similarity threshold (0-1). Only return results >= threshold
+        user: Authenticated user context
+
+    Returns:
+        SemanticSearchResponse containing ranked tool results with similarity scores
+
+    Raises:
+        HTTPException 400: If query is empty or parameters are invalid
+        HTTPException 422: If validation fails
+        HTTPException 500: If search operation fails
+
+    Example:
+        GET /tools/semantic?query=fetch%20weather%20data&limit=5&threshold=0.7
+    """
+    # First-Party
+    from mcpgateway.services.semantic_search_service import get_semantic_search_service
+
+    try:
+        # Get semantic search service
+        search_service = get_semantic_search_service()
+
+        # Perform semantic search
+        results = await search_service.search_tools(
+            query=query,
+            limit=limit,
+            threshold=threshold,
+        )
+
+        # Build response
+        return schemas.SemanticSearchResponse(
+            results=results,
+            query=query,
+            total_results=len(results),
+        )
+
+    except ValueError as e:
+        # Invalid parameters (e.g., empty query, out-of-range values)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        # Unexpected errors during search
+        logger.error(f"Semantic search failed: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Semantic search failed: {str(e)}")
 
 
 @tool_router.post("", response_model=ToolRead)
