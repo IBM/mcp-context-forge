@@ -33,7 +33,7 @@ fn add_extension_module_path(py: Python<'_>) -> PyResult<()> {
     candidates.push(alternate_dir.join("deps"));
 
     let sys = py.import("sys")?;
-    let sys_path = sys.getattr("path")?.downcast::<PyList>()?;
+    let sys_path = sys.getattr("path")?.cast::<PyList>()?;
 
     for path in candidates {
         if !path.exists() {
@@ -117,18 +117,18 @@ fn test_ssn_detection() {
             .expect("detect() failed");
 
         // Check that SSN was detected
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert!(detections.contains("ssn").unwrap());
 
         let ssn_list = detections
             .get_item("ssn")
             .unwrap()
             .unwrap()
-            .downcast::<PyList>()
+            .cast::<PyList>()
             .unwrap();
         assert_eq!(ssn_list.len(), 1);
 
-        let detection = ssn_list.get_item(0).unwrap().downcast::<PyDict>().unwrap();
+        let detection = ssn_list.get_item(0).unwrap().cast::<PyDict>().unwrap();
         assert_eq!(
             detection
                 .get_item("value")
@@ -152,14 +152,14 @@ fn test_email_detection() {
         let text = "Contact me at john.doe@example.com";
         let result = detector.call_method1(py, "detect", (text,)).unwrap();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert!(detections.contains("email").unwrap());
 
         let email_list = detections
             .get_item("email")
             .unwrap()
             .unwrap()
-            .downcast::<PyList>()
+            .cast::<PyList>()
             .unwrap();
         assert_eq!(email_list.len(), 1);
     });
@@ -176,7 +176,7 @@ fn test_credit_card_detection() {
         let text = "Credit card: 4111-1111-1111-1111";
         let result = detector.call_method1(py, "detect", (text,)).unwrap();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert!(detections.contains("credit_card").unwrap());
     });
 }
@@ -192,7 +192,7 @@ fn test_phone_detection() {
         let text = "Call me at (555) 123-4567";
         let result = detector.call_method1(py, "detect", (text,)).unwrap();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert!(detections.contains("phone").unwrap());
     });
 }
@@ -228,7 +228,7 @@ fn test_multiple_pii_types() {
         let text = "SSN: 123-45-6789, Email: john@example.com, Phone: 555-1234";
         let result = detector.call_method1(py, "detect", (text,)).unwrap();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert!(detections.contains("ssn").unwrap());
         assert!(detections.contains("email").unwrap());
         assert!(detections.contains("phone").unwrap());
@@ -257,19 +257,19 @@ fn test_nested_data_processing() {
             .expect("process_nested failed");
 
         // Result is tuple: (modified, new_data, detections)
-        let result_tuple = result.downcast::<pyo3::types::PyTuple>(py).unwrap();
+        let result_tuple = result.cast::<pyo3::types::PyTuple>(py).unwrap();
         assert_eq!(result_tuple.len(), 3);
 
         let modified = result_tuple.get_item(0).unwrap().extract::<bool>().unwrap();
         assert!(modified, "Should have detected and masked PII");
 
         let new_data = result_tuple.get_item(1).unwrap();
-        let new_outer = new_data.downcast::<PyDict>().unwrap();
+        let new_outer = new_data.cast::<PyDict>().unwrap();
         let new_inner = new_outer
             .get_item("user")
             .unwrap()
             .unwrap()
-            .downcast::<PyDict>()
+            .cast::<PyDict>()
             .unwrap();
 
         let masked_ssn = new_inner
@@ -302,15 +302,11 @@ fn test_nested_list_processing() {
             .call_method1(py, "process_nested", (list, ""))
             .expect("process_nested failed");
 
-        let result_tuple = result.downcast::<pyo3::types::PyTuple>(py).unwrap();
+        let result_tuple = result.cast::<pyo3::types::PyTuple>(py).unwrap();
         let modified = result_tuple.get_item(0).unwrap().extract::<bool>().unwrap();
         assert!(modified);
 
-        let new_list = result_tuple
-            .get_item(1)
-            .unwrap()
-            .downcast::<PyList>()
-            .unwrap();
+        let new_list = result_tuple.get_item(1).unwrap().cast::<PyList>().unwrap();
         let first_item = new_list.get_item(0).unwrap().extract::<String>().unwrap();
         assert!(first_item.contains("***-**-6789"));
     });
@@ -327,7 +323,7 @@ fn test_aws_key_detection() {
         let text = "AWS Key: AKIAIOSFODNN7EXAMPLE";
         let result = detector.call_method1(py, "detect", (text,)).unwrap();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert!(detections.contains("aws_key").unwrap());
     });
 }
@@ -364,7 +360,7 @@ fn test_no_detection_when_disabled() {
         let text = "SSN: 123-45-6789, Email: test@example.com";
         let result = detector.call_method1(py, "detect", (text,)).unwrap();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert_eq!(
             detections.len(),
             0,
@@ -389,23 +385,19 @@ fn test_whitelist_patterns() {
         let text = "Email: test@example.com, Other: john@test.com";
         let result = detector.call_method1(py, "detect", (text,)).unwrap();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
 
         if detections.contains("email").unwrap() {
             let email_list = detections
                 .get_item("email")
                 .unwrap()
                 .unwrap()
-                .downcast::<PyList>()
+                .cast::<PyList>()
                 .unwrap();
 
             // Should only detect john@test.com, not test@example.com (whitelisted)
             for i in 0..email_list.len() {
-                let detection = email_list
-                    .get_item(i)
-                    .unwrap()
-                    .downcast::<PyDict>()
-                    .unwrap();
+                let detection = email_list.get_item(i).unwrap().cast::<PyDict>().unwrap();
                 let value = detection
                     .get_item("value")
                     .unwrap()
@@ -432,7 +424,7 @@ fn test_empty_string() {
         let text = "";
         let result = detector.call_method1(py, "detect", (text,)).unwrap();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert_eq!(detections.len(), 0);
     });
 }
@@ -460,7 +452,7 @@ fn test_large_text_performance() {
             .unwrap();
         let duration = start.elapsed();
 
-        let detections = result.downcast::<PyDict>(py).unwrap();
+        let detections = result.cast::<PyDict>(py).unwrap();
         assert!(detections.contains("ssn").unwrap());
         assert!(detections.contains("email").unwrap());
 

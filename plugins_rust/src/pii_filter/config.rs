@@ -192,9 +192,9 @@ impl PIIConfig {
 
         // Extract custom patterns
         if let Some(value) = dict.get_item("custom_patterns")? {
-            if let Ok(py_list) = value.downcast::<pyo3::types::PyList>() {
+            if let Ok(py_list) = value.cast::<pyo3::types::PyList>() {
                 for item in py_list.iter() {
-                    if let Ok(py_dict) = item.downcast::<PyDict>() {
+                    if let Ok(py_dict) = item.cast::<PyDict>() {
                         let pattern: String = py_dict
                             .get_item("pattern")?
                             .ok_or_else(|| {
