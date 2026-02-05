@@ -66,6 +66,8 @@ def get_llm_instance(model_id, model_type=TOOLOPS_MODEL_TYPE):
         logger.info("Successfully configured LLM instance for ToolOps , and LLM model - " + model_id)
     except Exception as e:
         logger.info("Error in configuring LLM instance for ToolOps -" + str(e))
+        llm_model_instance, llm_config = None, None
+        pass
     return llm_model_instance, llm_config
 
 
