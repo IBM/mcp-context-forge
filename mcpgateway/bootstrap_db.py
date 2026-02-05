@@ -121,9 +121,20 @@ def _ensure_performance_indexes(conn: Connection) -> int:
     except Exception:
         return 0
 
+    dialect = conn.dialect.name
+
+    # Index that the migration replaces with a partial index on PostgreSQL
+    _PG_PARTIAL_FULL_INDEX = "idx_email_team_members_team_active_count"
+    _PG_PARTIAL_INDEX_NAME = "idx_email_team_members_team_active_partial"
+    _PG_PARTIAL_TABLE = "email_team_members"
+
     for name, table, columns, unique in INDEX_SPECS:
         try:
             if table not in tables:
+                continue
+
+            # On PostgreSQL, skip the full composite index in favour of a partial index
+            if dialect == "postgresql" and name == _PG_PARTIAL_FULL_INDEX:
                 continue
 
             existing = list(insp.get_indexes(table))
@@ -140,6 +151,19 @@ def _ensure_performance_indexes(conn: Connection) -> int:
             created += 1
         except Exception as exc:
             logger.debug(f"Could not create index {name} on {table}: {exc}")
+
+    # On PostgreSQL, create the partial index if it doesn't exist
+    if dialect == "postgresql" and _PG_PARTIAL_TABLE in tables:
+        try:
+            existing = list(insp.get_indexes(_PG_PARTIAL_TABLE))
+            if not any(idx.get("name") == _PG_PARTIAL_INDEX_NAME for idx in existing):
+                conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS {_PG_PARTIAL_INDEX_NAME} "
+                    f"ON {_PG_PARTIAL_TABLE} (team_id) WHERE is_active = true"
+                ))
+                created += 1
+        except Exception as exc:
+            logger.debug(f"Could not create partial index {_PG_PARTIAL_INDEX_NAME}: {exc}")
 
     return created
 
