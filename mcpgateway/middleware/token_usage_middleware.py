@@ -73,7 +73,7 @@ class TokenUsageMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         # Calculate response time
-        response_time_ms = int((time.time() - start_time) * 1000)
+        response_time_ms = round((time.time() - start_time) * 1000)
 
         # Only log if this was an API token request
         auth_method = getattr(request.state, "auth_method", None)
