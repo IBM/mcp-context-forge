@@ -547,6 +547,11 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
             # First-Party
             from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
             from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+
+            if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+                logger.debug("Invalid MCP session id for Streamable HTTP tool affinity, executing locally")
+                raise RuntimeError("invalid mcp session id")
 
             pool = get_mcp_session_pool()
 
@@ -574,17 +579,37 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 if "error" in forwarded_response:
                     raise Exception(forwarded_response["error"].get("message", "Forwarded request failed"))  # pylint: disable=broad-exception-raised
                 result_data = forwarded_response.get("result", {})
-                # Convert result back to expected content types
-                content = result_data.get("content", [])
-                if content:
-                    return_content: list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource] = []
-                    for item in content:
-                        if item.get("type") == "text":
-                            return_content.append(types.TextContent(type="text", text=item.get("text", "")))
-                        elif item.get("type") == "image":
-                            return_content.append(types.ImageContent(type="image", data=item.get("data", ""), mimeType=item.get("mimeType", "image/png")))
-                    return return_content
-                return []
+
+                def _rehydrate_content_items(items: Any) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource]:
+                    if not isinstance(items, list):
+                        return []
+                    converted: list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource] = []
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        item_type = item.get("type")
+                        try:
+                            if item_type == "text":
+                                converted.append(types.TextContent.model_validate(item))
+                            elif item_type == "image":
+                                converted.append(types.ImageContent.model_validate(item))
+                            elif item_type == "audio":
+                                converted.append(types.AudioContent.model_validate(item))
+                            elif item_type == "resource_link":
+                                converted.append(types.ResourceLink.model_validate(item))
+                            elif item_type == "resource":
+                                converted.append(types.EmbeddedResource.model_validate(item))
+                            else:
+                                converted.append(types.TextContent(type="text", text=str(item)))
+                        except Exception:
+                            converted.append(types.TextContent(type="text", text=str(item)))
+                    return converted
+
+                unstructured = _rehydrate_content_items(result_data.get("content", []))
+                structured = result_data.get("structuredContent") or result_data.get("structured_content")
+                if structured:
+                    return (unstructured, structured)
+                return unstructured
         except RuntimeError:
             # Pool not initialized - execute locally
             pass
@@ -1304,8 +1329,14 @@ class SessionManagerWrapper:
         # Uses precompiled regex for server ID extraction
         match = _SERVER_ID_RE.search(path)
 
-        # Extract request headers from scope
-        headers = dict(Headers(scope=scope))
+        # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
+        raw_headers = scope.get("headers") or []
+        headers: dict[str, str] = {}
+        for k, v in raw_headers:
+            try:
+                headers[k.decode("latin-1").lower()] = v.decode("latin-1")
+            except Exception:
+                continue
 
         # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("mcp-session-id", "not-provided")
@@ -1320,6 +1351,17 @@ class SessionManagerWrapper:
         # Multi-worker session affinity: check if we should forward to another worker
         # This must happen BEFORE the SDK's session manager handles the request
         is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
+
+        if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
+            try:
+                # First-Party
+                from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+
+                if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+                    logger.debug("Invalid MCP session id on Streamable HTTP request, skipping affinity")
+                    mcp_session_id = "not-provided"
+            except Exception:
+                mcp_session_id = "not-provided"
 
         # Log session manager ID for debugging
         logger.debug(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)}")

@@ -2,14 +2,10 @@
 """
 Redis-backed event store for Streamable HTTP stateful sessions.
 
-Provides distributed event storage across multiple gateway workers using Redis,
-enabling stateful MCP sessions to work correctly behind load balancers.
-
-Architecture:
-- Uses Redis Sorted Sets for ordered event storage with ring buffer semantics
-- Events indexed by event_id for O(1) lookup during replay
-- Automatic eviction when exceeding max_events_per_stream
-- TTL-based cleanup for expired streams
+Design goals:
+- Multi-worker safe: store+evict is atomic (Lua), so concurrent writers do not corrupt meta/count.
+- Bounded memory: per-stream ring buffer with eviction.
+- Bounded index growth: event_id index entries expire with the stream TTL.
 """
 
 # Standard
@@ -32,217 +28,170 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_STORE_EVENT_LUA = r"""
+-- KEYS:
+--  1) meta_key
+--  2) events_key (zset: member=event_id, score=seq_num)
+--  3) messages_key (hash: event_id -> message_json)
+-- ARGV:
+--  1) event_id
+--  2) message_json (orjson encoded; "null" for priming)
+--  3) ttl_seconds
+--  4) max_events
+--  5) index_prefix (string, eg "mcpgw:eventstore:event_index:")
+--  6) stream_id
+
+local meta_key = KEYS[1]
+local events_key = KEYS[2]
+local messages_key = KEYS[3]
+
+local event_id = ARGV[1]
+local message_json = ARGV[2]
+local ttl = tonumber(ARGV[3])
+local max_events = tonumber(ARGV[4])
+local index_prefix = ARGV[5]
+local stream_id = ARGV[6]
+
+local seq_num = redis.call('HINCRBY', meta_key, 'next_seq', 1)
+local count = redis.call('HINCRBY', meta_key, 'count', 1)
+if count == 1 then
+  redis.call('HSET', meta_key, 'start_seq', seq_num)
+end
+
+redis.call('ZADD', events_key, seq_num, event_id)
+redis.call('HSET', messages_key, event_id, message_json)
+
+local index_key = index_prefix .. event_id
+redis.call('SET', index_key, cjson.encode({stream_id=stream_id, seq_num=seq_num}), 'EX', ttl)
+
+if count > max_events then
+  local to_evict = count - max_events
+  local evicted_ids = redis.call('ZRANGE', events_key, 0, to_evict - 1)
+  redis.call('ZREMRANGEBYRANK', events_key, 0, to_evict - 1)
+
+  if #evicted_ids > 0 then
+    redis.call('HDEL', messages_key, unpack(evicted_ids))
+    for _, ev_id in ipairs(evicted_ids) do
+      redis.call('DEL', index_prefix .. ev_id)
+    end
+  end
+
+  redis.call('HSET', meta_key, 'count', max_events)
+  local first = redis.call('ZRANGE', events_key, 0, 0, 'WITHSCORES')
+  if #first >= 2 then
+    redis.call('HSET', meta_key, 'start_seq', tonumber(first[2]))
+  else
+    redis.call('HSET', meta_key, 'start_seq', seq_num)
+  end
+end
+
+redis.call('EXPIRE', meta_key, ttl)
+redis.call('EXPIRE', events_key, ttl)
+redis.call('EXPIRE', messages_key, ttl)
+
+return seq_num
+"""
+
+
 class RedisEventStore(EventStore):
-    """
-    Redis-backed event store for multi-worker deployments.
-
-    Data Model:
-        Per Stream:
-        - Hash: mcpgw:eventstore:{stream_id}:meta
-          - start_seq: Oldest sequence number (for eviction detection)
-          - next_seq: Next sequence number to assign
-          - count: Current event count
-
-        - Sorted Set: mcpgw:eventstore:{stream_id}:events
-          - Score: sequence number
-          - Value: JSON {event_id, message, seq_num}
-
-        Global:
-        - Hash: mcpgw:eventstore:event_index
-          - Key: event_id -> Value: JSON {stream_id, seq_num}
-
-    Examples:
-        >>> # Create event store with custom settings
-        >>> store = RedisEventStore(max_events_per_stream=200, ttl=7200)
-
-        >>> # Store an event
-        >>> event_id = await store.store_event("stream-123", message)  # doctest: +SKIP
-
-        >>> # Replay events after a specific event_id
-        >>> async def callback(msg):  # doctest: +SKIP
-        ...     print(f"Replayed: {msg}")
-        >>> stream_id = await store.replay_events_after(event_id, callback)  # doctest: +SKIP
-    """
+    """Redis-backed event store for multi-worker Streamable HTTP."""
 
     def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600):
-        """
-        Initialize Redis event store.
-
-        Args:
-            max_events_per_stream: Maximum events per stream (ring buffer size)
-            ttl: Stream TTL in seconds (default 1 hour)
-        """
         self.max_events = max_events_per_stream
         self.ttl = ttl
-        logger.info(f"RedisEventStore initialized: max_events={max_events_per_stream}, ttl={ttl}s")
+        logger.debug("RedisEventStore initialized: max_events=%s ttl=%ss", max_events_per_stream, ttl)
 
     def _get_stream_meta_key(self, stream_id: str) -> str:
-        """Get Redis key for stream metadata.
-
-        Args:
-            stream_id: Unique stream identifier
-
-        Returns:
-            Redis key for stream metadata hash
-        """
         return f"mcpgw:eventstore:{stream_id}:meta"
 
     def _get_stream_events_key(self, stream_id: str) -> str:
-        """Get Redis key for stream events sorted set.
-
-        Args:
-            stream_id: Unique stream identifier
-
-        Returns:
-            Redis key for stream events sorted set
-        """
         return f"mcpgw:eventstore:{stream_id}:events"
 
-    def _get_event_index_key(self) -> str:
-        """Get Redis key for global event index.
+    def _get_stream_messages_key(self, stream_id: str) -> str:
+        return f"mcpgw:eventstore:{stream_id}:messages"
 
-        Returns:
-            Redis key for event index hash
-        """
-        return "mcpgw:eventstore:event_index"
+    def _event_index_prefix(self) -> str:
+        return "mcpgw:eventstore:event_index:"
+
+    def _event_index_key(self, event_id: str) -> str:
+        return f"{self._event_index_prefix()}{event_id}"
 
     async def store_event(self, stream_id: str, message: JSONRPCMessage | None) -> str:
-        """
-        Store an event in Redis.
-
-        Args:
-            stream_id: Unique stream identifier
-            message: JSON-RPC message to store (None for priming events)
-
-        Returns:
-            Unique event_id for this event
-
-        Examples:
-            >>> event_id = await store.store_event("stream-123", {"jsonrpc": "2.0", "method": "test"})  # doctest: +SKIP
-            >>> isinstance(event_id, str)  # doctest: +SKIP
-            True  # doctest: +SKIP
-
-        Raises:
-            RuntimeError: If Redis client is not available
-        """
         redis: Redis = await get_redis_client()
         if redis is None:
             raise RuntimeError("Redis client not available - cannot store event")
+
         event_id = str(uuid.uuid4())
-
-        logger.info(f"[REDIS_EVENTSTORE] Storing event | stream_id={stream_id} | event_id={event_id} | message_type={type(message).__name__ if message else 'None'}")
-
-        meta_key = self._get_stream_meta_key(stream_id)
-        events_key = self._get_stream_events_key(stream_id)
-        index_key = self._get_event_index_key()
-
-        # Atomically increment sequence number
-        seq_num = await redis.hincrby(meta_key, "next_seq", 1)
 
         # Convert message to dict for serialization (Pydantic model -> dict)
         message_dict = None if message is None else (message.model_dump() if hasattr(message, "model_dump") else dict(message))
-
-        # Serialize event data
-        event_data = orjson.dumps({"event_id": event_id, "message": message_dict, "seq_num": seq_num})
-
-        # Store event in sorted set (score = seq_num)
-        await redis.zadd(events_key, {event_data: seq_num})
-
-        # Index event_id for lookup
-        index_data = orjson.dumps({"stream_id": stream_id, "seq_num": seq_num})
-        await redis.hset(index_key, event_id, index_data)
-
-        # Increment count
-        count = await redis.hincrby(meta_key, "count", 1)
-
-        # Handle eviction if exceeding max_events
-        if count > self.max_events:
-            # Calculate how many to evict
-            to_evict = count - self.max_events
-
-            # Get events to evict (oldest by rank)
-            evicted = await redis.zrange(events_key, 0, to_evict - 1)
-
-            # Remove from sorted set
-            await redis.zremrangebyrank(events_key, 0, to_evict - 1)
-
-            # Remove from event index and update start_seq
-            for event_bytes in evicted:
-                evicted_event = orjson.loads(event_bytes)
-                await redis.hdel(index_key, evicted_event["event_id"])
-
-            # Update start_seq to first remaining event
-            remaining = await redis.zrange(events_key, 0, 0, withscores=True)
-            if remaining:
-                _, start_seq = remaining[0]
-                await redis.hset(meta_key, "start_seq", int(start_seq))
-
-            # Update count
-            await redis.hset(meta_key, "count", self.max_events)
-
-        # Set TTL on stream keys
-        await redis.expire(meta_key, self.ttl)
-        await redis.expire(events_key, self.ttl)
-
-        logger.debug(f"Stored event {event_id} in stream {stream_id} (seq={seq_num})")
-        return event_id
-
-    async def replay_events_after(self, last_event_id: str, send_callback: EventCallback) -> str | None:
-        """
-        Replay events after a specific event_id.
-
-        Args:
-            last_event_id: Event ID to replay from
-            send_callback: Async callback to receive replayed messages
-
-        Returns:
-            stream_id if found, None if event not found or evicted
-
-        Examples:
-            >>> messages = []  # doctest: +SKIP
-            >>> async def callback(msg):  # doctest: +SKIP
-            ...     messages.append(msg)  # doctest: +SKIP
-            >>> stream_id = await store.replay_events_after(event_id, callback)  # doctest: +SKIP
-            >>> len(messages) > 0  # doctest: +SKIP
-            True  # doctest: +SKIP
-        """
-        redis: Redis = await get_redis_client()
-        if redis is None:
-            logger.warning("Redis client not available - cannot replay events")
-            return None
-        index_key = self._get_event_index_key()
-
-        logger.info(f"[REDIS_EVENTSTORE] Replaying events | last_event_id={last_event_id}")
-
-        # Lookup event in index
-        index_data = await redis.hget(index_key, last_event_id)
-        if not index_data:
-            logger.warning(f"[REDIS_EVENTSTORE] Event not found in index | last_event_id={last_event_id}")
-            return None
-
-        event_info = orjson.loads(index_data)
-        stream_id = event_info["stream_id"]
-        last_seq = event_info["seq_num"]
+        message_json = orjson.dumps(message_dict)
 
         meta_key = self._get_stream_meta_key(stream_id)
         events_key = self._get_stream_events_key(stream_id)
+        messages_key = self._get_stream_messages_key(stream_id)
 
-        # Check if event still in buffer (not evicted)
+        await redis.eval(
+            _STORE_EVENT_LUA,
+            3,
+            meta_key,
+            events_key,
+            messages_key,
+            event_id,
+            message_json,
+            int(self.ttl),
+            int(self.max_events),
+            self._event_index_prefix(),
+            stream_id,
+        )
+
+        return event_id
+
+    async def replay_events_after(self, last_event_id: str, send_callback: EventCallback) -> str | None:
+        redis: Redis = await get_redis_client()
+        if redis is None:
+            logger.debug("Redis client not available - cannot replay events")
+            return None
+
+        index_data = await redis.get(self._event_index_key(last_event_id))
+        if not index_data:
+            return None
+
+        try:
+            info = orjson.loads(index_data)
+        except Exception:
+            return None
+
+        stream_id = info.get("stream_id")
+        last_seq = info.get("seq_num")
+        if not stream_id or last_seq is None:
+            return None
+
+        meta_key = self._get_stream_meta_key(stream_id)
+        events_key = self._get_stream_events_key(stream_id)
+        messages_key = self._get_stream_messages_key(stream_id)
+
+        # Eviction detection: if last_seq < start_seq, the event is gone.
         start_seq_bytes = await redis.hget(meta_key, "start_seq")
         if start_seq_bytes:
-            start_seq = int(start_seq_bytes)
-            if last_seq < start_seq:
-                logger.warning(f"Event {last_event_id} evicted from stream {stream_id} (seq {last_seq} < start {start_seq})")
+            try:
+                start_seq = int(start_seq_bytes)
+            except Exception:
+                start_seq = None
+            if start_seq is not None and int(last_seq) < start_seq:
                 return None
 
-        # Get all events after last_seq
-        events = await redis.zrangebyscore(events_key, last_seq + 1, "+inf")
+        event_ids = await redis.zrangebyscore(events_key, int(last_seq) + 1, "+inf")
+        for event_id_bytes in event_ids:
+            ev_id = event_id_bytes.decode("latin-1") if isinstance(event_id_bytes, (bytes, bytearray)) else str(event_id_bytes)
+            msg_json = await redis.hget(messages_key, ev_id)
+            if msg_json is None:
+                continue
+            try:
+                msg = orjson.loads(msg_json)
+            except Exception:
+                msg = None
+            await send_callback(msg)
 
-        # Replay events
-        for event_bytes in events:
-            event_data = orjson.loads(event_bytes)
-            message = event_data["message"]
-            await send_callback(message)
-
-        logger.info(f"[REDIS_EVENTSTORE] Replayed events | stream_id={stream_id} | last_event_id={last_event_id} | count={len(events)}")
         return stream_id
+

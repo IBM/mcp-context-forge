@@ -1427,7 +1427,7 @@ class Settings(BaseSettings):
 
     # Session Affinity
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
-    mcpgateway_session_affinity_ttl: int = 3600  # Session affinity binding TTL
+    mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
     mcpgateway_session_affinity_max_sessions: int = 1  # Max sessions per identity for affinity
     mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
 

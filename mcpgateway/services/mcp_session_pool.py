@@ -33,6 +33,7 @@ from enum import Enum
 import hashlib
 import logging
 import os
+import re
 import socket
 import time
 from typing import Any, Callable, Dict, Optional, Set, Tuple, TYPE_CHECKING
@@ -54,6 +55,10 @@ from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 # JSON-RPC standard error code for method not found
 METHOD_NOT_FOUND = -32601
+
+# Shared session-id validation (downstream MCP session IDs used for affinity).
+# Intentionally strict: protects Redis key/channel construction and log lines.
+_MCP_SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
 # Worker ID for multi-worker session affinity
 # Uses hostname + PID to be unique across Docker containers (each container has PID 1)
@@ -501,26 +506,18 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         """Record a success, resetting failure count."""
         self._failures[url] = 0
 
-    def _is_valid_session_id(self, session_id: str) -> bool:
-        """Validate mcp_session_id format to prevent Redis key injection.
+    @staticmethod
+    def is_valid_mcp_session_id(session_id: str) -> bool:
+        """Validate downstream MCP session ID format for affinity.
 
-        Valid session IDs should be UUIDs or similar alphanumeric identifiers.
-        Rejects IDs containing special characters that could manipulate Redis keys.
-
-        Args:
-            session_id: The session ID to validate.
-
-        Returns:
-            True if the session ID is valid, False otherwise.
+        Used for:
+        - Redis key construction (ownership + mapping)
+        - Pub/Sub channel naming
+        - Avoiding log spam / injection
         """
-        if not session_id or len(session_id) > 128:
+        if not session_id:
             return False
-
-        # Allow alphanumeric, hyphens, and underscores (standard UUID format)
-        # Standard
-        import re  # pylint: disable=import-outside-toplevel
-
-        return bool(re.match(r"^[a-zA-Z0-9_-]+$", session_id))
+        return bool(_MCP_SESSION_ID_PATTERN.match(session_id))
 
     def _sanitize_redis_key_component(self, value: str) -> str:
         """Sanitize a value for use in Redis key construction.
@@ -537,10 +534,20 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return ""
 
         # Replace problematic characters with underscores
-        # Standard
-        import re  # pylint: disable=import-outside-toplevel
-
         return re.sub(r"[^a-zA-Z0-9_-]", "_", value)
+
+    def _session_mapping_redis_key(self, mcp_session_id: str, url: str, transport_type: str, gateway_id: str) -> str:
+        """Compute a bounded Redis key for session mapping.
+
+        The URL is hashed to keep keys small and avoid special character issues.
+        """
+        sanitized_session_id = self._sanitize_redis_key_component(mcp_session_id)
+        url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
+        return f"mcpgw:session_mapping:{sanitized_session_id}:{url_hash}:{transport_type}:{gateway_id}"
+
+    @staticmethod
+    def _pool_owner_key(mcp_session_id: str) -> str:
+        return f"mcpgw:pool_owner:{mcp_session_id}"
 
     async def register_session_mapping(
         self,
@@ -574,7 +581,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             return
 
         # Validate mcp_session_id to prevent Redis key injection
-        if not self._is_valid_session_id(mcp_session_id):
+        if not self.is_valid_mcp_session_id(mcp_session_id):
             logger.warning(f"Invalid mcp_session_id format, skipping session mapping: {mcp_session_id[:20]}...")
             return
 
@@ -613,10 +620,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
             redis = await get_redis_client()
             if redis:
-                # Redis key: session_mapping:{mcp_session_id}:{url}:{transport}:{gateway_id}
-                # Use sanitized session ID to prevent Redis key injection
-                sanitized_session_id = self._sanitize_redis_key_component(mcp_session_id)
-                redis_key = f"mcpgw:session_mapping:{sanitized_session_id}:{url}:{transport_type}:{normalized_gateway_id}"
+                redis_key = self._session_mapping_redis_key(mcp_session_id, url, transport_type, normalized_gateway_id)
 
                 # Store pool_key as JSON for easy deserialization
                 pool_key_data = {
@@ -628,16 +632,14 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 }
                 await redis.setex(redis_key, settings.mcpgateway_session_affinity_ttl, orjson.dumps(pool_key_data))  # TTL from config
 
-                # CRITICAL: Register ownership atomically with mapping using SETNX
+                # CRITICAL: Register ownership atomically with mapping.
                 # This claims ownership BEFORE any session creation attempt, preventing
                 # the race condition where two workers both start creating sessions
-                owner_key = f"mcpgw:pool_owner:{mcp_session_id}"
-                # Use SETNX to only set if key doesn't exist (atomic claim)
-                was_set = await redis.setnx(owner_key, WORKER_ID)
+                owner_key = self._pool_owner_key(mcp_session_id)
+                # Atomic claim with TTL (avoids the SETNX/EXPIRE crash window).
+                was_set = await redis.set(owner_key, WORKER_ID, nx=True, ex=settings.mcpgateway_session_affinity_ttl)
                 if was_set:
-                    # Set expiry on the key we just created
-                    await redis.expire(owner_key, settings.mcpgateway_session_affinity_ttl)
-                    logger.debug(f"Session ownership claimed (SETNX): {mcp_session_id[:8]}... → worker {WORKER_ID}")
+                    logger.debug(f"Session ownership claimed (SET NX): {mcp_session_id[:8]}... → worker {WORKER_ID}")
                 else:
                     # Another worker already claimed ownership
                     existing_owner = await redis.get(owner_key)
@@ -698,7 +700,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if settings.mcpgateway_session_affinity_enabled and headers:
             headers_lower = {k.lower(): v for k, v in headers.items()}
             mcp_session_id = headers_lower.get("x-mcp-session-id")
-            if mcp_session_id and self._is_valid_session_id(mcp_session_id):
+            if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
                 normalized_gateway_id = gateway_id or ""
                 mapping_key: SessionMappingKey = (mcp_session_id, url, transport_type.value, normalized_gateway_id)
 
@@ -717,8 +719,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
                         redis = await get_redis_client()
                         if redis:
-                            sanitized_session_id = self._sanitize_redis_key_component(mcp_session_id)
-                            redis_key = f"mcpgw:session_mapping:{sanitized_session_id}:{url}:{transport_type.value}:{normalized_gateway_id}"
+                            redis_key = self._session_mapping_redis_key(mcp_session_id, url, transport_type.value, normalized_gateway_id)
                             pool_key_data = await redis.get(redis_key)
                             if pool_key_data:
                                 # Deserialize pool_key from JSON
@@ -801,7 +802,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             if settings.mcpgateway_session_affinity_enabled and headers:
                 headers_lower = {k.lower(): v for k, v in headers.items()}
                 mcp_session_id = headers_lower.get("x-mcp-session-id")
-                if mcp_session_id and self._is_valid_session_id(mcp_session_id):
+                if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
                     owner = await self._get_pool_session_owner(mcp_session_id)
                     if owner and owner != WORKER_ID:
                         # Another worker claimed ownership - should have been forwarded
@@ -1221,7 +1222,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if settings.mcpgateway_session_affinity_enabled and pooled.headers:
             headers_lower = {k.lower(): v for k, v in pooled.headers.items()}
             mcp_session_id = headers_lower.get("x-mcp-session-id")
-            if mcp_session_id and self._is_valid_session_id(mcp_session_id):
+            if mcp_session_id and self.is_valid_mcp_session_id(mcp_session_id):
                 await self._cleanup_pool_session_owner(mcp_session_id)
 
     async def _cleanup_pool_session_owner(self, mcp_session_id: str) -> None:
@@ -1238,7 +1239,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
             redis = await get_redis_client()
             if redis:
-                key = f"mcpgw:pool_owner:{mcp_session_id}"
+                key = self._pool_owner_key(mcp_session_id)
                 # Only delete if we own it
                 owner = await redis.get(key)
                 if owner:
@@ -1306,24 +1307,37 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if not settings.mcpgateway_session_affinity_enabled:
             return
 
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            logger.debug("Invalid mcp_session_id for owner registration, skipping")
+            return
+
         try:
             # First-Party
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
             redis = await get_redis_client()
-            logger.debug(f"[REDIS_DEBUG] register_pool_session_owner | redis client: {redis}")
             if redis:
-                key = f"mcpgw:pool_owner:{mcp_session_id}"
-                result = await redis.setex(key, settings.mcpgateway_session_affinity_ttl, WORKER_ID)
-                logger.debug(f"[REDIS_DEBUG] SETEX {key} = {WORKER_ID} (TTL: {settings.mcpgateway_session_affinity_ttl}s) | Result: {result}")
-                # Immediately verify the write
-                verify = await redis.get(key)
-                logger.debug(f"[REDIS_DEBUG] Immediate GET {key} = {verify}")
-            else:
-                logger.debug("[REDIS_DEBUG] Redis client is None, cannot register session ownership")
+                key = self._pool_owner_key(mcp_session_id)
+
+                # Do not steal ownership: only claim if missing, or refresh TTL if we already own.
+                # Lua keeps this atomic.
+                script = """
+                local cur = redis.call('GET', KEYS[1])
+                if not cur then
+                  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+                  return 1
+                end
+                if cur == ARGV[1] then
+                  redis.call('EXPIRE', KEYS[1], ARGV[2])
+                  return 2
+                end
+                return 0
+                """
+                ttl = int(settings.mcpgateway_session_affinity_ttl)
+                outcome = await redis.eval(script, 1, key, WORKER_ID, ttl)
+                logger.debug(f"Owner registration outcome={outcome} for session {mcp_session_id[:8]}...")
         except Exception as e:
             # Redis failure is non-fatal - single worker mode still works
-            logger.debug(f"[REDIS_DEBUG] Exception during register: {e}")
             logger.debug(f"Failed to register pool session owner in Redis: {e}")
 
     async def _get_pool_session_owner(self, mcp_session_id: str) -> Optional[str]:
@@ -1338,25 +1352,21 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if not settings.mcpgateway_session_affinity_enabled:
             return None
 
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            return None
+
         try:
             # First-Party
             from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
 
             redis = await get_redis_client()
-            logger.debug(f"[REDIS_DEBUG] _get_pool_session_owner | redis client: {redis}")
             if redis:
-                key = f"mcpgw:pool_owner:{mcp_session_id}"
+                key = self._pool_owner_key(mcp_session_id)
                 owner = await redis.get(key)
-                logger.debug(f"[REDIS_DEBUG] GET {key} = {owner}")
                 if owner:
                     decoded = owner.decode() if isinstance(owner, bytes) else owner
-                    logger.debug(f"[REDIS_DEBUG] Decoded owner: {decoded}")
                     return decoded
-                logger.debug(f"[REDIS_DEBUG] No owner found for key {key}")
-            else:
-                logger.debug("[REDIS_DEBUG] Redis client is None, cannot get session owner")
         except Exception as e:
-            logger.debug(f"[REDIS_DEBUG] Exception during get: {e}")
             logger.debug(f"Failed to get pool session owner from Redis: {e}")
         return None
 
@@ -1387,6 +1397,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
         if not settings.mcpgateway_session_affinity_enabled:
             return None
 
+        if not self.is_valid_mcp_session_id(mcp_session_id):
+            return None
+
         effective_timeout = timeout if timeout is not None else settings.mcpgateway_pool_rpc_forward_timeout
 
         try:
@@ -1398,7 +1411,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
                 return None  # Execute locally - no Redis
 
             # Check who owns this session
-            owner = await redis.get(f"mcpgw:pool_owner:{mcp_session_id}")
+            owner = await redis.get(self._pool_owner_key(mcp_session_id))
             method = request_data.get("method", "unknown")
             if not owner:
                 logger.info(f"[AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Method: {method} | No owner → execute locally (new session)")
@@ -1694,6 +1707,9 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             or None if forwarding fails.
         """
         if not settings.mcpgateway_session_affinity_enabled:
+            return None
+
+        if not self.is_valid_mcp_session_id(mcp_session_id):
             return None
 
         session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id

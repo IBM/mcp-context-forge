@@ -1011,9 +1011,10 @@ class SessionRegistry(SessionBackend):
     async def _register_session_mapping(self, session_id: str, message: Dict[str, Any], user_email: Optional[str] = None) -> None:
         """Register session mapping for session affinity when tools are called.
 
-        This method is called during broadcast() to pre-register the mapping between
-        a downstream SSE session and the upstream MCP server session. This enables
-        session affinity in multi-worker deployments.
+        This method is called on the worker that executes the request (the SSE session
+        owner) to pre-register the mapping between a downstream session ID and the
+        upstream MCP session pool key. This enables session affinity in multi-worker
+        deployments.
 
         Only registers mappings for tools/call methods - list operations and other
         methods don't need session affinity since they don't maintain state.
@@ -1944,7 +1945,14 @@ class SessionRegistry(SessionBackend):
                     # Generate token using centralized token creation
                     token = await create_jwt_token(payload)
 
+                # Pass downstream session id to /rpc for session affinity.
+                # This is gateway-internal only; the pool strips it before contacting upstream MCP servers.
+                if settings.mcpgateway_session_affinity_enabled:
+                    await self._register_session_mapping(transport.session_id, message, user.get("email") if hasattr(user, "get") else None)
+
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                if settings.mcpgateway_session_affinity_enabled:
+                    headers["x-mcp-session-id"] = transport.session_id
                 # Extract root URL from base_url (remove /servers/{id} path)
                 parsed_url = urlparse(base_url)
                 # Preserve the path up to the root path (before /servers/{id})

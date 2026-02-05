@@ -199,16 +199,19 @@ class TestRedisEventStore:
         redis = await get_redis_client()
         meta_key = f"mcpgw:eventstore:{stream_id}:meta"
         events_key = f"mcpgw:eventstore:{stream_id}:events"
+        messages_key = f"mcpgw:eventstore:{stream_id}:messages"
+        index_key = f"mcpgw:eventstore:event_index:{event_id}"
         meta_exists = await redis.exists(meta_key)
         events_exists = await redis.exists(events_key)
+        messages_exists = await redis.exists(messages_key)
+        index_exists = await redis.exists(index_key)
 
         # Keys should be expired
         assert meta_exists == 0
         assert events_exists == 0
-
-        # Event index still has the entry but stream is gone
-        # This is expected - event_index is global and doesn't expire with streams
-        # In production, old entries will be garbage collected when streams are recreated
+        assert messages_exists == 0
+        # Index entries expire with the stream TTL to prevent unbounded growth.
+        assert index_exists == 0
 
     async def test_concurrent_workers(self, redis_event_store):
         """Multiple workers can store/replay to same stream."""

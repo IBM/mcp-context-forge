@@ -6,7 +6,7 @@ nav:
   - 3 Expose Multi-Transport Endpoints: 003-expose-multi-transport-endpoints.md
   - 4 Combine JWT & Basic Auth: 004-combine-jwt-and-basic-auth.md
   - 5 Structured JSON Logging: 005-structured-json-logging.md
-  - 5 VS Code Dev Container Support: 005-vscode-devcontainer-support.md
+  - 5b VS Code Dev Container Support: 005-vscode-devcontainer-support.md
   - 6 Gateway & Tool-Level Rate Limiting: 006-gateway-tool-rate-limiting.md
   - 7 Pluggable Cache Backend: 007-pluggable-cache-backend.md
   - 8 Federation & Auto-Discovery via DNS-SD: 008-federation-discovery.md
@@ -36,8 +36,8 @@ nav:
   - 32 MCP Session Pool: 032-mcp-session-pool.md
   - 33 Tool Lookup Cache: 033-tool-lookup-cache.md
   - 34 SSO Admin Sync & Config Precedence: 034-sso-admin-sync-config-precedence.md
-  - 34 Centralized Notification Service: 034-centralized-notification-service.md
+  - 34b Centralized Notification Service: 034-centralized-notification-service.md
   - 35 Query Parameter Authentication: 035-query-parameter-authentication.md
   - 36 Bootstrap Custom Roles: 036-bootstrap-custom-roles.md
   - 37 External Plugin Stdio Launch: 037-external-plugin-stdio-launch.md
-  - 38 Multi-Worker Session Affinity: 038-multi-worker-session-affinity.md
+  - 38b Multi-Worker Session Affinity: 038-multi-worker-session-affinity.md
