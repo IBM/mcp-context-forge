@@ -297,6 +297,7 @@ repos:
         description: Checks YAML files for parseable syntax.
         types: [yaml]
         exclude: ^(docs/|charts/)
+        args: ['--allow-multiple-documents']
 
       - id: check-toml
         name: ✅ Check TOML
