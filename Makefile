@@ -4257,9 +4257,10 @@ compose-tls: compose-validate
 	@echo "   └─ Admin UI: https://localhost:8443/admin"
 	@echo ""
 	@echo "💡 Options:"
-	@echo "   Custom certs:    mkdir -p certs && cp cert.pem certs/ && cp key.pem certs/"
-	@echo "   Force HTTPS:     make compose-tls-https  (redirects HTTP → HTTPS)"
-	@echo "   Or set env:      NGINX_FORCE_HTTPS=true make compose-tls"
+	@echo "   Custom certs:        mkdir -p certs && cp cert.pem certs/ && cp key.pem certs/"
+	@echo "   Passphrase certs:    make certs-passphrase && echo KEY_FILE_PASSWORD=pass >> .env"
+	@echo "   Force HTTPS:         make compose-tls-https  (redirects HTTP → HTTPS)"
+	@echo "   Or set env:          NGINX_FORCE_HTTPS=true make compose-tls"
 	@echo ""
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls up -d --scale nginx=0
 	@echo ""

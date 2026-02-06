@@ -432,8 +432,17 @@ docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
 make compose-tls
 
 # Access via HTTPS: https://localhost:8443/admin
-# Or use your own certificates:
-mkdir -p certs && cp your-cert.pem certs/cert.pem && cp your-key.pem certs/key.pem
+
+# Or bring your own certificates:
+# Unencrypted key:
+mkdir -p certs
+cp your-cert.pem certs/cert.pem && cp your-key.pem certs/key.pem
+make compose-tls
+
+# Passphrase-protected key:
+mkdir -p certs
+cp your-cert.pem certs/cert.pem && cp your-encrypted-key.pem certs/key-encrypted.pem
+echo "KEY_FILE_PASSWORD=your-passphrase" >> .env
 make compose-tls
 ```
 
