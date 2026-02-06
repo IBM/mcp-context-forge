@@ -1184,3 +1184,16 @@ nav[class*="-mb-px"]::-webkit-scrollbar-thumb:hover {
         gap: 0.5rem;
     }
 }
+
+/* Override HTMX's default "show all indicators on any request" behavior
+   This prevents spinners from showing during background /trace requests */
+body.htmx-request .htmx-indicator {
+    visibility: hidden;
+}
+
+/* Only show indicators when explicitly targeted via hx-indicator attribute
+   HTMX adds htmx-request class to the indicator when it's the target.
+   Use higher specificity to override the rule above. */
+body.htmx-request .htmx-indicator.htmx-request {
+    visibility: visible;
+}
