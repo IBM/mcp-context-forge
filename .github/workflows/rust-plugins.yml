@@ -66,11 +66,11 @@ jobs:
 
       - name: Run Rust tests
         working-directory: plugins_rust
-        run: cargo test --verbose
+        run: cargo test --workspace --lib --bins --no-default-features --verbose
 
       - name: Run Rust integration tests
         working-directory: plugins_rust
-        run: cargo test --test integration --verbose
+        run: cargo test --workspace --test integration --verbose
 
   # Build wheels for multiple platforms (native builds)
   build-wheels:
@@ -223,7 +223,7 @@ jobs:
         working-directory: plugins_rust
         run: |
           cargo install cargo-criterion || true
-          cargo criterion --message-format=json > benchmark-results.json || true
+          cargo criterion --workspace --no-default-features --message-format=json > benchmark-results.json || true
 
       - name: Run Python comparison benchmarks
         run: |
@@ -292,7 +292,7 @@ jobs:
 
       - name: Run Rust coverage
         working-directory: plugins_rust
-        run: cargo tarpaulin --out Xml --output-dir coverage
+        run: cargo tarpaulin --workspace --lib --bin --no-default-features --out Xml --output-dir coverage
 
       - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@v4

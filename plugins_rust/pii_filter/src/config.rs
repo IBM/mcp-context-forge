@@ -191,49 +191,47 @@ impl PIIConfig {
         }
 
         // Extract custom patterns
-        if let Some(value) = dict.get_item("custom_patterns")? {
-            if let Ok(py_list) = value.cast::<pyo3::types::PyList>() {
-                for item in py_list.iter() {
-                    if let Ok(py_dict) = item.cast::<PyDict>() {
-                        let pattern: String = py_dict
-                            .get_item("pattern")?
-                            .ok_or_else(|| {
-                                pyo3::exceptions::PyValueError::new_err("Missing 'pattern' field")
-                            })?
-                            .extract()?;
-                        let description: String = py_dict
-                            .get_item("description")?
-                            .ok_or_else(|| {
-                                pyo3::exceptions::PyValueError::new_err(
-                                    "Missing 'description' field",
-                                )
-                            })?
-                            .extract()?;
-                        let mask_strategy_str: String = match py_dict.get_item("mask_strategy")? {
-                            Some(val) => val.extract()?,
-                            None => "redact".to_string(),
-                        };
-                        let enabled: bool = match py_dict.get_item("enabled")? {
-                            Some(val) => val.extract()?,
-                            None => true,
-                        };
+        if let Some(value) = dict.get_item("custom_patterns")?
+            && let Ok(py_list) = value.cast::<pyo3::types::PyList>()
+        {
+            for item in py_list.iter() {
+                if let Ok(py_dict) = item.cast::<PyDict>() {
+                    let pattern: String = py_dict
+                        .get_item("pattern")?
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err("Missing 'pattern' field")
+                        })?
+                        .extract()?;
+                    let description: String = py_dict
+                        .get_item("description")?
+                        .ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err("Missing 'description' field")
+                        })?
+                        .extract()?;
+                    let mask_strategy_str: String = match py_dict.get_item("mask_strategy")? {
+                        Some(val) => val.extract()?,
+                        None => "redact".to_string(),
+                    };
+                    let enabled: bool = match py_dict.get_item("enabled")? {
+                        Some(val) => val.extract()?,
+                        None => true,
+                    };
 
-                        let mask_strategy = match mask_strategy_str.as_str() {
-                            "redact" => MaskingStrategy::Redact,
-                            "partial" => MaskingStrategy::Partial,
-                            "hash" => MaskingStrategy::Hash,
-                            "tokenize" => MaskingStrategy::Tokenize,
-                            "remove" => MaskingStrategy::Remove,
-                            _ => MaskingStrategy::Redact,
-                        };
+                    let mask_strategy = match mask_strategy_str.as_str() {
+                        "redact" => MaskingStrategy::Redact,
+                        "partial" => MaskingStrategy::Partial,
+                        "hash" => MaskingStrategy::Hash,
+                        "tokenize" => MaskingStrategy::Tokenize,
+                        "remove" => MaskingStrategy::Remove,
+                        _ => MaskingStrategy::Redact,
+                    };
 
-                        config.custom_patterns.push(CustomPattern {
-                            pattern,
-                            description,
-                            mask_strategy,
-                            enabled,
-                        });
-                    }
+                    config.custom_patterns.push(CustomPattern {
+                        pattern,
+                        description,
+                        mask_strategy,
+                        enabled,
+                    });
                 }
             }
         }

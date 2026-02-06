@@ -96,11 +96,10 @@ recursive-include plugins *.md
 # Rust plugins (optional - exclude build artifacts)
 recursive-include plugins_rust *.rs
 recursive-include plugins_rust *.toml
+recursive-include plugins_rust *.md
+recursive-include plugins_rust *.py
 include plugins_rust/Makefile
-include plugins_rust/README.md
-include plugins_rust/QUICKSTART.md
 prune plugins_rust/target
-prune plugins_rust/benchmarks
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
