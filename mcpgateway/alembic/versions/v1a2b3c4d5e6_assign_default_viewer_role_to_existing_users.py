@@ -39,7 +39,7 @@ def upgrade() -> None:
 
     This migration:
     1. Checks if the roles and user_roles tables exist
-    2. Adds 'admin.dashboard' permission to all roles except 'platform_admin'
+    2. Adds 'admin.dashboard', 'gateway.read', and 'server.read' permissions to all roles except 'platform_admin'
     3. Ensures the 'viewer' and 'platform_admin' roles exist with correct permissions
     4. Assigns 'platform_admin' role to users with is_admin=true (with platform scope)
     5. Assigns 'viewer' role to regular users without role assignments (with team scope)
@@ -65,8 +65,8 @@ def upgrade() -> None:
         print("email_users table not found. Skipping default role assignment.")
         return
 
-    # Step 1: Update existing roles to include 'admin.dashboard' permission
-    print("Updating role permissions to include 'admin.dashboard'...")
+    # Step 1: Update existing roles to include 'admin.dashboard', 'gateway.read', and 'server.read' permissions
+    print("Updating role permissions to include 'admin.dashboard', 'gateway.read', and 'server.read'...")
 
     # Get all roles except platform_admin
     roles_query = text("SELECT id, name, permissions FROM roles WHERE name != :platform_admin")
@@ -98,10 +98,18 @@ def upgrade() -> None:
         if not isinstance(permissions, list):
             permissions = []
 
-        # Check if admin.dashboard is already present
+        # Check if any of the required permissions are missing
+        permissions_to_add = []
         if "admin.dashboard" not in permissions:
-            # Append admin.dashboard to the end of existing permissions
-            permissions.append("admin.dashboard")
+            permissions_to_add.append("admin.dashboard")
+        if "gateway.read" not in permissions:
+            permissions_to_add.append("gateway.read")
+        if "server.read" not in permissions:
+            permissions_to_add.append("server.read")
+
+        if permissions_to_add:
+            # Append missing permissions to the end of existing permissions
+            permissions.extend(permissions_to_add)
 
             # Update the role with new permissions
             # Use database-specific JSON handling
@@ -133,12 +141,12 @@ def upgrade() -> None:
                 },
             )
             updated_roles_count += 1
-            print(f"  ✓ Added 'admin.dashboard' permission to role '{role_name}': {permissions}")
+            print(f"  ✓ Added {permissions_to_add} permission(s) to role '{role_name}': {permissions}")
 
     if updated_roles_count > 0:
-        print(f"✅ Updated {updated_roles_count} role(s) with 'admin.dashboard' permission.")
+        print(f"✅ Updated {updated_roles_count} role(s) with 'admin.dashboard', 'gateway.read', and 'server.read' permissions.")
     else:
-        print("All roles already have 'admin.dashboard' permission.")
+        print("All roles already have 'admin.dashboard', 'gateway.read', and 'server.read' permissions.")
 
     print("\nAssigning default roles to existing users (team_admin for admins, viewer for others)...")
 
@@ -170,7 +178,7 @@ def upgrade() -> None:
                 "name": "viewer",
                 "description": "Read-only access to team resources",
                 "scope": "team",
-                "permissions": '["admin.dashboard", "teams.join", "tools.read", "resources.read", "prompts.read"]',
+                "permissions": '["admin.dashboard", "gateway.read", "server.read", "teams.join", "tools.read", "resources.read", "prompts.read"]',
                 "inherits_from": None,
                 "created_by": "system",
                 "is_system_role": True,
@@ -188,33 +196,8 @@ def upgrade() -> None:
     platform_admin_role_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
     platform_admin_role_result = bind.execute(platform_admin_role_query, {"role_name": "platform_admin"}).fetchone()
 
-    if not platform_admin_role_result:
-        print("Warning: 'platform_admin' role not found. Creating it now...")
-
-        # Create platform_admin role if it doesn't exist
-        platform_admin_role_id = uuid.uuid4().hex
-        now = datetime.now(timezone.utc)
-
-        bind.execute(
-            insert_role,
-            {
-                "id": platform_admin_role_id,
-                "name": "platform_admin",
-                "description": "Full platform administration access",
-                "scope": "global",
-                "permissions": '["admin.dashboard", "teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read", "rbac.*"]',
-                "inherits_from": None,
-                "created_by": "system",
-                "is_system_role": True,
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            },
-        )
-        print(f"Created 'platform_admin' role with ID: {platform_admin_role_id}")
-    else:
-        platform_admin_role_id = platform_admin_role_result[0]
-        print(f"Found existing 'platform_admin' role with ID: {platform_admin_role_id}")
+    platform_admin_role_id = platform_admin_role_result[0]
+    print(f"Found existing 'platform_admin' role with ID: {platform_admin_role_id}")
 
     # Find users without any role assignments, including their is_admin status
     # Use database-specific boolean comparison for compatibility
@@ -367,7 +350,7 @@ def downgrade() -> None:
     """Remove role assignments and permission updates created by this migration.
 
     This migration downgrade:
-    1. Removes 'admin.dashboard' permission from all roles except 'platform_admin'
+    1. Removes 'admin.dashboard', 'gateway.read', and 'server.read' permissions from all roles except 'platform_admin'
     2. Removes all role assignments EXCEPT those with platform_admin role
 
     Supports both PostgreSQL and SQLite databases.
@@ -385,8 +368,8 @@ def downgrade() -> None:
         print("Required tables not found. Nothing to downgrade.")
         return
 
-    # Step 1: Remove 'admin.dashboard' permission from roles (except platform_admin)
-    print("Removing 'admin.dashboard' permission from roles...")
+    # Step 1: Remove 'admin.dashboard', 'gateway.read', and 'server.read' permissions from roles (except platform_admin)
+    print("Removing 'admin.dashboard', 'gateway.read', and 'server.read' permissions from roles...")
 
     # Get all roles except platform_admin
     roles_query = text("SELECT id, name, permissions FROM roles WHERE name != :platform_admin")
@@ -418,10 +401,19 @@ def downgrade() -> None:
         if not isinstance(permissions, list):
             permissions = []
 
-        # Check if admin.dashboard is present and remove it
+        # Check if any of the permissions are present and remove them
+        permissions_removed = []
         if "admin.dashboard" in permissions:
             permissions.remove("admin.dashboard")
+            permissions_removed.append("admin.dashboard")
+        if "gateway.read" in permissions:
+            permissions.remove("gateway.read")
+            permissions_removed.append("gateway.read")
+        if "server.read" in permissions:
+            permissions.remove("server.read")
+            permissions_removed.append("server.read")
 
+        if permissions_removed:
             # Update the role with new permissions
             # Use database-specific JSON handling
             if dialect_name == "postgresql":
@@ -452,12 +444,12 @@ def downgrade() -> None:
                 },
             )
             updated_roles_count += 1
-            print(f"  ✓ Removed 'admin.dashboard' permission from role '{role_name}': {permissions}")
+            print(f"  ✓ Removed {permissions_removed} permission(s) from role '{role_name}': {permissions}")
 
     if updated_roles_count > 0:
-        print(f"✅ Removed 'admin.dashboard' permission from {updated_roles_count} role(s).")
+        print(f"✅ Removed 'admin.dashboard', 'gateway.read', and 'server.read' permissions from {updated_roles_count} role(s).")
     else:
-        print("No roles had 'admin.dashboard' permission to remove.")
+        print("No roles had 'admin.dashboard', 'gateway.read', or 'server.read' permissions to remove.")
 
     # Step 2: Remove migration-assigned role assignments (keeping admin@example.com)
     print("\nRemoving migration-assigned roles (preserving user_email=admin@example.com)...")

@@ -383,10 +383,10 @@ class EmailAuthService:
                 else:
                     # Assign viewer role for non-admin users (read-only access)
                     default_role_name = "viewer"
-                
+
                 # Find the default role
                 default_role = self.db.execute(select(Role).where(and_(Role.name == default_role_name, Role.is_active.is_(True)))).scalar_one_or_none()
-                default_role_scope=default_role.scope if default_role else None
+                default_role_scope = default_role.scope if default_role else None
                 if default_role:
                     # Check if role assignment already exists (shouldn't happen for new user, but be safe)
                     existing_assignment = self.db.execute(
@@ -396,7 +396,7 @@ class EmailAuthService:
                     if not existing_assignment:
                         # Create role assignment
                         # Use global scope
-                        role_scope = default_role_scope # This role applies to all teams - adjust if you want team-specific default roles
+                        role_scope = default_role_scope  # This role applies to all teams - adjust if you want team-specific default roles
                         user_role = UserRole(
                             user_email=email,
                             role_id=default_role.id,
