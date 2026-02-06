@@ -250,6 +250,13 @@ services:
       # - SSRF_ALLOW_LOCALHOST=false
       # - SSRF_ALLOW_PRIVATE_NETWORKS=false
       # - SSRF_DNS_FAIL_CLOSED=true
+
+      # Uncomment to enable stateful sessions for Streamable HTTP transport
+      # - USE_STATEFUL_SESSIONS=true
+
+      # Uncomment to enable session affinity between downstream (from client) and upstrean (to MCP server) sessions
+      # - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
+
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem

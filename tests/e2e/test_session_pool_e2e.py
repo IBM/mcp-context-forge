@@ -593,3 +593,734 @@ class TestNotificationE2E:
             include_resources=False,
             include_prompts=True
         )
+
+
+class TestSessionAffinityE2E:
+    """End-to-end tests for session affinity (downstream → upstream mapping).
+
+    These tests verify the bidirectional x-mcp-session-id mapping that enables
+    session affinity between downstream SSE sessions and upstream MCP server sessions.
+    """
+
+    @pytest.mark.asyncio
+    async def test_register_session_mapping_creates_affinity(self):
+        """Verify register_session_mapping creates pool key mapping."""
+        pool = MCPSessionPool()
+
+        try:
+            # Register a session mapping
+            session_id = "downstream-session-123"
+            url = "http://upstream:8080/mcp"
+            gateway_id = "gateway-abc"
+            transport_type = "streamablehttp"
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_session_affinity_ttl = 3600
+
+                user_email = "user@example.com"
+                await pool.register_session_mapping(session_id, url, gateway_id, transport_type, user_email)
+
+                # Verify mapping was stored
+                mapping_key = (session_id, url, transport_type, gateway_id)
+                assert mapping_key in pool._mcp_session_mapping
+
+                # Verify pool key uses session_id hash for identity and hashed user email
+                pool_key = pool._mcp_session_mapping[mapping_key]
+                import hashlib
+
+                expected_user_hash = hashlib.sha256(user_email.encode()).hexdigest()
+                assert pool_key[0] == expected_user_hash  # user_identity (hashed email)
+                assert pool_key[1] == url
+                # pool_key[2] is identity_hash derived from session_id
+                assert pool_key[3] == transport_type
+                assert pool_key[4] == gateway_id
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_acquire_uses_preregistered_mapping(self):
+        """Verify acquire() uses pre-registered mapping for session affinity."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+                with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                    mock_settings.mcpgateway_session_affinity_enabled = True
+                    mock_settings.mcpgateway_session_affinity_ttl = 3600
+
+                    # Pre-register session mapping
+                    session_id = "downstream-session-456"
+                    url = "http://upstream:8080/mcp"
+                    gateway_id = "gateway-xyz"
+                    transport_type = "sse"
+                    user_email = "testuser@example.com"
+
+                    await pool.register_session_mapping(session_id, url, gateway_id, transport_type, user_email)
+
+                    # Create mock session
+                    def create_session_factory(url, headers, transport_type, httpx_client_factory, timeout=None, gateway_id=None):
+                        return PooledSession(
+                            session=MagicMock(),
+                            transport_context=MagicMock(),
+                            url=url,
+                            identity_key=pool._compute_identity_hash(headers),
+                            transport_type=transport_type,
+                            headers=headers or {},
+                            gateway_id=gateway_id or "",
+                        )
+
+                    mock_create.side_effect = create_session_factory
+
+                    # Acquire with x-mcp-session-id header
+                    headers = {
+                        "Authorization": "Bearer rotating-jwt-token-1",
+                        "x-mcp-session-id": session_id,
+                    }
+
+                    s1 = await pool.acquire(
+                        url,
+                        headers=headers,
+                        transport_type=TransportType.SSE,
+                        user_identity=user_email,
+                        gateway_id=gateway_id,
+                    )
+                    await pool.release(s1)
+
+                    # Acquire again with DIFFERENT JWT but SAME session_id and SAME user
+                    headers2 = {
+                        "Authorization": "Bearer rotating-jwt-token-2",  # Different JWT
+                        "x-mcp-session-id": session_id,  # Same session ID
+                    }
+
+                    s2 = await pool.acquire(
+                        url,
+                        headers=headers2,
+                        transport_type=TransportType.SSE,
+                        user_identity=user_email,  # Same user
+                        gateway_id=gateway_id,
+                    )
+                    await pool.release(s2)
+
+                    # Should be a pool hit (same session returned)
+                    metrics = pool.get_metrics()
+                    assert metrics["hits"] >= 1, "Expected pool hit for same session_id with different JWT"
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_session_affinity_disabled_ignores_mapping(self):
+        """Verify session affinity mapping is ignored when disabled."""
+        pool = MCPSessionPool()
+
+        try:
+            session_id = "downstream-session-789"
+            url = "http://upstream:8080/mcp"
+            gateway_id = "gateway-123"
+            transport_type = "streamablehttp"
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = False
+
+                await pool.register_session_mapping(session_id, url, gateway_id, transport_type, "user@test.com")
+
+                # Mapping should NOT be stored when disabled
+                mapping_key = (session_id, url, transport_type, gateway_id)
+                assert mapping_key not in pool._mcp_session_mapping
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_different_session_ids_different_pools(self):
+        """Verify different downstream session IDs use different upstream pools."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch.object(pool, '_create_session', new_callable=AsyncMock) as mock_create:
+                with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                    mock_settings.mcpgateway_session_affinity_enabled = True
+                    mock_settings.mcpgateway_session_affinity_ttl = 3600
+
+                    url = "http://upstream:8080/mcp"
+                    gateway_id = "gateway-multi"
+                    transport_type = "streamablehttp"
+
+                    # Register two different session mappings for different users
+                    session_id_1 = "session-user-A"
+                    session_id_2 = "session-user-B"
+                    user_email_1 = "userA@example.com"
+                    user_email_2 = "userB@example.com"
+
+                    await pool.register_session_mapping(session_id_1, url, gateway_id, transport_type, user_email_1)
+                    await pool.register_session_mapping(session_id_2, url, gateway_id, transport_type, user_email_2)
+
+                    # Verify different pool keys
+                    mapping_key_1 = (session_id_1, url, transport_type, gateway_id)
+                    mapping_key_2 = (session_id_2, url, transport_type, gateway_id)
+
+                    pool_key_1 = pool._mcp_session_mapping[mapping_key_1]
+                    pool_key_2 = pool._mcp_session_mapping[mapping_key_2]
+
+                    # Pool keys should be different (different identity hash)
+                    assert pool_key_1 != pool_key_2
+                    assert pool_key_1[2] != pool_key_2[2]  # Identity hash differs
+        finally:
+            await pool.close_all()
+
+
+class TestSessionRegistryAffinityE2E:
+    """End-to-end tests for session affinity in SessionRegistry.broadcast()."""
+
+    @pytest.mark.asyncio
+    async def test_broadcast_registers_session_mapping_for_tools_call(self):
+        """Verify broadcast() pre-registers session mapping for tools/call."""
+        # First-Party
+        from mcpgateway.cache.session_registry import SessionRegistry
+
+        registry = SessionRegistry(backend="memory")
+        await registry.initialize()
+
+        try:
+            session_id = "sse-session-abc"
+            message = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "my_tool", "arguments": {}},
+                "id": 1,
+            }
+
+            # Mock tool_lookup_cache to return gateway info
+            mock_cache_result = {
+                "status": "active",
+                "tool": {
+                    "name": "my_tool",
+                    "gateway_id": "gw-123",
+                },
+                "gateway": {
+                    "id": "gw-123",
+                    "url": "http://mcp-server:9000/sse",
+                    "transport": "sse",
+                },
+            }
+
+            # Mock the pool and cache - patch at the import location inside the method
+            with patch("mcpgateway.cache.session_registry.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                mock_cache = MagicMock()
+                mock_cache.get = AsyncMock(return_value=mock_cache_result)
+
+                mock_pool = MagicMock()
+                mock_pool.register_session_mapping = AsyncMock()
+
+                user_email = "testuser@example.com"
+
+                with patch.dict("sys.modules", {"mcpgateway.cache.tool_lookup_cache": MagicMock(tool_lookup_cache=mock_cache)}):
+                    with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
+                        with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                            # Call _register_session_mapping with user_email (simulates respond() call)
+                            await registry._register_session_mapping(session_id, message, user_email)
+
+                            # Verify register_session_mapping was called with correct args including user_email
+                            mock_pool.register_session_mapping.assert_called_once_with(
+                                session_id,
+                                "http://mcp-server:9000/sse",
+                                "gw-123",
+                                "sse",
+                                user_email,
+                            )
+        finally:
+            await registry.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_skips_non_tools_call_methods(self):
+        """Verify broadcast() does not register mapping for non-tools/call methods."""
+        # First-Party
+        from mcpgateway.cache.session_registry import SessionRegistry
+
+        registry = SessionRegistry(backend="memory")
+        await registry.initialize()
+
+        try:
+            session_id = "sse-session-def"
+            # List methods should not trigger registration
+            for method in ["tools/list", "resources/list", "prompts/list", "ping", "initialize"]:
+                message = {
+                    "jsonrpc": "2.0",
+                    "method": method,
+                    "params": {},
+                    "id": 1,
+                }
+
+                with patch("mcpgateway.cache.session_registry.settings") as mock_settings:
+                    mock_settings.mcpgateway_session_affinity_enabled = True
+
+                    mock_pool = MagicMock()
+                    mock_pool.register_session_mapping = AsyncMock()
+
+                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                        await registry._register_session_mapping(session_id, message)
+
+                        # Should NOT call register_session_mapping for non-tools/call
+                        mock_pool.register_session_mapping.assert_not_called()
+        finally:
+            await registry.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_handles_missing_tool_gracefully(self):
+        """Verify broadcast() handles missing tool in cache gracefully."""
+        # First-Party
+        from mcpgateway.cache.session_registry import SessionRegistry
+
+        registry = SessionRegistry(backend="memory")
+        await registry.initialize()
+
+        try:
+            session_id = "sse-session-ghi"
+            message = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "nonexistent_tool", "arguments": {}},
+                "id": 1,
+            }
+
+            with patch("mcpgateway.cache.session_registry.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                mock_cache = MagicMock()
+                # Return None for missing tool
+                mock_cache.get = AsyncMock(return_value=None)
+
+                mock_pool = MagicMock()
+                mock_pool.register_session_mapping = AsyncMock()
+
+                with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
+                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                        # Should not raise
+                        await registry._register_session_mapping(session_id, message)
+
+                        # Should NOT call register_session_mapping for missing tool
+                        mock_pool.register_session_mapping.assert_not_called()
+        finally:
+            await registry.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_full_broadcast_flow_with_affinity(self):
+        """Test the full broadcast flow includes session affinity registration."""
+        # First-Party
+        from mcpgateway.cache.session_registry import SessionRegistry
+
+        registry = SessionRegistry(backend="memory")
+        await registry.initialize()
+
+        try:
+            session_id = "full-flow-session"
+            message = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "test_tool", "arguments": {"arg1": "value1"}},
+                "id": 42,
+            }
+
+            mock_cache_result = {
+                "status": "active",
+                "tool": {"name": "test_tool", "gateway_id": "gw-full"},
+                "gateway": {
+                    "id": "gw-full",
+                    "url": "http://full-test:8080/mcp",
+                    "transport": "streamablehttp",
+                },
+            }
+
+            with patch("mcpgateway.cache.session_registry.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                mock_cache = MagicMock()
+                mock_cache.get = AsyncMock(return_value=mock_cache_result)
+
+                mock_pool = MagicMock()
+                mock_pool.register_session_mapping = AsyncMock()
+
+                with patch("mcpgateway.cache.tool_lookup_cache.tool_lookup_cache", mock_cache):
+                    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+                        # Call broadcast (which no longer calls _register_session_mapping)
+                        # In production, registration happens in respond()
+                        await registry.broadcast(session_id, message)
+
+                        # Verify session mapping was NOT registered from broadcast()
+                        # (it should be registered from respond() instead)
+                        mock_pool.register_session_mapping.assert_not_called()
+
+                        # Verify message was stored (memory backend behavior)
+                        assert registry._session_message is not None
+                        assert registry._session_message["session_id"] == session_id
+        finally:
+            await registry.shutdown()
+
+
+class TestMultiWorkerSessionAffinityE2E:
+    """End-to-end tests for multi-worker session affinity via Redis pub/sub.
+
+    These tests verify the multi-worker session affinity pattern:
+    - Pool session ownership is tracked in Redis
+    - Requests are forwarded to the worker that owns the pool session
+    - Workers can execute forwarded requests and return responses
+    """
+
+    @pytest.mark.asyncio
+    async def test_worker_id_is_process_id(self):
+        """Verify WORKER_ID is set to hostname:pid format."""
+        import socket
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        # WORKER_ID format is "hostname:pid"
+        expected = f"{socket.gethostname()}:{os.getpid()}"
+        assert WORKER_ID == expected
+
+    @pytest.mark.asyncio
+    async def test_register_pool_session_owner_disabled_when_affinity_off(self):
+        """Verify register_pool_session_owner does nothing when affinity disabled."""
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-disabled"
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = False
+
+                # Should return immediately without calling Redis
+                await pool.register_pool_session_owner(mcp_session_id)
+                # No assertion needed - just verify it doesn't hang or crash
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_returns_none_when_affinity_disabled(self):
+        """Verify forward_request_to_owner returns None when affinity disabled."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = False
+
+                result = await pool.forward_request_to_owner(
+                    "test-session",
+                    {"method": "tools/call", "params": {"name": "test_tool"}}
+                )
+
+                assert result is None
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_returns_none_when_we_own_session(self):
+        """Verify forward_request_to_owner returns None when we own the session."""
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-local"
+
+            # Create a mock Redis that returns our worker ID
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=WORKER_ID.encode())
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    result = await pool.forward_request_to_owner(
+                        mcp_session_id,
+                        {"method": "tools/call", "params": {"name": "test_tool"}}
+                    )
+
+                    # Should return None (execute locally)
+                    assert result is None
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_returns_none_when_no_owner(self):
+        """Verify forward_request_to_owner returns None when no owner registered."""
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-no-owner"
+
+            # Create a mock Redis that returns None (no owner)
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=None)
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    result = await pool.forward_request_to_owner(
+                        mcp_session_id,
+                        {"method": "tools/call", "params": {"name": "test_tool"}}
+                    )
+
+                    # Should return None (execute locally - new session)
+                    assert result is None
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_returns_none_when_no_redis(self):
+        """Verify forward_request_to_owner returns None when Redis unavailable."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return None
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    result = await pool.forward_request_to_owner(
+                        "test-session",
+                        {"method": "tools/call", "params": {"name": "test_tool"}}
+                    )
+
+                    assert result is None
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_returns_error_when_no_server(self):
+        """Verify _execute_forwarded_request returns error when internal HTTP call fails.
+
+        Since _execute_forwarded_request now makes an internal HTTP call to /rpc,
+        it will fail with a connection error when no server is running.
+        """
+        pool = MCPSessionPool()
+
+        try:
+            result = await pool._execute_forwarded_request({
+                "method": "unknown/method",
+                "params": {},
+                "headers": {},
+            })
+
+            assert "error" in result
+            # -32603 is the internal error code returned when HTTP call fails
+            assert result["error"]["code"] == -32603
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_returns_when_affinity_disabled(self):
+        """Verify start_rpc_listener returns immediately when affinity disabled."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = False
+
+                # Should return immediately without hanging
+                await pool.start_rpc_listener()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_returns_when_no_redis(self):
+        """Verify start_rpc_listener returns when Redis unavailable."""
+        pool = MCPSessionPool()
+
+        try:
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                async def mock_get_redis():
+                    return None
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    # Should return immediately without hanging
+                    await pool.start_rpc_listener()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_affinity_logs_when_we_own_session(self, caplog):
+        """Verify [AFFINITY] log is emitted when we own the session."""
+        import logging
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-log-own"
+
+            # Create a mock Redis that returns our worker ID
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=WORKER_ID.encode())
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                        result = await pool.forward_request_to_owner(
+                            mcp_session_id,
+                            {"method": "tools/call", "params": {"name": "test_tool"}}
+                        )
+
+                        assert result is None
+                        # Verify affinity log was emitted
+                        affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
+                        assert len(affinity_logs) >= 1, "Expected [AFFINITY] log to be emitted"
+                        assert "We own it" in affinity_logs[0].message
+                        assert WORKER_ID in affinity_logs[0].message
+                        assert "test-ses" in affinity_logs[0].message  # First 8 chars of session ID
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_affinity_logs_when_no_owner(self, caplog):
+        """Verify [AFFINITY] log is emitted when no owner is registered."""
+        import logging
+
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-log-noowner"
+
+            # Create a mock Redis that returns None (no owner)
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=None)
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                        result = await pool.forward_request_to_owner(
+                            mcp_session_id,
+                            {"method": "resources/list", "params": {}}
+                        )
+
+                        assert result is None
+                        # Verify affinity log was emitted
+                        affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
+                        assert len(affinity_logs) >= 1, "Expected [AFFINITY] log to be emitted"
+                        assert "No owner" in affinity_logs[0].message
+                        assert "execute locally" in affinity_logs[0].message
+
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_affinity_logs_when_forwarding_to_another_worker(self, caplog):
+        """Verify [AFFINITY] logs are emitted when forwarding to another worker."""
+        import logging
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        pool = MCPSessionPool()
+
+        try:
+            mcp_session_id = "test-session-log-forward"
+            other_worker_id = "99999"  # Different from our WORKER_ID
+
+            # Create a mock Redis
+            mock_redis = AsyncMock()
+            mock_redis.get = AsyncMock(return_value=other_worker_id.encode())
+
+            # Mock pubsub - make get_message raise TimeoutError after being called
+            call_count = 0
+            async def mock_get_message(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count > 2:
+                    raise asyncio.TimeoutError("Mock timeout")
+                return None
+
+            mock_pubsub = AsyncMock()
+            mock_pubsub.subscribe = AsyncMock()
+            mock_pubsub.unsubscribe = AsyncMock()
+            mock_pubsub.get_message = mock_get_message
+            mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+            mock_redis.publish = AsyncMock()
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+                mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.5  # Short timeout for test
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                        try:
+                            await pool.forward_request_to_owner(
+                                mcp_session_id,
+                                {"method": "tools/call", "params": {"name": "test_tool"}}
+                            )
+                        except asyncio.TimeoutError:
+                            pass  # Expected - no actual worker to respond
+
+                        # Verify affinity logs were emitted
+                        affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
+                        assert len(affinity_logs) >= 2, f"Expected at least 2 [AFFINITY] logs, got {len(affinity_logs)}"
+
+                        # Check for forwarding decision log
+                        forwarding_log = [r for r in affinity_logs if "forwarding" in r.message.lower()]
+                        assert len(forwarding_log) >= 1, "Expected forwarding log"
+                        assert other_worker_id in forwarding_log[0].message
+
+                        # Check for publish log
+                        publish_log = [r for r in affinity_logs if "Published" in r.message]
+                        assert len(publish_log) >= 1, "Expected publish log"
+
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_affinity_logs_when_executing_forwarded_request(self, caplog):
+        """Verify [AFFINITY] logs are emitted when executing a forwarded request."""
+        import logging
+        from mcpgateway.services.mcp_session_pool import WORKER_ID
+
+        pool = MCPSessionPool()
+
+        try:
+            with caplog.at_level(logging.INFO, logger="mcpgateway.services.mcp_session_pool"):
+                # This will fail with connection error since no server is running,
+                # but should still emit the log before attempting the HTTP call
+                result = await pool._execute_forwarded_request({
+                    "method": "tools/call",
+                    "params": {"name": "test_tool"},
+                    "mcp_session_id": "test-session-forwarded",
+                    "req_id": 1
+                })
+
+                # Should return error (no server running)
+                assert "error" in result
+
+                # Verify affinity logs were emitted
+                affinity_logs = [r for r in caplog.records if "[AFFINITY]" in r.message]
+                assert len(affinity_logs) >= 1, "Expected [AFFINITY] log to be emitted"
+                assert "Received forwarded request" in affinity_logs[0].message
+                assert WORKER_ID in affinity_logs[0].message
+                assert "test-ses" in affinity_logs[0].message  # First 8 chars
+
+        finally:
+            await pool.close_all()

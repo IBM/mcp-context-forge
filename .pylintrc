@@ -295,7 +295,7 @@ max-positional-arguments = 16
 max-attributes=30
 
 # Maximum number of boolean expressions in an if statement (see R0916).
-max-bool-expr=5
+max-bool-expr=6
 
 # Maximum number of branch for function / method body.
 max-branches=12

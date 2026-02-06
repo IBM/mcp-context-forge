@@ -1273,9 +1273,12 @@ async def test_session_manager_wrapper_initialization_stateful(monkeypatch):
         captured_config.update(kwargs)
         return DummySessionManager(**kwargs)
 
-    # Mock settings to enable stateful sessions
+    # Mock settings to enable stateful sessions with InMemoryEventStore
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.json_response_enabled", False)
+    # Ensure InMemoryEventStore is used (not Redis) by clearing Redis settings
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.cache_type", "memory")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.redis_url", "")
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", capture_manager)
 
     wrapper = SessionManagerWrapper()
@@ -1299,6 +1302,9 @@ async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
         sent.append(msg)
 
     class DummySessionManager:
+        def __init__(self):
+            self._server_instances = {}  # Add _server_instances attribute
+
         @asynccontextmanager
         async def run(self):
             yield self
@@ -1311,7 +1317,9 @@ async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
 
         async def handle_request(self, scope, receive, send_func):
             self.called = True
-            await send_func("ok")
+            # Send proper ASGI messages
+            await send_func({"type": "http.response.start", "status": 200, "headers": []})
+            await send_func({"type": "http.response.body", "body": b"ok"})
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
     wrapper = SessionManagerWrapper()
@@ -1320,7 +1328,10 @@ async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
     sent = []
     await wrapper.handle_streamable_http(scope, None, send)
     await wrapper.shutdown()
-    assert sent == ["ok"]
+    # Verify proper ASGI messages were sent
+    assert len(sent) == 2
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[1]["type"] == "http.response.body"
 
 
 @pytest.mark.asyncio
@@ -1336,6 +1347,9 @@ async def test_session_manager_wrapper_handle_streamable_http_no_server_id(monke
         sent.append(msg)
 
     class DummySessionManager:
+        def __init__(self):
+            self._server_instances = {}  # Add _server_instances attribute
+
         @asynccontextmanager
         async def run(self):
             yield self
@@ -1350,7 +1364,9 @@ async def test_session_manager_wrapper_handle_streamable_http_no_server_id(monke
             self.called = True
             # Check that server_id was set to None
             assert server_id_var.get() is None
-            await send_func("ok_no_server")
+            # Send proper ASGI messages
+            await send_func({"type": "http.response.start", "status": 200, "headers": []})
+            await send_func({"type": "http.response.body", "body": b"ok_no_server"})
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
     wrapper = SessionManagerWrapper()
@@ -1360,7 +1376,10 @@ async def test_session_manager_wrapper_handle_streamable_http_no_server_id(monke
     sent = []
     await wrapper.handle_streamable_http(scope, None, send)
     await wrapper.shutdown()
-    assert sent == ["ok_no_server"]
+    # Verify proper ASGI messages were sent
+    assert len(sent) == 2
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[1]["type"] == "http.response.body"
 
 
 @pytest.mark.asyncio
@@ -1370,6 +1389,9 @@ async def test_session_manager_wrapper_handle_streamable_http_exception(monkeypa
     from contextlib import asynccontextmanager
 
     class DummySessionManager:
+        def __init__(self):
+            self._server_instances = {}  # Add _server_instances attribute
+
         @asynccontextmanager
         async def run(self):
             yield self
