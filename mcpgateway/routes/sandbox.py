@@ -11,7 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, status
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -487,3 +488,169 @@ async def service_info() -> dict:
             "historical_replay": True,
         },
     }
+# Add this to mcpgateway/routes/sandbox.py
+# Place after the existing POST /sandbox/simulate endpoint
+
+
+
+@router.post("/sandbox/simulate", response_class=HTMLResponse)
+async def simulate_form_submit(
+    policy_draft_id: str = Form(...),
+    subject_email: str = Form(...),
+    subject_roles: str = Form(...),
+    subject_team_id: str = Form(None),
+    action: str = Form(...),
+    resource_type: str = Form(...),
+    resource_id: str = Form(...),
+    resource_server: str = Form(None),
+    expected_decision: str = Form(...),
+    sandbox: SandboxService = Depends(get_sandbox_service),
+):
+    """Handle simulation form submission and return HTML results.
+    
+    This endpoint is called via HTMX when the simulation form is submitted.
+    It returns HTML that will be injected into the results container.
+    """
+    try:
+        # Parse roles (comma-separated)
+        roles = [r.strip() for r in subject_roles.split(",") if r.strip()]
+        
+        # Create test case from form data
+        from mcpgateway.schemas.sandbox import TestCase
+        from mcpgateway.plugins.unified_pdp.pdp_models import Subject, Resource, Context, Decision
+        
+        test_case = TestCase(
+            subject=Subject(
+                email=subject_email,
+                roles=roles,
+                team_id=subject_team_id or None,
+            ),
+            action=action,
+            resource=Resource(
+                type=resource_type,
+                id=resource_id,
+                server=resource_server or None,
+            ),
+            context=Context(),
+            expected_decision=Decision.ALLOW if expected_decision.lower() == "allow" else Decision.DENY,
+            description=f"Test {action} on {resource_type} {resource_id}",
+        )
+        
+        # Run simulation
+        result = await sandbox.simulate_single(
+            policy_draft_id=policy_draft_id,
+            test_case=test_case,
+            include_explanation=True,
+        )
+        
+        # Generate HTML response
+        passed_class = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" if result.passed else "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+        passed_text = "PASSED ✓" if result.passed else "FAILED ✗"
+        
+        policies_html = "".join([
+            f'<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">{policy}</span>'
+            for policy in result.matching_policies
+        ])
+        
+        explanation_html = ""
+        if result.explanation:
+            explanation_html = f'''
+            <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Detailed Explanation</h4>
+                <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
+                    <pre class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono">{result.explanation}</pre>
+                </div>
+            </div>
+            '''
+        
+        html = f'''
+        <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+                    Simulation Results
+                </h3>
+            </div>
+
+            <div class="p-6 space-y-6">
+                <!-- Result Badge -->
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Test Result</h4>
+                        <div class="mt-2">
+                            <span class="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full {passed_class}">
+                                {passed_text}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Execution Time</h4>
+                        <p class="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+                            {result.execution_time_ms}ms
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Decision Details -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-200 dark:border-gray-700 pt-6">
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Expected Decision</h4>
+                        <p class="text-lg font-semibold text-gray-900 dark:text-white">
+                            {result.expected_decision.value}
+                        </p>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Actual Decision</h4>
+                        <p class="text-lg font-semibold text-gray-900 dark:text-white">
+                            {result.actual_decision.value}
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Matching Policies -->
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Matching Policies</h4>
+                    <div class="space-x-2 space-y-2">
+                        {policies_html if policies_html else '<p class="text-sm text-gray-500 dark:text-gray-400">No policies matched</p>'}
+                    </div>
+                </div>
+
+                <!-- Reason -->
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Decision Reason</h4>
+                    <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
+                        <p class="text-sm text-gray-700 dark:text-gray-300">
+                            {result.reason}
+                        </p>
+                    </div>
+                </div>
+
+                {explanation_html}
+            </div>
+        </div>
+        '''
+        
+        return HTMLResponse(content=html)
+        
+    except Exception as e:
+        logger.exception("Error running simulation")
+        error_html = f'''
+        <div class="bg-red-50 dark:bg-red-900 border-l-4 border-red-400 p-4 rounded-md">
+            <div class="flex">
+                <div class="flex-shrink-0">
+                    <svg class="h-5 w-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                </div>
+                <div class="ml-3">
+                    <h3 class="text-sm font-medium text-red-800 dark:text-red-200">
+                        Simulation Error
+                    </h3>
+                    <div class="mt-2 text-sm text-red-700 dark:text-red-300">
+                        <p>{str(e)}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        '''
+        return HTMLResponse(content=error_html, status_code=500)
+
