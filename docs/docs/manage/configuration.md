@@ -938,6 +938,10 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | --------------------------- | ------------------------------------- | ------- | ---------- |
 | `METRICS_CACHE_ENABLED`     | Enable metrics query caching          | `true`  | bool       |
 | `METRICS_CACHE_TTL_SECONDS` | Cache TTL (seconds)                   | `60`    | int (1-300)|
+| `METRICS_CACHE_USE_REDIS`   | Use Redis for shared cache (multi-instance) | `true`  | bool       |
+
+!!! info "Multi-Instance Deployments"
+    When deploying multiple gateway instances behind a load balancer, `METRICS_CACHE_USE_REDIS=true` ensures consistent metrics display across all instances by using a shared Redis cache. Without Redis, each instance maintains its own cache, leading to fluctuating metrics values on page refresh. See [Issue #2643](https://github.com/IBM/mcp-context-forge/issues/2643) for details.
 
 ### MCP Session Pool
 
