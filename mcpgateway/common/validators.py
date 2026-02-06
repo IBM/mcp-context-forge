@@ -261,12 +261,12 @@ class SecurityValidator:
             ValueError: When input is not acceptable
 
         Examples:
-            Basic HTML escaping:
+            Basic HTML tag stripping:
 
             >>> SecurityValidator.sanitize_display_text('Hello World', 'test')
             'Hello World'
             >>> SecurityValidator.sanitize_display_text('Hello <b>World</b>', 'test')
-            'Hello &lt;b&gt;World&lt;/b&gt;'
+            'Hello World'
 
             Empty/None handling:
 
@@ -290,7 +290,7 @@ class SecurityValidator:
                 ...
             ValueError: test contains potentially dangerous character sequences
             >>> SecurityValidator.sanitize_display_text('-->test', 'test')
-            '--&gt;test'
+            '-->test'
             >>> SecurityValidator.sanitize_display_text('--><script>', 'test')
             Traceback (most recent call last):
                 ...
@@ -300,14 +300,14 @@ class SecurityValidator:
                 ...
             ValueError: test contains potentially dangerous character sequences
 
-            Safe character escaping:
+            Special characters (preserved as-is, no HTML entity conversion):
 
             >>> SecurityValidator.sanitize_display_text('User & Admin', 'test')
-            'User &amp; Admin'
+            'User & Admin'
             >>> SecurityValidator.sanitize_display_text('Quote: "Hello"', 'test')
-            'Quote: &quot;Hello&quot;'
+            'Quote: "Hello"'
             >>> SecurityValidator.sanitize_display_text("Quote: 'Hello'", 'test')
-            'Quote: &#x27;Hello&#x27;'
+            "Quote: 'Hello'"
         """
         if not value:
             return value
@@ -324,9 +324,11 @@ class SecurityValidator:
             if pattern.search(value):
                 raise ValueError(f"{field_name} contains potentially dangerous character sequences")
 
-        # Return the value without HTML escaping - escaping should be done at presentation layer (templates)
-        # not at data storage layer to avoid double-encoding issues
-        return value
+        # Strip HTML tags while preserving text content
+        # This removes tags like <b>, <script>, etc. but keeps the text inside them
+        # Does NOT convert special characters to HTML entities (e.g., & stays as &, not &amp;)
+        cleaned = re.sub(r"<[^>]+>", "", value)
+        return cleaned
 
     @classmethod
     def validate_name(cls, value: str, field_name: str = "Name") -> str:
