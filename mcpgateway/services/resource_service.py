@@ -2213,7 +2213,7 @@ class ResourceService:
                             async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     # Skip session initialize for stateless servers
-                                    #await session.initialize()
+                                    # await session.initialize()
 
                                     # Read resource with _meta if provided
                                     read_params = {"uri": uri}
@@ -2227,17 +2227,11 @@ class ResourceService:
                                     # result.contents is a list of TextResourceContents or BlobResourceContents
                                     if result.contents:
                                         first_content = result.contents[0]
-                                        if hasattr(first_content, 'text'):
-                                            content = TextResourceContents(
-                                                uri=uri,
-                                                mimeType=first_content.mimeType if hasattr(first_content, 'mimeType') else "text/plain",
-                                                text=first_content.text
-                                            )
-                                        elif hasattr(first_content, 'blob'):
+                                        if hasattr(first_content, "text"):
+                                            content = TextResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "text/plain", text=first_content.text)
+                                        elif hasattr(first_content, "blob"):
                                             content = BlobResourceContents(
-                                                uri=uri,
-                                                mimeType=first_content.mimeType if hasattr(first_content, 'mimeType') else "application/octet-stream",
-                                                blob=first_content.blob
+                                                uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "application/octet-stream", blob=first_content.blob
                                             )
                                         else:
                                             content = TextResourceContents(uri=uri, text="")
