@@ -5,6 +5,9 @@ before deployment. It creates temporary PDP instances with draft policies,
 executes test cases, and compares results against expectations.
 
 Related to Issue #2226: Policy testing and simulation sandbox
+
+NOTE: Database integration uses mock data for now. See TODO comments for
+future database implementation.
 """
 
 from __future__ import annotations
@@ -20,9 +23,15 @@ from sqlalchemy.orm import Session
 from ..plugins.unified_pdp.pdp import PolicyDecisionPoint
 from ..plugins.unified_pdp.pdp_models import (
     CacheConfig,
+    CombinationMode,
     Context,
     Decision,
+    EngineConfig,
+    EngineType,
     PDPConfig,
+    PerformanceConfig,
+    Resource,
+    Subject,
 )
 from ..schemas.sandbox import (
     BatchSimulationResult,
@@ -365,23 +374,32 @@ class SandboxService:
         Raises:
             ValueError: If draft not found
         """
-        # TODO: Implement database query to fetch policy draft
-        # This is a placeholder that would query your database
-        # For now, return a basic config
+        # TODO: Replace with actual database query when policy_drafts table exists
+        # Example query:
+        # draft = self.db.query(PolicyDraft).filter_by(id=policy_draft_id).first()
+        # if not draft:
+        #     raise ValueError(f"Policy draft not found: {policy_draft_id}")
+        # return self._convert_draft_to_config(draft)
         
-        logger.warning(
-            "Using placeholder config - implement database query for draft %s",
+        logger.info(
+            "Loading policy draft %s (using mock data - database table not yet implemented)",
             policy_draft_id,
         )
 
-        # Placeholder: In real implementation, this would query the database
-        # to fetch the actual policy draft configuration
-        from ..plugins.unified_pdp.pdp_models import (
-            CombinationMode,
-            EngineConfig,
-            EngineType,
-            PerformanceConfig,
-        )
+        # Mock configuration for testing
+        # This simulates different policy scenarios based on draft ID
+        if policy_draft_id == "draft-permissive":
+            # Permissive policy - allows most actions
+            combination_mode = CombinationMode.ANY_ALLOW
+            default_decision = Decision.ALLOW
+        elif policy_draft_id == "draft-restrictive":
+            # Restrictive policy - requires all engines to allow
+            combination_mode = CombinationMode.ALL_MUST_ALLOW
+            default_decision = Decision.DENY
+        else:
+            # Default balanced policy
+            combination_mode = CombinationMode.ALL_MUST_ALLOW
+            default_decision = Decision.DENY
 
         return PDPConfig(
             engines=[
@@ -392,8 +410,8 @@ class SandboxService:
                     settings={},
                 ),
             ],
-            combination_mode=CombinationMode.ALL_MUST_ALLOW,
-            default_decision=Decision.DENY,
+            combination_mode=combination_mode,
+            default_decision=default_decision,
             cache=CacheConfig(enabled=False),  # IMPORTANT: Disable cache for testing!
             performance=PerformanceConfig(
                 timeout_ms=1000,
@@ -477,25 +495,65 @@ class SandboxService:
         Returns:
             List of historical decisions
         """
-        # TODO: Implement database query to fetch historical audit logs
+        # TODO: Replace with actual database query when audit tables are properly set up
+        # Example query using AuditTrail table:
+        # cutoff_date = datetime.now(timezone.utc) - timedelta(days=replay_last_days)
+        # 
+        # query = self.db.query(AuditTrail).filter(
+        #     AuditTrail.timestamp >= cutoff_date,
+        #     AuditTrail.action.like('%policy%'),  # Filter for policy decisions
+        # )
+        # 
+        # if filter_by_subject:
+        #     query = query.filter(AuditTrail.user_email == filter_by_subject)
+        # if filter_by_action:
+        #     query = query.filter(AuditTrail.action == filter_by_action)
+        # 
+        # audit_records = query.order_by(AuditTrail.timestamp.desc()).limit(sample_size).all()
+        # 
+        # return [self._convert_audit_to_historical(record) for record in audit_records]
         
-        logger.warning(
-            "Using placeholder historical decisions - implement database query"
+        logger.info(
+            "Fetching historical decisions for %s (using mock data - database query not yet implemented)",
+            baseline_policy_version,
         )
 
-        # Placeholder: In real implementation, query audit logs from database
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=replay_last_days)
-        
-        # Would execute something like:
-        # SELECT * FROM policy_audit_log
-        # WHERE policy_version = baseline_policy_version
-        #   AND timestamp >= cutoff_date
-        #   AND (subject_email = filter_by_subject OR filter_by_subject IS NULL)
-        #   AND (action = filter_by_action OR filter_by_action IS NULL)
-        # ORDER BY timestamp DESC
-        # LIMIT sample_size
+        # Mock historical decisions for testing
+        # These simulate realistic access patterns
+        mock_decisions = [
+            HistoricalDecision(
+                id=f"hist-{i}",
+                subject=Subject(
+                    email=f"user{i % 10}@example.com",
+                    roles=["developer"] if i % 3 == 0 else ["viewer"],
+                    team_id=f"team-{i % 3}",
+                ),
+                action="tools.invoke" if i % 2 == 0 else "resources.read",
+                resource=Resource(
+                    type="tool" if i % 2 == 0 else "resource",
+                    id=f"resource-{i % 5}",
+                    server=f"server-{i % 2}",
+                ),
+                context=Context(
+                    ip=f"192.168.1.{i % 255}",
+                    timestamp=datetime.now(timezone.utc) - timedelta(days=i % replay_last_days),
+                ),
+                decision=Decision.ALLOW if i % 4 != 0 else Decision.DENY,
+                reason="Historical policy decision" if i % 4 != 0 else "Access denied by policy",
+                matching_policies=[f"policy-{i % 3}"],
+                policy_version=baseline_policy_version,
+                timestamp=datetime.now(timezone.utc) - timedelta(days=i % replay_last_days),
+            )
+            for i in range(min(sample_size, 50))  # Limit mock data to 50 for performance
+        ]
 
-        return []  # Return empty list for now
+        # Apply filters
+        if filter_by_subject:
+            mock_decisions = [d for d in mock_decisions if d.subject.email == filter_by_subject]
+        if filter_by_action:
+            mock_decisions = [d for d in mock_decisions if d.action == filter_by_action]
+
+        return mock_decisions
 
     async def _replay_and_compare(
         self,
@@ -587,7 +645,7 @@ class SandboxService:
         self,
         subject_email: str,
         action: str,
-        resource: "Resource",
+        resource: Resource,
         old_decision: Decision,
         new_decision: Decision,
     ) -> str:
