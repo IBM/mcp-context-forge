@@ -212,7 +212,7 @@ def _canonicalize_schema(schema: dict) -> str:
     return orjson.dumps(schema, option=orjson.OPT_SORT_KEYS).decode()
 
 
-def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
+def _validate_with_cached_schema(instance: Any, schema: dict) -> None:  # noqa: DAR401
     """Validate instance against schema using cached validator class.
 
     Creates a fresh validator instance for thread safety, but reuses
@@ -225,6 +225,7 @@ def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
 
     Raises:
         jsonschema.exceptions.ValidationError: If validation fails.
+        jsonschema.exceptions.SchemaError: If the schema itself is invalid.
     """
     schema_json = _canonicalize_schema(schema)
     validator_cls, checked_schema = _get_validator_class_and_check(schema_json)
