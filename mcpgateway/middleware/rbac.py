@@ -16,6 +16,7 @@ from functools import wraps
 import logging
 from typing import Callable, Generator, List, Optional
 import uuid
+from contextlib import contextmanager
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -25,10 +26,56 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, SessionLocal
+from mcpgateway.db import SessionLocal, get_request_session
 from mcpgateway.services.permission_service import PermissionService
 
+# Backwards-compatible alias for tests and older modules that patch
+# `get_request_session` is a request-scoped getter; keep it available
+request_session = get_request_session
+
+
+@contextmanager
+def fresh_db_session():
+    """Context manager that yields a fresh, short-lived DB session.
+
+    Use this for permission checks that should not reuse the request-scoped
+    session (avoids session accumulation under high load).
+
+    Yields:
+        Session: a new SQLAlchemy ``Session`` instance (short-lived).
+
+    Raises:
+        Exception: Re-raises any exception after attempting rollback and
+            session invalidation/cleanup.
+    """
+    db = SessionLocal()
+    try:
+        yield db
+        try:
+            db.commit()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                logger.debug("fresh_db_session: failed to invalidate DB after commit", exc_info=True)
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            try:
+                db.invalidate()
+            except Exception:
+                logger.debug("fresh_db_session: failed to invalidate DB after rollback", exc_info=True)
+        raise
+    finally:
+        try:
+            db.close()
+        except Exception:
+            logger.debug("fresh_db_session: failed to close DB session", exc_info=True)
+
+
 logger = logging.getLogger(__name__)
+
 
 # HTTP Bearer security scheme for token extraction
 security = HTTPBearer(auto_error=False)
@@ -36,9 +83,6 @@ security = HTTPBearer(auto_error=False)
 
 def get_db() -> Generator[Session, None, None]:
     """Get database session for dependency injection.
-
-    DEPRECATED: Use fresh_db_session() context manager instead to avoid session accumulation.
-    This function is kept for backwards compatibility with endpoints that still use Depends(get_db).
 
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.

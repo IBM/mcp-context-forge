@@ -23,6 +23,7 @@ Examples:
 
 # Standard
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 import logging
 import os
@@ -450,6 +451,52 @@ class ResilientSession(Session):
 # allowing continued access to attributes without re-querying the database.
 # This is essential when commits happen during read operations (e.g., to release transactions).
 SessionLocal = sessionmaker(class_=ResilientSession, autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+
+# Request-scoped session storage to ensure single session reused across
+# middleware and route handlers during a single request lifecycle.
+_request_session: ContextVar[Optional[Session]] = ContextVar("db_session", default=None)
+
+
+def get_request_session() -> Session:
+    """Get or create a request-scoped SQLAlchemy Session.
+
+    This returns the current request session if one exists, otherwise it
+    creates a new ``SessionLocal()`` instance, stores it in a ContextVar
+    and returns it. Sessions created outside of a request context
+    (background jobs) should continue to use ``SessionLocal()`` directly.
+
+    Returns:
+        Session: An active SQLAlchemy ``Session`` instance scoped to the
+        current request context.
+    """
+    session = _request_session.get()
+    if session is None:
+        session = SessionLocal()
+        _request_session.set(session)
+    return session
+
+
+def close_request_session() -> None:
+    """Close and clear the request-scoped session if present.
+
+    This performs a best-effort rollback of any open transaction and then
+    closes the session and clears the ContextVar.
+    """
+    session = _request_session.get()
+    if not session:
+        return
+    try:
+        try:
+            if session.in_transaction():
+                session.rollback()
+        except Exception as e:
+            logger.debug("Failed to rollback request-scoped session: %s", e)
+        try:
+            session.close()
+        except Exception as e:
+            logger.debug("Failed to close request-scoped session: %s", e)
+    finally:
+        _request_session.set(None)
 
 
 @event.listens_for(ResilientSession, "after_transaction_end")
@@ -5379,7 +5426,17 @@ def get_db() -> Generator[Session, Any, None]:
         True
         >>> gen.close()
     """
-    db = SessionLocal()
+    # If there is already a request-scoped session, reuse it and do NOT close
+    # it here (it will be closed by request middleware). Otherwise create a
+    # fresh session from `SessionLocal` and ensure we close it when done.
+    request_session = _request_session.get()
+    if request_session is not None:
+        db = request_session
+        _close_after = False
+    else:
+        db = SessionLocal()
+        _close_after = True
+
     try:
         yield db
         db.commit()
@@ -5389,11 +5446,15 @@ def get_db() -> Generator[Session, Any, None]:
         except Exception:
             try:
                 db.invalidate()
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
+            except Exception as e:
+                logger.debug("Failed to invalidate session during rollback cleanup: %s", e)
         raise
     finally:
-        db.close()
+        if _close_after:
+            try:
+                db.close()
+            except Exception as e:
+                logger.debug("Failed to close ephemeral DB session: %s", e)
 
 
 def get_for_update(
