@@ -467,19 +467,13 @@
         try {
           const response = await fetch(window.ROOT_PATH + "/auth/sso/providers");
 
-          if (response.status === 404) {
-            // SSO not enabled, hide SSO section
-            document.getElementById("sso-section").style.display = "none";
-            document.getElementById("divider").style.display = "none";
-            return;
-          }
-
           if (!response.ok) throw new Error("Failed to load SSO providers");
 
           const providers = await response.json();
           const ssoContainer = document.getElementById("sso-providers");
 
           if (providers.length === 0) {
+            // SSO not enabled or no providers configured, hide SSO section
             document.getElementById("sso-section").style.display = "none";
             document.getElementById("divider").style.display = "none";
             return;

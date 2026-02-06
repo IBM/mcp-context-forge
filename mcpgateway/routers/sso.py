@@ -109,9 +109,7 @@ async def list_sso_providers(
 
     Returns:
         List of enabled SSO providers with basic information.
-
-    Raises:
-        HTTPException: If SSO authentication is disabled
+        Returns empty list if SSO authentication is disabled.
 
     Examples:
         >>> import asyncio
@@ -119,7 +117,7 @@ async def list_sso_providers(
         True
     """
     if not settings.sso_enabled:
-        raise HTTPException(status_code=404, detail="SSO authentication is disabled")
+        return []
 
     sso_service = SSOService(db)
     providers = sso_service.list_enabled_providers()
