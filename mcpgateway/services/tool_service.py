@@ -2700,7 +2700,7 @@ class ToolService:
         gateway_id_from_header = None
         if request_headers:
             for header_name, header_value in request_headers.items():
-                if header_name.lower() == 'x-context-forge-gateway-id':
+                if header_name.lower() == "x-context-forge-gateway-id":
                     gateway_id_from_header = header_value
                     break
 
@@ -3654,7 +3654,6 @@ class ToolService:
                         tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                         success = not is_err
                         logger.debug(f"Final tool_result: {tool_result}")
-
 
                 elif tool_integration_type == "A2A" and a2a_agent_endpoint_url:
                     # A2A tool invocation using pre-extracted agent data (extracted in Phase 2 before db.close())

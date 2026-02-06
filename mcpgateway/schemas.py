@@ -2550,9 +2550,7 @@ class GatewayCreate(BaseModel):
 
     # Gateway mode configuration
     gateway_mode: Optional[str] = Field(
-        default="cache",
-        description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)",
-        pattern="^(cache|direct_proxy)$"
+        default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$"
     )
 
     @field_validator("tags")
@@ -2876,11 +2874,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
 
     # Gateway mode configuration
-    gateway_mode: Optional[str] = Field(
-        None,
-        description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)",
-        pattern="^(cache|direct_proxy)$"
-    )
+    gateway_mode: Optional[str] = Field(None, description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
 
     @field_validator("tags")
     @classmethod
@@ -3246,10 +3240,7 @@ class GatewayRead(BaseModelWithConfigDict):
     last_refresh_at: Optional[datetime] = Field(None, description="Timestamp of last successful refresh")
 
     # Gateway mode configuration
-    gateway_mode: str = Field(
-        default="cache",
-        description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)"
-    )
+    gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
 
     @model_validator(mode="before")
     @classmethod
