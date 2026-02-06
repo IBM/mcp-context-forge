@@ -14915,7 +14915,6 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
     # Handle case where all durations are the same
     if latency_range == 0:
         latency_range = 1.0
-        max_duration = min_duration + 1.0
 
     time_range_minutes = hours * 60
     latency_bucket_size = latency_range / latency_buckets
