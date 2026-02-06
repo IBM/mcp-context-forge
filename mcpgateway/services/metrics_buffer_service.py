@@ -450,6 +450,16 @@ class MetricsBufferService:
             f"servers={len(server_metrics)}, a2a={len(a2a_agent_metrics)})"
         )
 
+        # Invalidate metrics cache after successful flush to ensure fresh aggregates
+        try:
+            # First-Party
+            from mcpgateway.cache.metrics_cache import metrics_cache  # pylint: disable=import-outside-toplevel
+
+            await metrics_cache.invalidate_async()
+            logger.debug("Invalidated metrics cache after buffer flush")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate metrics cache after flush: {e}")
+
     def _flush_to_db(
         self,
         tool_metrics: list[BufferedToolMetric],
