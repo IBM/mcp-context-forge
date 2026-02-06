@@ -597,7 +597,7 @@ async def test_admin_get_update_delete_user():
 
 
 @pytest.mark.asyncio
-async def test_admin_update_user_without_full_name():
+async def test_admin_update_user_without_full_name_and_is_admin():
     """Test updating only full_name field."""
     # First-Party
     from mcpgateway.routers import email_auth
@@ -621,7 +621,7 @@ async def test_admin_update_user_without_full_name():
         auth_service.get_user_by_email = AsyncMock(return_value=user)
         auth_service.is_last_active_admin = AsyncMock(return_value=False)
 
-        update_request = AdminUserUpdateRequest(is_admin=False)
+        update_request = AdminUserUpdateRequest()
 
         response = await email_auth.update_user(
             "user@example.com",
@@ -632,6 +632,7 @@ async def test_admin_update_user_without_full_name():
 
         assert response.full_name == "Old Name"
         assert user.full_name == "Old Name"
+        assert user.is_admin == False
         # Password should not be touched
         assert not hasattr(user, 'password_hash') or user.password_hash is None
 
