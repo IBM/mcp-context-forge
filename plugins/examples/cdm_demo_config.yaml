@@ -1,0 +1,89 @@
+# Demo configuration for CDM example plugins
+# Usage: python plugins/examples/cdm_demo.py
+
+plugin_settings:
+  parallel_execution_within_band: false
+  plugin_timeout: 30
+  fail_on_plugin_error: true
+
+plugins:
+  # CDM Content Scanner - checks for PII/secrets
+  - name: "CDMContentScanner"
+    kind: "plugins.examples.cdm_content_scanner.cdm_content_scanner.CDMContentScannerPlugin"
+    description: "Scans message content for sensitive patterns using CDM MessageView"
+    version: "0.1.0"
+    author: "Teryl Taylor"
+    hooks: ["message_evaluate"]
+    tags: ["security", "pii", "cdm"]
+    mode: "enforce"
+    priority: 10
+    conditions: []
+    config:
+      log_matches: true
+      include_match_in_metadata: false
+      patterns:
+        - name: "ssn"
+          pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+          severity: "critical"
+          block: true
+          scan_pre: true
+          scan_post: true
+        - name: "credit_card"
+          pattern: "\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b"
+          severity: "critical"
+          block: true
+        - name: "email"
+          pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+          severity: "low"
+          block: false
+
+  # CDM Tool Allowlist - controls which tools can be called
+  - name: "CDMToolAllowlist"
+    kind: "plugins.examples.cdm_tool_allowlist.cdm_tool_allowlist.CDMToolAllowlistPlugin"
+    description: "URI-based allowlist for tools and resources"
+    version: "0.1.0"
+    author: "Teryl Taylor"
+    hooks: ["message_evaluate"]
+    tags: ["security", "allowlist", "cdm"]
+    mode: "enforce"
+    priority: 20
+    conditions: []
+    config:
+      log_decisions: true
+      default_allow_tools: false
+      default_allow_resources: false
+      allowed_tools:
+        - "tool://*/read_*"
+        - "tool://*/search_*"
+        - "tool://*/list_*"
+        - "tool://mcp/**"
+      blocked_tools:
+        - "tool://*/execute_*"
+        - "tool://*/shell"
+        - "tool://*/eval"
+      allowed_resources:
+        - "file:///workspace/**"
+        - "file:///tmp/**"
+      blocked_resources:
+        - "file:///etc/**"
+        - "file:///**/.env"
+
+  # CDM Role Guard - RBAC for tools (disabled by default, needs principal)
+  - name: "CDMRoleGuard"
+    kind: "plugins.examples.cdm_role_guard.cdm_role_guard.CDMRoleGuardPlugin"
+    description: "Role-based access control using MessageView"
+    version: "0.1.0"
+    author: "Teryl Taylor"
+    hooks: ["message_evaluate"]
+    tags: ["security", "rbac", "cdm"]
+    mode: "disabled"  # Enable when you have principal context
+    priority: 30
+    conditions: []
+    config:
+      default_allow: true
+      admin_bypass: true
+      admin_role: "admin"
+      log_decisions: true
+      tool_permissions:
+        - tool_pattern: "dangerous_*"
+          required_roles: ["admin", "security"]

@@ -1,0 +1,21 @@
+description: "CDM Role Guard - Role-based access control using MessageView"
+author: "Teryl Taylor"
+version: "0.1.0"
+available_hooks:
+  - "message_evaluate"
+default_configs:
+  default_allow: true
+  admin_bypass: true
+  admin_role: "admin"
+  log_decisions: true
+  tool_permissions:
+    - tool_pattern: "dangerous_*"
+      required_roles:
+        - "admin"
+        - "security"
+      denied_environments:
+        - "production"
+    - tool_pattern: "database_*"
+      required_permissions:
+        - "db.write"
+        - "db.admin"

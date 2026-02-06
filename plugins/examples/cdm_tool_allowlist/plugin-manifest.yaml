@@ -1,0 +1,25 @@
+description: "CDM Tool Allowlist - URI-based access control for tools and resources"
+author: "Teryl Taylor"
+version: "0.1.0"
+available_hooks:
+  - "message_evaluate"
+default_configs:
+  log_decisions: true
+  default_allow_tools: false
+  default_allow_resources: false
+  default_allow_prompts: true
+  allowed_tools:
+    - "tool://*/search"
+    - "tool://*/read_*"
+    - "tool://mcp/**"
+  blocked_tools:
+    - "tool://*/execute_*"
+    - "tool://*/shell"
+    - "tool://*/eval"
+  allowed_resources:
+    - "file:///workspace/**"
+    - "file:///tmp/**"
+  blocked_resources:
+    - "file:///etc/**"
+    - "file:///**/.env"
+    - "file:///**/secrets/**"

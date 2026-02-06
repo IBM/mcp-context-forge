@@ -1,0 +1,12 @@
+description: "CDM OPA Policy - External policy evaluation using OPA and MessageView"
+author: "Teryl Taylor"
+version: "0.1.0"
+available_hooks:
+  - "message_evaluate"
+default_configs:
+  opa_url: "http://localhost:8181/v1/data/apex/allow"
+  timeout_seconds: 5.0
+  fail_open: false
+  include_content: true
+  evaluate_per_view: false
+  log_decisions: true

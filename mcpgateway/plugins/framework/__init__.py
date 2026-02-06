@@ -48,6 +48,7 @@ from mcpgateway.plugins.framework.hooks.prompts import (
     PromptPrehookResult,
 )
 from mcpgateway.plugins.framework.hooks.tools import ToolHookType, ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokeResult, ToolPreInvokePayload
+from mcpgateway.plugins.framework.hooks.message import MessageHookType, MessagePayload, MessageResult
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
     MCPServerConfig,
@@ -60,6 +61,8 @@ from mcpgateway.plugins.framework.models import (
     PluginPayload,
     PluginResult,
     PluginViolation,
+    Principal,
+    PrincipalType,
 )
 from mcpgateway.plugins.framework.utils import get_attr
 
@@ -119,6 +122,9 @@ __all__ = [
     "HttpPreRequestPayload",
     "HttpPreRequestResult",
     "MCPServerConfig",
+    "MessageHookType",
+    "MessagePayload",
+    "MessageResult",
     "Plugin",
     "PluginCondition",
     "PluginConfig",
@@ -133,6 +139,8 @@ __all__ = [
     "PluginResult",
     "PluginViolation",
     "PluginViolationError",
+    "Principal",
+    "PrincipalType",
     "PromptHookType",
     "PromptPosthookPayload",
     "PromptPosthookResult",

@@ -14,7 +14,7 @@ from enum import Enum
 import logging
 import os
 from pathlib import Path
-from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar, Union
+from typing import Any, Dict, Generic, Optional, Self, Set, TypeAlias, TypeVar, Union
 
 # Third-Party
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
@@ -25,6 +25,116 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, UDS, URL
 
 T = TypeVar("T")
+
+
+class PrincipalType(str, Enum):
+    """Type of principal making the request.
+
+    Attributes:
+        USER: Human user.
+        SERVICE: Service/application.
+        AGENT: AI agent.
+
+    Examples:
+        >>> PrincipalType.USER.value
+        'user'
+    """
+
+    USER = "user"
+    SERVICE = "service"
+    AGENT = "agent"
+
+
+class Principal(BaseModel):
+    """Identity making the request.
+
+    Represents the authenticated entity (user, service, or agent) making
+    a request. Used for authorization decisions in policy evaluation.
+
+    Attributes:
+        id: Unique identifier for the principal.
+        type: Type of principal (user, service, agent).
+        name: Display name.
+        email: Email address (for users).
+        roles: Set of assigned roles.
+        permissions: Set of granted permissions.
+        tenant_id: Tenant/organization ID.
+        teams: Set of team memberships.
+        claims: Additional claims from auth token (JWT, etc.).
+
+    Examples:
+        >>> p = Principal(id="user-123", roles={"admin", "developer"})
+        >>> p.has_role("admin")
+        True
+        >>> p.has_permission("tools.execute")
+        False
+    """
+
+    id: str
+    type: PrincipalType = PrincipalType.USER
+    name: Optional[str] = None
+    email: Optional[str] = None
+    roles: Set[str] = Field(default_factory=set)
+    permissions: Set[str] = Field(default_factory=set)
+    tenant_id: Optional[str] = None
+    teams: Set[str] = Field(default_factory=set)
+    claims: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_serializer("roles", "permissions", "teams")
+    def serialize_sets(self, value: Set[str]) -> list[str]:
+        """Serialize set fields to lists for JSON compatibility.
+
+        Args:
+            value: Set to serialize.
+
+        Returns:
+            List representation of the set.
+        """
+        return list(value) if value else []
+
+    def has_role(self, role: str) -> bool:
+        """Check if principal has a specific role.
+
+        Args:
+            role: Role name to check.
+
+        Returns:
+            True if principal has the role.
+        """
+        return role in self.roles
+
+    def has_permission(self, permission: str) -> bool:
+        """Check if principal has a specific permission.
+
+        Args:
+            permission: Permission name to check.
+
+        Returns:
+            True if principal has the permission.
+        """
+        return permission in self.permissions
+
+    def has_any_role(self, *roles: str) -> bool:
+        """Check if principal has any of the specified roles.
+
+        Args:
+            roles: Role names to check.
+
+        Returns:
+            True if principal has at least one of the roles.
+        """
+        return bool(self.roles & set(roles))
+
+    def has_all_roles(self, *roles: str) -> bool:
+        """Check if principal has all of the specified roles.
+
+        Args:
+            roles: Role names to check.
+
+        Returns:
+            True if principal has all of the roles.
+        """
+        return set(roles) <= self.roles
 
 
 class PluginMode(str, Enum):
@@ -984,12 +1094,16 @@ class GlobalContext(BaseModel):
     """The global context, which shared across all plugins.
 
     Attributes:
-            request_id (str): ID of the HTTP request.
-            user (str): user ID associated with the request.
-            tenant_id (str): tenant ID.
-            server_id (str): server ID.
-            metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective).
-            state (Optional[dict[str,Any]]): a global shared state across plugins.
+        request_id (str): ID of the HTTP request.
+        user (str): user ID associated with the request (legacy, use principal).
+        principal (Optional[Principal]): Authenticated principal with roles/permissions.
+        tenant_id (str): tenant ID.
+        server_id (str): server ID.
+        environment (Optional[str]): Execution environment (production, staging, development).
+        headers (dict[str, str]): HTTP headers from the request.
+        labels (set[str]): Data classification labels (PII, SECRET, etc.).
+        metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective).
+        state (Optional[dict[str,Any]]): a global shared state across plugins.
 
     Examples:
         >>> ctx = GlobalContext(request_id="req-123")
@@ -1007,14 +1121,28 @@ class GlobalContext(BaseModel):
         '123'
         >>> c.server_id
         'srv1'
+        >>> from mcpgateway.plugins.framework.models import Principal
+        >>> p = Principal(id="user-1", roles={"admin"})
+        >>> ctx3 = GlobalContext(request_id="req-789", principal=p)
+        >>> ctx3.principal.has_role("admin")
+        True
     """
 
     request_id: str
-    user: Optional[Union[str, dict[str, Any]]] = None
+    user: Optional[Union[str, dict[str, Any]]] = None  # Legacy, use principal
+    principal: Optional[Principal] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
+    environment: Optional[str] = None  # production, staging, development
+    headers: Dict[str, str] = Field(default_factory=dict)
+    labels: Set[str] = Field(default_factory=set)
     state: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_serializer("labels")
+    def serialize_labels(self, value: Set[str]) -> list[str]:
+        """Serialize labels set to list for JSON compatibility."""
+        return list(value) if value else []
 
 
 class PluginContext(BaseModel):

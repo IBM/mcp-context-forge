@@ -1,0 +1,21 @@
+description: "CDM Content Scanner - Scan messages for sensitive patterns using MessageView"
+author: "Teryl Taylor"
+version: "0.1.0"
+available_hooks:
+  - "message_evaluate"
+default_configs:
+  log_matches: true
+  include_match_in_metadata: false
+  patterns:
+    - name: "ssn"
+      pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      severity: "critical"
+      block: true
+    - name: "credit_card"
+      pattern: "\\b(?:\\d{4}[-\\s]?){3}\\d{4}\\b"
+      severity: "critical"
+      block: true
+    - name: "api_key"
+      pattern: "\\b(?:api[_-]?key|apikey)[:\\s]+['\"]?[A-Za-z0-9\\-_]{20,}['\"]?\\b"
+      severity: "high"
+      block: true
