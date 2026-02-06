@@ -601,3 +601,44 @@ async def test_admin_delete_user_self_block():
             await email_auth.delete_user("admin@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
 
     assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_emailuser_response_serialization_with_api_token():
+    """Test EmailUserResponse serialization with API token user (regression test for #2700).
+    
+    This test verifies that EmailUser objects created for API token authentication
+    include all required fields (auth_provider, password_change_required) and can
+    be successfully serialized to EmailUserResponse without validation errors.
+    
+    Previously, creating EmailUser objects without these fields would cause 422
+    validation errors when GET /auth/email/me tried to serialize the response.
+    """
+    # First-Party
+    from mcpgateway.schemas import EmailUserResponse
+
+    # Create a user that simulates API token authentication
+    mock_user = EmailUser(
+        email="apitoken@example.com",
+        password_hash="hash",
+        full_name="API Token User",
+        is_admin=False,
+        is_active=True,
+        auth_provider="api_token",
+        password_change_required=False,
+        email_verified_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    # Verify serialization works without errors (this would raise ValidationError if fields missing)
+    response = EmailUserResponse.from_email_user(mock_user)
+
+    # Verify all required fields are present and correct
+    assert response.email == "apitoken@example.com"
+    assert response.full_name == "API Token User"
+    assert response.is_admin is False
+    assert response.is_active is True
+    assert response.auth_provider == "api_token"
+    assert response.password_change_required is False
+    assert response.email_verified is True
+
