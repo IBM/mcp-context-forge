@@ -6080,7 +6080,7 @@ async def admin_get_user_edit(
                         <div class="ml-3 flex-1">
                             <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Password Requirements</h3>
                             <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
-                                <div class="flex items-center" id="req-length">
+                                <div class="flex items-center" id="edit-req-length">
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
                                     <span>At least {settings.password_min_length} characters long</span>
                                 </div>
@@ -6089,25 +6089,25 @@ async def admin_get_user_edit(
             if settings.password_require_uppercase:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
+                                <div class="flex items-center" id="edit-req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
                 """
                 )
             if settings.password_require_lowercase:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
+                                <div class="flex items-center" id="edit-req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
                 """
                 )
             if settings.password_require_numbers:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
+                                <div class="flex items-center" id="edit-req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
                 """
                 )
             if settings.password_require_special:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
+                                <div class="flex items-center" id="edit-req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
                 """
                 )
             pr_lines.append(
@@ -6160,7 +6160,7 @@ async def admin_get_user_edit(
                 </div>
                 {password_requirements_html}
                 <div
-                    id="password-policy-data"
+                    id="edit-password-policy-data"
                     class="hidden"
                     data-min-length="{settings.password_min_length}"
                     data-require-uppercase="{'true' if settings.password_require_uppercase else 'false'}"
