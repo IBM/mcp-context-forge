@@ -5818,7 +5818,7 @@ async function viewServer(serverId) {
                 const serverDesc = document.createElement("p");
                 serverDesc.className =
                     "text-sm text-gray-600 dark:text-gray-400 mt-1";
-                serverDesc.textContent = server.description;
+                serverDesc.textContent = decodeHtml(server.description);
                 headerTextDiv.appendChild(serverDesc);
             }
 
