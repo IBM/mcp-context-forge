@@ -88,12 +88,20 @@ def _make_gateway(**overrides):
         "auth_headers": None,
         "auth_query_param_key": None,
         "auth_query_param_value": None,
+        "auth_query_params": None,
         "oauth_config": None,
         "one_time_auth": False,
         "ca_certificate": None,
         "ca_certificate_sig": None,
         "signing_algorithm": None,
         "visibility": "public",
+        "enabled": True,
+        "team_id": None,
+        "tools": [],
+        "resources": [],
+        "prompts": [],
+        "capabilities": {},
+        "version": 1,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -134,7 +142,7 @@ class _PassthroughMasked:
 @pytest.fixture(autouse=True)
 def _bypass_gatewayread_validation(monkeypatch):
     """
-    The real GatewayService returns ``GatewayRead.model_validate(db_obj)``.
+    The real GatewayService returns ``GatewayRead.model_validate(db_obj).masked()``.
     The DB objects we feed in here are MagicMocks, not real models, and
     Pydantic hates that.  We therefore stub out `GatewayRead.model_validate`
     so it returns a thin wrapper that supports ``.masked()``.
@@ -1857,6 +1865,174 @@ class TestGatewayService:
                 # finally, your service should return the list produced by mock_db.execute(...)
                 assert isinstance(result, list)
                 assert result == [mocked_gateway_read]
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_cache_mode(self, gateway_service):
+        """Test registering a gateway with explicit cache mode (default behavior)."""
+        gateway_data = GatewayCreate(
+            name="Cache Mode Gateway",
+            url="https://cache-gateway.example.com",
+            description="Gateway with cache mode",
+            transport="SSE",
+            auth_type="bearer",
+            auth_token="test-token",
+            gateway_mode="cache",  # Explicit cache mode
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=None)
+        session.add = MagicMock()
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Mock _initialize_gateway to return empty lists
+        async def mock_init(*args, **kwargs):
+            return {}, [], [], []
+
+        gateway_service._initialize_gateway = mock_init
+
+        await gateway_service.register_gateway(
+            session,
+            gateway_data,
+            created_by="test@example.com",
+        )
+
+        # Verify gateway_mode was set to cache
+        add_call_args = session.add.call_args[0][0]
+        assert hasattr(add_call_args, "gateway_mode")
+        assert add_call_args.gateway_mode == "cache"
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_direct_proxy_mode(self, gateway_service):
+        """Test registering a gateway with direct_proxy mode."""
+        gateway_data = GatewayCreate(
+            name="Direct Proxy Gateway",
+            url="https://proxy-gateway.example.com",
+            description="Gateway with direct proxy mode",
+            transport="STREAMABLEHTTP",
+            auth_type="bearer",
+            auth_token="test-token",
+            gateway_mode="direct_proxy",  # Direct proxy mode
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=None)
+        session.add = MagicMock()
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Mock _initialize_gateway to return empty lists
+        async def mock_init(*args, **kwargs):
+            return {}, [], [], []
+
+        gateway_service._initialize_gateway = mock_init
+
+        await gateway_service.register_gateway(
+            session,
+            gateway_data,
+            created_by="test@example.com",
+        )
+
+        # Verify gateway_mode was set to direct_proxy
+        add_call_args = session.add.call_args[0][0]
+        assert hasattr(add_call_args, "gateway_mode")
+        assert add_call_args.gateway_mode == "direct_proxy"
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_default_mode_is_cache(self, gateway_service):
+        """Test that gateway_mode defaults to 'cache' when not specified."""
+        gateway_data = GatewayCreate(
+            name="Default Mode Gateway",
+            url="https://default-gateway.example.com",
+            description="Gateway without explicit mode",
+            transport="SSE",
+            auth_type="bearer",
+            auth_token="test-token",
+            # gateway_mode not specified - should default to "cache"
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=None)
+        session.add = MagicMock()
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Mock _initialize_gateway to return empty lists
+        async def mock_init(*args, **kwargs):
+            return {}, [], [], []
+
+        gateway_service._initialize_gateway = mock_init
+
+        await gateway_service.register_gateway(
+            session,
+            gateway_data,
+            created_by="test@example.com",
+        )
+
+        # Verify gateway_mode defaults to cache
+        add_call_args = session.add.call_args[0][0]
+        assert hasattr(add_call_args, "gateway_mode")
+        assert add_call_args.gateway_mode == "cache"
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_mode_from_cache_to_direct_proxy(self, gateway_service):
+        """Test updating gateway mode from cache to direct_proxy."""
+        # Existing gateway with cache mode
+        existing_gateway = _make_gateway(
+            id="gw-update-123",
+            name="Update Test Gateway",
+            url="https://update-gateway.example.com",
+            gateway_mode="cache",
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=existing_gateway)
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Update to direct_proxy mode
+        update_data = GatewayUpdate(gateway_mode="direct_proxy")
+
+        await gateway_service.update_gateway(
+            session,
+            "gw-update-123",
+            update_data,
+            modified_by="admin@example.com",
+        )
+
+        # Verify gateway_mode was updated
+        assert existing_gateway.gateway_mode == "direct_proxy"
+        session.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_mode_from_direct_proxy_to_cache(self, gateway_service):
+        """Test updating gateway mode from direct_proxy to cache."""
+        # Existing gateway with direct_proxy mode
+        existing_gateway = _make_gateway(
+            id="gw-update-456",
+            name="Proxy to Cache Gateway",
+            url="https://proxy-to-cache.example.com",
+            gateway_mode="direct_proxy",
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=existing_gateway)
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Update to cache mode
+        update_data = GatewayUpdate(gateway_mode="cache")
+
+        await gateway_service.update_gateway(
+            session,
+            "gw-update-456",
+            update_data,
+            modified_by="admin@example.com",
+        )
+
+        # Verify gateway_mode was updated
+        assert existing_gateway.gateway_mode == "cache"
+        session.commit.assert_called()
+
 
 
 class TestGatewayRefresh:
