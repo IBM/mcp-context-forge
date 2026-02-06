@@ -1872,20 +1872,30 @@ jinja_env = Environment(
     auto_reload=settings.templates_auto_reload,
 )
 
+
 # Add custom filter to decode HTML entities for backward compatibility with old database records
 # that were stored with HTML entities (e.g., &#x27; instead of ')
 def decode_html_entities(value: str) -> str:
     """Decode HTML entities in strings for display.
-    
+
     This filter handles legacy data that was stored with HTML entities.
     New data is stored without encoding, but this ensures old records display correctly.
+
+    Args:
+        value: String that may contain HTML entities
+
+    Returns:
+        String with HTML entities decoded to their original characters
     """
     if not value:
         return value
+    # Standard
     import html
+
     return html.unescape(value)
 
-jinja_env.filters['decode_html'] = decode_html_entities
+
+jinja_env.filters["decode_html"] = decode_html_entities
 
 templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
