@@ -2182,10 +2182,6 @@ class ResourceService:
                         logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
 
                         try:
-                            # Third-Party
-                            from mcp import ClientSession  # pylint: disable=import-outside-toplevel
-                            from mcp.client.streamable_http import streamablehttp_client  # pylint: disable=import-outside-toplevel
-
                             # First-Party
                             from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
 
@@ -2340,8 +2336,6 @@ class ResourceService:
 
                 # ResourceContents covers TextResourceContents and BlobResourceContents (MCP-compliant)
                 # ResourceContent is the legacy model for backwards compatibility
-                # First-Party
-                from mcpgateway.common.models import ResourceContents  # pylint: disable=import-outside-toplevel
 
                 if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     resource_response = await self.invoke_resource(

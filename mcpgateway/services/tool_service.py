@@ -213,7 +213,6 @@ def _canonicalize_schema(schema: dict) -> str:
 
 
 def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
-    # noqa: DAR401
     """Validate instance against schema using cached validator class.
 
     Creates a fresh validator instance for thread safety, but reuses
@@ -1094,7 +1093,7 @@ class ToolService:
             # Check for existing tool with the same name and visibility
             if visibility.lower() == "public":
                 # Check for existing public tool with the same name
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "public")).scalar_one_or_none()
+                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "public")).scalar_one_or_none()  # pylint: disable=comparison-with-callable
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
             elif visibility.lower() == "team" and team_id:
@@ -2583,10 +2582,6 @@ class ToolService:
         logger.info(f"Direct proxy tool invocation: {name} via gateway {gateway_id}")
 
         # Look up gateway
-        # First-Party
-        from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-        from mcpgateway.utils.services_auth import decode_auth  # pylint: disable=import-outside-toplevel
-
         # Use a fresh session for this lookup
         with fresh_db_session() as db:
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
@@ -2927,7 +2922,6 @@ class ToolService:
         gateway_ca_cert_sig = gateway_payload.get("ca_certificate_sig") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
-        gateway_mode = gateway_payload.get("gateway_mode", "cache") if has_gateway else "cache"
 
         # Decrypt and apply query param auth to URL if applicable
         gateway_auth_query_params_decrypted: Optional[Dict[str, str]] = None
