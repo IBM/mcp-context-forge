@@ -547,6 +547,7 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
 
     @staticmethod
     def _pool_owner_key(mcp_session_id: str) -> str:
+        """Return Redis key for session ownership tracking."""
         return f"mcpgw:pool_owner:{mcp_session_id}"
 
     async def register_session_mapping(

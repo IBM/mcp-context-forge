@@ -581,6 +581,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 result_data = forwarded_response.get("result", {})
 
                 def _rehydrate_content_items(items: Any) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource]:
+                    """Convert forwarded tool result items back to MCP content types."""
                     if not isinstance(items, list):
                         return []
                     converted: list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource] = []
@@ -1615,6 +1616,7 @@ class SessionManagerWrapper:
         captured_session_id: Optional[str] = None
 
         async def send_with_capture(message: Dict[str, Any]) -> None:
+            """Wrap ASGI send to capture session ID from response headers."""
             nonlocal captured_session_id
             if message["type"] == "http.response.start" and settings.mcpgateway_session_affinity_enabled:
                 # Look for mcp-session-id in response headers
