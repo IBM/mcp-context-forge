@@ -44,7 +44,7 @@
         </td>
         <td class="px-6 py-4 whitespace-normal break-words text-sm font-medium text-gray-900 dark:text-gray-100 w-24">{{ resource.name }}</td>
         <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ resource.description or 'N/A' }}</td>
-        <td class="px-6 py-4 whitespace-nowrap">{% if resource.tags %}{% for tag in resource.tags %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{{ tag }}</span>{% endfor %}{% else %}<span class="text-gray-500 dark:text-gray-300 text-xs">None</span>{% endif %}</td>
+        <td class="px-6 py-4 whitespace-nowrap">{% if resource.tags %}{% for tag in resource.tags %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}</span>{% endfor %}{% else %}<span class="text-gray-500 dark:text-gray-300 text-xs">None</span>{% endif %}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{% if resource.ownerEmail %}{{ resource.ownerEmail }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{% if resource.team %}{{ resource.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm w-20">
