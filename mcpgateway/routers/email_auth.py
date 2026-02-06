@@ -32,6 +32,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
+    AdminUserUpdateRequest,
     AuthenticationResponse,
     AuthEventResponse,
     ChangePasswordRequest,
@@ -682,7 +683,7 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
 
 @email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
-async def update_user(user_email: str, user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def update_user(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Update user information (admin only).
 
     Args:
@@ -706,7 +707,9 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
         # Update user fields
-        user.full_name = user_request.full_name
+        if hasattr(user_request, "full_name") and user_request.full_name is not None:
+            user.full_name = user_request.full_name
+
         user.is_admin = getattr(user_request, "is_admin", user.is_admin)
 
         # Update password if provided
@@ -737,6 +740,8 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
+    except PasswordValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")

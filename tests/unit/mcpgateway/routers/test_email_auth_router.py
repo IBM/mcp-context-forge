@@ -21,8 +21,8 @@ import pytest
 
 # First-Party
 from mcpgateway.db import EmailUser
-from mcpgateway.schemas import ChangePasswordRequest, EmailRegistrationRequest, SuccessResponse
-from mcpgateway.services.email_auth_service import AuthenticationError, EmailValidationError, UserExistsError
+from mcpgateway.schemas import ChangePasswordRequest, AdminUserUpdateRequest, EmailRegistrationRequest, SuccessResponse
+from mcpgateway.services.email_auth_service import AuthenticationError, EmailValidationError, PasswordValidationError, UserExistsError
 
 
 class TestEmailAuthLoginPasswordChangeRequired:
@@ -576,17 +576,127 @@ async def test_admin_get_update_delete_user():
 
         with patch("mcpgateway.services.argon2_service.Argon2PasswordService") as MockPasswordService:
             MockPasswordService.return_value.hash_password_async = AsyncMock(return_value="hashed")
-            update_request = EmailRegistrationRequest(email="user@example.com", password="newpassword123", full_name="Updated", is_admin=True)
+            update_request = AdminUserUpdateRequest(email="user@example.com", password="newPassword123!", full_name="Updated", is_admin=True)
 
             response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
             assert response.email == "user@example.com"
 
             response = await email_auth.update_user("user@example.com", update_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
             assert response.full_name == "Updated"
+            # Verify password was hashed
             assert user.password_hash == "hashed"
+            # Verify password was validated
+            auth_service.validate_password.assert_called_once_with("newPassword123!")
+            # Verify password_change_required was cleared
+            assert user.password_change_required is False
+            # Verify password_changed_at was set
+            assert hasattr(user, 'password_changed_at')
 
             delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
             assert delete_response.success is True
+
+
+@pytest.mark.asyncio
+async def test_admin_update_user_without_full_name():
+    """Test updating only full_name field."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    user = MagicMock(spec=EmailUser)
+    user.email = "user@example.com"
+    user.full_name = "Old Name"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(timezone.utc)
+    user.last_login = None
+    user.password_change_required = False
+    user.password_hash = None
+    user.is_email_verified = MagicMock(return_value=True)
+
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        auth_service = MockAuthService.return_value
+        auth_service.get_user_by_email = AsyncMock(return_value=user)
+        auth_service.is_last_active_admin = AsyncMock(return_value=False)
+
+        update_request = AdminUserUpdateRequest(is_admin=False)
+
+        response = await email_auth.update_user(
+            "user@example.com",
+            update_request,
+            current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+            db=mock_db
+        )
+
+        assert response.full_name == "Old Name"
+        assert user.full_name == "Old Name"
+        # Password should not be touched
+        assert not hasattr(user, 'password_hash') or user.password_hash is None
+
+
+@pytest.mark.asyncio
+async def test_admin_update_user_invalid_password():
+    """Test updating with invalid password raises PasswordValidationError."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    user = MagicMock(spec=EmailUser)
+    user.email = "user@example.com"
+    user.full_name = "User Name"
+    user.is_admin = False
+    user.is_active = True
+    user.auth_provider = "local"
+    user.created_at = datetime.now(timezone.utc)
+    user.is_email_verified = MagicMock(return_value=True)
+
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        auth_service = MockAuthService.return_value
+        auth_service.get_user_by_email = AsyncMock(return_value=user)
+        # Simulate password validation failure
+        auth_service.validate_password = MagicMock(side_effect=PasswordValidationError("Password too weak"))
+
+        update_request = AdminUserUpdateRequest(password="thisisweak", is_admin=False)
+
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.update_user(
+                "user@example.com",
+                update_request,
+                current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                db=mock_db
+            )
+
+        assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Password too weak" in str(excinfo.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_admin_update_user_not_found():
+    """Test updating non-existent user returns 404."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        auth_service = MockAuthService.return_value
+        auth_service.get_user_by_email = AsyncMock(return_value=None)
+
+        update_request = AdminUserUpdateRequest(full_name="New Name", is_admin=False)
+
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.update_user(
+                "nonexistent@example.com",
+                update_request,
+                current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                db=mock_db
+            )
+
+        assert excinfo.value.status_code == status.HTTP_404_NOT_FOUND
+        assert "User not found" in str(excinfo.value.detail)
 
 
 @pytest.mark.asyncio
