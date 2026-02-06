@@ -19,6 +19,7 @@ This ensures backward compatibility when RBAC is enabled on an existing system.
 
 # Standard
 from datetime import datetime, timezone
+import json
 from typing import Sequence, Union
 import uuid
 
@@ -73,9 +74,6 @@ def upgrade() -> None:
     roles_to_update = bind.execute(roles_query, {"platform_admin": "platform_admin"}).fetchall()
 
     updated_roles_count = 0
-    # Standard
-    import json
-
     for role_row in roles_to_update:
         role_id = role_row[0]
         role_name = role_row[1]
@@ -377,8 +375,6 @@ def downgrade() -> None:
     roles_to_update = bind.execute(roles_query, {"platform_admin": "platform_admin"}).fetchall()
 
     updated_roles_count = 0
-    # Standard
-    import json
 
     for role_row in roles_to_update:
         role_id = role_row[0]
