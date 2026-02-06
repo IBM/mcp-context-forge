@@ -9,6 +9,7 @@ import pytest
 
 # First-Party
 import mcpgateway.toolops.toolops_altk_service as svc
+import mcpgateway.services.mcp_client_chat_service as mcs
 
 
 class DummyTool:
@@ -26,7 +27,7 @@ class DummyTool:
 def test_custom_execute_prompt_success(monkeypatch):
     llm = MagicMock()
     llm.invoke.return_value = MagicMock(content="ok")
-    monkeypatch.setattr(svc, "get_llm_instance", lambda model_type="chat": (llm, None))
+    monkeypatch.setattr(svc, "get_llm_instance", lambda model_id="model-1",model_type="chat": (llm, None))
     assert svc.custom_mcp_cf_execute_prompt("hello") == "ok"
 
 
@@ -64,7 +65,7 @@ async def test_validation_generate_test_cases_generate(monkeypatch):
     monkeypatch.setattr(svc, "TestcaseGeneration", DummyTestcaseGen)
     monkeypatch.setattr(svc, "NlUtteranceGeneration", DummyNlGen)
 
-    result = await svc.validation_generate_test_cases("tool-1", tool_service, db=MagicMock(), mode="generate")
+    result = await svc.validation_generate_test_cases("model-1", "tool-1", tool_service, db=MagicMock(), mode="generate")
     assert result == ["final"]
     assert statuses == ["in-progress", "completed"]
 
@@ -76,7 +77,7 @@ async def test_validation_generate_test_cases_query(monkeypatch):
     record = MagicMock(run_status="completed", test_cases=[{"case": 1}])
     monkeypatch.setattr(svc, "query_testcases_table", lambda _tool_id, _db: record)
 
-    result = await svc.validation_generate_test_cases("tool-1", tool_service, db=MagicMock(), mode="query")
+    result = await svc.validation_generate_test_cases("model-1", "tool-1", tool_service, db=MagicMock(), mode="query")
     assert result == [{"case": 1}]
 
 
@@ -86,7 +87,7 @@ async def test_validation_generate_test_cases_status_not_initiated(monkeypatch):
     tool_service.get_tool = AsyncMock(return_value=DummyTool())
     monkeypatch.setattr(svc, "query_testcases_table", lambda _tool_id, _db: None)
 
-    result = await svc.validation_generate_test_cases("tool-1", tool_service, db=MagicMock(), mode="status")
+    result = await svc.validation_generate_test_cases("model-1", "tool-1", tool_service, db=MagicMock(), mode="status")
     assert result == [{"status": "not-initiated", "tool_id": "tool-1"}]
 
 
@@ -97,7 +98,7 @@ async def test_validation_generate_test_cases_error(monkeypatch):
     statuses = []
     monkeypatch.setattr(svc, "populate_testcases_table", lambda _tool_id, _tcs, status, _db: statuses.append(status))
 
-    result = await svc.validation_generate_test_cases("tool-1", tool_service, db=MagicMock(), mode="generate")
+    result = await svc.validation_generate_test_cases("model-1", "tool-1", tool_service, db=MagicMock(), mode="generate")
     assert result[0]["status"] == "error"
     assert "boom" in result[0]["error_message"]
     assert "failed" in statuses
@@ -117,7 +118,9 @@ async def test_execute_tool_nl_test_cases_transport(monkeypatch, path, expected_
     tool_service = MagicMock()
     tool_service.get_tool = AsyncMock(return_value=DummyTool(url))
     monkeypatch.setattr(svc, "query_tool_auth", lambda _tool_id, _db: {"Authorization": "Bearer t"})
-    monkeypatch.setattr(svc, "TOOLOPS_LLM_CONFIG", svc.LLMConfig(provider="ollama", config={}))
+    llm = MagicMock()
+    llm.invoke.return_value = MagicMock(content="ok")
+    monkeypatch.setattr(svc, "get_llm_instance", lambda model_id="model-1",model_type="chat": (llm, mcs.LLMConfig(provider="gateway",config=mcs.GatewayConfig(model="model-1", temperature=0, max_tokens=100))))
 
     created_configs = []
 
@@ -129,7 +132,7 @@ async def test_execute_tool_nl_test_cases_transport(monkeypatch, path, expected_
 
     monkeypatch.setattr(svc, "MCPChatService", DummyChatService)
 
-    result = await svc.execute_tool_nl_test_cases("tool-1", ["hi", "bye"], tool_service, db=MagicMock())
+    result = await svc.execute_tool_nl_test_cases("model-1", "tool-1", ["hi", "bye"], tool_service, db=MagicMock())
     assert result[0] == "ok"
     assert "fail" in result[1]
     assert created_configs[0].mcp_server.transport == expected_transport
@@ -147,7 +150,7 @@ async def test_enrich_tool_updates_description(monkeypatch):
 
     monkeypatch.setattr(svc, "ToolOpsMCPCFToolEnrichment", lambda llm_client=None, gen_mode=None: DummyEnrichment())
 
-    description, tool_schema = await svc.enrich_tool("tool-1", tool_service, db=MagicMock())
+    description, tool_schema = await svc.enrich_tool("model-1", "tool-1", tool_service, db=MagicMock())
     assert description == "enriched"
     assert tool_schema.name == "tool-name"
     tool_service.update_tool.assert_awaited_once()
