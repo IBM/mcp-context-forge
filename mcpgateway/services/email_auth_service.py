@@ -395,7 +395,6 @@ class EmailAuthService:
 
                     if not existing_assignment:
                         # Create role assignment
-                        # Use global scope
                         role_scope = default_role_scope  # This role applies to all teams - adjust if you want team-specific default roles
                         user_role = UserRole(
                             user_email=email,
