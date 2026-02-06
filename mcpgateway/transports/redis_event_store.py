@@ -97,26 +97,49 @@ class RedisEventStore(EventStore):
     """Redis-backed event store for multi-worker Streamable HTTP."""
 
     def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600):
+        """Initialize Redis event store.
+
+        Args:
+            max_events_per_stream: Maximum events per stream (ring buffer size).
+            ttl: Stream TTL in seconds.
+        """
         self.max_events = max_events_per_stream
         self.ttl = ttl
         logger.debug("RedisEventStore initialized: max_events=%s ttl=%ss", max_events_per_stream, ttl)
 
     def _get_stream_meta_key(self, stream_id: str) -> str:
+        """Return Redis key for stream metadata hash."""
         return f"mcpgw:eventstore:{stream_id}:meta"
 
     def _get_stream_events_key(self, stream_id: str) -> str:
+        """Return Redis key for stream events sorted set."""
         return f"mcpgw:eventstore:{stream_id}:events"
 
     def _get_stream_messages_key(self, stream_id: str) -> str:
+        """Return Redis key for stream messages hash."""
         return f"mcpgw:eventstore:{stream_id}:messages"
 
     def _event_index_prefix(self) -> str:
+        """Return prefix for per-event index keys."""
         return "mcpgw:eventstore:event_index:"
 
     def _event_index_key(self, event_id: str) -> str:
+        """Return Redis key for event index lookup."""
         return f"{self._event_index_prefix()}{event_id}"
 
     async def store_event(self, stream_id: str, message: JSONRPCMessage | None) -> str:
+        """Store an event in Redis atomically.
+
+        Args:
+            stream_id: Unique stream identifier.
+            message: JSON-RPC message to store (None for priming events).
+
+        Returns:
+            Unique event_id for this event.
+
+        Raises:
+            RuntimeError: If Redis client is not available.
+        """
         redis: Redis = await get_redis_client()
         if redis is None:
             raise RuntimeError("Redis client not available - cannot store event")
@@ -148,6 +171,15 @@ class RedisEventStore(EventStore):
         return event_id
 
     async def replay_events_after(self, last_event_id: str, send_callback: EventCallback) -> str | None:
+        """Replay events after a specific event_id.
+
+        Args:
+            last_event_id: Event ID to replay from.
+            send_callback: Async callback to receive replayed messages.
+
+        Returns:
+            stream_id if found, None if event not found or evicted.
+        """
         redis: Redis = await get_redis_client()
         if redis is None:
             logger.debug("Redis client not available - cannot replay events")
