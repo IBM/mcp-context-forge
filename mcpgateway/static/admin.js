@@ -4710,6 +4710,10 @@ async function viewPrompt(promptName) {
         <div class="grid grid-cols-2 gap-6 mb-6">
           <div class="space-y-3">
             <div>
+              <span id="prompt-id-label" class="font-medium text-gray-700 dark:text-gray-300">Prompt ID:</span>
+              <div class="mt-1 prompt-id text-sm font-mono text-indigo-600 dark:text-indigo-400" aria-labelledby="prompt-id-label"></div>
+            </div>
+            <div>
               <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
               <div class="mt-1 prompt-display-name font-medium"></div>
             </div>
@@ -4859,6 +4863,7 @@ async function viewPrompt(promptName) {
                 }
             };
 
+            setText(".prompt-id", prompt.id || "N/A");
             setText(".prompt-display-name", promptLabel);
             setText(".prompt-name", prompt.name || "N/A");
             setText(".prompt-original-name", prompt.originalName || "N/A");
