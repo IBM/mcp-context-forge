@@ -63,9 +63,9 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | teams.read, teams.update, teams.join, teams.manage_members, tools.read, tools.execute, resources.read, prompts.read, admin.dashboard,gateways.read,servers.read |
-| `developer` | team | teams.join, tools.read, tools.execute, resources.read, prompts.read, admin.dashboard,gateways.read,servers.read |
-| `viewer` | team | teams.join, tools.read, resources.read, prompts.read, admin.dashboard,gateways.read,servers.read |
+| `team_admin` | team | teams.read, teams.update, teams.join, teams.manage_members, tools.read, tools.execute, resources.read, prompts.read, admin.dashboard, gateways.read, servers.read |
+| `developer` | team | teams.join, tools.read, tools.execute, resources.read, prompts.read, admin.dashboard, gateways.read, servers.read |
+| `viewer` | team | teams.join, tools.read, resources.read, prompts.read, admin.dashboard, gateways.read, servers.read |
 
 !!! info "Default Role Assignment"
     **New users automatically receive default roles upon creation:**
@@ -80,7 +80,7 @@ Logical groups that:
     
     - Admin users without roles are assigned the `platform_admin` role with global scope
     - Non-admin users with team scope but without roles are assigned the `viewer` role with team scope
-   
+
 ### Resources
 Protected entities:
 

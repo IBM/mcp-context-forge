@@ -226,7 +226,7 @@ class PermissionService:
             cache_key = f"{user_email}:{team_id or 'global'}"
         if self._is_cache_valid(cache_key):
             cached_perms = self._permission_cache[cache_key]
-            logger.info(f"[RBAC DEBUG] Cache hit for {user_email} (team_id={team_id}): {cached_perms}")
+            logger.debug(f"[RBAC DEBUG] Cache hit for {user_email} (team_id={team_id}): {cached_perms}")
             return cached_perms
 
         permissions = set()
@@ -234,12 +234,12 @@ class PermissionService:
         # Get all active roles for the user (with eager-loaded role relationship)
         user_roles = await self._get_user_roles(user_email, team_id, include_all_teams=include_all_teams)
         user_roles = await self._get_user_roles(user_email, team_id)
-        logger.info(f"[RBAC DEBUG] Found {len(user_roles)} roles for {user_email} (team_id={team_id})")
+        logger.debug(f"[RBAC DEBUG] Found {len(user_roles)} roles for {user_email} (team_id={team_id})")
 
         # Collect permissions from all roles
         for user_role in user_roles:
             role_permissions = user_role.role.get_effective_permissions()
-            logger.info(f"[RBAC DEBUG] Role '{user_role.role.name}' (scope={user_role.scope}, scope_id={user_role.scope_id}) has permissions: {role_permissions}")
+            logger.debug(f"[RBAC DEBUG] Role '{user_role.role.name}' (scope={user_role.scope}, scope_id={user_role.scope_id}) has permissions: {role_permissions}")
             permissions.update(role_permissions)
 
         # Cache both permissions and roles

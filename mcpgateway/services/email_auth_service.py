@@ -390,7 +390,7 @@ class EmailAuthService:
                 if default_role:
                     # Check if role assignment already exists (shouldn't happen for new user, but be safe)
                     existing_assignment = self.db.execute(
-                        select(UserRole).where(and_(UserRole.user_email == email, UserRole.role_id == default_role.id, UserRole.scope == "global"))
+                        select(UserRole).where(and_(UserRole.user_email == email, UserRole.role_id == default_role.id, UserRole.scope == default_role_scope))
                     ).scalar_one_or_none()
 
                     if not existing_assignment:
