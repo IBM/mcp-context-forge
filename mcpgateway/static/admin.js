@@ -20928,16 +20928,6 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
     }
-
-    // Handle HTMX events to show/hide modal
-    document.body.addEventListener("htmx:afterRequest", function (event) {
-        if (
-            event.detail.pathInfo.requestPath.includes("/admin/users/") &&
-            event.detail.pathInfo.requestPath.includes("/edit")
-        ) {
-            showUserEditModal();
-        }
-    });
 });
 
 // Expose user modal functions to global scope
