@@ -1609,12 +1609,19 @@ services:
       - |
         # Check if we have an encrypted key that needs decryption
         if [ -f /certs/key-encrypted.pem ] && [ -n "${KEY_FILE_PASSWORD}" ]; then
+          # Validate: encrypted key requires matching certificate
+          if [ ! -f /certs/cert.pem ]; then
+            echo "❌ Found key-encrypted.pem but cert.pem is missing"
+            echo "   Please provide both files: cert.pem and key-encrypted.pem"
+            exit 1
+          fi
           echo "🔓 Decrypting passphrase-protected key for nginx..."
           if [ -f /certs/key.pem ]; then
             echo "⚠️  Overwriting existing key.pem with decrypted version"
           fi
           # Decrypt the key for nginx (nginx doesn't support passphrase-protected keys)
-          openssl rsa -in /certs/key-encrypted.pem -out /certs/key.pem -passin "pass:${KEY_FILE_PASSWORD}"
+          # Using env: prefix to avoid exposing password in process listing
+          openssl rsa -in /certs/key-encrypted.pem -out /certs/key.pem -passin env:KEY_FILE_PASSWORD
           if [ $? -eq 0 ]; then
             chmod 640 /certs/key.pem
             echo "✅ Successfully decrypted key-encrypted.pem to key.pem"
