@@ -41,13 +41,13 @@ where
 
     // Wait for writer to finish
     let _ = exit.await;
-    
+
     // Wait for all workers to complete and detect panics
     for (i, handle) in worker_handles.into_iter().enumerate() {
         if let Err(e) = handle.await {
             error!("Worker {} panicked: {:?}", i, e);
         }
     }
-    
+
     debug!("Finish");
 }

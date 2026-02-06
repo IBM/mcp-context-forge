@@ -18,11 +18,16 @@ pub async fn test_streamer_no_session_id() -> Result<(), Box<dyn std::error::Err
 
     let client = McpStreamClient::try_new(config)?;
     assert!(!client.is_auth());
-    let result: Option<String> = client.process_session_id(&response);
+    client.process_session_id(&response);
+    println!("{client:?}");
     assert!(
-        result.is_none(),
+        !client.is_ready(),
         "Should return None when session id not found"
     );
+
+    for _ in 0..42 {
+        client.set_session_id("same-id");
+    }
 
     Ok(())
 }

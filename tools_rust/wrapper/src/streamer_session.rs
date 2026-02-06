@@ -1,23 +1,15 @@
 use crate::streamer::{McpStreamClient, SID};
 use reqwest::Response;
-use tracing::{debug, error};
+use tracing::error;
 
 impl McpStreamClient {
     /// saves session id for future use
-    pub fn process_session_id(&self, response: &Response) -> Option<String> {
+    pub fn process_session_id(&self, response: &Response) {
         if let Some(val) = response.headers().get(SID) {
-            if let Ok(s) = val.to_str() {
-                self.set_session_id(Some(s.to_string()));
-                Some(s.to_string())
-            } else {
-                error!("Header contains invalid characters");
-                None
+            match val.to_str() {
+                Ok(s) => self.set_session_id(s),
+                Err(e) => error!("Invalid header: {e}"),
             }
-        } else {
-            if !self.is_ready() {
-                debug!("Session id not found");
-            }
-            None
         }
     }
 }

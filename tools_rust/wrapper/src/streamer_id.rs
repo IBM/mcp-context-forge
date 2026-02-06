@@ -2,22 +2,28 @@ use crate::streamer::McpStreamClient;
 use std::sync::Arc;
 
 impl McpStreamClient {
-    #[allow(dead_code)]
     /// sets received session id
-    pub fn set_session_id(&self, id: Option<String>) {
-        if self.session_id.load().is_some() || id.is_none() {
-            return;
+    pub fn set_session_id(&self, new_id: &str) {
+        let mut current_guard = self.session_id.load();
+        if current_guard.as_deref() == Some(new_id) {
+            return; // no update
         }
-        let new_val = Arc::new(id);
-        self.session_id.rcu(|current| {
-            if current.is_some() {
-                Arc::clone(current)
-            } else {
-                Arc::clone(&new_val)
+        let new_arc = Arc::new(Some(new_id.to_string()));
+        loop {
+            let prev_guard = self // safe update
+                .session_id
+                .compare_and_swap(&*current_guard, Arc::clone(&new_arc));
+
+            if Arc::ptr_eq(&*prev_guard, &*current_guard) {
+                return; // Success
             }
-        });
+            current_guard = prev_guard;
+            if current_guard.as_deref() == Some(new_id) {
+                return; // another thread set it to the desired value
+            }
+        }
     }
-    #[allow(dead_code)]
+
     ///  session id
     #[must_use]
     pub fn get_session_id(&self) -> Option<String> {

@@ -122,6 +122,7 @@ prune deployment
 prune mcp-servers
 prune agent_runtimes
 prune llms
+prune tools_rust
 
 # Development and CI/CD artifacts
 prune .github

@@ -12,7 +12,6 @@ async fn test_write() -> Result<(), Box<dyn std::error::Error>> {
         let res = PostResult {
             sse,
             out: vec![Bytes::from(out)],
-            session_id: Some("1".to_string()),
         };
         write_output(1, &tx, res).await;
 
@@ -31,7 +30,6 @@ async fn test_write_fail() -> Result<(), Box<dyn std::error::Error>> {
     let res = PostResult {
         sse: false,
         out: vec![Bytes::from("asdf")],
-        session_id: Some("1".to_string()),
     };
     drop(rx);
     write_output(1, &tx, res).await;

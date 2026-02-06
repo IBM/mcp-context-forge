@@ -22,10 +22,10 @@ pub async fn test_streamer_bad_chars() -> Result<(), Box<dyn std::error::Error>>
     let config = Config::from_cli(["test", "--url", "file:///tmp"]);
     let client = McpStreamClient::try_new(config)?;
 
-    let result: Option<String> = client.process_session_id(&response);
+    client.process_session_id(&response);
     assert!(
-        result.is_none(),
-        "Should return None for invalid UTF-8 headers"
+        !client.is_ready(),
+        "Should be 'not ready' for invalid UTF-8 headers"
     );
 
     Ok(())

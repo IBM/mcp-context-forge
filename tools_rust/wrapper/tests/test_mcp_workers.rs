@@ -20,29 +20,35 @@ pub async fn test_mcp_workers() -> Result<(), Box<dyn std::error::Error>> {
 
     let expected = "ok";
 
-    let mock_init = server
-        .mock("POST", "/mcp/")
-        .with_status(200)
-        .with_header("mcp-session-id", "session-42")
-        .with_header("content-type", "text/event-stream") // sse emulation
-        .with_body(format!("data: {expected}"))
-        .create_async()
-        .await;
-
     let url = server.url();
-    let config = Config::from_cli(["test", "--url", &format!("{url}/mcp/")]);
+    for opt in [None, Some("--http-pool-per-worker")] {
+        let mock_init = server
+            .mock("POST", "/mcp/")
+            .with_status(200)
+            .with_header("mcp-session-id", "session-42")
+            .with_header("content-type", "text/event-stream") // sse emulation
+            .with_body(format!("data: {expected}"))
+            .create_async()
+            .await;
 
-    let client = McpStreamClient::try_new(config)?;
-    let (tx_in, rx_in) = flume::unbounded();
-    let (tx_out, rx_out) = flume::unbounded();
+        let url = format!("{url}/mcp/");
+        let args: Vec<&str> = [Some("test"), Some("--url"), Some(url.as_str()), opt]
+            .into_iter()
+            .flatten() // Discards the None
+            .collect();
+        let config = Config::from_cli(args);
 
-    let _ = spawn_workers(DEFAULT_CONCURRENCY, &Arc::new(client), &rx_in, tx_out).await;
-    tx_in.send_async(Bytes::from("init")).await?;
+        let client = McpStreamClient::try_new(config)?;
+        let (tx_in, rx_in) = flume::unbounded();
+        let (tx_out, rx_out) = flume::unbounded();
 
-    let out = rx_out.recv_async().await?;
+        let _ = spawn_workers(DEFAULT_CONCURRENCY, &Arc::new(client), &rx_in, tx_out).await;
+        tx_in.send_async(Bytes::from("init")).await?;
 
-    assert_eq!(expected, String::from_utf8_lossy(&out));
-    mock_init.assert_async().await;
+        let out = rx_out.recv_async().await?;
 
+        assert_eq!(expected, String::from_utf8_lossy(&out));
+        mock_init.assert_async().await;
+    }
     Ok(())
 }
