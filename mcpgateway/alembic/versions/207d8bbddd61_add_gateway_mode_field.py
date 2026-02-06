@@ -14,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = '207d8bbddd61'
-down_revision: Union[str, Sequence[str], None] = 'b1b2b3b4b5b6'
+revision: str = "207d8bbddd61"
+down_revision: Union[str, Sequence[str], None] = "b1b2b3b4b5b6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -36,14 +36,7 @@ def upgrade() -> None:
 
     # Add gateway_mode column with default value 'cache'
     op.add_column(
-        "gateways",
-        sa.Column(
-            "gateway_mode",
-            sa.String(length=20),
-            nullable=False,
-            server_default="cache",
-            comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)"
-        )
+        "gateways", sa.Column("gateway_mode", sa.String(length=20), nullable=False, server_default="cache", comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)")
     )
 
 

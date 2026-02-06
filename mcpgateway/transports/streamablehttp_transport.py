@@ -588,6 +588,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
                 if meta:
                     # Third-Party
                     from mcp.types import PaginatedRequestParams
+
                     params = PaginatedRequestParams(_meta=meta)
                     logger.debug(f"Forwarding _meta to remote gateway: {meta}")
 
@@ -600,6 +601,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
     except Exception as e:
         logger.exception(f"Error proxying resources/list to gateway {gateway.id}: {e}")
         return []
+
 
 async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:
     """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
@@ -647,8 +649,8 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         # Forward X-Context-Forge-Gateway-Id header
         if request_headers:
             for header_name, header_value in request_headers.items():
-                if header_name.lower() == 'x-context-forge-gateway-id':
-                    headers['X-Context-Forge-Gateway-Id'] = header_value
+                if header_name.lower() == "x-context-forge-gateway-id":
+                    headers["X-Context-Forge-Gateway-Id"] = header_value
                     break
 
         # Forward passthrough headers if configured
@@ -676,13 +678,11 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                     # Create params and inject _meta
                     request_params = ReadResourceRequestParams(uri=resource_uri)
                     request_params_dict = request_params.model_dump()
-                    request_params_dict['_meta'] = meta
+                    request_params_dict["_meta"] = meta
 
                     # Send request with _meta
                     result = await session.send_request(
-                        types.ClientRequest(
-                            ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))
-                        ),
+                        types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))),
                         types.ReadResourceResult,
                     )
                 else:
@@ -697,11 +697,12 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         return []
 
 
-
-
-
 @mcp_app.call_tool(validate_input=False)
-async def call_tool(name: str, arguments: dict) -> Union[types.CallToolResult, List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]]]:
+async def call_tool(name: str, arguments: dict) -> Union[
+    types.CallToolResult,
+    List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
+    Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],
+]:
     """
     Handles tool invocation via the MCP Server.
 
@@ -770,7 +771,7 @@ async def call_tool(name: str, arguments: dict) -> Union[types.CallToolResult, L
     gateway_id_from_header = None
     if request_headers:
         for header_name, header_value in request_headers.items():
-            if header_name.lower() == 'x-context-forge-gateway-id':
+            if header_name.lower() == "x-context-forge-gateway-id":
                 gateway_id_from_header = header_value
                 break
 
@@ -1073,7 +1074,7 @@ async def list_tools() -> List[types.Tool]:
                 gateway_id = None
                 if request_headers:
                     for header_name, header_value in request_headers.items():
-                        if header_name.lower() == 'x-context-forge-gateway-id':
+                        if header_name.lower() == "x-context-forge-gateway-id":
                             gateway_id = header_value
                             break
 
@@ -1093,7 +1094,9 @@ async def list_tools() -> List[types.Tool]:
                         try:
                             request_ctx = mcp_app.request_context
                             meta = request_ctx.meta
-                            logger.info(f"[LIST TOOLS] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta is not None}")
+                            logger.info(
+                                f"[LIST TOOLS] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta is not None}"
+                            )
                         except (LookupError, AttributeError) as e:
                             logger.debug(f"No request context available for _meta extraction: {e}")
 
@@ -1300,7 +1303,7 @@ async def list_resources() -> List[types.Resource]:
                 gateway_id = None
                 if request_headers:
                     for header_name, header_value in request_headers.items():
-                        if header_name.lower() == 'x-context-forge-gateway-id':
+                        if header_name.lower() == "x-context-forge-gateway-id":
                             gateway_id = header_value
                             break
 
@@ -1320,7 +1323,9 @@ async def list_resources() -> List[types.Resource]:
                         try:
                             request_ctx = mcp_app.request_context
                             meta = request_ctx.meta
-                            logger.info(f"[LIST RESOURCES] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta is not None}")
+                            logger.info(
+                                f"[LIST RESOURCES] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta is not None}"
+                            )
                         except (LookupError, AttributeError) as e:
                             logger.debug(f"No request context available for _meta extraction: {e}")
 
@@ -1402,7 +1407,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
             gateway_id = None
             if request_headers:
                 for header_name, header_value in request_headers.items():
-                    if header_name.lower() == 'x-context-forge-gateway-id':
+                    if header_name.lower() == "x-context-forge-gateway-id":
                         gateway_id = header_value
                         break
 
@@ -1422,7 +1427,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     try:
                         request_ctx = mcp_app.request_context
                         meta = request_ctx.meta
-                        logger.info(f"Using direct_proxy mode for resources/read {resource_uri}, server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header), forwarding _meta: {meta}")
+                        logger.info(
+                            f"Using direct_proxy mode for resources/read {resource_uri}, server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header), forwarding _meta: {meta}"
+                        )
                     except (LookupError, AttributeError) as e:
                         logger.debug(f"No request context available for _meta extraction: {e}")
 
@@ -1430,9 +1437,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     if contents:
                         # Return first content (text or blob)
                         first_content = contents[0]
-                        if hasattr(first_content, 'text'):
+                        if hasattr(first_content, "text"):
                             return first_content.text
-                        elif hasattr(first_content, 'blob'):
+                        elif hasattr(first_content, "blob"):
                             return first_content.blob
                     return ""
                 elif gateway:
