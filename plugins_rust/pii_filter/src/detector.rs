@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use super::config::{MaskingStrategy, PIIConfig, PIIType};
 use super::masking;
-use super::patterns::{compile_patterns, CompiledPatterns};
+use super::patterns::{CompiledPatterns, compile_patterns};
 
 /// Public API for benchmarks - detect PII in text
 #[allow(dead_code)]
@@ -242,14 +242,14 @@ impl PIIDetectorRust {
                     let det_bound = val_detections.bind(py);
                     if let Ok(det_dict) = det_bound.cast::<PyDict>() {
                         for (pii_type_str, items) in det_dict.iter() {
-                            if let Ok(type_str) = pii_type_str.extract::<String>() {
-                                if let Ok(pii_type) = self.str_to_pii_type(&type_str) {
-                                    let rust_items = self.py_list_to_detections(&items)?;
-                                    all_detections
-                                        .entry(pii_type)
-                                        .or_default()
-                                        .extend(rust_items);
-                                }
+                            if let Ok(type_str) = pii_type_str.extract::<String>()
+                                && let Ok(pii_type) = self.str_to_pii_type(&type_str)
+                            {
+                                let rust_items = self.py_list_to_detections(&items)?;
+                                all_detections
+                                    .entry(pii_type)
+                                    .or_default()
+                                    .extend(rust_items);
                             }
                         }
                     }
@@ -281,14 +281,14 @@ impl PIIDetectorRust {
                     let det_bound = item_detections.bind(py);
                     if let Ok(det_dict) = det_bound.cast::<PyDict>() {
                         for (pii_type_str, items) in det_dict.iter() {
-                            if let Ok(type_str) = pii_type_str.extract::<String>() {
-                                if let Ok(pii_type) = self.str_to_pii_type(&type_str) {
-                                    let rust_items = self.py_list_to_detections(&items)?;
-                                    all_detections
-                                        .entry(pii_type)
-                                        .or_default()
-                                        .extend(rust_items);
-                                }
+                            if let Ok(type_str) = pii_type_str.extract::<String>()
+                                && let Ok(pii_type) = self.str_to_pii_type(&type_str)
+                            {
+                                let rust_items = self.py_list_to_detections(&items)?;
+                                all_detections
+                                    .entry(pii_type)
+                                    .or_default()
+                                    .extend(rust_items);
                             }
                         }
                     }
@@ -396,11 +396,11 @@ impl PIIDetectorRust {
 
         if let Ok(dict) = detections.cast::<PyDict>() {
             for (key, value) in dict.iter() {
-                if let Ok(type_str) = key.extract::<String>() {
-                    if let Ok(pii_type) = self.str_to_pii_type(&type_str) {
-                        let items = self.py_list_to_detections(&value)?;
-                        rust_detections.insert(pii_type, items);
-                    }
+                if let Ok(type_str) = key.extract::<String>()
+                    && let Ok(pii_type) = self.str_to_pii_type(&type_str)
+                {
+                    let items = self.py_list_to_detections(&value)?;
+                    rust_detections.insert(pii_type, items);
                 }
             }
         }
