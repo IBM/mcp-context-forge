@@ -48,7 +48,6 @@ Examples:
 """
 
 # Standard
-import html
 import ipaddress
 import logging
 from pathlib import Path
@@ -325,8 +324,9 @@ class SecurityValidator:
             if pattern.search(value):
                 raise ValueError(f"{field_name} contains potentially dangerous character sequences")
 
-        # Escape HTML entities to ensure proper display
-        return html.escape(value, quote=True)
+        # Return the value without HTML escaping - escaping should be done at presentation layer (templates)
+        # not at data storage layer to avoid double-encoding issues
+        return value
 
     @classmethod
     def validate_name(cls, value: str, field_name: str = "Name") -> str:
