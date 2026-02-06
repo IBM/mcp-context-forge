@@ -21587,12 +21587,6 @@ function handleAdminTeamAction(event) {
             const modals = document.querySelectorAll('[id$="-modal"]');
             modals.forEach((modal) => modal.classList.add("hidden"));
         }
-        if (detail.refreshTeamsList) {
-            const teamsList = safeGetElement("teams-list");
-            if (teamsList && window.htmx) {
-                window.htmx.trigger(teamsList, "load");
-            }
-        }
         if (detail.refreshUnifiedTeamsList && window.htmx) {
             const unifiedList = document.getElementById("unified-teams-list");
             if (unifiedList) {
