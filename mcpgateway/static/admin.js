@@ -3390,7 +3390,10 @@ async function viewAgent(agentId) {
                 { label: "Endpoint URL", value: agent.endpointUrl },
                 { label: "Agent Type", value: agent.agentType },
                 { label: "Protocol Version", value: agent.protocolVersion },
-                { label: "Description", value: agent.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(agent.description) || "N/A",
+                },
                 { label: "Visibility", value: agent.visibility || "private" },
             ];
 
@@ -3653,7 +3656,7 @@ async function editA2AAgent(agentId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = agent.description || "";
+            descField.value = decodeHtml(agent.description || "");
         }
 
         // Set tags field
@@ -4291,7 +4294,10 @@ async function viewResource(resourceId) {
                 { label: "URI", value: resource.uri },
                 { label: "Name", value: resource.name },
                 { label: "Type", value: resource.mimeType || "N/A" },
-                { label: "Description", value: resource.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(resource.description) || "N/A",
+                },
                 {
                     label: "Visibility",
                     value: resource.visibility || "private",
@@ -4634,7 +4640,7 @@ async function editResource(resourceId) {
             nameField.value = nameValidation.value;
         }
         if (descField) {
-            descField.value = resource.description || "";
+            descField.value = decodeHtml(resource.description || "");
         }
         if (mimeField) {
             mimeField.value = resource.mimeType || "";
@@ -4885,7 +4891,10 @@ async function viewPrompt(promptName) {
             setText(".prompt-custom-name", prompt.customName || "N/A");
             setText(".prompt-gateway", gatewayLabel);
             setText(".prompt-visibility", prompt.visibility || "private");
-            setText(".prompt-description", prompt.description || "N/A");
+            setText(
+                ".prompt-description",
+                decodeHtml(prompt.description) || "N/A",
+            );
 
             const tagsEl = promptDetailsDiv.querySelector(".prompt-tags");
             if (tagsEl) {
@@ -5140,7 +5149,7 @@ async function editPrompt(promptId) {
             displayNameField.value = prompt.displayName || "";
         }
         if (descField) {
-            descField.value = prompt.description || "";
+            descField.value = decodeHtml(prompt.description || "");
         }
 
         // Set tags field
@@ -5227,7 +5236,10 @@ async function viewGateway(gatewayId) {
             const fields = [
                 { label: "Name", value: gateway.name },
                 { label: "URL", value: gateway.url },
-                { label: "Description", value: gateway.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(gateway.description) || "N/A",
+                },
                 { label: "Visibility", value: gateway.visibility || "private" },
             ];
 
@@ -5460,7 +5472,7 @@ async function editGateway(gatewayId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = gateway.description || "";
+            descField.value = decodeHtml(gateway.description || "");
         }
 
         // Set tags field
@@ -6339,7 +6351,7 @@ async function editServer(serverId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = server.description || "";
+            descField.value = decodeHtml(server.description || "");
         }
 
         const idField = safeGetElement("edit-server-id");
