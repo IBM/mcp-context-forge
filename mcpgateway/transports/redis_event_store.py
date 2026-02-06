@@ -108,23 +108,55 @@ class RedisEventStore(EventStore):
         logger.debug("RedisEventStore initialized: max_events=%s ttl=%ss", max_events_per_stream, ttl)
 
     def _get_stream_meta_key(self, stream_id: str) -> str:
-        """Return Redis key for stream metadata hash."""
+        """Return Redis key for stream metadata hash.
+
+        Args:
+            stream_id: Unique stream identifier.
+
+        Returns:
+            Redis key string.
+        """
         return f"mcpgw:eventstore:{stream_id}:meta"
 
     def _get_stream_events_key(self, stream_id: str) -> str:
-        """Return Redis key for stream events sorted set."""
+        """Return Redis key for stream events sorted set.
+
+        Args:
+            stream_id: Unique stream identifier.
+
+        Returns:
+            Redis key string.
+        """
         return f"mcpgw:eventstore:{stream_id}:events"
 
     def _get_stream_messages_key(self, stream_id: str) -> str:
-        """Return Redis key for stream messages hash."""
+        """Return Redis key for stream messages hash.
+
+        Args:
+            stream_id: Unique stream identifier.
+
+        Returns:
+            Redis key string.
+        """
         return f"mcpgw:eventstore:{stream_id}:messages"
 
     def _event_index_prefix(self) -> str:
-        """Return prefix for per-event index keys."""
+        """Return prefix for per-event index keys.
+
+        Returns:
+            Prefix string for index keys.
+        """
         return "mcpgw:eventstore:event_index:"
 
     def _event_index_key(self, event_id: str) -> str:
-        """Return Redis key for event index lookup."""
+        """Return Redis key for event index lookup.
+
+        Args:
+            event_id: Unique event identifier.
+
+        Returns:
+            Redis key string.
+        """
         return f"{self._event_index_prefix()}{event_id}"
 
     async def store_event(self, stream_id: str, message: JSONRPCMessage | None) -> str:
