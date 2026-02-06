@@ -196,7 +196,7 @@ def create_ssl_context(tls_config: MCPClientTLSConfig, plugin_name: str) -> ssl.
             # Disable certificate verification (not recommended for production)
             logger.warning(f"Certificate verification disabled for plugin '{plugin_name}'. This is not recommended for production use.")
             ssl_context.check_hostname = False  # NOSONAR as this is specifically NOT tls_config.verify
-            ssl_context.verify_mode = ssl.CERT_NONE  # nosec B502 #NOSONAR as this is specifically NOT tls_config.verify
+            ssl_context.verify_mode = ssl.CERT_NONE  # nosec B502  # noqa: DUO122  # NOSONAR as this is specifically NOT tls_config.verify
         else:
             # Enable strict certificate verification (production mode)
             # Load CA certificate bundle for server certificate validation

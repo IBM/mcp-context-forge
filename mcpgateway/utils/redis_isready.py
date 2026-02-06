@@ -217,7 +217,7 @@ def wait_for_redis_ready(
                     # Exponential backoff: interval * 2^(attempt-1), capped at max_backoff
                     backoff = min(interval_s * (2 ** (attempt - 1)), max_backoff)
                     # Add jitter (±25%) to prevent thundering herd
-                    jitter = backoff * random.uniform(-0.25, 0.25)  # nosec B311 - timing jitter, not security
+                    jitter = backoff * random.uniform(-0.25, 0.25)  # nosec B311  # noqa: DUO102 - timing jitter, not security
                     sleep_time = max(0.1, backoff + jitter)  # Ensure minimum 0.1s
                     log.debug(f"Attempt {attempt}/{max_retries} failed ({exc}) - retrying in {sleep_time:.1f}s")
                     time.sleep(sleep_time)
