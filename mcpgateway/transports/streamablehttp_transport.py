@@ -1332,11 +1332,14 @@ class SessionManagerWrapper:
         # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
         raw_headers = scope.get("headers") or []
         headers: dict[str, str] = {}
-        for k, v in raw_headers:
-            try:
-                headers[k.decode("latin-1").lower()] = v.decode("latin-1")
-            except Exception:
+        for item in raw_headers:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
                 continue
+            k, v = item
+            if not isinstance(k, (bytes, bytearray)) or not isinstance(v, (bytes, bytearray)):
+                continue
+            # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
+            headers[k.decode("latin-1").lower()] = v.decode("latin-1")
 
         # Log session info for debugging stateful sessions
         mcp_session_id = headers.get("mcp-session-id", "not-provided")
