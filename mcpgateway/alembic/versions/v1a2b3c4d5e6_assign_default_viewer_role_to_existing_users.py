@@ -73,6 +73,7 @@ def upgrade() -> None:
     roles_to_update = bind.execute(roles_query, {"platform_admin": "platform_admin"}).fetchall()
 
     updated_roles_count = 0
+    # Standard
     import json
 
     for role_row in roles_to_update:
@@ -376,6 +377,7 @@ def downgrade() -> None:
     roles_to_update = bind.execute(roles_query, {"platform_admin": "platform_admin"}).fetchall()
 
     updated_roles_count = 0
+    # Standard
     import json
 
     for role_row in roles_to_update:
