@@ -16503,3 +16503,129 @@ async def get_performance_history(
     )
 
     return history.model_dump()
+
+
+    # ============================================================================
+# Sandbox Policy Testing Routes (Issue #2226)
+# ============================================================================
+
+
+@admin_router.get("/admin/sandbox/", response_class=HTMLResponse)
+async def sandbox_dashboard(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Sandbox dashboard - Policy testing overview.
+    
+    Displays statistics, recent simulations, and quick action buttons
+    for policy testing and simulation.
+    
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    # Mock stats for now - replace with real database queries later
+    # TODO: Query actual statistics from database
+    stats = {
+        "total_test_cases": 12,
+        "total_simulations": 48,
+        "pass_rate": 87.5,
+        "critical_regressions": 2,
+    }
+    
+    # Mock recent simulations - replace with database query later
+    # TODO: Query recent simulation results from database
+    recent_simulations = [
+        {
+            "test_case_id": "test-001",
+            "subject_email": "developer@example.com",
+            "action": "tools.invoke",
+            "passed": True,
+            "execution_time_ms": 45.2,
+            "timestamp": datetime.now(timezone.utc),
+        },
+        {
+            "test_case_id": "test-002",
+            "subject_email": "admin@example.com",
+            "action": "resources.read",
+            "passed": True,
+            "execution_time_ms": 32.8,
+            "timestamp": datetime.now(timezone.utc),
+        },
+        {
+            "test_case_id": "test-003",
+            "subject_email": "viewer@example.com",
+            "action": "tools.delete",
+            "passed": False,
+            "execution_time_ms": 28.1,
+            "timestamp": datetime.now(timezone.utc),
+        },
+    ]
+    
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_partial.html",
+            "stats": stats,
+            "recent_simulations": recent_simulations,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.ui_airgapped,
+        },
+    )
+
+
+@admin_router.get("/admin/sandbox/simulate", response_class=HTMLResponse)
+async def sandbox_simulate_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Simulation runner page - Run single test case.
+    
+    Provides a form to create and run a single policy test case
+    with detailed results and explanation.
+    
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_simulate.html",
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.ui_airgapped,
+        },
+    )
+
+
+@admin_router.get("/admin/sandbox/test-cases", response_class=HTMLResponse)
+async def sandbox_test_cases_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Test case management page.
+    
+    List, create, edit, and delete test cases for policy testing.
+    
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    # TODO: Query test cases from database
+    test_cases = []
+    
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_test_cases.html",
+            "test_cases": test_cases,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.ui_airgapped,
+        },
+    )
