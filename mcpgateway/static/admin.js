@@ -333,6 +333,21 @@ function escapeHtml(unsafe) {
 }
 
 /**
+ * Decode HTML entities back to their original characters.
+ * Used when populating form fields to prevent double-encoding.
+ * @param {string} html - The HTML-encoded string
+ * @returns {string} Decoded string
+ */
+function decodeHtml(html) {
+    if (html === null || html === undefined) {
+        return "";
+    }
+    const txt = document.createElement("textarea");
+    txt.innerHTML = html;
+    return txt.value;
+}
+
+/**
  * Extract a human-readable error message from an API error response.
  * Handles both string errors and Pydantic validation error arrays.
  * @param {Object} error - The parsed JSON error response
@@ -2965,11 +2980,16 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            tool.description = tool.description.slice(
-                0,
-                tool.description.indexOf("*"),
-            );
-            descField.value = tool.description || "";
+            // Decode HTML entities to prevent double-encoding when saving
+            const cleanDesc = tool.description
+                ? tool.description.slice(
+                      0,
+                      tool.description.indexOf("*") > 0
+                          ? tool.description.indexOf("*")
+                          : tool.description.length,
+                  )
+                : "";
+            descField.value = decodeHtml(cleanDesc);
         }
         if (typeField) {
             typeField.value = tool.integrationType || "MCP";
@@ -10760,8 +10780,9 @@ async function testTool(toolId) {
         }
         if (descElement) {
             if (tool.description) {
-                // Escape HTML and then replace newlines with <br/> tags
-                descElement.innerHTML = escapeHtml(tool.description).replace(
+                // Decode HTML entities first, then escape and replace newlines with <br/> tags
+                const decodedDesc = decodeHtml(tool.description);
+                descElement.innerHTML = escapeHtml(decodedDesc).replace(
                     /\n/g,
                     "<br/>",
                 );
@@ -11715,12 +11736,15 @@ async function validateTool(toolId) {
         }
         if (descElement) {
             if (tool.description) {
-                // Escape HTML and then replace newlines with <br/> tags
-                tool.description = tool.description.slice(
+                // Decode HTML entities first, then escape and replace newlines with <br/> tags
+                const cleanDesc = tool.description.slice(
                     0,
-                    tool.description.indexOf("*"),
+                    tool.description.indexOf("*") > 0
+                        ? tool.description.indexOf("*")
+                        : tool.description.length,
                 );
-                descElement.innerHTML = escapeHtml(tool.description).replace(
+                const decodedDesc = decodeHtml(cleanDesc);
+                descElement.innerHTML = escapeHtml(decodedDesc).replace(
                     /\n/g,
                     "<br/>",
                 );
@@ -14137,14 +14161,19 @@ async function viewTool(toolId) {
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
             );
-            tool.description = tool.description.slice(
-                0,
-                tool.description.indexOf("*"),
-            );
+            const cleanDesc = tool.description
+                ? tool.description.slice(
+                      0,
+                      tool.description.indexOf("*") > 0
+                          ? tool.description.indexOf("*")
+                          : tool.description.length,
+                  )
+                : "";
+            const decodedDesc = decodeHtml(cleanDesc);
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
-            setTextSafely(".tool-description", tool.description);
+            setTextSafely(".tool-description", decodedDesc);
             setTextSafely(".tool-visibility", tool.visibility);
 
             // Set tags as HTML with badges
