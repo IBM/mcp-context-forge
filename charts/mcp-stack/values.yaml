@@ -204,6 +204,7 @@ mcpContextForge:
 
     # ─ Cache behaviour ─
     CACHE_TYPE: redis                # Backend cache driver (redis, memory, database)
+                                     # Required for multi-worker session affinity
     CACHE_PREFIX: "mcpgw:"           # Prefix applied to every cache key
     SESSION_TTL: "3600"              # TTL (s) for user sessions
     MESSAGE_TTL: "600"               # TTL (s) for ephemeral messages (completions)
@@ -430,6 +431,14 @@ mcpContextForge:
     # ─ Streaming sessions ─
     USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
     JSON_RESPONSE_ENABLED: "true"    # default to JSON; false for SSE stream
+
+    # ─ Multi-Worker Session Affinity (ADR-038) ─
+    # Routes client requests to same worker for session continuity
+    # Requires: CACHE_TYPE=redis, USE_STATEFUL_SESSIONS=true, Redis accessible
+    MCPGATEWAY_SESSION_AFFINITY_ENABLED: "false"
+    MCPGATEWAY_SESSION_AFFINITY_TTL: "300"           # session ownership TTL (seconds)
+    MCPGATEWAY_SESSION_AFFINITY_MAX_SESSIONS: "1"   # max sessions per worker
+    MCPGATEWAY_POOL_RPC_FORWARD_TIMEOUT: "30"       # forwarded request timeout (seconds)
 
     # ─ Gateway/Server Connection Timeout ─
     FEDERATION_TIMEOUT: "120"        # HTTP timeout (seconds) for gateway and MCP server requests
