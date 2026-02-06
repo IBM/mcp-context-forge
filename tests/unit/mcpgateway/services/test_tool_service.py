@@ -3569,14 +3569,15 @@ class TestToolListingGracefulErrorHandling:
         mock_db = Mock()
 
         # Create mock tools - tool2 will fail conversion
-        tool1 = Mock(id="1", original_name="good_tool_1", team_id=None)
+        tool1 = Mock(id="1", original_name="good_tool_1", team_id=None, created_at="2023-01-01T00:00:00")
         tool1.name = "good-tool-1"
-        tool2 = Mock(id="2", original_name="bad_tool", team_id=None)
+        tool2 = Mock(id="2", original_name="bad_tool", team_id=None, created_at="2023-01-01T00:00:00")
         tool2.name = "bad-tool"
-        tool3 = Mock(id="3", original_name="good_tool_2", team_id=None)
+        tool3 = Mock(id="3", original_name="good_tool_2", team_id=None, created_at="2023-01-01T00:00:00")
         tool3.name = "good-tool-2"
 
-        # Mock DB to return all three tools
+        # Mock DB to return all three tools via unified_paginate flow
+        # unified_paginate calls db.execute(query).scalars().all() at line 767
         mock_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[tool1, tool2, tool3])))))
         mock_db.commit = Mock()
 
@@ -3587,6 +3588,7 @@ class TestToolListingGracefulErrorHandling:
         tool_read_3.name = "good_tool_2"
 
         # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
+        # The exception types caught are: ValidationError, ValueError, KeyError, TypeError, binascii.Error
         def mock_convert(tool, include_metrics=False, include_auth=False):
             if tool.id == "2":
                 raise ValueError("Simulated conversion error: corrupted auth_value")
