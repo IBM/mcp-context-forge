@@ -870,7 +870,7 @@ class LogAggregator:
         if window_end is None and minutes_offset:
             reference = reference - timedelta(minutes=minutes_offset)
 
-        resolved_end = reference if window_end is None else reference
+        resolved_end = reference
 
         if window_start is None:
             resolved_start = resolved_end - window_delta

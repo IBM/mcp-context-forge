@@ -1382,13 +1382,7 @@ class Settings(BaseSettings):
     mcp_session_pool_health_check_methods: List[str] = ["ping", "skip"]
     # Timeout in seconds for each health check attempt
     mcp_session_pool_health_check_timeout: float = 5.0
-    mcp_session_pool_identity_headers: List[str] = [
-        "authorization",
-        "x-tenant-id",
-        "x-user-id",
-        "x-api-key",
-        "cookie",
-    ]
+    mcp_session_pool_identity_headers: List[str] = ["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie", "x-mcp-session-id"]
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
     # memory streams) don't respond to cancellation. Does NOT affect tool execution
@@ -1430,6 +1424,12 @@ class Settings(BaseSettings):
     # Lower values = faster recovery, but more orphaned tasks.
     # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
     anyio_cancel_delivery_max_iterations: int = 100
+
+    # Session Affinity
+    mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
+    mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
+    mcpgateway_session_affinity_max_sessions: int = 1  # Max sessions per identity for affinity
+    mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
 
     # Prompts
     prompt_cache_size: int = 100
@@ -1562,6 +1562,8 @@ class Settings(BaseSettings):
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
+    streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
+    streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
 
     # Core plugin settings
     plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")

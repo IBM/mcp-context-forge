@@ -250,6 +250,13 @@ services:
       # - SSRF_ALLOW_LOCALHOST=false
       # - SSRF_ALLOW_PRIVATE_NETWORKS=false
       # - SSRF_DNS_FAIL_CLOSED=true
+
+      # Uncomment to enable stateful sessions for Streamable HTTP transport
+      # - USE_STATEFUL_SESSIONS=true
+
+      # Uncomment to enable session affinity between downstream (from client) and upstrean (to MCP server) sessions
+      # - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
+
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
@@ -1553,31 +1560,84 @@ services:
 #
 #  Features:
 #  - Auto-generates self-signed certificates on first run
-#  - Custom certs: place your own cert.pem/key.pem in ./certs/ before starting
+#  - Supports custom certificates (CA-signed or your own)
+#  - Supports passphrase-protected keys (auto-decrypted for nginx)
 #  - HTTPS on port 8443, HTTP on port 8080 (both available)
 #  - Compatible with other profiles: --profile tls --profile monitoring
 #
-#  Custom Certificate Usage:
+#  ═══════════════════════════════════════════════════════════════════════════
+#  Bringing Your Own Certificates
+#  ═══════════════════════════════════════════════════════════════════════════
+#
+#  Option 1: Unencrypted Private Key (no passphrase)
+#  ───────────────────────────────────────────────────────────────────────────
 #    mkdir -p certs
-#    cp /path/to/your/cert.pem certs/cert.pem
-#    cp /path/to/your/key.pem certs/key.pem
+#    cp /path/to/your/certificate.pem certs/cert.pem
+#    cp /path/to/your/private-key.pem certs/key.pem
 #    make compose-tls
+#
+#  Option 2: Passphrase-Protected Private Key
+#  ───────────────────────────────────────────────────────────────────────────
+#    mkdir -p certs
+#    cp /path/to/your/certificate.pem certs/cert.pem
+#    cp /path/to/your/encrypted-key.pem certs/key-encrypted.pem
+#    echo "KEY_FILE_PASSWORD=your-passphrase" >> .env
+#    make compose-tls
+#
+#  The cert_init service will automatically decrypt key-encrypted.pem to
+#  key.pem for nginx (nginx doesn't support passphrase-protected keys).
+#
+#  Option 3: Generate Self-Signed with Passphrase
+#  ───────────────────────────────────────────────────────────────────────────
+#    make certs-passphrase                         # Generates cert + key-encrypted.pem
+#    echo "KEY_FILE_PASSWORD=your-passphrase" >> .env
+#    make compose-tls                              # Auto-decrypts for nginx
 ###############################################################################
 
   # ──────────────────────────────────────────────────────────────────────
   # Certificate Initialization - Auto-generates self-signed certs if missing
+  # Supports passphrase-protected keys via KEY_FILE_PASSWORD
   # ──────────────────────────────────────────────────────────────────────
   cert_init:
     image: alpine/openssl:latest
     volumes:
       - ./certs:/certs
+    environment:
+      - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        # Check if we have an encrypted key that needs decryption
+        if [ -f /certs/key-encrypted.pem ] && [ -n "${KEY_FILE_PASSWORD}" ]; then
+          # Validate: encrypted key requires matching certificate
+          if [ ! -f /certs/cert.pem ]; then
+            echo "❌ Found key-encrypted.pem but cert.pem is missing"
+            echo "   Please provide both files: cert.pem and key-encrypted.pem"
+            exit 1
+          fi
+          echo "🔓 Decrypting passphrase-protected key for nginx..."
+          if [ -f /certs/key.pem ]; then
+            echo "⚠️  Overwriting existing key.pem with decrypted version"
+          fi
+          # Decrypt the key for nginx (nginx doesn't support passphrase-protected keys)
+          # Using env: prefix to avoid exposing password in process listing
+          openssl rsa -in /certs/key-encrypted.pem -out /certs/key.pem -passin env:KEY_FILE_PASSWORD
+          if [ $? -eq 0 ]; then
+            chmod 640 /certs/key.pem
+            echo "✅ Successfully decrypted key-encrypted.pem to key.pem"
+          else
+            echo "❌ Failed to decrypt key-encrypted.pem - check KEY_FILE_PASSWORD"
+            exit 1
+          fi
+        fi
+
+        # Check if we already have unencrypted certs
         if [ -f /certs/cert.pem ] && [ -f /certs/key.pem ]; then
           echo "✅ Certificates found in ./certs - using existing"
           exit 0
         fi
+
+        # Generate new self-signed certificate (without passphrase for nginx)
         echo "🔏 Generating self-signed TLS certificate..."
         mkdir -p /certs
         openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \

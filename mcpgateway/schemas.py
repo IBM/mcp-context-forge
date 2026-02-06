@@ -2533,7 +2533,7 @@ class GatewayCreate(BaseModel):
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
-    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
@@ -2825,7 +2825,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Unique name for the gateway")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Gateway endpoint URL")
     description: Optional[str] = Field(None, description="Gateway description")
-    transport: str = Field(default="SSE", description="Transport used by MCP server: SSE or STREAMABLEHTTP")
+    transport: Optional[str] = Field(None, description="Transport used by MCP server: SSE or STREAMABLEHTTP")
 
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
 
@@ -2858,7 +2858,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
-    tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
+    tags: Optional[List[Union[str, Dict[str, str]]]] = Field(None, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")

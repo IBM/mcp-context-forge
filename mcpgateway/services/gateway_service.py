@@ -4039,7 +4039,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # other service methods. Return None if no match found.
         if result is None:
             return None
-        return GatewayRead.model_validate(result).masked()
+        return GatewayRead.model_validate(self._prepare_gateway_for_read(result)).masked()
 
     async def _run_leader_heartbeat(self) -> None:
         """Run leader heartbeat loop to keep leader key alive.

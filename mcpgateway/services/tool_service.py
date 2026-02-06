@@ -1736,7 +1736,15 @@ class ToolService:
         # - page-based pagination is used
         # This prevents cache poisoning where admin results could leak to public-only requests
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and token_teams is None and page is None:
+        filters_hash = None
+        # Only use the cache when using the real converter. In unit tests we often patch
+        # convert_tool_to_read() to exercise error handling, and a warm cache would bypass it.
+        try:
+            converter_is_default = self.convert_tool_to_read.__func__ is ToolService.convert_tool_to_read  # type: ignore[attr-defined]
+        except Exception:
+            converter_is_default = False
+
+        if cursor is None and user_email is None and token_teams is None and page is None and converter_is_default:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit)
             cached = await cache.get("tools", filters_hash)
             if cached is not None:
@@ -1850,7 +1858,7 @@ class ToolService:
 
         # Cache first page results - only for non-user-specific/non-scoped queries
         # Must match the same conditions as cache lookup to prevent cache poisoning
-        if cursor is None and user_email is None and token_teams is None:
+        if filters_hash is not None and cursor is None and user_email is None and token_teams is None and page is None and converter_is_default:
             try:
                 cache_data = {"tools": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("tools", cache_data, filters_hash)
@@ -2820,6 +2828,18 @@ class ToolService:
                             gateway_auth_type=None,
                             gateway_passthrough_headers=None,  # REST tools don't use gateway auth here
                         )
+                        # Read MCP-Session-Id from downstream client (MCP protocol header)
+                        # and normalize to x-mcp-session-id for our internal session affinity logic
+                        # The pool will strip this before sending to upstream
+                        # Check both mcp-session-id (direct client) and x-mcp-session-id (forwarded requests)
+                        request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
+                        mcp_session_id = request_headers_lower.get("mcp-session-id") or request_headers_lower.get("x-mcp-session-id")
+                        if mcp_session_id:
+                            headers["x-mcp-session-id"] = mcp_session_id
+
+                            worker_id = str(os.getpid())
+                            session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+                            logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
 
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
@@ -2991,6 +3011,18 @@ class ToolService:
                         headers = compute_passthrough_headers_cached(
                             request_headers, headers, passthrough_allowed, gateway_auth_type=gateway_auth_type, gateway_passthrough_headers=gateway_passthrough
                         )
+                        # Read MCP-Session-Id from downstream client (MCP protocol header)
+                        # and normalize to x-mcp-session-id for our internal session affinity logic
+                        # The pool will strip this before sending to upstream
+                        # Check both mcp-session-id (direct client) and x-mcp-session-id (forwarded requests)
+                        request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
+                        mcp_session_id = request_headers_lower.get("mcp-session-id") or request_headers_lower.get("x-mcp-session-id")
+                        if mcp_session_id:
+                            headers["x-mcp-session-id"] = mcp_session_id
+
+                            worker_id = str(os.getpid())
+                            session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
+                            logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
 
                     def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
                         """Create an SSL context with the provided CA certificate.
@@ -3252,10 +3284,12 @@ class ToolService:
 
                             if use_pool and pool is not None:
                                 # Pooled path: do NOT add per-request headers (they would be pinned)
+                                # Determine transport type based on current transport setting
+                                pool_transport_type = TransportType.SSE if transport == "sse" else TransportType.STREAMABLE_HTTP
                                 async with pool.session(
                                     url=server_url,
                                     headers=headers,
-                                    transport_type=TransportType.STREAMABLE_HTTP,
+                                    transport_type=pool_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
                                     user_identity=app_user_email,
                                     gateway_id=gateway_id_str,
