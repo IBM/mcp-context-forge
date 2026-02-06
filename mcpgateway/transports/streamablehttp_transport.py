@@ -44,11 +44,12 @@ from uuid import uuid4
 import anyio
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
-from mcp import types
+from mcp import ClientSession, types
+from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import JSONRPCMessage
+from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
 import orjson
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
@@ -66,6 +67,7 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.verify_credentials import verify_credentials
 
 # Initialize logging service first
@@ -458,7 +460,7 @@ def get_user_email_from_context() -> str:
     return str(user) if user else "unknown"
 
 
-async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:
+async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -471,15 +473,6 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         List of Tool objects from remote server
     """
     try:
-        # Third-Party
-        import httpx
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
-        from mcp.types import PaginatedRequestParams
-
-        # First-Party
-        from mcpgateway.utils.services_auth import decode_auth
-
         # Prepare headers with gateway auth
         headers = {}
 
@@ -527,7 +520,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         return []
 
 
-async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Resource]:
+async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Resource]:  # pylint: disable=unused-argument
     """Proxy resources/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -540,13 +533,6 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         List of Resource objects from remote server
     """
     try:
-        # Third-Party
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
-
-        # First-Party
-        from mcpgateway.utils.services_auth import decode_auth
-
         # Prepare headers with gateway auth
         headers = {}
 
@@ -586,9 +572,6 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
                 # Prepare params with _meta if provided
                 params = None
                 if meta:
-                    # Third-Party
-                    from mcp.types import PaginatedRequestParams
-
                     params = PaginatedRequestParams(_meta=meta)
                     logger.debug(f"Forwarding _meta to remote gateway: {meta}")
 
@@ -603,7 +586,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         return []
 
 
-async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:
+async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:  # pylint: disable=unused-argument
     """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
 
     Args:
@@ -616,13 +599,6 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         List of content objects (TextResourceContents or BlobResourceContents) from remote server
     """
     try:
-        # Third-Party
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
-
-        # First-Party
-        from mcpgateway.utils.services_auth import decode_auth
-
         # Prepare headers with gateway auth
         headers = {}
 
@@ -672,9 +648,6 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
 
                 # Prepare request params with _meta if provided
                 if meta:
-                    # Third-Party
-                    from mcp.types import ReadResourceRequest, ReadResourceRequestParams
-
                     # Create params and inject _meta
                     request_params = ReadResourceRequestParams(uri=resource_uri)
                     request_params_dict = request_params.model_dump()
@@ -1101,7 +1074,7 @@ async def list_tools() -> List[types.Tool]:
                             logger.debug(f"No request context available for _meta extraction: {e}")
 
                         return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta)
-                    elif gateway:
+                    if gateway:
                         logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
                     else:
                         logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")
@@ -1330,7 +1303,7 @@ async def list_resources() -> List[types.Resource]:
                             logger.debug(f"No request context available for _meta extraction: {e}")
 
                         return await _proxy_list_resources_to_gateway(gateway, request_headers, user_context, meta)
-                    elif gateway:
+                    if gateway:
                         logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
                     else:
                         logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")
@@ -1439,10 +1412,10 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                         first_content = contents[0]
                         if hasattr(first_content, "text"):
                             return first_content.text
-                        elif hasattr(first_content, "blob"):
+                        if hasattr(first_content, "blob"):
                             return first_content.blob
                     return ""
-                elif gateway:
+                if gateway:
                     logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
                 else:
                     logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")

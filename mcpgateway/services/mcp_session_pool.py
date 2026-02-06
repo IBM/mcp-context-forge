@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 """
 
-# flake8: noqa: DAR101, DAR201, DAR401
+# flake8: noqa
 
 # Future
 from __future__ import annotations
