@@ -712,7 +712,7 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
 
         if hasattr(user_request, "is_admin") and user_request.is_admin is not None:
             user.is_admin = user_request.is_admin
-       
+
         # Update password if provided
         if user_request.password:
             # For admin updates, we need to directly update the password hash
