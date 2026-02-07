@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Add admin types to email_users
 
 Revision ID: 04cda6733305
@@ -14,12 +15,14 @@ This enables proper bidirectional sync for SSO-granted admins while
 preserving manual grants from being auto-revoked.
 
 """
+
+# Standard
 from typing import Sequence, Union
 
-import sqlalchemy as sa
+# Third-Party
 from alembic import op
+import sqlalchemy as sa
 from sqlalchemy import inspect
-
 
 # revision identifiers, used by Alembic.
 revision: str = "04cda6733305"
