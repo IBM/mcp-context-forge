@@ -19,7 +19,7 @@ import pytest
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.getenv("PLATFORM_ADMIN_PASSWORD", "changeme")
-ADMIN_NEW_PASSWORD = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "changeme123")
+ADMIN_NEW_PASSWORD = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!")
 ADMIN_ACTIVE_PASSWORD = [ADMIN_PASSWORD]
 
 

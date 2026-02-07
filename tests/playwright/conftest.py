@@ -32,7 +32,7 @@ PLAYWRIGHT_VIEWPORT_SIZE = os.getenv("PLAYWRIGHT_VIEWPORT_SIZE", PLAYWRIGHT_VIDE
 # Email login credentials (admin user)
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 ADMIN_PASSWORD = os.getenv("PLATFORM_ADMIN_PASSWORD", "changeme")
-ADMIN_NEW_PASSWORD = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "changeme123")
+ADMIN_NEW_PASSWORD = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!")
 ADMIN_ACTIVE_PASSWORD = [ADMIN_PASSWORD]
 
 # Ensure UI/Admin are enabled for tests
@@ -232,6 +232,12 @@ def admin_page(page: Page):
             _wait_for_admin_transition(page)
     # Verify we're on the admin page
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+    # Ensure the Authorization header is set for programmatic page.request calls.
+    # Cookie-only auth is rejected for non-browser requests (CSRF protection),
+    # so extract the JWT from the cookie and set it as a Bearer header.
+    jwt_cookie = next((c for c in page.context.cookies() if c["name"] == "jwt_token"), None)
+    if jwt_cookie:
+        page.context.set_extra_http_headers({"Authorization": f"Bearer {jwt_cookie['value']}"})
     # Wait for the application shell to load to ensure we aren't looking at a 500 error page
     try:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
