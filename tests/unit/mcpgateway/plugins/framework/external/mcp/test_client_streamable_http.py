@@ -192,7 +192,13 @@ def server_proc2():
 
 @pytest.fixture
 def server_proc_uds(tmp_path):
-    uds_path = str(tmp_path / "mcp-plugin.sock")
+    # Use MCPGATEWAY_UDS_TMP_DIR if set (for macOS with long paths), otherwise use tmp_path
+    uds_tmp_dir = os.environ.get("MCPGATEWAY_UDS_TMP_DIR")
+    if uds_tmp_dir:
+        uds_path = uds_tmp_dir + "/mcp-plugin.sock"
+    else:
+        uds_path = str(tmp_path / "mcp-plugin.sock")
+
     current_env = os.environ.copy()
     current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
     current_env["PYTHONPATH"] = "."
@@ -206,6 +212,8 @@ def server_proc_uds(tmp_path):
             env=current_env,
         ) as server_proc:
             _wait_for_socket(uds_path, proc=server_proc)
+            # Give the server a moment to fully initialize after socket creation
+            time.sleep(5)
             yield server_proc, uds_path
             server_proc.terminate()
             server_proc.wait(timeout=3)

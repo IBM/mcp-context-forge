@@ -1197,6 +1197,7 @@ def test_email_api_token_helpers():
 def test_sso_auth_session_is_expired_handles_naive_datetime():
     session = db.SSOAuthSession(provider_id="github", state="state", redirect_uri="http://example.com")
     session.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    session.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
     assert session.is_expired is True
 
 
