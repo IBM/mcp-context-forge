@@ -319,6 +319,8 @@ class DcrService:
         # Decrypt registration access token
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
         registration_access_token = await encryption.decrypt_secret_async(client_record.registration_access_token_encrypted)
+        if registration_access_token is None:
+            raise DcrError("Failed to decrypt registration access token for update operation")
 
         # Build update request
         update_request = {"client_id": client_record.client_id, "redirect_uris": orjson.loads(client_record.redirect_uris), "grant_types": orjson.loads(client_record.grant_types)}
@@ -370,6 +372,9 @@ class DcrService:
         # Decrypt registration access token
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
         registration_access_token = await encryption.decrypt_secret_async(client_record.registration_access_token_encrypted)
+        if registration_access_token is None:
+            logger.warning("Failed to decrypt registration access token; cannot authenticate delete request to AS. Considering client deleted locally.")
+            return True
 
         # Send delete request
         try:
