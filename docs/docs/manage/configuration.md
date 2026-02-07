@@ -823,6 +823,17 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `MAX_PROMPT_SIZE`       | Max prompt template size (bytes) | `102400` | int > 0 |
 | `PROMPT_RENDER_TIMEOUT` | Jinja render timeout (secs)      | `10`     | int > 0 |
 
+### Schema Validation
+
+| Setting | Description | Default | Options |
+| :--- | :--- | :--- | :--- |
+| `JSON_SCHEMA_VALIDATION_STRICT` | Enforce strict JSON Schema validation for tools and prompts | `true` | bool |
+
+**Strict Mode Scenarios:**
+
+- **`true` (Default)**: Invalid schemas (e.g., unknown types, malformed JSON Schema) will cause registration to **fail** with a 400 error. This ensures that only valid, spec-compliant tools and prompts are registered, preventing runtime issues later.
+- **`false`**: Invalid schemas will be **logged as warnings** but successfully persisted. Use this **only** for backward compatibility if you have legacy tools with broken schemas that cannot be immediately updated. Invalid schemas may valid schemas may still cause runtime errors when used by LLMs or downstream tools.
+
 ### Health Checks
 
 | Setting                 | Description                               | Default | Options |

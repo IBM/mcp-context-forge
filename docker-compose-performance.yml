@@ -231,6 +231,11 @@ services:
       - COMPRESSION_ENABLED=false
       # Disable optional middlewares for maximum throughput
       - VALIDATION_MIDDLEWARE_ENABLED=true
+      # It validates live HTTP request data (inputs to tools, resource paths, query parameters).
+      - VALIDATION_STRICT=true
+      # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
+      # Strict schema validation mode - reject invalid JSON schemas
+      - JSON_SCHEMA_VALIDATION_STRICT=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
       # ═══════════════════════════════════════════════════════════════════════════

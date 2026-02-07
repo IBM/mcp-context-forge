@@ -418,6 +418,12 @@
       "title": "Validation Strict",
       "type": "boolean"
     },
+    "json_schema_validation_strict": {
+      "default": true,
+      "description": "Strict JSON Schema validation for tools and prompts",
+      "title": "Json Schema Validation Strict",
+      "type": "boolean"
+    },
     "sanitize_output": {
       "default": true,
       "description": "Sanitize output to remove control characters",

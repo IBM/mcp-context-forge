@@ -652,9 +652,11 @@ def test_validate_tool_schema_invalid(caplog):
 
     # Capture warnings
     with caplog.at_level(logging.WARNING):
-        db.validate_tool_schema(None, None, Target())
+        # With strict mode enabled by default, this raises ValueError
+        with pytest.raises(ValueError):
+            db.validate_tool_schema(None, None, Target())
 
-    # Check that a warning about invalid schema was logged
+    # Check that a warning about invalid schema was logged (it logs then raises)
     assert any("Invalid tool input schema" in record.message for record in caplog.records)
 
 
@@ -686,7 +688,9 @@ def test_validate_prompt_schema_invalid(caplog):
 
     # Capture warnings
     with caplog.at_level(logging.WARNING):
-        db.validate_prompt_schema(None, None, Target())
+        # With strict mode enabled by default, this raises ValueError
+        with pytest.raises(ValueError):
+            db.validate_prompt_schema(None, None, Target())
 
     # Check that a warning about invalid schema was logged
     assert any("Invalid prompt argument schema" in record.message for record in caplog.records)
