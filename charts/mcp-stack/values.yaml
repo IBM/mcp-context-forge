@@ -654,6 +654,7 @@ mcpContextForge:
     EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
     VALIDATION_MIDDLEWARE_ENABLED: "false" # enable validation middleware for all requests
     VALIDATION_STRICT: "true" # reject requests with validation failures
+    JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas
     SANITIZE_OUTPUT: "true" # strip control characters from responses
     ALLOWED_ROOTS: "[]" # allowed root paths (JSON array)
     MAX_PATH_DEPTH: "10" # maximum allowed path depth

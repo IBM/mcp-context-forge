@@ -239,6 +239,7 @@ services:
       - COMPRESSION_ENABLED=false
       # Disable optional middlewares for maximum throughput
       - VALIDATION_MIDDLEWARE_ENABLED=true
+      - JSON_SCHEMA_VALIDATION_STRICT=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
       # ═══════════════════════════════════════════════════════════════════════════
