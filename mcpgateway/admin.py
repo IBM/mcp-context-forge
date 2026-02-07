@@ -16629,3 +16629,22 @@ async def sandbox_test_cases_page(
             "ui_airgapped": settings.ui_airgapped,
         },
     )
+
+@admin_router.get("/admin/sandbox/batch", response_class=HTMLResponse)
+async def sandbox_batch_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Batch runner page - Run multiple test cases."""
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_batch.html",
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.ui_airgapped,
+        },
+    )
