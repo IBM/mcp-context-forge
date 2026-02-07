@@ -5437,7 +5437,7 @@ async def get_root_by_uri(
     logger.debug(f"User '{user}' requested root with URI: {root_uri}")
     try:
         root = await root_service.get_root_by_uri(root_uri)
-        return root.model_dump(by_alias=True)
+        return root
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -5493,7 +5493,7 @@ async def update_root(
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
-        logger.error(f"Error getting root {root_uri}: {e}")
+        logger.error(f"Error updating root {root_uri}: {e}")
         raise e
 
 

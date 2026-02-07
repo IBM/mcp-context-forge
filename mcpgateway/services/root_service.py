@@ -228,9 +228,11 @@ class RootService:
             ...     str(e)
             'Root not found: file:///nonexistent'
         """
-        if root_uri not in self._roots:
+        # Normalize the URI to match how it was stored
+        normalized_uri = self._make_root_uri(root_uri)
+        if normalized_uri not in self._roots:
             raise RootServiceNotFoundError(f"Root not found: {root_uri}")
-        return self._roots[root_uri]
+        return self._roots[normalized_uri]
 
     async def update_root(self, root_uri: str, name: Optional[str] = None) -> Root:
         """Update an existing root.
@@ -262,10 +264,12 @@ class RootService:
             ...     str(e)
             'Root not found: file:///nonexistent'
         """
-        if root_uri not in self._roots:
+        # Normalize the URI to match how it was stored
+        normalized_uri = self._make_root_uri(root_uri)
+        if normalized_uri not in self._roots:
             raise RootServiceNotFoundError(f"Root not found: {root_uri}")
 
-        root_obj = self._roots[root_uri]
+        root_obj = self._roots[normalized_uri]
 
         # Update name if provided
         if name is not None:
@@ -302,9 +306,11 @@ class RootService:
             ...     str(e)
             'Root not found: file:///nonexistent'
         """
-        if root_uri not in self._roots:
+        # Normalize the URI to match how it was stored
+        normalized_uri = self._make_root_uri(root_uri)
+        if normalized_uri not in self._roots:
             raise RootServiceError(f"Root not found: {root_uri}")
-        root_obj = self._roots.pop(root_uri)
+        root_obj = self._roots.pop(normalized_uri)
         await self._notify_root_removed(root_obj)
         logger.info(f"Removed root: {root_uri}")
 

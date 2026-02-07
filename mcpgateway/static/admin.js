@@ -6813,10 +6813,18 @@ async function exportRoot(uri) {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = response.headers
-            .get("Content-Disposition")
-            .split("filename=")[1]
-            .replace(/"/g, "");
+
+        // Safely extract filename from Content-Disposition header
+        const contentDisposition = response.headers.get("Content-Disposition");
+        let filename = `root-export-${Date.now()}.json`;
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/);
+            if (filenameMatch && filenameMatch[1]) {
+                filename = filenameMatch[1];
+            }
+        }
+        a.download = filename;
+
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
