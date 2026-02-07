@@ -1,0 +1,456 @@
+<!-- Regression Testing Dashboard -->
+<div class="space-y-6" x-data="regressionDashboard()">
+  <!-- Header -->
+  <div class="flex justify-between items-center">
+    <div>
+      <h2 class="text-2xl font-bold text-gray-900 dark:text-white">
+        Regression Testing
+      </h2>
+      <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+        Replay historical decisions to detect policy regressions
+      </p>
+    </div>
+    <a
+      href="{{ root_path }}/admin/sandbox/"
+      class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
+    >
+      <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+      </svg>
+      Back to Dashboard
+    </a>
+  </div>
+
+  <!-- Configuration Form -->
+  <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+        Regression Test Configuration
+      </h3>
+    </div>
+    
+    <form id="regressionForm" class="p-6 space-y-6">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Policy Draft -->
+        <div>
+          <label for="regressionPolicyDraft" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Policy Draft to Test <span class="text-red-500">*</span>
+          </label>
+          <select
+            id="regressionPolicyDraft"
+            x-model="config.policyDraft"
+            required
+            class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+          >
+            <option value="">Select a policy draft...</option>
+            <option value="draft-permissive">Draft: Permissive Policy</option>
+            <option value="draft-restrictive">Draft: Restrictive Policy</option>
+            <option value="draft-balanced">Draft: Balanced Policy</option>
+          </select>
+        </div>
+
+        <!-- Baseline Version -->
+        <div>
+          <label for="baselineVersion" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Baseline Policy Version <span class="text-red-500">*</span>
+          </label>
+          <select
+            id="baselineVersion"
+            x-model="config.baselineVersion"
+            required
+            class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+          >
+            <option value="">Select baseline version...</option>
+            <option value="prod-v2.1">Production v2.1 (Current)</option>
+            <option value="prod-v2.0">Production v2.0</option>
+            <option value="prod-v1.9">Production v1.9</option>
+          </select>
+        </div>
+
+        <!-- Replay Time Window -->
+        <div>
+          <label for="replayDays" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Replay Last N Days <span class="text-red-500">*</span>
+          </label>
+          <select
+            id="replayDays"
+            x-model="config.replayDays"
+            required
+            class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+          >
+            <option value="1">Last 24 hours</option>
+            <option value="3">Last 3 days</option>
+            <option value="7">Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+          </select>
+        </div>
+
+        <!-- Sample Size -->
+        <div>
+          <label for="sampleSize" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Sample Size <span class="text-red-500">*</span>
+          </label>
+          <select
+            id="sampleSize"
+            x-model="config.sampleSize"
+            required
+            class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+          >
+            <option value="100">100 decisions</option>
+            <option value="500">500 decisions</option>
+            <option value="1000">1,000 decisions</option>
+            <option value="5000">5,000 decisions</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Optional Filters -->
+      <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+        <h4 class="text-sm font-semibold text-gray-900 dark:text-white mb-4">Optional Filters</h4>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label for="filterSubject" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Filter by Subject (email)
+            </label>
+            <input
+              type="text"
+              id="filterSubject"
+              x-model="config.filterSubject"
+              placeholder="user@example.com"
+              class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            />
+          </div>
+          <div>
+            <label for="filterAction" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Filter by Action
+            </label>
+            <input
+              type="text"
+              id="filterAction"
+              x-model="config.filterAction"
+              placeholder="tools.invoke"
+              class="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Run Button -->
+      <div class="flex justify-end pt-4 border-t border-gray-200 dark:border-gray-700">
+        <button
+          @click="runRegression()"
+          :disabled="!config.policyDraft || !config.baselineVersion"
+          type="button"
+          class="inline-flex items-center px-6 py-3 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+          Run Regression Test
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Loading Indicator -->
+  <div x-show="loading" class="bg-blue-50 dark:bg-blue-900 border-l-4 border-blue-400 p-4 rounded-md">
+    <div class="flex items-center">
+      <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400 mr-3" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      <p class="text-sm font-medium text-blue-800 dark:text-blue-200">
+        Running regression test... This may take a few moments.
+      </p>
+    </div>
+  </div>
+
+  <!-- Results Summary -->
+  <div x-show="results" class="bg-white dark:bg-gray-800 shadow rounded-lg">
+    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+      <div class="flex justify-between items-center">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+          Regression Test Results
+        </h3>
+        <span class="text-sm text-gray-500 dark:text-gray-400">
+          Completed: <span x-text="formatDate(results?.completedAt)"></span>
+        </span>
+      </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="p-6 border-b border-gray-200 dark:border-gray-700">
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <!-- Total Decisions -->
+        <div class="text-center">
+          <p class="text-sm text-gray-500 dark:text-gray-400">Total Decisions</p>
+          <p class="text-3xl font-bold text-gray-900 dark:text-white" x-text="results?.totalDecisions || 0"></p>
+        </div>
+        
+        <!-- Matching -->
+        <div class="text-center">
+          <p class="text-sm text-gray-500 dark:text-gray-400">Matching</p>
+          <p class="text-3xl font-bold text-green-600" x-text="results?.matchingDecisions || 0"></p>
+        </div>
+        
+        <!-- Regressions -->
+        <div class="text-center">
+          <p class="text-sm text-gray-500 dark:text-gray-400">Regressions</p>
+          <p class="text-3xl font-bold text-red-600" x-text="results?.differentDecisions || 0"></p>
+        </div>
+        
+        <!-- Regression Rate -->
+        <div class="text-center">
+          <p class="text-sm text-gray-500 dark:text-gray-400">Regression Rate</p>
+          <p class="text-3xl font-bold text-purple-600" x-text="(results?.regressionRate || 0) + '%'"></p>
+        </div>
+
+        <!-- Duration -->
+        <div class="text-center">
+          <p class="text-sm text-gray-500 dark:text-gray-400">Duration</p>
+          <p class="text-3xl font-bold text-blue-600" x-text="(results?.durationMs || 0).toFixed(0) + 'ms'"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Severity Breakdown -->
+    <div class="p-6 border-b border-gray-200 dark:border-gray-700">
+      <h4 class="text-sm font-semibold text-gray-900 dark:text-white mb-4">Regressions by Severity</h4>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <!-- Critical -->
+        <div class="bg-red-50 dark:bg-red-900/20 border-l-4 border-red-500 p-4 rounded">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-red-800 dark:text-red-200">Critical</p>
+              <p class="text-2xl font-bold text-red-900 dark:text-red-100" x-text="results?.criticalRegressions || 0"></p>
+            </div>
+            <svg class="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <p class="text-xs text-red-700 dark:text-red-300 mt-2">Security gaps - immediate action needed</p>
+        </div>
+
+        <!-- High -->
+        <div class="bg-orange-50 dark:bg-orange-900/20 border-l-4 border-orange-500 p-4 rounded">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-orange-800 dark:text-orange-200">High</p>
+              <p class="text-2xl font-bold text-orange-900 dark:text-orange-100" x-text="results?.highRegressions || 0"></p>
+            </div>
+            <svg class="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <p class="text-xs text-orange-700 dark:text-orange-300 mt-2">User lockouts - review required</p>
+        </div>
+
+        <!-- Medium -->
+        <div class="bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-500 p-4 rounded">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-yellow-800 dark:text-yellow-200">Medium</p>
+              <p class="text-2xl font-bold text-yellow-900 dark:text-yellow-100" x-text="results?.mediumRegressions || 0"></p>
+            </div>
+            <svg class="w-8 h-8 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <p class="text-xs text-yellow-700 dark:text-yellow-300 mt-2">Behavior changes - monitor closely</p>
+        </div>
+
+        <!-- Low -->
+        <div class="bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 p-4 rounded">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-blue-800 dark:text-blue-200">Low</p>
+              <p class="text-2xl font-bold text-blue-900 dark:text-blue-100" x-text="results?.lowRegressions || 0"></p>
+            </div>
+            <svg class="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <p class="text-xs text-blue-700 dark:text-blue-300 mt-2">Minor differences - informational</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Detailed Regressions Table -->
+    <div x-show="results?.regressionsOnly?.length > 0" class="p-6">
+      <h4 class="text-sm font-semibold text-gray-900 dark:text-white mb-4">
+        Regression Details (<span x-text="results?.regressionsOnly?.length || 0"></span> items)
+      </h4>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-900">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Severity
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Subject
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Action
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Resource
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Historical
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Simulated
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Impact
+              </th>
+            </tr>
+          </thead>
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            <template x-for="(regression, index) in results?.regressionsOnly || []" :key="index">
+              <tr :class="getSeverityRowClass(regression.severity)">
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <span
+                    :class="getSeverityBadgeClass(regression.severity)"
+                    class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full uppercase"
+                    x-text="regression.severity"
+                  ></span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white" x-text="regression.subjectEmail"></td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400" x-text="regression.action"></td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+                  <span x-text="regression.resourceType"></span>:<span x-text="regression.resourceId"></span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                  <span :class="regression.historicalDecision === 'ALLOW' ? 'text-green-600' : 'text-red-600'" x-text="regression.historicalDecision"></span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm">
+                  <span :class="regression.simulatedDecision === 'ALLOW' ? 'text-green-600' : 'text-red-600'" x-text="regression.simulatedDecision"></span>
+                </td>
+                <td class="px-6 py-4 text-sm text-gray-600 dark:text-gray-400 max-w-xs truncate" :title="regression.impactDescription" x-text="regression.impactDescription"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- No Regressions Message -->
+    <div x-show="results && results.regressionsOnly?.length === 0" class="p-6 text-center">
+      <svg class="mx-auto h-12 w-12 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">No Regressions Detected!</h3>
+      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+        All decisions match the baseline. Your policy changes are safe to deploy.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Alpine.js Component -->
+<script>
+function regressionDashboard() {
+  return {
+    config: {
+      policyDraft: '',
+      baselineVersion: '',
+      replayDays: 7,
+      sampleSize: 1000,
+      filterSubject: '',
+      filterAction: ''
+    },
+    loading: false,
+    results: null,
+
+    async runRegression() {
+      this.loading = true;
+      this.results = null;
+
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // Mock results
+      // TODO: Replace with actual API call to /sandbox/regression
+      const totalDecisions = parseInt(this.config.sampleSize);
+      const regressionCount = Math.floor(totalDecisions * 0.12); // 12% regression rate
+      
+      this.results = {
+        policyDraftId: this.config.policyDraft,
+        baselineVersion: this.config.baselineVersion,
+        totalDecisions: totalDecisions,
+        matchingDecisions: totalDecisions - regressionCount,
+        differentDecisions: regressionCount,
+        regressionRate: 12.0,
+        criticalRegressions: Math.floor(regressionCount * 0.2),
+        highRegressions: Math.floor(regressionCount * 0.3),
+        mediumRegressions: Math.floor(regressionCount * 0.3),
+        lowRegressions: Math.floor(regressionCount * 0.2),
+        durationMs: 2345.67,
+        completedAt: new Date().toISOString(),
+        regressionsOnly: this.generateMockRegressions(regressionCount)
+      };
+
+      this.loading = false;
+
+      // Scroll to results
+      setTimeout(() => {
+        document.querySelector('[x-show="results"]')?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    },
+
+    generateMockRegressions(count) {
+      const severities = ['critical', 'high', 'medium', 'low'];
+      const subjects = ['admin@example.com', 'developer@example.com', 'viewer@example.com'];
+      const actions = ['tools.invoke', 'tools.delete', 'resources.read', 'prompts.invoke'];
+      const resources = ['tool:db-query', 'resource:api-keys', 'tool:cleanup', 'prompt:summarize'];
+      
+      return Array.from({ length: Math.min(count, 20) }, (_, i) => {
+        const historical = i % 3 === 0 ? 'DENY' : 'ALLOW';
+        const simulated = historical === 'ALLOW' ? 'DENY' : 'ALLOW';
+        
+        return {
+          historicalId: `hist-${i}`,
+          subjectEmail: subjects[i % subjects.length],
+          action: actions[i % actions.length],
+          resourceType: resources[i % resources.length].split(':')[0],
+          resourceId: resources[i % resources.length].split(':')[1],
+          historicalDecision: historical,
+          simulatedDecision: simulated,
+          severity: severities[i % severities.length],
+          impactDescription: historical === 'ALLOW' 
+            ? `User will lose access to ${resources[i % resources.length]}`
+            : `User will gain access to ${resources[i % resources.length]}`
+        };
+      });
+    },
+
+    getSeverityBadgeClass(severity) {
+      const classes = {
+        critical: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+        high: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+        medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+        low: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+      };
+      return classes[severity] || classes.low;
+    },
+
+    getSeverityRowClass(severity) {
+      const classes = {
+        critical: 'bg-red-50/50 dark:bg-red-900/10',
+        high: 'bg-orange-50/50 dark:bg-orange-900/10',
+        medium: 'bg-yellow-50/50 dark:bg-yellow-900/10',
+        low: 'bg-blue-50/50 dark:bg-blue-900/10'
+      };
+      return classes[severity] || '';
+    },
+
+    formatDate(dateStr) {
+      if (!dateStr) return '';
+      return new Date(dateStr).toLocaleString();
+    }
+  };
+}
+</script>
