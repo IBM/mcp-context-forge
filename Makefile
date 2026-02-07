@@ -921,7 +921,7 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 
 testing-up:                                ## Start testing stack (fast_test_server + registration)
 	@echo "🧪 Starting testing stack (fast_test_server)..."
-	$(COMPOSE_CMD_MONITOR) --profile testing up -d
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector up -d
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
@@ -931,22 +931,64 @@ testing-up:                                ## Start testing stack (fast_test_ser
 	@echo "      • REST time:     http://localhost:9080/api/time"
 	@echo "      • Health:        http://localhost:9080/health"
 	@echo ""
+	@echo "   🔍 MCP Inspector:   http://localhost:6274"
+	@echo ""
 	@echo "   📝 Registered as 'fast_test' gateway in MCP Gateway"
 	@echo ""
 	@echo "   Run load test: cd mcp-servers/rust/fast-test-server && make locust-mcp"
 
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing down --remove-orphans
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 testing-status:                            ## Show status of testing services
 	@echo "🧪 Testing stack status:"
-	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test)" || \
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|mcp_inspector)" || \
 		echo "   No testing services running. Start with 'make testing-up'"
 
 testing-logs:                              ## Show testing stack logs
-	$(COMPOSE_CMD_MONITOR) --profile testing logs -f --tail=100
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector logs -f --tail=100
+
+# =============================================================================
+# help: 🔍 MCP INSPECTOR (Interactive MCP Client)
+# help: inspector-up           - Start MCP Inspector (http://localhost:6274)
+# help: inspector-down         - Stop MCP Inspector
+# help: inspector-logs         - Show MCP Inspector logs
+# help: inspector-status       - Show status of MCP Inspector
+
+.PHONY: inspector-up inspector-down inspector-logs inspector-status
+
+inspector-up:                              ## Start MCP Inspector (interactive MCP client)
+	@echo "🔍 Starting MCP Inspector..."
+	$(COMPOSE_CMD_MONITOR) --profile inspector up -d
+	@echo ""
+	@echo "✅ MCP Inspector started!"
+	@echo ""
+	@echo "   🔍 Inspector UI:  http://localhost:6274"
+	@echo ""
+	@echo "   To connect to the gateway's virtual server:"
+	@echo "      1. Select transport: Streamable HTTP"
+	@echo "      2. Enter URL: http://nginx:80/servers/9779b6698cbd4b4995ee04a4fab38737/mcp"
+	@echo "      3. Add header — Authorization: Bearer <token>"
+	@echo ""
+	@echo "   Generate a JWT token:"
+	@echo "      python -m mcpgateway.utils.create_jwt_token \\"
+	@echo "        --username admin@example.com --exp 10080 --secret my-test-key --algo HS256"
+	@echo ""
+
+inspector-down:                            ## Stop MCP Inspector
+	@echo "🔍 Stopping MCP Inspector..."
+	$(COMPOSE_CMD_MONITOR) --profile inspector down --remove-orphans
+	@echo "✅ MCP Inspector stopped."
+
+inspector-logs:                            ## Show MCP Inspector logs
+	$(COMPOSE_CMD_MONITOR) --profile inspector logs -f --tail=100
+
+inspector-status:                          ## Show status of MCP Inspector
+	@echo "🔍 MCP Inspector status:"
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(mcp_inspector)" || \
+		echo "   Not running. Start with 'make inspector-up'"
 
 # =============================================================================
 # help: 🤖 A2A DEMO AGENTS (Issue #2002 Authentication Testing)

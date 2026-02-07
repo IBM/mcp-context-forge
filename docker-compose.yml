@@ -17,6 +17,7 @@
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
+#  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
 #
 #  TLS Quick Start:
 #    make compose-tls                    # HTTP:8080 + HTTPS:8443
@@ -1697,3 +1698,42 @@ services:
           cpus: '2'
           memory: 512M
     profiles: ["tls"]
+
+###############################################################################
+#  MCP INSPECTOR - Interactive MCP client for debugging and testing
+#  Usage: make inspector-up  (or: docker compose --profile inspector up -d)
+#  Access: http://localhost:6274
+#
+#  Connect to the gateway's virtual server from the Inspector UI:
+#    1. Transport: Streamable HTTP
+#    2. URL: http://nginx:80/servers/9779b6698cbd4b4995ee04a4fab38737/mcp
+#    3. Add header:  Authorization: Bearer <your-jwt-token>
+#
+#  Generate a JWT token:
+#    python -m mcpgateway.utils.create_jwt_token \
+#      --username admin@example.com --exp 10080 --secret my-test-key --algo HS256
+###############################################################################
+
+  mcp_inspector:
+    image: ghcr.io/modelcontextprotocol/inspector:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "6274:6274"    # Inspector web UI
+      - "6277:6277"    # Inspector MCP proxy server
+    environment:
+      - HOST=0.0.0.0                   # Bind to all interfaces (required in Docker)
+      - MCP_AUTO_OPEN_ENABLED=false    # Don't attempt to open browser in container
+      - DANGEROUSLY_OMIT_AUTH=true     # Skip proxy token (safe: local dev only)
+    depends_on:
+      gateway:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    profiles: ["inspector"]
