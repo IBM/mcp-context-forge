@@ -162,6 +162,7 @@ dev = [
     "pyasn1>=0.6.2", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
     # gRPC plugin framework testing (optional at runtime, required for test coverage)
     "grpcio>=1.76.0",
+    "grpcio-reflection>=1.76.0",
     "grpcio-tools>=1.76.0",
 ]
 
