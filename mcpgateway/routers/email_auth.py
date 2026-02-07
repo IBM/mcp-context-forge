@@ -711,7 +711,12 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
             user.full_name = user_request.full_name
 
         if hasattr(user_request, "is_admin") and user_request.is_admin is not None:
-            user.is_admin = user_request.is_admin
+            requested_is_admin = user_request.is_admin
+            # Track admin origin when granting or revoking admin via API
+            # Only update when status actually changes to preserve original grant source
+            if requested_is_admin != user.is_admin:
+                user.is_admin = requested_is_admin
+                user.admin_origin = "api" if requested_is_admin else None
 
         # Update password if provided
         if user_request.password:

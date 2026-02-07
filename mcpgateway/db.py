@@ -1069,6 +1069,8 @@ class EmailUser(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Track how admin status was granted: "sso" (synced from IdP), "manual" (Admin UI), "api" (API grant), or None (legacy)
+    admin_origin: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Status fields
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
