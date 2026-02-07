@@ -6247,7 +6247,7 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password)
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
 
         # Return success message with auto-close and refresh
         success_html = """

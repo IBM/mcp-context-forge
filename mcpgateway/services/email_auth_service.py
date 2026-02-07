@@ -1015,6 +1015,7 @@ class EmailAuthService:
         is_active: Optional[bool] = None,
         password_change_required: Optional[bool] = None,
         password: Optional[str] = None,
+        admin_origin_source: Optional[str] = None,
     ) -> EmailUser:
         """Update user information.
 
@@ -1025,15 +1026,19 @@ class EmailAuthService:
             is_active: New active status (optional)
             password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
+            admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
 
         Returns:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist
+            ValueError: If user doesn't exist or if operation would remove the last active admin
             PasswordValidationError: If password doesn't meet policy
         """
         try:
+            # Normalize email to match create_user() / get_user_by_email() behavior
+            email = email.lower().strip()
+
             # Get existing user
             stmt = select(EmailUser).where(EmailUser.email == email)
             result = self.db.execute(stmt)
@@ -1042,24 +1047,32 @@ class EmailAuthService:
             if not user:
                 raise ValueError(f"User {email} not found")
 
+            # Last-admin guard: prevent demoting or deactivating the last active admin
+            if user.is_admin and user.is_active:
+                would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
+                if would_lose_admin and await self.is_last_active_admin(email):
+                    raise ValueError("Cannot demote or deactivate the last remaining active admin user")
+
             # Update fields if provided
             if full_name is not None:
                 user.full_name = full_name
 
             if is_admin is not None:
-                user.is_admin = is_admin
+                # Track admin_origin when status actually changes
+                if is_admin != user.is_admin:
+                    user.is_admin = is_admin
+                    user.admin_origin = admin_origin_source if is_admin else None
 
             if is_active is not None:
                 user.is_active = is_active
 
             if password is not None:
-                if not self.validate_password(password):
-                    raise ValueError("Password does not meet security requirements")
+                self.validate_password(password)
                 user.password_hash = await self.password_service.hash_password_async(password)
                 # Only clear password_change_required if it wasn't explicitly set
                 if password_change_required is None:
                     user.password_change_required = False
-                user.password_changed_at = utc_now()  # Update password change timestamp
+                user.password_changed_at = utc_now()
 
             # Set password_change_required after password processing to allow explicit override
             if password_change_required is not None:

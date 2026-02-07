@@ -21,7 +21,7 @@ import pytest
 
 # First-Party
 from mcpgateway.db import EmailUser
-from mcpgateway.schemas import ChangePasswordRequest, AdminUserUpdateRequest, EmailRegistrationRequest, SuccessResponse
+from mcpgateway.schemas import AdminCreateUserRequest, AdminUserUpdateRequest, ChangePasswordRequest, PublicRegistrationRequest, SuccessResponse
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailValidationError, PasswordValidationError, UserExistsError
 
 
@@ -323,7 +323,7 @@ async def test_register_disabled():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    registration = EmailRegistrationRequest(email="new@example.com", password="password", full_name="New User")
+    registration = PublicRegistrationRequest(email="new@example.com", password="password1234", full_name="New User")
 
     with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
         mock_settings.public_registration_enabled = False
@@ -345,7 +345,7 @@ async def test_register_success():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    registration = EmailRegistrationRequest(email="new@example.com", password="password", full_name="New User")
+    registration = PublicRegistrationRequest(email="new@example.com", password="password1234", full_name="New User")
 
     user = MagicMock(spec=EmailUser)
     user.email = "new@example.com"
@@ -379,7 +379,7 @@ async def test_register_validation_error():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    registration = EmailRegistrationRequest(email="bad@example.com", password="password", full_name="Bad User")
+    registration = PublicRegistrationRequest(email="bad@example.com", password="password1234", full_name="Bad User")
 
     with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
         mock_settings.public_registration_enabled = True
@@ -402,7 +402,7 @@ async def test_register_user_exists_error():
     request.client.host = "127.0.0.1"
     request.headers = {"User-Agent": "TestAgent/1.0"}
 
-    registration = EmailRegistrationRequest(email="exists@example.com", password="password", full_name="User")
+    registration = PublicRegistrationRequest(email="exists@example.com", password="password1234", full_name="User")
 
     with patch("mcpgateway.routers.email_auth.settings") as mock_settings:
         mock_settings.public_registration_enabled = True
@@ -523,7 +523,7 @@ async def test_admin_create_user_default_password_enforcement():
     # First-Party
     from mcpgateway.routers import email_auth
 
-    user_request = EmailRegistrationRequest(email="new@example.com", password="defaultpass", full_name="New User", is_admin=False)
+    user_request = AdminCreateUserRequest(email="new@example.com", password="defaultpass", full_name="New User", is_admin=False)
     mock_db = MagicMock()
     user = MagicMock(spec=EmailUser)
     user.email = "new@example.com"
@@ -556,13 +556,14 @@ async def test_admin_get_update_delete_user():
 
     user = MagicMock(spec=EmailUser)
     user.email = "user@example.com"
-    user.full_name = "User"
-    user.is_admin = False
+    user.full_name = "Updated"
+    user.is_admin = True
     user.is_active = True
     user.auth_provider = "local"
     user.created_at = datetime.now(timezone.utc)
     user.last_login = None
-    user.password_change_required = True
+    user.password_change_required = False
+    user.password_hash = "hashed"
     user.is_email_verified = MagicMock(return_value=True)
 
     mock_db = MagicMock()
@@ -570,35 +571,35 @@ async def test_admin_get_update_delete_user():
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         auth_service = MockAuthService.return_value
         auth_service.get_user_by_email = AsyncMock(return_value=user)
-        auth_service.validate_password = MagicMock()
+        auth_service.update_user = AsyncMock(return_value=user)
         auth_service.is_last_active_admin = AsyncMock(return_value=False)
         auth_service.delete_user = AsyncMock(return_value=None)
 
-        with patch("mcpgateway.services.argon2_service.Argon2PasswordService") as MockPasswordService:
-            MockPasswordService.return_value.hash_password_async = AsyncMock(return_value="hashed")
-            update_request = AdminUserUpdateRequest(email="user@example.com", password="newPassword123!", full_name="Updated", is_admin=True)
+        update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated", is_admin=True)
 
-            response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
-            assert response.email == "user@example.com"
+        response = await email_auth.get_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        assert response.email == "user@example.com"
 
-            response = await email_auth.update_user("user@example.com", update_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
-            assert response.full_name == "Updated"
-            # Verify password was hashed
-            assert user.password_hash == "hashed"
-            # Verify password was validated
-            auth_service.validate_password.assert_called_once_with("newPassword123!")
-            # Verify password_change_required was cleared
-            assert user.password_change_required is False
-            # Verify password_changed_at was set
-            assert hasattr(user, 'password_changed_at')
+        response = await email_auth.update_user("user@example.com", update_request, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        assert response.full_name == "Updated"
+        # Verify update_user was called with correct params
+        auth_service.update_user.assert_called_once_with(
+            email="user@example.com",
+            full_name="Updated",
+            is_admin=True,
+            is_active=None,
+            password_change_required=None,
+            password="newPassword123!",
+            admin_origin_source="api",
+        )
 
-            delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
-            assert delete_response.success is True
+        delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
+        assert delete_response.success is True
 
 
 @pytest.mark.asyncio
 async def test_admin_update_user_without_full_name_and_is_admin():
-    """Test updating only full_name field."""
+    """Test empty update (no fields) delegates to service correctly."""
     # First-Party
     from mcpgateway.routers import email_auth
 
@@ -618,8 +619,7 @@ async def test_admin_update_user_without_full_name_and_is_admin():
 
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         auth_service = MockAuthService.return_value
-        auth_service.get_user_by_email = AsyncMock(return_value=user)
-        auth_service.is_last_active_admin = AsyncMock(return_value=False)
+        auth_service.update_user = AsyncMock(return_value=user)
 
         update_request = AdminUserUpdateRequest()
 
@@ -627,14 +627,20 @@ async def test_admin_update_user_without_full_name_and_is_admin():
             "user@example.com",
             update_request,
             current_user_ctx={"db": mock_db, "email": "admin@example.com"},
-            db=mock_db
+            db=mock_db,
         )
 
         assert response.full_name == "Old Name"
-        assert user.full_name == "Old Name"
-        assert user.is_admin == False
-        # Password should not be touched
-        assert not hasattr(user, 'password_hash') or user.password_hash is None
+        # Verify service was called with all None values
+        auth_service.update_user.assert_called_once_with(
+            email="user@example.com",
+            full_name=None,
+            is_admin=None,
+            is_active=None,
+            password_change_required=None,
+            password=None,
+            admin_origin_source="api",
+        )
 
 
 @pytest.mark.asyncio
@@ -643,31 +649,21 @@ async def test_admin_update_user_invalid_password():
     # First-Party
     from mcpgateway.routers import email_auth
 
-    user = MagicMock(spec=EmailUser)
-    user.email = "user@example.com"
-    user.full_name = "User Name"
-    user.is_admin = False
-    user.is_active = True
-    user.auth_provider = "local"
-    user.created_at = datetime.now(timezone.utc)
-    user.is_email_verified = MagicMock(return_value=True)
-
     mock_db = MagicMock()
 
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         auth_service = MockAuthService.return_value
-        auth_service.get_user_by_email = AsyncMock(return_value=user)
-        # Simulate password validation failure
-        auth_service.validate_password = MagicMock(side_effect=PasswordValidationError("Password too weak"))
+        # Service raises PasswordValidationError when password is too weak
+        auth_service.update_user = AsyncMock(side_effect=PasswordValidationError("Password too weak"))
 
-        update_request = AdminUserUpdateRequest(password="thisisweak", is_admin=False)
+        update_request = AdminUserUpdateRequest(password="thisisweak1234", is_admin=False)
 
         with pytest.raises(email_auth.HTTPException) as excinfo:
             await email_auth.update_user(
                 "user@example.com",
                 update_request,
                 current_user_ctx={"db": mock_db, "email": "admin@example.com"},
-                db=mock_db
+                db=mock_db,
             )
 
         assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
@@ -684,7 +680,8 @@ async def test_admin_update_user_not_found():
 
     with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
         auth_service = MockAuthService.return_value
-        auth_service.get_user_by_email = AsyncMock(return_value=None)
+        # Service raises ValueError with "not found" for missing users
+        auth_service.update_user = AsyncMock(side_effect=ValueError("User nonexistent@example.com not found"))
 
         update_request = AdminUserUpdateRequest(full_name="New Name", is_admin=False)
 
@@ -693,7 +690,7 @@ async def test_admin_update_user_not_found():
                 "nonexistent@example.com",
                 update_request,
                 current_user_ctx={"db": mock_db, "email": "admin@example.com"},
-                db=mock_db
+                db=mock_db,
             )
 
         assert excinfo.value.status_code == status.HTTP_404_NOT_FOUND
@@ -752,3 +749,59 @@ def test_emailuser_response_serialization_with_api_token():
     assert response.auth_provider == "api_token"
     assert response.password_change_required is False
     assert response.email_verified is True
+
+
+@pytest.mark.asyncio
+async def test_admin_update_last_admin_demote_blocked():
+    """Test that demoting the last active admin returns 400."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        auth_service = MockAuthService.return_value
+        auth_service.update_user = AsyncMock(
+            side_effect=ValueError("Cannot demote or deactivate the last remaining active admin user")
+        )
+
+        update_request = AdminUserUpdateRequest(is_admin=False)
+
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.update_user(
+                "admin@example.com",
+                update_request,
+                current_user_ctx={"db": mock_db, "email": "other-admin@example.com"},
+                db=mock_db,
+            )
+
+        assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "last remaining active admin" in str(excinfo.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_admin_update_last_admin_deactivate_blocked():
+    """Test that deactivating the last active admin returns 400."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        auth_service = MockAuthService.return_value
+        auth_service.update_user = AsyncMock(
+            side_effect=ValueError("Cannot demote or deactivate the last remaining active admin user")
+        )
+
+        update_request = AdminUserUpdateRequest(is_active=False)
+
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.update_user(
+                "admin@example.com",
+                update_request,
+                current_user_ctx={"db": mock_db, "email": "other-admin@example.com"},
+                db=mock_db,
+            )
+
+        assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "last remaining active admin" in str(excinfo.value.detail)
