@@ -126,8 +126,8 @@ class TestGatewayCreateErrorHandlers:
                 "description": "Test gateway",
             }
             response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 503
-            assert "Unable to connect" in response.json()["message"]
+            assert response.status_code == 502
+            assert "Connection failed" in response.json()["message"]
 
     def test_register_gateway_value_error(self, test_client, auth_headers):
         """Test ValueError handling in register_gateway."""
@@ -265,7 +265,8 @@ class TestGatewayUpdateErrorHandlers:
                 "description": "Updated gateway",
             }
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 503
+            assert response.status_code == 502
+            assert "Connection failed" in response.json()["message"]
 
     def test_update_gateway_value_error(self, test_client, auth_headers):
         """Test ValueError handling in update_gateway."""
