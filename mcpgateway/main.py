@@ -5388,6 +5388,33 @@ async def export_root(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Root export failed: {str(e)}")
 
 
+@root_router.get("/changes")
+async def subscribe_roots_changes(
+    user=Depends(get_current_user_with_permissions),
+) -> StreamingResponse:
+    """
+    Subscribe to real-time changes in root list via Server-Sent Events (SSE).
+
+    Args:
+        user: Authenticated user.
+
+    Returns:
+        StreamingResponse with event-stream media type.
+    """
+    logger.debug(f"User '{user}' subscribed to root changes stream")
+
+    async def generate_events():
+        """Generate SSE-formatted events from root service changes.
+
+        Yields:
+            str: SSE-formatted event data.
+        """
+        async for event in root_service.subscribe_changes():
+            yield f"data: {orjson.dumps(event).decode()}\n\n"
+
+    return StreamingResponse(generate_events(), media_type="text/event-stream")
+
+
 @root_router.get("/{root_uri:path}", response_model=Root)
 async def get_root_by_uri(
     root_uri: str,
@@ -5460,7 +5487,6 @@ async def update_root(
         Exception: For any other unexpected errors.
     """
     logger.debug(f"User '{user}' requested to update root with URI: {root_uri}")
-    print("Here is the root", root)
     try:
         root = await root_service.update_root(root_uri, root.name)
         return root
@@ -5489,33 +5515,6 @@ async def remove_root(
     logger.debug(f"User '{user}' requested to remove root with URI: {uri}")
     await root_service.remove_root(uri)
     return {"status": "success", "message": f"Root {uri} removed"}
-
-
-@root_router.get("/changes")
-async def subscribe_roots_changes(
-    user=Depends(get_current_user_with_permissions),
-) -> StreamingResponse:
-    """
-    Subscribe to real-time changes in root list via Server-Sent Events (SSE).
-
-    Args:
-        user: Authenticated user.
-
-    Returns:
-        StreamingResponse with event-stream media type.
-    """
-    logger.debug(f"User '{user}' subscribed to root changes stream")
-
-    async def generate_events():
-        """Generate SSE-formatted events from root service changes.
-
-        Yields:
-            str: SSE-formatted event data.
-        """
-        async for event in root_service.subscribe_changes():
-            yield f"data: {orjson.dumps(event).decode()}\n\n"
-
-    return StreamingResponse(generate_events(), media_type="text/event-stream")
 
 
 ##################
