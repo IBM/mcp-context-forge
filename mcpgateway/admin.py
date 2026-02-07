@@ -18448,3 +18448,22 @@ async def sandbox_batch_page(
             "ui_airgapped": settings.ui_airgapped,
         },
     )
+
+@admin_router.get("/admin/sandbox/regression", response_class=HTMLResponse)
+async def sandbox_regression_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Regression testing page - Detect policy regressions."""
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_regression.html",
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.ui_airgapped,
+        },
+    )
