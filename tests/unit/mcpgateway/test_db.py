@@ -652,9 +652,11 @@ def test_validate_tool_schema_invalid(caplog):
 
     # Capture warnings
     with caplog.at_level(logging.WARNING):
-        db.validate_tool_schema(None, None, Target())
+        # With strict mode enabled by default, this raises ValueError
+        with pytest.raises(ValueError):
+            db.validate_tool_schema(None, None, Target())
 
-    # Check that a warning about invalid schema was logged
+    # Check that a warning about invalid schema was logged (it logs then raises)
     assert any("Invalid tool input schema" in record.message for record in caplog.records)
 
 
@@ -686,7 +688,9 @@ def test_validate_prompt_schema_invalid(caplog):
 
     # Capture warnings
     with caplog.at_level(logging.WARNING):
-        db.validate_prompt_schema(None, None, Target())
+        # With strict mode enabled by default, this raises ValueError
+        with pytest.raises(ValueError):
+            db.validate_prompt_schema(None, None, Target())
 
     # Check that a warning about invalid schema was logged
     assert any("Invalid prompt argument schema" in record.message for record in caplog.records)
@@ -750,6 +754,45 @@ def test_validate_tool_schema_draft2020_12(caplog):
 
     # Valid Draft 2020-12 schema should not log warnings
     assert not any("Invalid tool input schema" in record.message for record in caplog.records)
+
+
+def test_validate_tool_schema_invalid_non_strict(caplog, monkeypatch):
+    """Test that invalid schema only logs warning when strict mode is disabled."""
+    monkeypatch.setattr(db.settings, "json_schema_validation_strict", False)
+
+    class Target:
+        input_schema = {"type": "invalid"}
+
+    with caplog.at_level(logging.WARNING):
+        db.validate_tool_schema(None, None, Target())
+
+    assert any("Invalid tool input schema" in record.message for record in caplog.records)
+
+
+def test_validate_prompt_schema_invalid_non_strict(caplog, monkeypatch):
+    """Test that invalid prompt schema only logs warning when strict mode is disabled."""
+    monkeypatch.setattr(db.settings, "json_schema_validation_strict", False)
+
+    class Target:
+        argument_schema = {"type": "invalid"}
+
+    with caplog.at_level(logging.WARNING):
+        db.validate_prompt_schema(None, None, Target())
+
+    assert any("Invalid prompt argument schema" in record.message for record in caplog.records)
+
+
+def test_validate_tool_schema_defaults_to_draft202012(caplog):
+    """Test that schemas without $schema field use Draft 2020-12 validator."""
+
+    class Target:
+        input_schema = {"type": "object", "properties": {"x": {"type": "string"}}}
+
+    with caplog.at_level(logging.WARNING):
+        db.validate_tool_schema(None, None, Target())
+
+    assert not any("Unsupported" in record.message for record in caplog.records)
+    assert not any("Invalid" in record.message for record in caplog.records)
 
 
 def test_validate_tool_name_missing():
