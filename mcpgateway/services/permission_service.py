@@ -116,7 +116,7 @@ class PermissionService:
             if allow_admin_bypass and await self._is_user_admin(user_email):
                 return True
 
-            # Get user's effective permissions from roles
+            # Get user's effective permissions (uses cache when valid)
             user_permissions = await self.get_user_permissions(user_email, team_id)
 
             # Check if user has the specific permission or wildcard
@@ -132,6 +132,8 @@ class PermissionService:
 
             # Log the permission check if auditing is enabled
             if self.audit_enabled:
+                # Reuse roles cached by get_user_permissions (no second query)
+                roles_checked = self._get_roles_for_audit(user_email, team_id)
                 await self._log_permission_check(
                     user_email=user_email,
                     permission=permission,
@@ -139,7 +141,7 @@ class PermissionService:
                     resource_id=resource_id,
                     team_id=team_id,
                     granted=granted,
-                    roles_checked=self._get_roles_for_audit(user_email, team_id),
+                    roles_checked=roles_checked,
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
@@ -228,7 +230,7 @@ class PermissionService:
             role_permissions = user_role.role.get_effective_permissions()
             permissions.update(role_permissions)
 
-        # Cache both permissions and roles (roles reused by _get_roles_for_audit)
+        # Cache both permissions and roles
         self._permission_cache[cache_key] = permissions
         self._roles_cache[cache_key] = user_roles
         self._cache_timestamps[cache_key] = utc_now()
@@ -565,12 +567,12 @@ class PermissionService:
                 return True
             return False
 
-        # Check if user is a member of this team
-        if not await self._is_team_member(user_email, team_id):
-            return False
-
-        # Get user's role in the team
+        # Get user's role in the team (single query instead of two separate queries)
         user_role = await self._get_user_team_role(user_email, team_id)
+
+        # If user is not a member (role is None), deny access
+        if user_role is None:
+            return False
 
         # Define fallback permissions based on team role
         if user_role == "owner":
@@ -585,6 +587,8 @@ class PermissionService:
     async def _is_team_member(self, user_email: str, team_id: str) -> bool:
         """Check if user is a member of the specified team.
 
+        Note: This method delegates to _get_user_team_role to avoid duplicate DB queries.
+
         Args:
             user_email: Email address of the user
             team_id: Team ID
@@ -592,13 +596,8 @@ class PermissionService:
         Returns:
             bool: True if user is a team member
         """
-        # First-Party
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
-
-        member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
-        self.db.commit()  # Release transaction to avoid idle-in-transaction
-
-        return member is not None
+        # Delegate to _get_user_team_role to avoid duplicate query
+        return await self._get_user_team_role(user_email, team_id) is not None
 
     async def _get_user_team_role(self, user_email: str, team_id: str) -> Optional[str]:
         """Get user's role in the specified team.
