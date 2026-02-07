@@ -35,6 +35,16 @@ class CacheEntry:
 
         Returns:
             True if expired, otherwise False.
+
+        Examples:
+            >>> from unittest.mock import patch
+            >>> from mcpgateway.cache.tool_lookup_cache import CacheEntry
+            >>> with patch("time.time", return_value=1000):
+            ...     CacheEntry(value={"k": "v"}, expiry=999).is_expired()
+            True
+            >>> with patch("time.time", return_value=1000):
+            ...     CacheEntry(value={"k": "v"}, expiry=1001).is_expired()
+            False
         """
         return time.time() >= self.expiry
 
@@ -47,7 +57,14 @@ class ToolLookupCache:
     """
 
     def __init__(self) -> None:
-        """Initialize cache settings and in-memory structures."""
+        """Initialize cache settings and in-memory structures.
+
+        Examples:
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> cache = ToolLookupCache()
+            >>> isinstance(cache.enabled, bool)
+            True
+        """
         try:
             # First-Party
             from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
@@ -91,6 +108,11 @@ class ToolLookupCache:
 
         Returns:
             True if enabled, otherwise False.
+
+        Examples:
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> ToolLookupCache().enabled in (True, False)
+            True
         """
         return self._enabled
 
@@ -183,6 +205,18 @@ class ToolLookupCache:
 
         Returns:
             Cached payload dict or None.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> cache = ToolLookupCache()
+            >>> cache._enabled = True
+            >>> cache._l2_enabled = False
+            >>> asyncio.run(cache.get("missing")) is None
+            True
+            >>> asyncio.run(cache.set("t1", {"tool": {"name": "t1"}}, ttl=60))
+            >>> asyncio.run(cache.get("t1"))["tool"]["name"]
+            't1'
         """
         if not self._enabled:
             return None
@@ -215,6 +249,16 @@ class ToolLookupCache:
             payload: Payload to cache.
             ttl: Time to live in seconds (defaults to configured TTL).
             gateway_id: Gateway ID for invalidation set tracking.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> cache = ToolLookupCache()
+            >>> cache._enabled = True
+            >>> cache._l2_enabled = False
+            >>> asyncio.run(cache.set("t1", {"status": "ok"}, ttl=60))
+            >>> asyncio.run(cache.get("t1"))
+            {'status': 'ok'}
         """
         if not self._enabled:
             return
@@ -241,6 +285,16 @@ class ToolLookupCache:
         Args:
             name: Tool name.
             status: Negative status (missing, inactive, offline).
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> cache = ToolLookupCache()
+            >>> cache._enabled = True
+            >>> cache._l2_enabled = False
+            >>> asyncio.run(cache.set_negative("t1", "missing"))
+            >>> asyncio.run(cache.get("t1"))
+            {'status': 'missing'}
         """
         payload = {"status": status}
         await self.set(name=name, payload=payload, ttl=self._negative_ttl_seconds)
@@ -251,6 +305,17 @@ class ToolLookupCache:
         Args:
             name: Tool name.
             gateway_id: Gateway ID for invalidation set tracking.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> cache = ToolLookupCache()
+            >>> cache._enabled = True
+            >>> cache._l2_enabled = False
+            >>> asyncio.run(cache.set("t1", {"status": "ok"}, ttl=60))
+            >>> asyncio.run(cache.invalidate("t1"))
+            >>> asyncio.run(cache.get("t1")) is None
+            True
         """
         if not self._enabled:
             return
@@ -275,6 +340,18 @@ class ToolLookupCache:
 
         Args:
             gateway_id: Gateway ID.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> cache = ToolLookupCache()
+            >>> cache._enabled = True
+            >>> cache._l2_enabled = False
+            >>> asyncio.run(cache.set("t1", {"tool": {"gateway_id": "g1"}}, ttl=60, gateway_id="g1"))
+            >>> asyncio.run(cache.set("t2", {"tool": {"gateway_id": "g2"}}, ttl=60, gateway_id="g2"))
+            >>> asyncio.run(cache.invalidate_gateway("g1"))
+            >>> (asyncio.run(cache.get("t1")) is None, asyncio.run(cache.get("t2")) is None)
+            (True, False)
         """
         if not self._enabled:
             return
@@ -302,6 +379,7 @@ class ToolLookupCache:
 
     def invalidate_all_local(self) -> None:
         """Clear all L1 cache entries."""
+        # Note: L2 is intentionally not cleared here; this is L1 only.
         with self._lock:
             self._cache.clear()
 
@@ -310,6 +388,18 @@ class ToolLookupCache:
 
         Returns:
             Cache stats and settings.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> cache = ToolLookupCache()
+            >>> cache._enabled = True
+            >>> cache._l2_enabled = False
+            >>> asyncio.run(cache.get("missing")) is None
+            True
+            >>> s = cache.stats()
+            >>> (s["l1_miss_count"] >= 1, "l1_hit_rate" in s)
+            (True, True)
         """
         total_l1 = self._l1_hit_count + self._l1_miss_count
         total_l2 = self._l2_hit_count + self._l2_miss_count
@@ -330,7 +420,20 @@ class ToolLookupCache:
         }
 
     def reset_stats(self) -> None:
-        """Reset hit/miss counters."""
+        """Reset hit/miss counters.
+
+        Examples:
+            >>> import asyncio
+            >>> from mcpgateway.cache.tool_lookup_cache import ToolLookupCache
+            >>> cache = ToolLookupCache()
+            >>> cache._enabled = True
+            >>> cache._l2_enabled = False
+            >>> asyncio.run(cache.get("missing")) is None
+            True
+            >>> cache.reset_stats()
+            >>> cache.stats()["l1_miss_count"]
+            0
+        """
         self._l1_hit_count = 0
         self._l1_miss_count = 0
         self._l2_hit_count = 0

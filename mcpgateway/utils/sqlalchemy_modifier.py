@@ -156,6 +156,30 @@ def json_contains_tag_expr(session, col, values: Union[str, Iterable[str]], matc
     Raises:
         RuntimeError: If dialect is not supported
         ValueError: If values is empty
+
+    Examples:
+        SQLite builds a parameterized `TextClause` using `json_each()`:
+
+        >>> from unittest.mock import Mock, patch
+        >>> from sqlalchemy.sql.elements import TextClause
+        >>> from mcpgateway.utils import sqlalchemy_modifier as mod
+        >>> session = Mock()
+        >>> session.get_bind.return_value.dialect.name = "sqlite"
+        >>> col = Mock()
+        >>> col.table.name = "resources"
+        >>> col.name = "tags"
+        >>> with patch.object(mod, "_generate_unique_prefix", return_value="resources_tags_0"):
+        ...     expr = mod.json_contains_tag_expr(session, col, ["api", "db"], match_any=True)
+        ...     (isinstance(expr, TextClause), "json_each(resources.tags)" in expr.text, expr.compile().params["resources_tags_0_p0"])
+        (True, True, 'api')
+
+        Unsupported dialects raise:
+
+        >>> session.get_bind.return_value.dialect.name = "oracle"
+        >>> mod.json_contains_tag_expr(session, col, ["x"])
+        Traceback (most recent call last):
+        ...
+        RuntimeError: Unsupported dialect for json_contains_tag: oracle
     """
     values_list = _ensure_list(values)
     if not values_list:
@@ -266,6 +290,28 @@ def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_an
     Raises:
         RuntimeError: If dialect is not supported
         ValueError: If values is empty
+
+    Examples:
+        SQLite builds a parameterized SQL fragment using `json_each()`:
+
+        >>> from unittest.mock import Mock
+        >>> from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+        >>> session = Mock()
+        >>> session.get_bind.return_value.dialect.name = "sqlite"
+        >>> col = Mock()
+        >>> col.table.name = "resources"
+        >>> col.name = "scopes"
+        >>> expr = json_contains_expr(session, col, ["a", "b"], match_any=True)
+        >>> ("json_each(resources.scopes)" in expr.text, "value IN" in expr.text, len(expr.compile().params))
+        (True, True, 2)
+
+        Unsupported dialects raise:
+
+        >>> session.get_bind.return_value.dialect.name = "oracle"
+        >>> json_contains_expr(session, col, ["x"])
+        Traceback (most recent call last):
+        ...
+        RuntimeError: Unsupported dialect for json_contains: oracle
     """
     values_list = _ensure_list(values)
     if not values_list:

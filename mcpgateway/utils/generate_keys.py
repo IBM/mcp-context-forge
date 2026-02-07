@@ -30,6 +30,27 @@ def generate_ed25519_keypair(private_path: Path, public_path: Path) -> None:
     Args:
         private_path: Path to save the private key PEM file.
         public_path: Path to save the public key PEM file.
+
+    Examples:
+        >>> import io
+        >>> import tempfile
+        >>> from contextlib import redirect_stdout
+        >>> from pathlib import Path
+        >>> from mcpgateway.utils.generate_keys import generate_ed25519_keypair
+        >>> with tempfile.TemporaryDirectory() as d:
+        ...     priv = Path(d) / "private.pem"
+        ...     pub = Path(d) / "public.pem"
+        ...     buf = io.StringIO()
+        ...     with redirect_stdout(buf):
+        ...         generate_ed25519_keypair(priv, pub)
+        ...     (
+        ...         priv.exists(),
+        ...         pub.exists(),
+        ...         "Ed25519 key pair generated" in buf.getvalue(),
+        ...         priv.read_text(encoding="utf-8").startswith("-----BEGIN PRIVATE KEY-----"),
+        ...         pub.read_text(encoding="utf-8").startswith("-----BEGIN PUBLIC KEY-----"),
+        ...     )
+        (True, True, True, True, True)
     """
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
@@ -61,6 +82,14 @@ def generate_ed25519_private_key() -> str:
 
     Returns:
         str: PEM-formatted Ed25519 private key.
+
+    Examples:
+        >>> from mcpgateway.utils.generate_keys import generate_ed25519_private_key
+        >>> pem = generate_ed25519_private_key()
+        >>> pem.startswith("-----BEGIN PRIVATE KEY-----")
+        True
+        >>> pem.strip().endswith("-----END PRIVATE KEY-----")
+        True
     """
     private_key = ed25519.Ed25519PrivateKey.generate()
     private_pem = private_key.private_bytes(
@@ -87,6 +116,17 @@ def derive_public_key_from_private(private_pem: str) -> str:
 
     Raises:
         RuntimeError: If the public key cannot be derived.
+
+    Examples:
+        >>> from mcpgateway.utils.generate_keys import derive_public_key_from_private, generate_ed25519_private_key
+        >>> pub = derive_public_key_from_private(generate_ed25519_private_key())
+        >>> pub.startswith("-----BEGIN PUBLIC KEY-----")
+        True
+
+        >>> derive_public_key_from_private("not a pem")
+        Traceback (most recent call last):
+        ...
+        RuntimeError: Failed to derive public key from private PEM
     """
     try:
         private_key = serialization.load_pem_private_key(private_pem.encode(), password=None)
