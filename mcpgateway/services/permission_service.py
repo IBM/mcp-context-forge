@@ -218,16 +218,20 @@ class PermissionService:
         # Check cache first
         cache_key = f"{user_email}:{team_id or 'global'}"
         if self._is_cache_valid(cache_key):
-            return self._permission_cache[cache_key]
+            cached_perms = self._permission_cache[cache_key]
+            logger.debug(f"[RBAC DEBUG] Cache hit for {user_email} (team_id={team_id}): {cached_perms}")
+            return cached_perms
 
         permissions = set()
 
         # Get all active roles for the user (with eager-loaded role relationship)
         user_roles = await self._get_user_roles(user_email, team_id)
+        logger.debug(f"[RBAC DEBUG] Found {len(user_roles)} roles for {user_email} (team_id={team_id})")
 
         # Collect permissions from all roles
         for user_role in user_roles:
             role_permissions = user_role.role.get_effective_permissions()
+            logger.debug(f"[RBAC DEBUG] Role '{user_role.role.name}' (scope={user_role.scope}, scope_id={user_role.scope_id}) has permissions: {role_permissions}")
             permissions.update(role_permissions)
 
         # Cache both permissions and roles
@@ -428,22 +432,34 @@ class PermissionService:
     async def _get_user_roles(self, user_email: str, team_id: Optional[str] = None) -> List[UserRole]:
         """Get user roles for permission checking.
 
-        Includes global roles and team-specific roles if team_id is provided.
+        Includes global roles, personal roles, and team-specific roles.
+
+        When team_id is provided, only includes roles for that specific team.
+        When team_id is None, includes ALL team roles the user has (important for
+        admin dashboard access where users may have team-scoped admin permissions).
 
         Args:
             user_email: Email address of the user
-            team_id: Optional team ID to include team-specific roles
+            team_id: Optional team ID to filter to a specific team's roles.
+                    If None, includes all team roles the user has.
 
         Returns:
             List[UserRole]: List of active roles for the user
         """
         query = select(UserRole).join(Role).options(contains_eager(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
-        # Include global roles and team-specific roles
+        # Include global roles and personal roles
         scope_conditions = [UserRole.scope == "global", UserRole.scope == "personal"]
 
         if team_id:
-            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id == team_id))
+            # Filter to specific team's roles only
+            # IMPORTANT: Also include team roles with NULL scope_id
+            # These are "global team roles" that apply to all teams
+            scope_conditions.append(and_(UserRole.scope == "team", or_(UserRole.scope_id == team_id, UserRole.scope_id.is_(None))))
+        else:
+            # Include ALL team roles (no team_id filter)
+            # This ensures users with team-scoped roles can access admin dashboard
+            scope_conditions.append(UserRole.scope == "team")
 
         query = query.where(or_(*scope_conditions))
 
