@@ -29,6 +29,7 @@ class CedarInput(BaseModel):
     action: str = ""
     resource: str = ""
     context: Optional[dict[Any, Any]] = None
+    correlation_id: Optional[str] = None
 
 
 class Redaction(BaseModel):
@@ -36,16 +37,18 @@ class Redaction(BaseModel):
 
     Attributes:
         pattern (str) : pattern detected in output to redact
+        redaction_str (str): string to output
     """
 
     pattern: str = ""
+    redaction_str: str = ""
 
 
 class CedarConfig(BaseModel):
     """Configuration for the Cedar plugin.
 
     Attributes:
-        policy_land (str) : cedar or custom_dsl. If policy is represented in cedar mode or custom_dsl mode
+        policy_lang (str) : cedar or custom_dsl. If policy is represented in cedar mode or custom_dsl mode
         policy (Union[list, str]): RBAC policy defined
         policy_output_keywords (dict): this is to internally check if certain type of views are allowed for outputs
         policy_redaction_spec (Redaction) : pattern or other parameters provided to redact the output
