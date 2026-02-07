@@ -716,11 +716,11 @@ async def test_admin_delete_user_self_block():
 
 def test_emailuser_response_serialization_with_api_token():
     """Test EmailUserResponse serialization with API token user (regression test for #2700).
-    
+
     This test verifies that EmailUser objects created for API token authentication
     include all required fields (auth_provider, password_change_required) and can
     be successfully serialized to EmailUserResponse without validation errors.
-    
+
     Previously, creating EmailUser objects without these fields would cause 422
     validation errors when GET /auth/email/me tried to serialize the response.
     """
@@ -752,4 +752,3 @@ def test_emailuser_response_serialization_with_api_token():
     assert response.auth_provider == "api_token"
     assert response.password_change_required is False
     assert response.email_verified is True
-
