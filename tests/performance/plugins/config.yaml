@@ -517,7 +517,7 @@ plugins:
       threshold_chars: 800
       hard_truncate_chars: 24000
       tool_allowlist: [search, retrieve]
-      resource_uri_prefixes: [http://, https://]
+      resource_uri_prefixes: ["http://", "https://"]
 
   # ClamAV Remote Scanner (external MCP) - DISABLED due to script path issue
   # - name: "ClamAVRemote"
