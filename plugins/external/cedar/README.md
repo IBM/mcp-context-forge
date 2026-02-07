@@ -323,6 +323,77 @@ INFO:     127.0.0.1:55196 - "GET /health HTTP/1.1" 200 OK
 There are set of test cases in the `cedar/tests` folder. The file named `test_cedarpolicyplugin.py` file which contains detailed test cases for RBAC policies enforced on tools, prompts and resources.
 run `make test` to run all the test cases.
 
+## End to End Testing from the UI for ContextForge MCP Gateway
+
+Run the following from the project root folder:
+
+```bash
+# Generate JWT bearer token
+python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+
+# Export for API calls
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+```
+
+
+1. Add server fast-time that exposes git tools in the mcp gateway
+
+Run the mcp server
+
+```bash
+python3 -m mcpgateway.translate \
+     --stdio "uvx mcp-server-git" \
+     --expose-sse \
+     --expose-streamable-http \
+     --port 9000
+```
+
+Add it to the gateway
+```bash
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"fast-time","url":"http://localhost:9000/sse"}' \
+     http://localhost:4444/gateways
+```
+
+2. This adds server to the gateway and exposes all the tools for git. You would see `fast-time-git-status` as the tool appearing in the tools tab of mcp gateway.
+
+3. The next step is to run CedarPolicyPlugin as an external MCP server
+Go into `plugins/external/cedar` and run the following:
+- `make venv`, and enter the environment
+- `make install && make install-dev` installs all the packages
+- `make build`
+- `make start`
+
+This will start CedarPolicyPlugin on port `8000`.
+
+4. Next step, is to add CedarPolicyPlugin in plugins by `PLUGINS_ENABLED=true` and the following blob in `plugins/config.yaml` file. This will indicate that CedarPolicyPlugin is running as an external MCP server.
+
+  ```yaml
+  - name: "CedarPolicyPlugin"
+    kind: "external"
+    priority: 10 # adjust the priority
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://127.0.0.1:8000/mcp
+  ```
+
+2. To test cedar plugin from the UI
+Invoke the `fast-time-git-status` from the UI, with `admin` as role.
+The request will be allowed by the CedarPolicyPlugin.
+
+If you switch to a another tool which is not in the policy `fast-time-git-show` expect denial by the CedarPolicyPlugin. For more details into policy, `plugins/external/cedar/resources/config.yaml`
+You get the following as output in the UI:
+```json
+  {
+    "message": "Plugin Violation: tool_pre_invoke not allowed",
+    "data": {
+      "description": "tool_pre_invoke not allowed",
+      "plugin_error_code": "DENY",
+      "plugin_name": "CedarPolicyPlugin"
+    }
+  }
+```
 
 
 ## Difference from OPAPlugin
