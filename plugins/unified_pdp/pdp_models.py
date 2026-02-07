@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Pydantic models for the Unified Policy Decision Point (PDP).
 
 All domain types used across engines, the PDP orchestrator, caching,
