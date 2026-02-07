@@ -32,14 +32,15 @@ from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
+    AdminCreateUserRequest,
     AdminUserUpdateRequest,
     AuthenticationResponse,
     AuthEventResponse,
     ChangePasswordRequest,
     CursorPaginatedUsersResponse,
     EmailLoginRequest,
-    EmailRegistrationRequest,
     EmailUserResponse,
+    PublicRegistrationRequest,
     SuccessResponse,
 )
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
@@ -332,7 +333,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 
 
 @email_auth_router.post("/register", response_model=AuthenticationResponse)
-async def register(registration_request: EmailRegistrationRequest, request: Request, db: Session = Depends(get_db)):
+async def register(registration_request: PublicRegistrationRequest, request: Request, db: Session = Depends(get_db)):
     """Register a new user account.
 
     This endpoint is controlled by the PUBLIC_REGISTRATION_ENABLED setting.
@@ -340,7 +341,7 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
     created by administrators via the admin API.
 
     Args:
-        registration_request: Registration information
+        registration_request: Registration information (email, password, full_name only)
         request: FastAPI request object
         db: Database session
 
@@ -371,12 +372,15 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
     get_user_agent(request)
 
     try:
-        # Create new user
+        # Password is required by schema (str, not Optional) — Pydantic returns 422 if missing
+        # Security-sensitive fields are hardcoded (not exposed on public schema)
         user = await auth_service.create_user(
             email=registration_request.email,
             password=registration_request.password,
             full_name=registration_request.full_name,
             is_admin=False,  # Regular users cannot self-register as admin
+            is_active=True,  # Public registrations are always active
+            password_change_required=False,  # No forced password change for self-registration
             auth_provider="local",
         )
 
@@ -588,7 +592,7 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
 
 @email_auth_router.post("/admin/users", response_model=EmailUserResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("admin.user_management")
-async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def create_user(user_request: AdminCreateUserRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Create a new user account (admin only).
 
     Args:
@@ -614,12 +618,15 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
     auth_service = EmailAuthService(db)
 
     try:
-        # Create new user with admin privileges
+        # Password is required by schema (str, not Optional) — Pydantic returns 422 if missing
+        # Create new user with all fields from request
         user = await auth_service.create_user(
             email=user_request.email,
             password=user_request.password,
             full_name=user_request.full_name,
             is_admin=user_request.is_admin,
+            is_active=user_request.is_active,
+            password_change_required=user_request.password_change_required,
             auth_provider="local",
         )
 
@@ -701,51 +708,26 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
     auth_service = EmailAuthService(db)
 
     try:
-        # Get existing user
-        user = await auth_service.get_user_by_email(user_email)
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-
-        # Update user fields
-        if hasattr(user_request, "full_name") and user_request.full_name is not None:
-            user.full_name = user_request.full_name
-
-        if hasattr(user_request, "is_admin") and user_request.is_admin is not None:
-            requested_is_admin = user_request.is_admin
-            # Track admin origin when granting or revoking admin via API
-            # Only update when status actually changes to preserve original grant source
-            if requested_is_admin != user.is_admin:
-                user.is_admin = requested_is_admin
-                user.admin_origin = "api" if requested_is_admin else None
-
-        # Update password if provided
-        if user_request.password:
-            # For admin updates, we need to directly update the password hash
-            # since we don't have the old password to verify
-            # First-Party
-            from mcpgateway.services.argon2_service import Argon2PasswordService
-
-            password_service = Argon2PasswordService()
-
-            # Validate the new password meets requirements
-            auth_service.validate_password(user_request.password)
-
-            # Update password hash directly
-            user.password_hash = await password_service.hash_password_async(user_request.password)
-            user.password_change_required = False  # Clear password change requirement
-            user.password_changed_at = utc_now()  # Update password change timestamp
-
-        db.commit()
-        db.refresh(user)
+        user = await auth_service.update_user(
+            email=user_email,
+            full_name=user_request.full_name,
+            is_admin=user_request.is_admin,
+            is_active=user_request.is_active,
+            password_change_required=user_request.password_change_required,
+            password=user_request.password,
+            admin_origin_source="api",
+        )
 
         logger.info(f"Admin {current_user_ctx['email']} updated user: {user.email}")
 
         result = EmailUserResponse.from_email_user(user)
-        db.close()
         return result
 
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
     except PasswordValidationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
