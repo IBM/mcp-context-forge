@@ -340,8 +340,11 @@ function escapeHtml(unsafe) {
  * @returns {string} Human-readable error message
  */
 function extractApiError(error, fallback = "An error occurred") {
-    if (!error || !error.detail) {
+    if (!error || (!error.detail && !error.message)) {
         return fallback;
+    }
+    if (error.message) {
+        return error.message;
     }
     if (typeof error.detail === "string") {
         return error.detail;
@@ -370,10 +373,59 @@ async function parseErrorResponse(response, fallback = "An error occurred") {
         }
         // Non-JSON response - try to get text
         const text = await response.text();
-        return text || fallback;
+        if (!text) {
+            return fallback;
+        }
+        // Detect HTML responses (proxy error pages, auth redirects) and show generic message
+        if (
+            text.trimStart().startsWith("<!") ||
+            text.trimStart().toLowerCase().startsWith("<html")
+        ) {
+            return `${fallback} (HTTP ${response.status}). The server returned an HTML error page.`;
+        }
+        // Truncate long non-HTML text responses
+        const maxLength = 200;
+        if (text.length > maxLength) {
+            return text.substring(0, maxLength) + "...";
+        }
+        return text;
     } catch {
         return fallback;
     }
+}
+
+/**
+ * Safely parse a JSON response with validation.
+ * Prevents "JSON.parse: unexpected character" errors when server/proxy returns HTML.
+ * @param {Response} response - The fetch Response object
+ * @param {string} fallbackError - Fallback error message if response is not JSON
+ * @returns {Promise<Object>} Parsed JSON result
+ * @throws {Error} If response is not OK or not JSON
+ */
+async function safeParseJsonResponse(
+    response,
+    fallbackError = "Request failed",
+) {
+    const contentType = response.headers.get("content-type") || "";
+
+    // Handle non-OK responses first
+    if (!response.ok) {
+        const errorMsg = await parseErrorResponse(
+            response,
+            `${fallbackError} (HTTP ${response.status})`,
+        );
+        throw new Error(errorMsg);
+    }
+
+    // Validate content-type before parsing
+    if (!contentType.includes("application/json")) {
+        throw new Error(
+            "The server returned an unexpected response. " +
+                "Please verify you are authenticated and the server is responding correctly.",
+        );
+    }
+
+    return await response.json();
 }
 
 /**
@@ -14436,7 +14488,11 @@ async function handleGatewayFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add gateway",
+        );
 
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add gateway");
@@ -14519,7 +14575,10 @@ async function handleResourceFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add Resource",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add Resource");
         } else {
@@ -14588,7 +14647,10 @@ async function handlePromptFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add prompt",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add prompt");
         }
@@ -14655,7 +14717,10 @@ async function handleEditPromptFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit Prompt",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit Prompt");
         }
@@ -14719,7 +14784,10 @@ async function handleServerFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add server",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add server.");
         } else {
@@ -14848,7 +14916,10 @@ async function handleA2AFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add A2A Agent",
+        );
 
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add A2A Agent.");
@@ -14944,7 +15015,10 @@ async function handleToolFormSubmit(event) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add tool",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add tool");
         } else {
@@ -15011,7 +15085,10 @@ async function handleEditToolFormSubmit(event) {
             headers: { "X-Requested-With": "XMLHttpRequest" },
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit tool",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit tool");
         } else {
@@ -15102,7 +15179,10 @@ async function handleEditGatewayFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit gateway",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit gateway");
         }
@@ -15200,7 +15280,10 @@ async function handleEditA2AAgentFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit A2A agent",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit a2a agent");
         }
@@ -15254,7 +15337,10 @@ async function handleEditServerFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit server",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit server");
         }
@@ -15326,7 +15412,10 @@ async function handleEditResFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit resource",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit resource");
         }

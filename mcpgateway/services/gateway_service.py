@@ -3972,10 +3972,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             return capabilities, tools, resources, prompts
         except Exception as e:
+
+            # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
+            root_cause = e
+            if isinstance(e, BaseExceptionGroup):
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                    root_cause = root_cause.exceptions[0]
             sanitized_url = sanitize_url_for_logging(url, auth_query_params)
-            sanitized_error = sanitize_exception_message(str(e), auth_query_params)
+            sanitized_error = sanitize_exception_message(str(root_cause), auth_query_params)
             logger.error(f"Gateway initialization failed for {sanitized_url}: {sanitized_error}", exc_info=True)
-            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
+            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
@@ -5437,7 +5443,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 return capabilities, tools, resources, prompts
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
-        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
+        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
     async def connect_to_streamablehttp_server(
         self,
@@ -5589,7 +5595,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 return capabilities, tools, resources, prompts
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
-        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
+        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
 
 # Lazy singleton - created on first access, not at module import time.
