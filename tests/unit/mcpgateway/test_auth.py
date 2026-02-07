@@ -284,6 +284,8 @@ class TestGetCurrentUser:
             full_name="API User",
             is_admin=False,
             is_active=True,
+            auth_provider="api_token",
+            password_change_required=False,
             email_verified_at=datetime.now(timezone.utc),
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
@@ -296,6 +298,8 @@ class TestGetCurrentUser:
                     user = await get_current_user(credentials=credentials)
 
                     assert user.email == mock_user.email
+                    assert user.auth_provider == "api_token"
+                    assert user.password_change_required is False
 
     @pytest.mark.asyncio
     async def test_expired_api_token_raises_401(self):
