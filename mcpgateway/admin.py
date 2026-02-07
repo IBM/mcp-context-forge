@@ -2912,9 +2912,12 @@ async def admin_login_page(request: Request) -> Response:
     if settings.secure_cookies and settings.environment == "development":
         secure_cookie_warning = "Serving over HTTP with secure cookies enabled. If you have login issues, try disabling secure cookies in your configuration."
 
+    # Preserve email from failed login attempt
+    prefill_email = request.query_params.get("email", "")
+
     # Use external template file
     return request.app.state.templates.TemplateResponse(
-        request, "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped}
+        request, "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email}
     )
 
 
@@ -2970,7 +2973,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
         if not email or not password:
             root_path = request.scope.get("root_path", "")
-            return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
+            params = "error=missing_fields"
+            if email:
+                params += f"&email={urllib.parse.quote(email)}"
+            return RedirectResponse(url=f"{root_path}/admin/login?{params}", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -2984,7 +2990,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
                 root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
+                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
@@ -3058,7 +3064,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
             root_path = request.scope.get("root_path", "")
-            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
+            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
