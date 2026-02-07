@@ -805,3 +805,31 @@ async def test_admin_update_last_admin_deactivate_blocked():
 
         assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
         assert "last remaining active admin" in str(excinfo.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_admin_update_protect_all_admins_blocked():
+    """Test that demoting any admin is blocked when protect_all_admins is enabled."""
+    # First-Party
+    from mcpgateway.routers import email_auth
+
+    mock_db = MagicMock()
+
+    with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+        auth_service = MockAuthService.return_value
+        auth_service.update_user = AsyncMock(
+            side_effect=ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
+        )
+
+        update_request = AdminUserUpdateRequest(is_admin=False)
+
+        with pytest.raises(email_auth.HTTPException) as excinfo:
+            await email_auth.update_user(
+                "admin@example.com",
+                update_request,
+                current_user_ctx={"db": mock_db, "email": "other-admin@example.com"},
+                db=mock_db,
+            )
+
+        assert excinfo.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Admin protection is enabled" in str(excinfo.value.detail)

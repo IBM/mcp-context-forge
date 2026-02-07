@@ -1368,6 +1368,68 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
+    async def test_update_user_protect_all_admins_blocks_demote(self, service, mock_db, monkeypatch):
+        """Test that protect_all_admins blocks demoting any admin (not just last)."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "protect_all_admins", True)
+
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@example.com"
+        admin_user.is_admin = True
+        admin_user.is_active = True
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        mock_db.execute.return_value = mock_result
+
+        with pytest.raises(ValueError, match="Admin protection is enabled"):
+            await service.update_user(email="admin@example.com", is_admin=False)
+
+    @pytest.mark.asyncio
+    async def test_update_user_protect_all_admins_blocks_deactivate(self, service, mock_db, monkeypatch):
+        """Test that protect_all_admins blocks deactivating any admin."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "protect_all_admins", True)
+
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@example.com"
+        admin_user.is_admin = True
+        admin_user.is_active = True
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        mock_db.execute.return_value = mock_result
+
+        with pytest.raises(ValueError, match="Admin protection is enabled"):
+            await service.update_user(email="admin@example.com", is_active=False)
+
+    @pytest.mark.asyncio
+    async def test_update_user_protect_all_admins_allows_other_updates(self, service, mock_db, monkeypatch):
+        """Test that protect_all_admins still allows non-admin-related updates."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "protect_all_admins", True)
+
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@example.com"
+        admin_user.is_admin = True
+        admin_user.is_active = True
+        admin_user.password_hash = "old_hash"
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        mock_db.execute.return_value = mock_result
+
+        result = await service.update_user(email="admin@example.com", full_name="New Name")
+        assert admin_user.full_name == "New Name"
+        mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
     async def test_activate_user_success(self, service, mock_db, mock_user):
         """Test activating a user account."""
         mock_user.is_active = False

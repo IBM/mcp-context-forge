@@ -195,6 +195,7 @@ services:
       - JWT_AUDIENCE=mcpgateway-api
       - JWT_ISSUER=mcpgateway
       - EMAIL_AUTH_ENABLED=true
+      - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
       - REQUIRE_TOKEN_EXPIRATION=false

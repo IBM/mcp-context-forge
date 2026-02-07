@@ -1032,7 +1032,7 @@ class EmailAuthService:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist or if operation would remove the last active admin
+            ValueError: If user doesn't exist, if protect_all_admins blocks the change, or if it would remove the last active admin
             PasswordValidationError: If password doesn't meet policy
         """
         try:
@@ -1047,11 +1047,14 @@ class EmailAuthService:
             if not user:
                 raise ValueError(f"User {email} not found")
 
-            # Last-admin guard: prevent demoting or deactivating the last active admin
+            # Admin protection guard
             if user.is_admin and user.is_active:
                 would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
-                if would_lose_admin and await self.is_last_active_admin(email):
-                    raise ValueError("Cannot demote or deactivate the last remaining active admin user")
+                if would_lose_admin:
+                    if settings.protect_all_admins:
+                        raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
+                    if await self.is_last_active_admin(email):
+                        raise ValueError("Cannot demote or deactivate the last remaining active admin user")
 
             # Update fields if provided
             if full_name is not None:
