@@ -486,7 +486,7 @@ class TestResourceServicePluginIntegration:
             )
 
         mock_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
-
+        service.invoke_resource = AsyncMock(return_value="Sensitive content")
         with pytest.raises(PluginViolationError) as exc_info:
             await service.read_resource(mock_db, "test://resource")
 
