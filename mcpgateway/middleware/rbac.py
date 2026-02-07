@@ -251,13 +251,15 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         token = jwt_token
         token_from_cookie = True
 
-    # Check if this is an API request (not a browser request)
+    # Check if this is a browser/admin-UI request (not an external API request)
     accept_header = request.headers.get("accept", "")
     is_htmx = request.headers.get("hx-request") == "true"
-    is_browser_request = "text/html" in accept_header or is_htmx
+    referer = request.headers.get("referer", "")
+    is_admin_ui_request = "/admin" in referer
+    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
 
     # SECURITY: Reject cookie-only authentication for API requests
-    # Cookies should only be used for browser/HTML requests
+    # Cookies should only be used for browser/HTML requests (including admin UI fetch calls)
     if token_from_cookie and not is_browser_request:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
