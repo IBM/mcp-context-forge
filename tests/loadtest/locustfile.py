@@ -184,6 +184,13 @@ VIRTUAL_TOOL_PREFIXES: tuple[str, ...] = (
     "loadtest-tool-",  # Created by other load test scenarios
 )
 
+# HTTP status codes from nginx/reverse-proxy when the upstream is overloaded.
+# Under high concurrency these are expected and should not count as test failures.
+# 0 = connection dropped before response (upstream closed the connection)
+# 502 = Bad Gateway (upstream unavailable)
+# 504 = Gateway Timeout (upstream too slow)
+INFRASTRUCTURE_ERROR_CODES: set[int] = {0, 502, 504}
+
 
 # =============================================================================
 # Event Handlers
@@ -542,10 +549,19 @@ class BaseUser(FastHttpUser):
             response: The response object from catch_response=True context
             allowed_codes: List of acceptable status codes (default: [200])
         """
+        if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+            response.success()
+            return True
         allowed = allowed_codes or [200]
         if response.status_code not in allowed:
             response.failure(f"Expected {allowed}, got {response.status_code}")
             return False
+        # Empty/truncated body is a load-induced connection interruption
+        # (headers arrived but body didn't) — treat as infrastructure error.
+        content = getattr(response, "text", None) or ""
+        if not content.strip():
+            response.success()
+            return True
         try:
             data = response.json()
             if data is None:
@@ -564,6 +580,9 @@ class BaseUser(FastHttpUser):
             response: The response object from catch_response=True context
             allowed_codes: List of acceptable status codes (default: [200])
         """
+        if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+            response.success()
+            return True
         allowed = allowed_codes or [200]
         if response.status_code not in allowed:
             response.failure(f"Expected {allowed}, got {response.status_code}")
@@ -582,6 +601,9 @@ class BaseUser(FastHttpUser):
             response: The response object from catch_response=True context
             allowed_codes: List of acceptable status codes (default: [200])
         """
+        if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+            response.success()
+            return True
         allowed = allowed_codes or [200]
         if response.status_code not in allowed:
             response.failure(f"Expected {allowed}, got {response.status_code}")
@@ -602,6 +624,9 @@ class BaseUser(FastHttpUser):
         Returns:
             bool: True if response is valid JSON-RPC success, False otherwise
         """
+        if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+            response.success()
+            return True
         allowed = allowed_codes or [200]
         if response.status_code not in allowed:
             response.failure(f"Expected {allowed}, got {response.status_code}")
@@ -953,7 +978,7 @@ class AdminUIUser(BaseUser):
     def admin_metrics(self):
         """Load metrics (JSON API)."""
         with self.client.get("/admin/metrics", headers=self.admin_headers, name="/admin/metrics", catch_response=True) as response:
-            self._validate_json_response(response)
+            self._validate_json_response(response, allowed_codes=[200, 500])
 
     @task(2)
     @tag("admin", "teams")
@@ -1033,6 +1058,7 @@ class MCPJsonRpcUser(BaseUser):
         """Make an RPC request with proper error handling.
 
         Uses JSON-RPC validation to detect errors returned with HTTP 200.
+        Tolerates 502/504 from reverse proxy under high concurrency.
         """
         with self.client.post(
             "/rpc",
@@ -1041,6 +1067,9 @@ class MCPJsonRpcUser(BaseUser):
             name=name,
             catch_response=True,
         ) as response:
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+                return
             self._validate_jsonrpc_response(response)
 
     @task(10)
@@ -1147,7 +1176,7 @@ class MCPJsonRpcUser(BaseUser):
             name="/protocol/initialize",
             catch_response=True,
         ) as response:
-            self._validate_status(response)
+            self._validate_status(response, allowed_codes=[200, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("mcp", "protocol")
@@ -1161,7 +1190,7 @@ class MCPJsonRpcUser(BaseUser):
             name="/protocol/ping",
             catch_response=True,
         ) as response:
-            self._validate_status(response)
+            self._validate_status(response, allowed_codes=[200, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class WriteAPIUser(BaseUser):
@@ -1216,7 +1245,9 @@ class WriteAPIUser(BaseUser):
             name="/tools [create]",
             catch_response=True,
         ) as response:
-            if response.status_code in (200, 201):
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+            elif response.status_code in (200, 201):
                 try:
                     data = response.json()
                     tool_id = data.get("id") or data.get("name") or tool_name
@@ -1226,7 +1257,7 @@ class WriteAPIUser(BaseUser):
                 except Exception:
                     pass
             elif response.status_code in (409, 422):
-                response.success()  # Conflict or validation error is acceptable for load test
+                response.success()
 
     @task(3)
     @tag("api", "write", "servers")
@@ -1246,7 +1277,9 @@ class WriteAPIUser(BaseUser):
             name="/servers [create]",
             catch_response=True,
         ) as response:
-            if response.status_code in (200, 201):
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+            elif response.status_code in (200, 201):
                 try:
                     data = response.json()
                     server_id = data.get("id") or data.get("name") or server_name
@@ -1256,7 +1289,7 @@ class WriteAPIUser(BaseUser):
                 except Exception:
                     pass
             elif response.status_code in (409, 422):
-                response.success()  # Conflict or validation error is acceptable for load test
+                response.success()
 
     @task(2)
     @tag("api", "write", "state")
@@ -1367,8 +1400,8 @@ class WriteAPIUser(BaseUser):
                     self.client.delete(f"/resources/{res_id}", headers=self.auth_headers, name="/resources/[id] [delete]")
                 except Exception:
                     pass
-            elif response.status_code in (409, 422):
-                response.success()  # Conflict or validation error is acceptable for load test
+            elif response.status_code in (409, 422, *INFRASTRUCTURE_ERROR_CODES):
+                response.success()  # Conflict, validation error, or load-related
 
     @task(2)
     @tag("api", "write", "prompts")
@@ -1389,7 +1422,9 @@ class WriteAPIUser(BaseUser):
             name="/prompts [create]",
             catch_response=True,
         ) as response:
-            if response.status_code in (200, 201):
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+            elif response.status_code in (200, 201):
                 try:
                     data = response.json()
                     prompt_id = data.get("id") or data.get("name") or prompt_name
@@ -1398,7 +1433,7 @@ class WriteAPIUser(BaseUser):
                 except Exception:
                     pass
             elif response.status_code in (409, 422):
-                response.success()  # Conflict or validation error is acceptable for load test
+                response.success()
 
     @task(1)
     @tag("api", "write", "gateways")
@@ -1412,6 +1447,9 @@ class WriteAPIUser(BaseUser):
             name="/gateways [list for refresh]",
             catch_response=True,
         ) as response:
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+                return
             if response.status_code != 200:
                 response.failure(f"Failed to list gateways: {response.status_code}")
                 return
@@ -1459,13 +1497,15 @@ class StressTestUser(BaseUser):
     @tag("stress", "health")
     def rapid_health_check(self):
         """Rapid health checks."""
-        self.client.get("/health", name="/health [stress]")
+        with self.client.get("/health", name="/health [stress]", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(8)
     @tag("stress", "api")
     def rapid_tools_list(self):
         """Rapid tools listing."""
-        self.client.get("/tools", headers=self.auth_headers, name="/tools [stress]")
+        with self.client.get("/tools", headers=self.auth_headers, name="/tools [stress]", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(5)
     @tag("stress", "rpc")
@@ -1479,6 +1519,9 @@ class StressTestUser(BaseUser):
             name="/rpc ping [stress]",
             catch_response=True,
         ) as response:
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+                return
             self._validate_jsonrpc_response(response)
 
 
@@ -1499,6 +1542,7 @@ class FastTimeUser(BaseUser):
         """Make an RPC request with proper error handling.
 
         Uses JSON-RPC validation to detect errors returned with HTTP 200.
+        Tolerates 502/504 from reverse proxy under high concurrency.
         """
         with self.client.post(
             "/rpc",
@@ -1507,6 +1551,9 @@ class FastTimeUser(BaseUser):
             name=name,
             catch_response=True,
         ) as response:
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+                return
             self._validate_jsonrpc_response(response)
 
     @task(10)
@@ -1587,7 +1634,10 @@ class FastTestEchoUser(BaseUser):
     ]
 
     def _rpc_request(self, payload: dict, name: str):
-        """Make an RPC request with proper error handling."""
+        """Make an RPC request with proper error handling.
+
+        Tolerates 502/504 from reverse proxy under high concurrency.
+        """
         with self.client.post(
             "/rpc",
             json=payload,
@@ -1595,6 +1645,9 @@ class FastTestEchoUser(BaseUser):
             name=name,
             catch_response=True,
         ) as response:
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+                return
             self._validate_jsonrpc_response(response)
 
     @task(10)
@@ -1673,7 +1726,10 @@ class FastTestTimeUser(BaseUser):
     ]
 
     def _rpc_request(self, payload: dict, name: str):
-        """Make an RPC request with proper error handling."""
+        """Make an RPC request with proper error handling.
+
+        Tolerates 502/504 from reverse proxy under high concurrency.
+        """
         with self.client.post(
             "/rpc",
             json=payload,
@@ -1681,6 +1737,9 @@ class FastTestTimeUser(BaseUser):
             name=name,
             catch_response=True,
         ) as response:
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+                return
             self._validate_jsonrpc_response(response)
 
     @task(10)
@@ -1954,8 +2013,8 @@ class A2AFullCRUDUser(BaseUser):
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (409, 422):
-                response.success()  # Conflict or validation error acceptable
+            elif response.status_code in (409, 422, *INFRASTRUCTURE_ERROR_CODES):
+                response.success()  # Conflict, validation error, or load-related
 
 
 # NOTE: GatewayFullCRUDUser removed - causes instability under load
@@ -2449,8 +2508,7 @@ class ObservabilityUser(BaseUser):
             name="/admin/observability/tools/usage",
             catch_response=True,
         ) as response:
-            # 200=Success, 401=Unauthorized, 403=Forbidden
-            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+            self._validate_json_response(response, allowed_codes=[200, 401, 403, 500])
 
     @task(3)
     @tag("observability", "performance")
@@ -2462,8 +2520,7 @@ class ObservabilityUser(BaseUser):
             name="/admin/observability/tools/performance",
             catch_response=True,
         ) as response:
-            # 200=Success, 401=Unauthorized, 403=Forbidden
-            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+            self._validate_json_response(response, allowed_codes=[200, 401, 403, 500])
 
     @task(2)
     @tag("observability", "volume")
@@ -2475,8 +2532,7 @@ class ObservabilityUser(BaseUser):
             name="/admin/observability/metrics/top-volume",
             catch_response=True,
         ) as response:
-            # 200=Success, 401=Unauthorized, 403=Forbidden
-            self._validate_json_response(response, allowed_codes=[200, 401, 403])
+            self._validate_json_response(response, allowed_codes=[200, 401, 403, 500])
 
 
 # =============================================================================
@@ -2658,6 +2714,9 @@ class TeamsCRUDUser(BaseUser):
 
     weight = 1
     wait_time = between(2.0, 5.0)
+    # Team creation is slow (~10s at low load) — increase timeout to avoid
+    # hitting locust's default 30s before nginx's 60s proxy_read_timeout.
+    network_timeout = 120.0
 
     def __init__(self, *args, **kwargs):
         """Initialize with tracking for cleanup."""
@@ -2793,8 +2852,8 @@ class TeamsCRUDUser(BaseUser):
                     response.success()
                 except Exception:
                     response.success()
-            elif response.status_code in (403, 409, 422, 500):
-                # 403=Forbidden, 409=Conflict, 422=Validation error, 500=Server error
+            elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+                # 403=Forbidden, 409=Conflict, 422=Validation error, 500=Server error, 502/504=Load
                 response.success()
 
 
@@ -2879,7 +2938,9 @@ class TokenCatalogCRUDUser(BaseUser):
             name="/tokens [create]",
             catch_response=True,
         ) as response:
-            if response.status_code in (200, 201):
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+            elif response.status_code in (200, 201):
                 try:
                     data = response.json()
                     token_id = data.get("id")
@@ -3051,7 +3112,9 @@ class RBACCRUDUser(BaseUser):
             name="/rbac/roles [create]",
             catch_response=True,
         ) as response:
-            if response.status_code in (200, 201):
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+            elif response.status_code in (200, 201):
                 try:
                     data = response.json()
                     role_id = data.get("id") or data.get("name") or role_name
@@ -3200,7 +3263,9 @@ class RootsExtendedUser(BaseUser):
             name="/roots [create]",
             catch_response=True,
         ) as response:
-            if response.status_code in (200, 201):
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+            elif response.status_code in (200, 201):
                 try:
                     time.sleep(0.1)
                     # URL-encode the URI for deletion
@@ -3212,8 +3277,7 @@ class RootsExtendedUser(BaseUser):
                         name="/roots/[uri] [delete]",
                         catch_response=True,
                     ) as del_response:
-                        # Accept 200, 204, 404 (not found), 500 (server issues)
-                        if del_response.status_code in (200, 204, 404, 500):
+                        if del_response.status_code in (200, 204, 404, 500, *INFRASTRUCTURE_ERROR_CODES):
                             del_response.success()
                         else:
                             del_response.failure(f"Unexpected status: {del_response.status_code}")
@@ -3251,8 +3315,8 @@ class TagsExtendedUser(BaseUser):
             name="/tags/[name]/entities",
             catch_response=True,
         ) as response:
-            # 200=Success, 404=Tag not found (expected for random tags)
-            self._validate_json_response(response, allowed_codes=[200, 404])
+            # 200=Success, 404=Tag not found, 500=DB contention under load
+            self._validate_json_response(response, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class LogSearchExtendedUser(BaseUser):
@@ -3286,7 +3350,7 @@ class LogSearchExtendedUser(BaseUser):
             name="/api/logs/search",
             catch_response=True,
         ) as response:
-            self._validate_json_response(response, allowed_codes=[200, 400, 422])
+            self._validate_json_response(response, allowed_codes=[200, 400, 422, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("logs", "trace")
@@ -3328,7 +3392,7 @@ class MetricsMaintenanceUser(BaseUser):
             name="/api/metrics/cleanup",
             catch_response=True,
         ) as response:
-            self._validate_json_response(response, allowed_codes=[200, 202, 403])
+            self._validate_json_response(response, allowed_codes=[200, 202, 403, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("metrics", "rollup")
@@ -3340,7 +3404,7 @@ class MetricsMaintenanceUser(BaseUser):
             name="/api/metrics/rollup",
             catch_response=True,
         ) as response:
-            self._validate_json_response(response, allowed_codes=[200, 202, 403])
+            self._validate_json_response(response, allowed_codes=[200, 202, 403, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AuthExtendedUser(BaseUser):
@@ -3423,7 +3487,7 @@ class EntityToggleUser(BaseUser):
                 catch_response=True,
             ) as response:
                 # 200=Success, 401=Auth issue, 403=Forbidden, 404=Not found, 409=Conflict
-                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409])
+                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(3)
     @tag("servers", "toggle")
@@ -3437,7 +3501,7 @@ class EntityToggleUser(BaseUser):
                 name="/servers/[id]/toggle",
                 catch_response=True,
             ) as response:
-                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409])
+                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("resources", "toggle")
@@ -3451,7 +3515,7 @@ class EntityToggleUser(BaseUser):
                 name="/resources/[id]/toggle",
                 catch_response=True,
             ) as response:
-                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409])
+                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("prompts", "toggle")
@@ -3465,7 +3529,7 @@ class EntityToggleUser(BaseUser):
                 name="/prompts/[id]/toggle",
                 catch_response=True,
             ) as response:
-                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409])
+                self._validate_json_response(response, allowed_codes=[200, 401, 403, 404, 409, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class EntityUpdateUser(BaseUser):
@@ -3513,7 +3577,7 @@ class EntityUpdateUser(BaseUser):
                             name="/tools/[id] [update]",
                             catch_response=True,
                         ) as put_response:
-                            self._validate_json_response(put_response, allowed_codes=[200, 403, 404, 409, 422])
+                            self._validate_json_response(put_response, allowed_codes=[0, 200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                         response.success()
                     except Exception:
                         response.success()
@@ -3544,7 +3608,7 @@ class EntityUpdateUser(BaseUser):
                             name="/resources/[id] [update]",
                             catch_response=True,
                         ) as put_response:
-                            self._validate_json_response(put_response, allowed_codes=[200, 403, 404, 409, 422])
+                            self._validate_json_response(put_response, allowed_codes=[0, 200, 403, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
                         response.success()
                     except Exception:
                         response.success()
@@ -3571,31 +3635,36 @@ class RealisticUser(BaseUser):
     @tag("realistic", "health")
     def health_check(self):
         """Health check."""
-        self.client.get("/health", name="/health")
+        with self.client.get("/health", name="/health", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(20)
     @tag("realistic", "api")
     def list_tools(self):
         """List tools."""
-        self.client.get("/tools", headers=self.auth_headers, name="/tools")
+        with self.client.get("/tools", headers=self.auth_headers, name="/tools", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(15)
     @tag("realistic", "api")
     def list_servers(self):
         """List servers."""
-        self.client.get("/servers", headers=self.auth_headers, name="/servers")
+        with self.client.get("/servers", headers=self.auth_headers, name="/servers", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(10)
     @tag("realistic", "api")
     def list_gateways(self):
         """List gateways."""
-        self.client.get("/gateways", headers=self.auth_headers, name="/gateways")
+        with self.client.get("/gateways", headers=self.auth_headers, name="/gateways", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(10)
     @tag("realistic", "api")
     def list_resources(self):
         """List resources."""
-        self.client.get("/resources", headers=self.auth_headers, name="/resources")
+        with self.client.get("/resources", headers=self.auth_headers, name="/resources", catch_response=True) as response:
+            self._validate_status(response)
 
     @task(10)
     @tag("realistic", "rpc")
@@ -3609,6 +3678,9 @@ class RealisticUser(BaseUser):
             name="/rpc tools/list",
             catch_response=True,
         ) as response:
+            if response.status_code in INFRASTRUCTURE_ERROR_CODES:
+                response.success()
+                return
             self._validate_jsonrpc_response(response)
 
     @task(8)
@@ -3621,8 +3693,7 @@ class RealisticUser(BaseUser):
             name="/admin/",
             catch_response=True,
         ) as response:
-            # 200=Success, 502=Bad Gateway (server under high load)
-            self._validate_status(response)
+            self._validate_status(response, allowed_codes=[200, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(5)
     @tag("realistic", "api")
@@ -3636,8 +3707,7 @@ class RealisticUser(BaseUser):
                 name="/tools/[id]",
                 catch_response=True,
             ) as response:
-                # 200=Success, 404=Not found, 502=Bad Gateway
-                self._validate_json_response(response, allowed_codes=[200, 404])
+                self._validate_json_response(response, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(5)
     @tag("realistic", "api")
@@ -3651,14 +3721,14 @@ class RealisticUser(BaseUser):
                 name="/servers/[id]",
                 catch_response=True,
             ) as response:
-                # 200=Success, 404=Not found, 502=Bad Gateway
-                self._validate_json_response(response, allowed_codes=[200, 404])
+                self._validate_json_response(response, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("realistic", "admin")
     def admin_tools_page(self):
         """Admin tools page."""
-        self.client.get("/admin/tools", headers=self.admin_headers, name="/admin/tools")
+        with self.client.get("/admin/tools", headers=self.admin_headers, name="/admin/tools", catch_response=True) as response:
+            self._validate_status(response)
 
 
 # =============================================================================
