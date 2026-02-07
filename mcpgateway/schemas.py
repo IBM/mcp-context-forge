@@ -5487,6 +5487,7 @@ class AdminUserUpdateRequest(BaseModel):
         full_name: User's full name
         is_admin: Whether user has admin privileges
         is_active: Whether account is active
+        password: New password (admin can reset without old password)
 
     Examples:
         >>> request = AdminUserUpdateRequest(
@@ -5505,6 +5506,7 @@ class AdminUserUpdateRequest(BaseModel):
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     is_admin: Optional[bool] = Field(None, description="Whether user has admin privileges")
     is_active: Optional[bool] = Field(None, description="Whether account is active")
+    password: Optional[str] = Field(None, min_length=8, description="New password (admin reset)")
 
 
 class ErrorResponse(BaseModel):
