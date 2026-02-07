@@ -43,6 +43,7 @@ repos:
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
         types: [text]
+        exclude: 'tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py'
 
   #   - repo: https://github.com/Yelp/detect-secrets
   #     rev: v1.5.0
@@ -296,6 +297,7 @@ repos:
         description: Checks YAML files for parseable syntax.
         types: [yaml]
         exclude: ^(docs/|charts/)
+        args: ['--allow-multiple-documents']
 
       - id: check-toml
         name: ✅ Check TOML
@@ -368,7 +370,7 @@ repos:
         description: Verifies test files in tests/ directories start with `test_`.
         language: python
         files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load)/.*\.py$
+        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client)/.*\.py$
         args: [--pytest-test-first] # `test_.*\.py`
 
   # - repo: https://github.com/pycqa/flake8
