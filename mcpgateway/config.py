@@ -258,7 +258,6 @@ class Settings(BaseSettings):
     # Security Validation & Sanitization
     experimental_validate_io: bool = Field(default=False, description="Enable experimental input validation and output sanitization")
     validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
-    # It validates live HTTP request data (inputs to tools, resource paths, query parameters).
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
     sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
     allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
