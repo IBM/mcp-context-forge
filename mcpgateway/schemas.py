@@ -5516,6 +5516,7 @@ class AdminUserUpdateRequest(BaseModel):
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     is_admin: Optional[bool] = Field(None, description="Whether user has admin privileges")
     is_active: Optional[bool] = Field(None, description="Whether account is active")
+    password_change_required: Optional[bool] = Field(None, description="Whether user must change password on next login")
     password: Optional[str] = Field(None, min_length=8, description="New password (admin reset)")
 
 

@@ -732,13 +732,9 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
 
         if user_request.is_active is not None:
             user.is_active = user_request.is_active
-        if user_request.password_change_required is not None:
-            user.password_change_required = user_request.password_change_required
 
         # Update password if provided
         if user_request.password is not None:
-            # For admin updates, we need to directly update the password hash
-            # since we don't have the old password to verify
             # First-Party
             from mcpgateway.services.argon2_service import Argon2PasswordService
 
@@ -749,8 +745,14 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
 
             # Update password hash directly
             user.password_hash = await password_service.hash_password_async(user_request.password)
-            user.password_change_required = False  # Clear password change requirement
-            user.password_changed_at = utc_now()  # Update password change timestamp
+            # Only auto-clear password_change_required if not explicitly set in the request
+            if user_request.password_change_required is None:
+                user.password_change_required = False
+            user.password_changed_at = utc_now()
+
+        # Apply explicit password_change_required after password processing to allow override
+        if user_request.password_change_required is not None:
+            user.password_change_required = user_request.password_change_required
 
         db.commit()
         db.refresh(user)
