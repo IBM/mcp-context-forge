@@ -93,7 +93,7 @@ class TestEmailAuthBasic:
         # Should not raise any exception with default settings
         service.validate_password("Password123!")
         service.validate_password("Simple123!")  # 8+ chars with requirements
-        service.validate_password("VerylongPasswordString!")
+        service.validate_password("VerylongPasswordString1!")
 
     def test_validate_password_empty(self, service):
         """Test password validation with empty password."""
