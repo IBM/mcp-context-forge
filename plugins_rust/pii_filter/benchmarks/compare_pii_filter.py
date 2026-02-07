@@ -292,6 +292,7 @@ class BenchmarkSuite:
             data_size = len(data_str.encode("utf-8"))
 
             import time
+
             start = time.time()
             for _ in range(100):
                 self.rust_detector.process_nested(data, "")
