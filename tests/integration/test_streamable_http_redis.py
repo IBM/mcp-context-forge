@@ -8,6 +8,7 @@ using Redis as the shared event store backend.
 
 import asyncio
 import os
+import uuid
 from unittest.mock import AsyncMock
 
 import pytest
@@ -33,18 +34,19 @@ async def redis_cleanup(monkeypatch):
     settings.redis_url = "redis://localhost:6379"
 
     redis = await get_redis_client()
+    key_prefix = f"mcpgw:eventstore:itest:{uuid.uuid4().hex}"
 
     # Clean before
     if redis:
-        keys = await redis.keys("mcpgw:eventstore:*")
+        keys = await redis.keys(f"{key_prefix}:*")
         if keys:
             await redis.delete(*keys)
 
-    yield
+    yield key_prefix
 
     # Clean after
     if redis:
-        keys = await redis.keys("mcpgw:eventstore:*")
+        keys = await redis.keys(f"{key_prefix}:*")
         if keys:
             await redis.delete(*keys)
 
@@ -62,8 +64,8 @@ class TestMultiWorkerStatefulSessions:
         Worker 1 stores events, Worker 2 replays them.
         """
         # Create two event stores (simulating two workers)
-        worker1_store = RedisEventStore(max_events_per_stream=100, ttl=300)
-        worker2_store = RedisEventStore(max_events_per_stream=100, ttl=300)
+        worker1_store = RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup)
+        worker2_store = RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup)
 
         stream_id = "session-abc123"
 
@@ -102,7 +104,7 @@ class TestMultiWorkerStatefulSessions:
 
         async def worker_task(worker_id):
             """Simulate a worker storing events."""
-            store = RedisEventStore(max_events_per_stream=100, ttl=300)
+            store = RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup)
             stream_id = f"worker-{worker_id}-stream"
             event_ids = []
 
@@ -123,7 +125,7 @@ class TestMultiWorkerStatefulSessions:
             assert len(event_ids) == events_per_worker
 
             # Create new store to verify persistence
-            verify_store = RedisEventStore(max_events_per_stream=100, ttl=300)
+            verify_store = RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup)
 
             # Replay from first event
             replayed = []
@@ -143,7 +145,7 @@ class TestMultiWorkerStatefulSessions:
         stream_id = "resilient-session"
 
         # Worker 1: Store some events
-        worker1_store = RedisEventStore(max_events_per_stream=100, ttl=300)
+        worker1_store = RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup)
         msg1 = {"jsonrpc": "2.0", "method": "initialize", "id": 1}
         event1 = await worker1_store.store_event(stream_id, msg1)
 
@@ -154,7 +156,7 @@ class TestMultiWorkerStatefulSessions:
         del worker1_store
 
         # Worker 2: Takes over the stream
-        worker2_store = RedisEventStore(max_events_per_stream=100, ttl=300)
+        worker2_store = RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup)
 
         # Worker 2 can replay existing events
         replayed = []
@@ -187,7 +189,7 @@ class TestMultiWorkerStatefulSessions:
         stream_id = "load-balanced-session"
 
         # Create 3 workers
-        workers = [RedisEventStore(max_events_per_stream=100, ttl=300) for _ in range(3)]
+        workers = [RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup) for _ in range(3)]
 
         # Simulate 12 requests round-robin across workers
         event_ids = []
@@ -223,8 +225,8 @@ class TestMultiWorkerStatefulSessions:
         max_events = 10
 
         # Create two workers
-        worker1 = RedisEventStore(max_events_per_stream=max_events, ttl=300)
-        worker2 = RedisEventStore(max_events_per_stream=max_events, ttl=300)
+        worker1 = RedisEventStore(max_events_per_stream=max_events, ttl=300, key_prefix=redis_cleanup)
+        worker2 = RedisEventStore(max_events_per_stream=max_events, ttl=300, key_prefix=redis_cleanup)
 
         # Worker 1 stores 5 events
         event_ids = []
@@ -260,7 +262,7 @@ class TestMultiWorkerStatefulSessions:
         Ensure different sessions don't interfere with each other.
         """
         # Create multiple workers
-        workers = [RedisEventStore(max_events_per_stream=100, ttl=300) for _ in range(3)]
+        workers = [RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup) for _ in range(3)]
 
         # Create 3 different sessions
         sessions = ["session-alice", "session-bob", "session-charlie"]
@@ -277,7 +279,7 @@ class TestMultiWorkerStatefulSessions:
 
         # Verify each session has only its own events
         for session_id, event_ids in session_events.items():
-            store = RedisEventStore(max_events_per_stream=100, ttl=300)
+            store = RedisEventStore(max_events_per_stream=100, ttl=300, key_prefix=redis_cleanup)
             replayed = []
 
             async def callback(msg):
@@ -304,7 +306,7 @@ class TestMultiWorkerStatefulSessions:
 
         async def worker_task(worker_id):
             """Worker that rapidly stores events."""
-            store = RedisEventStore(max_events_per_stream=1000, ttl=300)
+            store = RedisEventStore(max_events_per_stream=1000, ttl=300, key_prefix=redis_cleanup)
             for i in range(events_per_worker):
                 msg = {"jsonrpc": "2.0", "method": f"w{worker_id}_msg{i}", "id": f"{worker_id}-{i}"}
                 await store.store_event(stream_id, msg)
@@ -313,11 +315,11 @@ class TestMultiWorkerStatefulSessions:
         await asyncio.gather(*[worker_task(i) for i in range(num_workers)])
 
         # Verify total event count
-        store = RedisEventStore(max_events_per_stream=1000, ttl=300)
+        store = RedisEventStore(max_events_per_stream=1000, ttl=300, key_prefix=redis_cleanup)
         redis = await get_redis_client()
 
         # Get event count
-        count = await redis.hget(f"mcpgw:eventstore:{stream_id}:meta", "count")
+        count = await redis.hget(store._get_stream_meta_key(stream_id), "count")
         assert count is not None
         total_events = int(count)
 

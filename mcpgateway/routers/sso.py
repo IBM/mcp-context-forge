@@ -369,7 +369,7 @@ async def create_sso_provider(
     if existing:
         raise HTTPException(status_code=409, detail=f"SSO provider '{provider_data.id}' already exists")
 
-    provider = await sso_service.create_provider(provider_data.dict())
+    provider = await sso_service.create_provider(provider_data.model_dump())
 
     result = {
         "id": provider.id,
@@ -502,7 +502,7 @@ async def update_sso_provider(
     sso_service = SSOService(db)
 
     # Filter out None values
-    update_data = {k: v for k, v in provider_data.dict().items() if v is not None}
+    update_data = {k: v for k, v in provider_data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No update data provided")
 

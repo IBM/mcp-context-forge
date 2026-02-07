@@ -233,29 +233,31 @@ class StorageHandler(logging.Handler):
 
         # Store the log asynchronously
         try:
-            # Get or create event loop
-            if not self.loop:
-                try:
-                    self.loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    # No running loop, can't store
+            coro = self.storage.add_log(
+                level=log_level,
+                message=message,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                entity_name=entity_name,
+                logger=record.name,
+                request_id=request_id,
+            )
+
+            try:
+                # Fast path: we're already on an event loop thread.
+                loop = asyncio.get_running_loop()
+                self.loop = loop
+                task = loop.create_task(coro)
+                task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            except RuntimeError:
+                # Fallback: no running loop in this thread; attempt to schedule on a known loop.
+                loop = self.loop
+                if loop is None or not loop.is_running():
+                    coro.close()
                     return
 
-            # Schedule the coroutine and store the future (fire-and-forget)
-            future = asyncio.run_coroutine_threadsafe(
-                self.storage.add_log(
-                    level=log_level,
-                    message=message,
-                    entity_type=entity_type,
-                    entity_id=entity_id,
-                    entity_name=entity_name,
-                    logger=record.name,
-                    request_id=request_id,
-                ),
-                self.loop,
-            )
-            # Add a done callback to catch any exceptions without blocking
-            future.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
+                future = asyncio.run_coroutine_threadsafe(coro, loop)
+                future.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
         except Exception:
             # Silently fail to avoid logging recursion
             pass  # nosec B110 - Intentional to prevent logging recursion

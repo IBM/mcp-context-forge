@@ -1012,7 +1012,9 @@ class A2AAgentService:
                 # Update the slug when name changes
                 agent.slug = new_slug
             # Update fields
-            update_data = agent_data.model_dump(exclude_unset=True)
+            # Avoid `model_dump()` here: tests use `model_construct()` to create intentionally invalid
+            # payloads, and `model_dump()` emits serializer warnings when encountering unexpected types.
+            update_data = {field: getattr(agent_data, field) for field in agent_data.model_fields_set}
 
             # Track original auth_type and endpoint_url before updates
             original_auth_type = agent.auth_type

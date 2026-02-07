@@ -113,7 +113,7 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
         logger.info(f"Role created: {role.id} by {user['email']}")
         db.commit()
         db.close()
-        return RoleResponse.from_orm(role)
+        return RoleResponse.model_validate(role)
 
     except ValueError as e:
         logger.error(f"Role creation validation error: {e}")
@@ -157,7 +157,7 @@ async def list_roles(
         db.commit()
         db.close()
 
-        return [RoleResponse.from_orm(role) for role in roles]
+        return [RoleResponse.model_validate(role) for role in roles]
 
     except Exception as e:
         logger.error(f"Failed to list roles: {e}")
@@ -194,7 +194,7 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
 
         db.commit()
         db.close()
-        return RoleResponse.from_orm(role)
+        return RoleResponse.model_validate(role)
 
     except HTTPException:
         raise
@@ -227,7 +227,7 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
     """
     try:
         role_service = RoleService(db)
-        role = await role_service.update_role(role_id, **role_data.dict(exclude_unset=True))
+        role = await role_service.update_role(role_id, **role_data.model_dump(exclude_unset=True))
 
         if not role:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Role not found")
@@ -235,7 +235,7 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
         logger.info(f"Role updated: {role_id} by {user['email']}")
         db.commit()
         db.close()
-        return RoleResponse.from_orm(role)
+        return RoleResponse.model_validate(role)
 
     except HTTPException:
         raise
@@ -321,7 +321,7 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
         logger.info(f"Role assigned: {assignment_data.role_id} to {user_email} by {user['email']}")
         db.commit()
         db.close()
-        return UserRoleResponse.from_orm(user_role)
+        return UserRoleResponse.model_validate(user_role)
 
     except ValueError as e:
         logger.error(f"Role assignment validation error: {e}")
@@ -364,7 +364,7 @@ async def get_user_roles(
         permission_service = PermissionService(db)
         user_roles = await permission_service.get_user_roles(user_email=user_email, scope=scope, include_expired=not active_only)
 
-        result = [UserRoleResponse.from_orm(user_role) for user_role in user_roles]
+        result = [UserRoleResponse.model_validate(user_role) for user_role in user_roles]
         db.commit()
         db.close()
         return result
@@ -555,7 +555,7 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Sess
         permission_service = PermissionService(db)
         user_roles = await permission_service.get_user_roles(user_email=user["email"], include_expired=False)
 
-        result = [UserRoleResponse.from_orm(user_role) for user_role in user_roles]
+        result = [UserRoleResponse.model_validate(user_role) for user_role in user_roles]
         db.commit()
         db.close()
         return result
