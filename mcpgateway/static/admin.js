@@ -6818,7 +6818,9 @@ async function exportRoot(uri) {
         const contentDisposition = response.headers.get("Content-Disposition");
         let filename = `root-export-${Date.now()}.json`;
         if (contentDisposition) {
-            const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/);
+            const filenameMatch = contentDisposition.match(
+                /filename="?([^";\n]+)"?/,
+            );
             if (filenameMatch && filenameMatch[1]) {
                 filename = filenameMatch[1];
             }
