@@ -7,7 +7,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate, GatewayCreate, GatewayUpdate
+from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate, EmailRegistrationRequest, GatewayCreate, GatewayUpdate
 from mcpgateway.utils.services_auth import decode_auth
 
 
@@ -158,3 +158,131 @@ def test_a2a_agent_create_query_param_host_allowlist(monkeypatch):
 def test_a2a_agent_update_query_param_missing_value():
     with pytest.raises(ValueError):
         A2AAgentUpdate(auth_type="query_param", auth_query_param_key="api_key")
+
+
+# =========================================================================
+# EmailRegistrationRequest Schema Tests
+# =========================================================================
+
+
+def test_email_registration_request_with_password():
+    """Test EmailRegistrationRequest with password provided."""
+    request = EmailRegistrationRequest(
+        email="test@example.com",
+        password="SecurePass123!",
+        full_name="Test User"
+    )
+    assert request.email == "test@example.com"
+    assert request.password == "SecurePass123!"
+    assert request.full_name == "Test User"
+    assert request.is_admin is False  # Default
+    assert request.is_active is True  # Default
+    assert request.password_change_required is False  # Default
+
+
+def test_email_registration_request_without_password():
+    """Test EmailRegistrationRequest without password (for updates)."""
+    request = EmailRegistrationRequest(
+        email="test@example.com",
+        full_name="Test User"
+    )
+    assert request.email == "test@example.com"
+    assert request.password is None
+    assert request.full_name == "Test User"
+
+
+def test_email_registration_request_with_is_active_true():
+    """Test EmailRegistrationRequest with is_active=True."""
+    request = EmailRegistrationRequest(
+        email="active@example.com",
+        password="SecurePass123!",
+        full_name="Active User",
+        is_active=True
+    )
+    assert request.is_active is True
+
+
+def test_email_registration_request_with_is_active_false():
+    """Test EmailRegistrationRequest with is_active=False."""
+    request = EmailRegistrationRequest(
+        email="inactive@example.com",
+        password="SecurePass123!",
+        full_name="Inactive User",
+        is_active=False
+    )
+    assert request.is_active is False
+
+
+def test_email_registration_request_with_password_change_required_true():
+    """Test EmailRegistrationRequest with password_change_required=True."""
+    request = EmailRegistrationRequest(
+        email="pwchange@example.com",
+        password="TempPass123!",
+        full_name="Password Change User",
+        password_change_required=True
+    )
+    assert request.password_change_required is True
+
+
+def test_email_registration_request_with_password_change_required_false():
+    """Test EmailRegistrationRequest with password_change_required=False."""
+    request = EmailRegistrationRequest(
+        email="nopwchange@example.com",
+        password="SecurePass123!",
+        full_name="No Password Change User",
+        password_change_required=False
+    )
+    assert request.password_change_required is False
+
+
+def test_email_registration_request_with_all_fields():
+    """Test EmailRegistrationRequest with all fields set."""
+    request = EmailRegistrationRequest(
+        email="complete@example.com",
+        password="CompletePass123!",
+        full_name="Complete User",
+        is_admin=True,
+        is_active=False,
+        password_change_required=True
+    )
+    assert request.email == "complete@example.com"
+    assert request.password == "CompletePass123!"
+    assert request.full_name == "Complete User"
+    assert request.is_admin is True
+    assert request.is_active is False
+    assert request.password_change_required is True
+
+
+def test_email_registration_request_password_too_short():
+    """Test EmailRegistrationRequest with password shorter than 8 characters."""
+    with pytest.raises(ValueError, match="at least 8 characters"):
+        EmailRegistrationRequest(
+            email="test@example.com",
+            password="Short1!",  # Only 7 characters
+            full_name="Test User"
+        )
+
+
+def test_email_registration_request_invalid_email():
+    """Test EmailRegistrationRequest with invalid email format."""
+    with pytest.raises(ValueError):
+        EmailRegistrationRequest(
+            email="not-an-email",
+            password="SecurePass123!",
+            full_name="Test User"
+        )
+
+
+def test_email_registration_request_partial_update_scenario():
+    """Test EmailRegistrationRequest for partial update (no password, only other fields)."""
+    request = EmailRegistrationRequest(
+        email="update@example.com",
+        full_name="Updated Name",
+        is_admin=True
+    )
+    assert request.email == "update@example.com"
+    assert request.password is None
+    assert request.full_name == "Updated Name"
+    assert request.is_admin is True
+    assert request.is_active is True  # Default preserved
+    assert request.password_change_required is False  # Default preserved

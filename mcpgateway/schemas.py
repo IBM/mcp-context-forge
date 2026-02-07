@@ -5191,13 +5191,15 @@ class EmailLoginRequest(BaseModel):
 
 
 class EmailRegistrationRequest(BaseModel):
-    """Request schema for user registration.
+    """Request schema for user registration and updates.
 
     Attributes:
         email: User's email address
-        password: User's password
+        password: User's password (optional for updates)
         full_name: Optional full name for display
         is_admin: Whether user should have admin privileges (default: False)
+        is_active: Whether user account is active (default: True)
+        password_change_required: Whether user must change password on next login (default: False)
 
     Examples:
         >>> request = EmailRegistrationRequest(
@@ -5211,30 +5213,36 @@ class EmailRegistrationRequest(BaseModel):
         'New User'
         >>> request.is_admin
         False
+        >>> request.is_active
+        True
+        >>> request.password_change_required
+        False
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
     email: EmailStr = Field(..., description="User's email address")
-    password: str = Field(..., min_length=8, description="User's password")
+    password: Optional[str] = Field(None, min_length=8, description="User's password (optional for updates)")
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     is_admin: bool = Field(False, description="Grant admin privileges to user")
+    is_active: bool = Field(True, description="Whether user account is active")
+    password_change_required: bool = Field(False, description="Whether user must change password on next login")
 
     @field_validator("password")
     @classmethod
-    def validate_password(cls, v: str) -> str:
+    def validate_password(cls, v: Optional[str]) -> Optional[str]:
         """Validate password meets minimum requirements.
 
         Args:
-            v: Password string to validate
+            v: Password string to validate (can be None for updates)
 
         Returns:
-            str: Validated password
+            Optional[str]: Validated password or None
 
         Raises:
             ValueError: If password doesn't meet requirements
         """
-        if len(v) < 8:
+        if v is not None and len(v) < 8:
             raise ValueError("Password must be at least 8 characters long")
         return v
 
