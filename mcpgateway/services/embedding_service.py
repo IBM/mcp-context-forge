@@ -14,8 +14,13 @@ Required interface:
 """
 
 # Standard
+import os
 from typing import List
-
+from mcpgateway.services.mcp_client_chat_service import (
+    EmbeddingConfig,
+    EmbeddingProviderFactory, 
+    OpenAIEmbeddingConfig,
+)
 
 class EmbeddingService:
     """Service for generating text embeddings.
@@ -30,7 +35,26 @@ class EmbeddingService:
         Team A: Add your model initialization here.
         Example: Load sentence-transformers model, initialize OpenAI client, etc.
         """
-        pass
+         # Set up attributes first
+        self.embedding_config = EmbeddingConfig(
+            provider="openai",
+            config=OpenAIEmbeddingConfig(
+    model="text-embedding-3-small",
+    api_key=os.getenv("OPENAI_API_KEY", "sk-fake-key-for-testing")
+)
+        )
+        self._provider = None
+        self._embedding_model = None
+        self._initialized = False
+
+    async def initialize(self):
+        """Initialize the embedding provider (separate async method)."""
+        if self._initialized:
+            return
+        
+        self._provider = EmbeddingProviderFactory.create(self.embedding_config)
+        self._embedding_model = self._provider.get_embedding_model()
+        self._initialized = True
 
     async def embed_query(self, query: str) -> List[float]:
         """Generate embedding vector for a query string.
@@ -52,5 +76,9 @@ class EmbeddingService:
         # embedding = self.model.encode(query)
         # return embedding.tolist()
         
-        # Placeholder: Return 768-dimensional zero vector
-        return [0.0] * 768
+        if not self._initialized:
+            await self.initialize()
+
+        embedding = await self._embedding_model.aembed_query(query)
+        return embedding
+
