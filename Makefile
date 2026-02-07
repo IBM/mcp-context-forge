@@ -1619,6 +1619,7 @@ JMETER_TOKEN ?= $(shell python3 -m mcpgateway.utils.create_jwt_token --username 
 JMETER_SERVER_ID ?=
 JMETER_FAST_TIME_URL ?= http://localhost:8888
 JMETER_FAST_TEST_URL ?= http://localhost:8880
+JMETER_SUMMARISER ?= -Jsummariser.interval=10
 
 .PHONY: jmeter-install jmeter-ui jmeter-check jmeter-quick jmeter-clean
 .PHONY: jmeter-rest-baseline jmeter-mcp-baseline jmeter-mcp-servers-baseline
@@ -1676,7 +1677,7 @@ jmeter-quick: jmeter-check                 ## Quick 10-second test to verify set
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@$(JMETER_RENDER)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/rest_api_baseline.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_RENDERED_DIR)/rest_api_baseline.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
@@ -1692,7 +1693,7 @@ jmeter-rest-baseline: jmeter-check         ## Run REST API baseline test (1,000 
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@$(JMETER_RENDER)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/rest_api_baseline.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_RENDERED_DIR)/rest_api_baseline.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
@@ -1713,7 +1714,7 @@ jmeter-mcp-baseline: jmeter-check          ## Run MCP JSON-RPC baseline test (1,
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@$(JMETER_RENDER)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/mcp_jsonrpc_baseline.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_RENDERED_DIR)/mcp_jsonrpc_baseline.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
@@ -1730,7 +1731,7 @@ jmeter-mcp-servers-baseline: jmeter-check  ## Run MCP test servers baseline (fas
 	@echo "   Target: 2,000 RPS per server for 10 minutes"
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_DIR)/mcp_test_servers_baseline.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_DIR)/mcp_test_servers_baseline.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JFAST_TIME_URL=$(JMETER_FAST_TIME_URL) \
 		-JFAST_TEST_URL=$(JMETER_FAST_TEST_URL) \
@@ -1739,19 +1740,19 @@ jmeter-mcp-servers-baseline: jmeter-check  ## Run MCP test servers baseline (fas
 		-e -o $(JMETER_RESULTS_DIR)/mcp_servers_$$TIMESTAMP/
 	@echo "📄 Report: $(JMETER_RESULTS_DIR)/mcp_servers_*/index.html"
 
-jmeter-load: jmeter-check                  ## Run load test (4,000 RPS, 30min)
+jmeter-load: jmeter-check                  ## Run load test (1,000 users, 30min)
 	@echo "🔥 Running load test..."
 	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
-	@echo "   Target: 4,000 RPS for 30 minutes"
+	@echo "   Target: 1,000 concurrent users for 30 minutes"
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@$(JMETER_RENDER)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/load_test.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_RENDERED_DIR)/load_test.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
 		-JSERVER_ID=$(JMETER_SERVER_ID) \
-		-JTHREADS=400 -JRAMP_UP=120 -JDURATION=1800 \
+		-JTHREADS=1000 -JRAMP_UP=60 -JDURATION=1800 \
 		-l $(JMETER_RESULTS_DIR)/load_test_$$TIMESTAMP.jtl \
 		-e -o $(JMETER_RESULTS_DIR)/load_test_$$TIMESTAMP/
 	@echo "📄 Report: $(JMETER_RESULTS_DIR)/load_test_*/index.html"
@@ -1763,7 +1764,7 @@ jmeter-stress: jmeter-check                ## Run stress test (ramp to 10,000 RP
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@$(JMETER_RENDER)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/stress_test.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_RENDERED_DIR)/stress_test.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
@@ -1779,7 +1780,7 @@ jmeter-spike: jmeter-check                 ## Run spike test (1K→10K→1K reco
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@$(JMETER_RENDER)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/spike_test.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_RENDERED_DIR)/spike_test.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
@@ -1796,7 +1797,7 @@ jmeter-soak: jmeter-check                  ## Run 24-hour soak test (2,000 RPS)
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@$(JMETER_RENDER)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/soak_test.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_RENDERED_DIR)/soak_test.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
@@ -1812,7 +1813,7 @@ jmeter-sse: jmeter-check                   ## Run SSE streaming baseline (1,000 
 	@echo "   Target: 1,000 concurrent SSE connections for 10 minutes"
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_DIR)/sse_streaming_baseline.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_DIR)/sse_streaming_baseline.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
@@ -1829,7 +1830,7 @@ jmeter-websocket: jmeter-check             ## Run WebSocket baseline (500 connec
 	@echo "   Note: Requires JMeter WebSocket plugin for full support"
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_DIR)/websocket_baseline.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_DIR)/websocket_baseline.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL="ws://$$(echo $(JMETER_GATEWAY_URL) | sed 's|http://||' | sed 's|https://||')" \
 		-JTOKEN="$(JMETER_TOKEN)" \
@@ -1845,7 +1846,7 @@ jmeter-admin-ui: jmeter-check              ## Run Admin UI baseline (50 users)
 	@echo "   Target: 50 concurrent admin users with think time"
 	@mkdir -p $(JMETER_RESULTS_DIR)
 	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	$(JMETER_BIN) -n -t $(JMETER_DIR)/admin_ui_baseline.jmx \
+	$(JMETER_BIN) -n $(JMETER_SUMMARISER) -t $(JMETER_DIR)/admin_ui_baseline.jmx \
 		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
 		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
 		-JTOKEN="$(JMETER_TOKEN)" \
