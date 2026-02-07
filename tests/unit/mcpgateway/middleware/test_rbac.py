@@ -44,6 +44,22 @@ async def test_get_current_user_with_permissions_cookie_token_success():
 
 
 @pytest.mark.asyncio
+async def test_get_current_user_with_permissions_cookie_rejected_for_api_request():
+    """Cookie-only authentication must return 401 for non-browser (API) requests."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"user-agent": "python-requests/2.31", "accept": "application/json"}
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req123")
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Cookie authentication not allowed" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_get_current_user_with_permissions_no_token_raises_401():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {}
