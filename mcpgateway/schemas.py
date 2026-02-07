@@ -3470,6 +3470,8 @@ class FederatedPrompt(BaseModelWithConfigDict):
 class RPCRequest(BaseModel):
     """MCP-compliant RPC request validation"""
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     jsonrpc: Literal["2.0"]
     method: str
     params: Optional[Dict[str, Any]] = None

@@ -3639,7 +3639,7 @@ async def create_tool(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ex))
         if isinstance(ex, (ValidationError, ValueError)):
             logger.error(f"Validation error while creating tool: {ex}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(ex))
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorFormatter.format_validation_error(ex))
         if isinstance(ex, IntegrityError):
             logger.error(f"Integrity error while creating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
@@ -3741,7 +3741,7 @@ async def update_tool(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))
         if isinstance(ex, ValidationError):
             logger.error(f"Validation error while updating tool: {ex}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(ex))
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorFormatter.format_validation_error(ex))
         if isinstance(ex, IntegrityError):
             logger.error(f"Integrity error while updating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
@@ -4647,7 +4647,7 @@ async def create_prompt(
         if isinstance(e, ValidationError):
             # If there is a validation error, return a 422 Unprocessable Entity error
             logger.error(f"Validation error while creating prompt: {e}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(e))
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorFormatter.format_validation_error(e))
         if isinstance(e, IntegrityError):
             # If there is an integrity error, return a 409 Conflict error
             logger.error(f"Integrity error while creating prompt: {e}")
@@ -4834,7 +4834,7 @@ async def update_prompt(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         if isinstance(e, ValidationError):
             logger.error(f"Validation error while updating prompt: {e}")
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(e))
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=ErrorFormatter.format_validation_error(e))
         if isinstance(e, IntegrityError):
             logger.error(f"Integrity error while updating prompt: {e}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(e))
@@ -5130,7 +5130,7 @@ async def register_gateway(
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
         return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -5217,7 +5217,7 @@ async def update_gateway(
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
-            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=status.HTTP_409_CONFLICT, content=ErrorFormatter.format_database_error(ex))
         return ORJSONResponse(content={"message": "Unexpected error"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
