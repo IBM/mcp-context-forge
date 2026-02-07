@@ -10961,12 +10961,7 @@ async def admin_test_gateway(
             if content_type == "application/x-www-form-urlencoded":
                 # Set proper content type header and use data parameter for form encoding
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
-                if isinstance(request.body, str):
-                    # Body is already form-encoded
-                    request_kwargs["data"] = request.body
-                else:
-                    # Body is a dict, convert to form data
-                    request_kwargs["data"] = request.body
+                request_kwargs["data"] = request.body
             else:
                 # Default to JSON
                 headers["Content-Type"] = "application/json"
