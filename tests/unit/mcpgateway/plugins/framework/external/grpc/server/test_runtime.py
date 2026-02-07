@@ -9,7 +9,9 @@ Tests for GrpcPluginRuntime initialization, start, and stop.
 """
 
 # Standard
+import asyncio
 import os
+import signal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -293,3 +295,147 @@ plugin_settings:
 
                 mock_grpc_server.start.assert_called_once()
                 mock_grpc_server.stop.assert_called_once()
+
+
+class TestGrpcPluginRuntimeRequestShutdown:
+    """Tests for GrpcPluginRuntime.request_shutdown."""
+
+    def test_request_shutdown_sets_event(self):
+        """Test request_shutdown sets the shutdown event."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import GrpcPluginRuntime
+
+        runtime = GrpcPluginRuntime()
+        assert not runtime._shutdown_event.is_set()
+
+        runtime.request_shutdown()
+        assert runtime._shutdown_event.is_set()
+
+
+class TestGrpcPluginRuntimeRunServer:
+    """Tests for the run_server function."""
+
+    @pytest.mark.asyncio
+    async def test_run_server_creates_runtime_and_starts(self):
+        """Test run_server creates a runtime and runs start/stop."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import run_server
+
+        mock_runtime = MagicMock()
+        mock_runtime.start = AsyncMock()
+        mock_runtime.stop = AsyncMock()
+        mock_runtime.request_shutdown = MagicMock()
+
+        with patch(
+            "mcpgateway.plugins.framework.external.grpc.server.runtime.GrpcPluginRuntime",
+            return_value=mock_runtime,
+        ):
+            # Make start() immediately complete by making shutdown_event set
+            async def instant_start():
+                return
+
+            mock_runtime.start = AsyncMock(side_effect=instant_start)
+            await run_server(config_path="/test/config.yaml", host="localhost", port=50052)
+
+        mock_runtime.start.assert_called_once()
+        mock_runtime.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_server_stop_called_on_exception(self):
+        """Test run_server calls stop even when start raises."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import run_server
+
+        mock_runtime = MagicMock()
+        mock_runtime.start = AsyncMock(side_effect=RuntimeError("Start failed"))
+        mock_runtime.stop = AsyncMock()
+        mock_runtime.request_shutdown = MagicMock()
+
+        with patch(
+            "mcpgateway.plugins.framework.external.grpc.server.runtime.GrpcPluginRuntime",
+            return_value=mock_runtime,
+        ):
+            with pytest.raises(RuntimeError, match="Start failed"):
+                await run_server()
+
+        # stop() should still be called in finally block
+        mock_runtime.stop.assert_called_once()
+
+
+class TestGrpcPluginRuntimeMain:
+    """Tests for the main() entry point."""
+
+    def test_main_keyboard_interrupt(self):
+        """Test main handles KeyboardInterrupt gracefully."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import main
+
+        with patch("sys.argv", ["runtime"]):
+            with patch(
+                "mcpgateway.plugins.framework.external.grpc.server.runtime.asyncio.run",
+                side_effect=KeyboardInterrupt,
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 0
+
+    def test_main_exception_exits_with_error(self):
+        """Test main exits with code 1 on unexpected exception."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import main
+
+        with patch("sys.argv", ["runtime"]):
+            with patch(
+                "mcpgateway.plugins.framework.external.grpc.server.runtime.asyncio.run",
+                side_effect=RuntimeError("Server failed"),
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+                assert exc_info.value.code == 1
+
+    def test_main_parses_arguments(self):
+        """Test main correctly parses command line arguments."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import main
+
+        with patch(
+            "sys.argv",
+            ["runtime", "--config", "/custom/config.yaml", "--host", "127.0.0.1", "--port", "50052", "--log-level", "DEBUG"],
+        ):
+            with patch(
+                "mcpgateway.plugins.framework.external.grpc.server.runtime.asyncio.run",
+            ) as mock_run:
+                mock_run.return_value = None
+                main()
+                mock_run.assert_called_once()
+
+
+class TestGrpcPluginRuntimeUdsChmod:
+    """Tests for UDS chmod behavior."""
+
+    @pytest.mark.asyncio
+    async def test_start_sets_socket_permissions(self, tmp_path):
+        """Test start sets permissions on UDS socket file."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import GrpcPluginRuntime
+
+        uds_path = str(tmp_path / "grpc.sock")
+        runtime = GrpcPluginRuntime()
+
+        mock_plugin_server = AsyncMock()
+        mock_plugin_server.get_grpc_server_config = MagicMock(return_value=GRPCServerConfig(uds=uds_path))
+        mock_plugin_server.get_plugin_configs = AsyncMock(return_value=[])
+
+        mock_grpc_server = MagicMock()
+        mock_grpc_server.start = AsyncMock()
+        mock_grpc_server.add_insecure_port = MagicMock()
+
+        with patch(
+            "mcpgateway.plugins.framework.external.grpc.server.runtime.ExternalPluginServer",
+            return_value=mock_plugin_server,
+        ):
+            with patch("grpc.aio.server", return_value=mock_grpc_server):
+                # Create the socket file to test chmod
+                with open(uds_path, "w") as f:
+                    f.write("")
+
+                runtime._shutdown_event.set()
+                await runtime.start()
+
+                # Verify permissions were set to 0o600
+                assert os.path.exists(uds_path)
+                mode = oct(os.stat(uds_path).st_mode & 0o777)
+                assert mode == "0o600"

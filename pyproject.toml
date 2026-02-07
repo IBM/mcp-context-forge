@@ -160,6 +160,9 @@ dev = [
     # Required by other packages but here for security version control (CVEs)
     # Can be removed once the associated packages update their dependencies
     "pyasn1>=0.6.2", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
+    # gRPC plugin framework testing (optional at runtime, required for test coverage)
+    "grpcio>=1.76.0",
+    "grpcio-tools>=1.76.0",
 ]
 
 # ----------------------------------------------------------------
@@ -724,7 +727,9 @@ omit = [
     # Builder deployment files - require external tools (docker, kubectl, templates)
     "mcpgateway/tools/builder/common.py",
     "mcpgateway/tools/builder/dagger_deploy.py",
-    "mcpgateway/tools/builder/python_deploy.py"
+    "mcpgateway/tools/builder/python_deploy.py",
+    # Generated protobuf files - auto-generated, not hand-written code
+    "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py",
 ]
 
 # --------------------------------------------------------------------

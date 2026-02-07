@@ -252,3 +252,45 @@ class TestRoundTrip:
 
         assert parsed_request.hook_type == "tool_pre_invoke"
         assert parsed_request.plugin_name == "TestPlugin"
+
+
+class TestProtocolLimits:
+    """Tests for protocol size limits."""
+
+    def test_write_message_exceeds_max_size(self):
+        """Test write_message raises ProtocolError for oversized messages."""
+        from mcpgateway.plugins.framework.external.unix.protocol import MAX_MESSAGE_SIZE
+
+        data = b"x" * (MAX_MESSAGE_SIZE + 1)
+        mock_writer = MagicMock()
+
+        with pytest.raises(ProtocolError, match="exceeds maximum"):
+            write_message(mock_writer, data)
+
+    @pytest.mark.asyncio
+    async def test_read_message_exceeds_max_size(self):
+        """Test read_message raises ProtocolError for oversized messages."""
+        from mcpgateway.plugins.framework.external.unix.protocol import MAX_MESSAGE_SIZE
+
+        # Encode a length prefix larger than MAX_MESSAGE_SIZE
+        oversized_length = MAX_MESSAGE_SIZE + 1
+        length_prefix = struct.pack(">I", oversized_length)
+
+        mock_reader = AsyncMock()
+        mock_reader.readexactly = AsyncMock(return_value=length_prefix)
+
+        with pytest.raises(ProtocolError, match="exceeds maximum"):
+            await read_message(mock_reader)
+
+    @pytest.mark.asyncio
+    async def test_write_message_async_no_drain(self):
+        """Test write_message_async with drain=False."""
+        mock_writer = MagicMock()
+        mock_writer.write = MagicMock()
+        mock_writer.drain = AsyncMock()
+
+        data = b"Hello!"
+        await write_message_async(mock_writer, data, drain=False)
+
+        mock_writer.write.assert_called_once()
+        mock_writer.drain.assert_not_called()

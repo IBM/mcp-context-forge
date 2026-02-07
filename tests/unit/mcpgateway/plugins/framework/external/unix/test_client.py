@@ -36,6 +36,7 @@ from mcpgateway.plugins.framework.models import (
     GlobalContext,
     PluginConfig,
     PluginContext,
+    PluginErrorModel,
     UnixSocketClientConfig,
 )
 
@@ -357,3 +358,298 @@ class TestUnixSocketExternalPluginReconnect:
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 with pytest.raises(PluginError, match="Failed to reconnect"):
                     await plugin._reconnect()
+
+
+class TestUnixSocketExternalPluginSendRequest:
+    """Tests for _send_request retry and error handling."""
+
+    @pytest.fixture
+    def connected_plugin(self, mock_plugin_config):
+        """Create a connected plugin for testing."""
+        plugin = UnixSocketExternalPlugin(mock_plugin_config)
+        plugin._connected = True
+        plugin._reader = AsyncMock()
+        mock_writer = MagicMock()
+        mock_writer.is_closing.return_value = False
+        plugin._writer = mock_writer
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_send_request_connection_error_retry(self, mock_plugin_config):
+        """Test _send_request retries on connection error."""
+        from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+
+        plugin = UnixSocketExternalPlugin(mock_plugin_config)
+        plugin._connected = False
+
+        # Build a minimal request
+        request = plugin_service_pb2.InvokeHookRequest()
+        request.hook_type = "tool_pre_invoke"
+        request.plugin_name = "TestPlugin"
+
+        with patch.object(plugin, "_reconnect", new_callable=AsyncMock, side_effect=PluginError(error=PluginErrorModel(message="Failed", plugin_name="test"))):
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                with pytest.raises(PluginError):
+                    await plugin._send_request(request)
+
+    @pytest.mark.asyncio
+    async def test_send_request_os_error_retries(self, connected_plugin):
+        """Test _send_request retries on OSError during write."""
+        from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+
+        request = plugin_service_pb2.InvokeHookRequest()
+        request.hook_type = "tool_pre_invoke"
+        request.plugin_name = "TestPlugin"
+
+        call_count = 0
+
+        async def failing_write(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise OSError("Connection reset")
+
+        # Mock reconnect to succeed (so we actually retry the write)
+        mock_reader = AsyncMock()
+        mock_writer = MagicMock()
+        mock_writer.is_closing.return_value = False
+
+        with patch(
+            "mcpgateway.plugins.framework.external.unix.client.write_message_async",
+            side_effect=failing_write,
+        ):
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                with patch(
+                    "asyncio.open_unix_connection",
+                    return_value=(mock_reader, mock_writer),
+                ):
+                    with pytest.raises(PluginError):
+                        await connected_plugin._send_request(request)
+
+        # Should have attempted multiple times (initial + reconnect attempts)
+        assert call_count >= 2
+
+
+class TestUnixSocketExternalPluginInitializeEdgeCases:
+    """Tests for initialize edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_unexpected_exception(self, mock_plugin_config):
+        """Test initialize handles non-PluginError exceptions."""
+        plugin = UnixSocketExternalPlugin(mock_plugin_config)
+
+        with patch("asyncio.open_unix_connection", side_effect=ValueError("Unexpected")):
+            with pytest.raises(PluginError):
+                await plugin.initialize()
+
+    @pytest.mark.asyncio
+    async def test_initialize_config_not_found(self, mock_plugin_config):
+        """Test initialize continues when remote plugin config not found."""
+        plugin = UnixSocketExternalPlugin(mock_plugin_config)
+        from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+
+        mock_reader = AsyncMock()
+        mock_writer = MagicMock()
+        mock_writer.is_closing.return_value = False
+
+        # Config not found response
+        config_response = plugin_service_pb2.GetPluginConfigResponse()
+        config_response.found = False
+
+        with patch("asyncio.open_unix_connection", return_value=(mock_reader, mock_writer)):
+            with patch(
+                "mcpgateway.plugins.framework.external.unix.client.write_message_async",
+                new_callable=AsyncMock,
+            ):
+                with patch(
+                    "mcpgateway.plugins.framework.external.unix.client.read_message",
+                    new_callable=AsyncMock,
+                    return_value=config_response.SerializeToString(),
+                ):
+                    # Should not raise even if config not found
+                    await plugin.initialize()
+                    assert plugin._connected is True
+
+    @pytest.mark.asyncio
+    async def test_initialize_config_verification_fails(self, mock_plugin_config):
+        """Test initialize continues when config verification fails."""
+        plugin = UnixSocketExternalPlugin(mock_plugin_config)
+
+        mock_reader = AsyncMock()
+        mock_writer = MagicMock()
+        mock_writer.is_closing.return_value = False
+
+        with patch("asyncio.open_unix_connection", return_value=(mock_reader, mock_writer)):
+            with patch(
+                "mcpgateway.plugins.framework.external.unix.client.write_message_async",
+                new_callable=AsyncMock,
+                side_effect=[None, Exception("Write failed")],
+            ):
+                with patch(
+                    "mcpgateway.plugins.framework.external.unix.client.read_message",
+                    new_callable=AsyncMock,
+                    side_effect=Exception("Read failed"),
+                ):
+                    # Should still initialize (config verification is best-effort)
+                    await plugin.initialize()
+                    assert plugin._connected is True
+
+
+class TestUnixSocketExternalPluginInvokeHookEdgeCases:
+    """Tests for invoke_hook edge cases."""
+
+    @pytest.fixture
+    def initialized_plugin(self, mock_plugin_config):
+        """Create an initialized plugin for testing."""
+        plugin = UnixSocketExternalPlugin(mock_plugin_config)
+        plugin._connected = True
+        plugin._reader = AsyncMock()
+        mock_writer = MagicMock()
+        mock_writer.is_closing.return_value = False
+        plugin._writer = mock_writer
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_with_dict_payload(self, initialized_plugin):
+        """Test invoke_hook with dict payload (not pydantic model)."""
+        from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+
+        # Create success response
+        response = plugin_service_pb2.InvokeHookResponse()
+        result_struct = Struct()
+        json_format.ParseDict({"continue_processing": True}, result_struct)
+        response.result.CopyFrom(result_struct)
+
+        with patch(
+            "mcpgateway.plugins.framework.external.unix.client.write_message_async",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "mcpgateway.plugins.framework.external.unix.client.read_message",
+                new_callable=AsyncMock,
+                return_value=response.SerializeToString(),
+            ):
+                context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
+                # Pass dict payload instead of pydantic model
+                payload = {"name": "test_tool", "args": {}}
+
+                result = await initialized_plugin.invoke_hook("tool_pre_invoke", payload, context)
+
+                assert result.continue_processing is True
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_with_context_update(self, initialized_plugin):
+        """Test invoke_hook updates context from response."""
+        from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+
+        # Create response with context update
+        response = plugin_service_pb2.InvokeHookResponse()
+        result_struct = Struct()
+        json_format.ParseDict({"continue_processing": True}, result_struct)
+        response.result.CopyFrom(result_struct)
+
+        # Add context with state
+        from google.protobuf import json_format as jf
+        jf.ParseDict({"updated_key": "updated_value"}, response.context.state)
+        response.context.global_context.request_id = "req-1"
+
+        with patch(
+            "mcpgateway.plugins.framework.external.unix.client.write_message_async",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "mcpgateway.plugins.framework.external.unix.client.read_message",
+                new_callable=AsyncMock,
+                return_value=response.SerializeToString(),
+            ):
+                context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
+                payload = ToolPreInvokePayload(name="test_tool", args={})
+
+                result = await initialized_plugin.invoke_hook("tool_pre_invoke", payload, context)
+                assert result.continue_processing is True
+                # Context should be updated
+                assert context.state.get("updatedKey") == "updated_value" or context.state.get("updated_key") == "updated_value"
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_error_with_details(self, initialized_plugin):
+        """Test invoke_hook handles error response with details."""
+        from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+
+        response = plugin_service_pb2.InvokeHookResponse()
+        response.error.message = "Error with details"
+        response.error.plugin_name = "TestPlugin"
+        response.error.code = "ERR"
+        from google.protobuf import json_format as jf
+        jf.ParseDict({"extra": "info"}, response.error.details)
+
+        with patch(
+            "mcpgateway.plugins.framework.external.unix.client.write_message_async",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "mcpgateway.plugins.framework.external.unix.client.read_message",
+                new_callable=AsyncMock,
+                return_value=response.SerializeToString(),
+            ):
+                context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
+                payload = ToolPreInvokePayload(name="test_tool", args={})
+
+                with pytest.raises(PluginError) as exc_info:
+                    await initialized_plugin.invoke_hook("tool_pre_invoke", payload, context)
+                assert "Error with details" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_invalid_response(self, initialized_plugin):
+        """Test invoke_hook handles response without result or error."""
+        from mcpgateway.plugins.framework.external.grpc.proto import plugin_service_pb2
+
+        # Empty response (no result, no error)
+        response = plugin_service_pb2.InvokeHookResponse()
+
+        with patch(
+            "mcpgateway.plugins.framework.external.unix.client.write_message_async",
+            new_callable=AsyncMock,
+        ):
+            with patch(
+                "mcpgateway.plugins.framework.external.unix.client.read_message",
+                new_callable=AsyncMock,
+                return_value=response.SerializeToString(),
+            ):
+                context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
+                payload = ToolPreInvokePayload(name="test_tool", args={})
+
+                with pytest.raises(PluginError, match="invalid response"):
+                    await initialized_plugin.invoke_hook("tool_pre_invoke", payload, context)
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_generic_exception(self, initialized_plugin):
+        """Test invoke_hook wraps generic exceptions in PluginError."""
+        with patch(
+            "mcpgateway.plugins.framework.external.unix.client.write_message_async",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Unexpected serialization error"),
+        ):
+            context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
+            payload = ToolPreInvokePayload(name="test_tool", args={})
+
+            with pytest.raises(PluginError):
+                await initialized_plugin.invoke_hook("tool_pre_invoke", payload, context)
+
+
+class TestUnixSocketExternalPluginDisconnect:
+    """Tests for _disconnect edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_disconnect_writer_exception(self, mock_plugin_config):
+        """Test _disconnect handles writer close exception."""
+        plugin = UnixSocketExternalPlugin(mock_plugin_config)
+        mock_writer = MagicMock()
+        mock_writer.close = MagicMock(side_effect=OSError("Close failed"))
+        mock_writer.wait_closed = AsyncMock(side_effect=OSError("Wait failed"))
+        plugin._writer = mock_writer
+        plugin._reader = AsyncMock()
+        plugin._connected = True
+
+        # Should not raise
+        await plugin._disconnect()
+        assert plugin._writer is None
+        assert plugin._connected is False

@@ -372,3 +372,157 @@ class TestGrpcPluginServicerEdgeCases:
         assert response.HasField("result")
         result_dict = json_format.MessageToDict(response.result)
         assert "modifiedPayload" in result_dict or "modified_payload" in result_dict
+
+
+class TestGrpcPluginServicerExceptionHandling:
+    """Tests for exception handling in GrpcPluginServicer."""
+
+    @pytest.mark.asyncio
+    async def test_get_plugin_config_exception(self, servicer, mock_plugin_server):
+        """Test GetPluginConfig handles exceptions with gRPC error codes."""
+        mock_plugin_server.get_plugin_config = AsyncMock(side_effect=RuntimeError("DB error"))
+
+        request = plugin_service_pb2.GetPluginConfigRequest(name="TestPlugin")
+        context = MagicMock()
+
+        response = await servicer.GetPluginConfig(request, context)
+
+        assert response.found is False
+        context.set_code.assert_called_once()
+        context.set_details.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_plugin_configs_exception(self, servicer, mock_plugin_server):
+        """Test GetPluginConfigs handles exceptions with gRPC error codes."""
+        mock_plugin_server.get_plugin_configs = AsyncMock(side_effect=RuntimeError("DB error"))
+
+        request = plugin_service_pb2.GetPluginConfigsRequest()
+        context = MagicMock()
+
+        response = await servicer.GetPluginConfigs(request, context)
+
+        assert len(response.configs) == 0
+        context.set_code.assert_called_once()
+        context.set_details.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_with_error_dict(self, servicer, mock_plugin_server):
+        """Test InvokeHook handles error as raw dict (not model_dump)."""
+        mock_plugin_server.invoke_hook = AsyncMock(
+            return_value={
+                "error": {
+                    "message": "Raw dict error",
+                    "plugin_name": "TestPlugin",
+                    "code": "RAW_ERROR",
+                    "mcp_error_code": -32600,
+                    "details": {"extra": "info"},
+                }
+            }
+        )
+
+        request = plugin_service_pb2.InvokeHookRequest()
+        request.hook_type = "tool_pre_invoke"
+        request.plugin_name = "TestPlugin"
+
+        payload_struct = Struct()
+        json_format.ParseDict({"name": "test_tool", "args": {}}, payload_struct)
+        request.payload.CopyFrom(payload_struct)
+
+        request.context.global_context.request_id = "test-request"
+        request.context.global_context.server_id = "test-server"
+
+        context = MagicMock()
+        response = await servicer.InvokeHook(request, context)
+
+        assert response.HasField("error")
+        assert response.error.message == "Raw dict error"
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_with_error_model(self, servicer, mock_plugin_server):
+        """Test InvokeHook handles error as Pydantic model with model_dump."""
+        from mcpgateway.plugins.framework.models import PluginErrorModel
+
+        error_model = PluginErrorModel(
+            message="Model error",
+            plugin_name="TestPlugin",
+            code="MODEL_ERROR",
+        )
+        mock_plugin_server.invoke_hook = AsyncMock(
+            return_value={"error": error_model}
+        )
+
+        request = plugin_service_pb2.InvokeHookRequest()
+        request.hook_type = "tool_pre_invoke"
+        request.plugin_name = "TestPlugin"
+
+        payload_struct = Struct()
+        json_format.ParseDict({"name": "test_tool", "args": {}}, payload_struct)
+        request.payload.CopyFrom(payload_struct)
+
+        request.context.global_context.request_id = "test-request"
+        request.context.global_context.server_id = "test-server"
+
+        context = MagicMock()
+        response = await servicer.InvokeHook(request, context)
+
+        assert response.HasField("error")
+        assert response.error.message == "Model error"
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_with_dict_context(self, servicer, mock_plugin_server):
+        """Test InvokeHook handles context as dict (not PluginContext)."""
+        mock_plugin_server.invoke_hook = AsyncMock(
+            return_value={
+                "result": {"continue_processing": True},
+                "context": {
+                    "global_context": {"request_id": "req-1", "server_id": "srv-1"},
+                    "state": {"updated": True},
+                },
+            }
+        )
+
+        request = plugin_service_pb2.InvokeHookRequest()
+        request.hook_type = "tool_pre_invoke"
+        request.plugin_name = "TestPlugin"
+
+        payload_struct = Struct()
+        json_format.ParseDict({"name": "test_tool", "args": {}}, payload_struct)
+        request.payload.CopyFrom(payload_struct)
+
+        request.context.global_context.request_id = "test-request"
+        request.context.global_context.server_id = "test-server"
+
+        context = MagicMock()
+        response = await servicer.InvokeHook(request, context)
+
+        assert response.HasField("context")
+
+    @pytest.mark.asyncio
+    async def test_dict_to_plugin_error(self, servicer):
+        """Test _dict_to_plugin_error converts dict to PluginError proto."""
+        error_dict = {
+            "message": "Test error",
+            "plugin_name": "TestPlugin",
+            "code": "TEST_ERROR",
+            "mcp_error_code": -32603,
+            "details": {"extra": "detail"},
+        }
+        error_proto = servicer._dict_to_plugin_error(error_dict)
+
+        assert error_proto.message == "Test error"
+        assert error_proto.plugin_name == "TestPlugin"
+        assert error_proto.code == "TEST_ERROR"
+        assert error_proto.mcp_error_code == -32603
+        details = json_format.MessageToDict(error_proto.details)
+        assert details["extra"] == "detail"
+
+    @pytest.mark.asyncio
+    async def test_dict_to_plugin_error_minimal(self, servicer):
+        """Test _dict_to_plugin_error with minimal dict."""
+        error_dict = {}
+        error_proto = servicer._dict_to_plugin_error(error_dict)
+
+        assert error_proto.message == "Unknown error"
+        assert error_proto.plugin_name == "unknown"
+        assert error_proto.code == ""
+        assert error_proto.mcp_error_code == -32603
