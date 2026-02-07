@@ -82,12 +82,50 @@ class PluginLoader:
     async def load_and_instantiate_plugin(self, config: PluginConfig) -> Plugin | None:
         """Load and instantiate a plugin, given a configuration.
 
+        For external plugins, the transport type is determined by the presence
+        of 'mcp', 'grpc', or 'unix_socket' configuration:
+        - If 'grpc' is set, uses GrpcExternalPlugin for gRPC transport
+        - If 'mcp' is set, uses ExternalPlugin for MCP transport
+        - If 'unix_socket' is set, uses UnixSocketExternalPlugin for raw Unix socket transport
+
         Args:
             config: A plugin configuration.
 
         Returns:
             A plugin instance.
+
+        Raises:
+            ValueError: If an external plugin has no transport configured.
         """
+        # Handle external plugins with transport selection
+        if config.kind == EXTERNAL_PLUGIN_TYPE:
+            plugin: Plugin
+            if config.grpc:
+                # Use gRPC transport
+                # Import here to avoid circular dependency and to make grpc optional
+                # First-Party
+                from mcpgateway.plugins.framework.external.grpc.client import GrpcExternalPlugin  # pylint: disable=import-outside-toplevel
+
+                plugin = GrpcExternalPlugin(config)
+                logger.info("Loading external plugin '%s' with gRPC transport", config.name)
+            elif config.unix_socket:
+                # Use raw Unix socket transport (high-performance local IPC)
+                # First-Party
+                from mcpgateway.plugins.framework.external.unix.client import UnixSocketExternalPlugin  # pylint: disable=import-outside-toplevel
+
+                plugin = UnixSocketExternalPlugin(config)
+                logger.info("Loading external plugin '%s' with Unix socket transport", config.name)
+            elif config.mcp:
+                # Use MCP transport
+                plugin = ExternalPlugin(config)
+                logger.info("Loading external plugin '%s' with MCP transport", config.name)
+            else:
+                raise ValueError(f"External plugin '{config.name}' must have 'mcp', 'grpc', or 'unix_socket' configuration")
+
+            await plugin.initialize()
+            return plugin
+
+        # Handle other plugin types
         if config.kind not in self._plugin_types:
             self.__register_plugin_type(config.kind)
         plugin_type = self._plugin_types[config.kind]
