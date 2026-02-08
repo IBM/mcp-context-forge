@@ -30,6 +30,7 @@ class CookieTooLargeError(Exception):
     """Raised when a cookie value exceeds the browser's 4KB limit."""
 
     def __init__(self, cookie_size: int, limit: int = _COOKIE_HARD_LIMIT):
+        """Initialize with the actual cookie size and the browser limit."""
         self.cookie_size = cookie_size
         self.limit = limit
         super().__init__(f"Cookie size {cookie_size} bytes exceeds browser limit of {limit} bytes")
