@@ -2,6 +2,7 @@
 """Tests for psycopg3 optimization helpers."""
 
 # Standard
+import builtins
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, List
@@ -239,3 +240,77 @@ def test_get_raw_connection_psycopg3_success(monkeypatch):
             return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
 
     assert psy.get_raw_connection(DummyDB()) is raw_conn
+
+
+def test_is_psycopg3_backend_true_when_postgresql_psycopg(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", None)
+    monkeypatch.setattr("mcpgateway.db.backend", "postgresql", raising=False)
+    monkeypatch.setattr("mcpgateway.db.driver", "psycopg", raising=False)
+
+    assert psy.is_psycopg3_backend() is True
+
+
+def test_is_psycopg3_backend_importerror_sets_false(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", None)
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "mcpgateway.db":
+            raise ImportError("boom")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert psy.is_psycopg3_backend() is False
+
+
+def test_bulk_insert_with_copy_psycopg3_empty_rows_returns_zero(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+
+    raw_conn = object()
+
+    class DummyDB:
+        def connection(self):
+            return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
+
+    assert psy.bulk_insert_with_copy(DummyDB(), "items", ["id"], []) == 0
+
+
+def test_bulk_insert_with_copy_psycopg3_exception_falls_back(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+    monkeypatch.setattr(psy, "_bulk_insert_fallback", lambda *args, **kwargs: 123)
+
+    class FailingDB:
+        def connection(self):
+            raise RuntimeError("no raw connection")
+
+    assert psy.bulk_insert_with_copy(FailingDB(), "items", ["id"], [(1,)]) == 123
+
+
+def test_bulk_insert_metrics_empty_returns_zero():
+    assert psy.bulk_insert_metrics(db=None, table_name="metrics", metrics=[]) == 0
+
+
+def test_bulk_insert_metrics_respects_explicit_columns(monkeypatch):
+    captured = {}
+
+    def fake_bulk_insert(db, table_name, columns, rows, schema=None):
+        captured["columns"] = list(columns)
+        captured["rows"] = rows
+        return len(rows)
+
+    monkeypatch.setattr(psy, "bulk_insert_with_copy", fake_bulk_insert)
+
+    count = psy.bulk_insert_metrics(
+        db=None,
+        table_name="metrics",
+        metrics=[
+            {"tool_id": "t1", "value": 1},
+            {"tool_id": "t2", "value": 2},
+        ],
+        columns=["value", "tool_id"],
+    )
+
+    assert count == 2
+    assert captured["columns"] == ["value", "tool_id"]
+    assert captured["rows"] == [[1, "t1"], [2, "t2"]]
