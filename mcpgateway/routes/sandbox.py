@@ -1,4 +1,10 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """API routes for Policy Testing and Simulation Sandbox.
+Location: ./mcpgateway/routes/sandbox.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: "Hugh Hennelly"
 
 This module provides REST API endpoints for testing policy drafts before
 deployment. It exposes the SandboxService functionality via HTTP endpoints.

@@ -1,4 +1,10 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Sandbox Service for Policy Testing and Simulation.
+Location: ./mcpgateway/services/sandbox_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: "Hugh Hennelly"
 
 This service provides isolated policy evaluation for testing policy drafts
 before deployment. It creates temporary PDP instances with draft policies,
@@ -9,7 +15,6 @@ Related to Issue #2226: Policy testing and simulation sandbox
 NOTE: Database integration uses mock data for now. See TODO comments for
 future database implementation.
 """
-
 from __future__ import annotations
 
 import asyncio
