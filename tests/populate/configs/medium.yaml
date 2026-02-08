@@ -1,0 +1,85 @@
+# Medium REST API population profile - QA / Integration testing
+# Target: 10K users, ~110K teams, ~50K tokens
+# Estimated time: ~30-60 minutes
+# Database: PostgreSQL recommended
+
+profile:
+  name: medium
+  description: "Medium-scale API population (10K users, ~300K entities)"
+  version: 1.0
+
+global:
+  random_seed: 42
+  progress_bar: true
+  progress_update_frequency: 100
+  email_domain: "loadtest.example.com"
+  output_report: "reports/medium_populate_report.json"
+  log_level: INFO
+
+concurrency:
+  max_connections: 100
+  max_concurrent: 50
+  batch_size: 50
+  max_retries: 3
+  retry_base_delay: 1.0
+  timeout: 60.0
+
+scale:
+  # Users
+  users: 10000
+  users_admin_percent: 2
+
+  # Teams
+  additional_teams_per_user: 10
+  teams_private_percent: 60
+  teams_public_percent: 40
+  members_per_team_min: 1
+  members_per_team_max: 15
+
+  # API Tokens
+  tokens_per_user_min: 2
+  tokens_per_user_max: 8
+  tokens_per_user_avg: 5
+
+  # Gateways
+  gateways: 100
+  tools_per_gateway_min: 20
+  tools_per_gateway_max: 100
+  tools_per_gateway_avg: 50
+
+  # Resources
+  resources_per_user_min: 50
+  resources_per_user_max: 200
+  resources_per_user_avg: 100
+
+  # Prompts
+  prompts_per_user_min: 30
+  prompts_per_user_max: 100
+  prompts_per_user_avg: 50
+
+  # Virtual Servers
+  servers_per_user_min: 5
+  servers_per_user_max: 20
+  servers_per_user_avg: 10
+
+  # A2A Agents
+  a2a_agents_per_user_min: 0
+  a2a_agents_per_user_max: 5
+  a2a_agents_per_user_avg: 2
+
+population_order:
+  - users
+  - teams
+  - rbac
+  - gateways
+  - tools
+  - resources
+  - prompts
+  - servers
+  - a2a_agents
+  - tokens
+
+reporting:
+  enabled: true
+  format: json
+  output_file: "reports/medium_populate_report.json"

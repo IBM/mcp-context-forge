@@ -1,0 +1,85 @@
+# Large REST API population profile - Production-scale load testing
+# Target: 500K users, ~5.5M teams, ~1M tokens
+# Estimated time: ~4-12 hours
+# Database: PostgreSQL REQUIRED
+
+profile:
+  name: large
+  description: "Large-scale API population (500K users, ~13M entities)"
+  version: 1.0
+
+global:
+  random_seed: 42
+  progress_bar: true
+  progress_update_frequency: 1000
+  email_domain: "loadtest.example.com"
+  output_report: "reports/large_populate_report.json"
+  log_level: WARNING
+
+concurrency:
+  max_connections: 200
+  max_concurrent: 100
+  batch_size: 100
+  max_retries: 5
+  retry_base_delay: 2.0
+  timeout: 120.0
+
+scale:
+  # Users
+  users: 500000
+  users_admin_percent: 1
+
+  # Teams
+  additional_teams_per_user: 10
+  teams_private_percent: 70
+  teams_public_percent: 30
+  members_per_team_min: 1
+  members_per_team_max: 20
+
+  # API Tokens
+  tokens_per_user_min: 1
+  tokens_per_user_max: 5
+  tokens_per_user_avg: 2
+
+  # Gateways
+  gateways: 500
+  tools_per_gateway_min: 50
+  tools_per_gateway_max: 200
+  tools_per_gateway_avg: 100
+
+  # Resources
+  resources_per_user_min: 5
+  resources_per_user_max: 20
+  resources_per_user_avg: 10
+
+  # Prompts
+  prompts_per_user_min: 5
+  prompts_per_user_max: 20
+  prompts_per_user_avg: 10
+
+  # Virtual Servers
+  servers_per_user_min: 1
+  servers_per_user_max: 5
+  servers_per_user_avg: 2
+
+  # A2A Agents
+  a2a_agents_per_user_min: 0
+  a2a_agents_per_user_max: 3
+  a2a_agents_per_user_avg: 1
+
+population_order:
+  - users
+  - teams
+  - rbac
+  - gateways
+  - tools
+  - resources
+  - prompts
+  - servers
+  - a2a_agents
+  - tokens
+
+reporting:
+  enabled: true
+  format: json
+  output_file: "reports/large_populate_report.json"

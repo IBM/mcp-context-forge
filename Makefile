@@ -827,6 +827,93 @@ generate-report:                           ## Display most recent load test repo
 	done || echo "❌ No reports found. Run 'make generate-small' first."
 
 # =============================================================================
+# 📊 REST API POPULATION - Populate via HTTP endpoints (full write path)
+# =============================================================================
+# help: 📊 REST API POPULATION
+# help: populate-small       - Populate via REST API (100 users, ~3K entities, ~2 min)
+# help: populate-medium      - Populate via REST API (10K users, ~300K entities, ~1 hr)
+# help: populate-large       - Populate via REST API (500K users, ~13M entities, ~4-12 hrs)
+# help: populate-dry         - Preview what would be created (no requests sent)
+# help: populate-verify      - Verify populated data via GET endpoints
+# help: populate-clean       - Delete all loadtest.example.com entities via API
+# help: populate-report      - Show latest population report
+
+.PHONY: populate-small populate-medium populate-large populate-dry populate-verify populate-clean populate-report
+
+populate-small:                            ## Populate via REST API - small (100 users)
+	@echo "📊 Populating via REST API (small profile)..."
+	@echo "   Target: 100 users, ~3K entities"
+	@echo "   Time: ~2 minutes"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile small"
+	@echo ""
+	@echo "✅ Small API population complete!"
+	@echo "📄 Report: reports/small_populate_report.json"
+
+populate-medium:                           ## Populate via REST API - medium (10K users)
+	@echo "📊 Populating via REST API (medium profile)..."
+	@echo "   Target: 10K users, ~300K entities"
+	@echo "   Time: ~30-60 minutes"
+	@echo "   ⚠️  Recommended: PostgreSQL backend"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile medium"
+	@echo ""
+	@echo "✅ Medium API population complete!"
+	@echo "📄 Report: reports/medium_populate_report.json"
+
+populate-large:                            ## Populate via REST API - large (500K users)
+	@echo "📊 Populating via REST API (large profile)..."
+	@echo "   Target: 500K users, ~13M entities"
+	@echo "   Time: ~4-12 hours"
+	@echo "   ⚠️  REQUIRED: PostgreSQL backend"
+	@echo ""
+	@read -p "This will take several hours. Continue? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		test -d "$(VENV_DIR)" || $(MAKE) venv; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+			python -m tests.populate --profile large"; \
+		echo ""; \
+		echo "✅ Large API population complete!"; \
+		echo "📄 Report: reports/large_populate_report.json"; \
+	else \
+		echo "❌ Cancelled"; \
+		exit 1; \
+	fi
+
+populate-dry:                              ## Preview what populate-small would create
+	@echo "📊 Population dry run (no requests sent)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate --profile small --dry-run"
+
+populate-verify:                           ## Verify populated data via GET endpoints
+	@echo "🔍 Verifying populated data via REST API..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate.verify"
+
+populate-clean:                            ## Delete all loadtest.example.com entities via API
+	@echo "🧹 Cleaning up loadtest data via REST API..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.populate.cleanup --confirm"
+
+populate-report:                           ## Show latest population report
+	@echo "📊 Most Recent Population Reports:"
+	@echo ""
+	@for report in reports/*_populate_report.json; do \
+		if [ -f "$$report" ]; then \
+			echo "📄 $$report:"; \
+			jq -r '"  Profile: \(.profile)\n  Duration: \(.duration_seconds)s\n  Created: \(.total_created) entities\n  Errors: \(.total_errors)\n  Rate: \(.requests_per_second) req/s\n  Timestamp: \(.timestamp)"' "$$report" 2>/dev/null || \
+			cat "$$report" | head -20; \
+			echo ""; \
+		fi; \
+	done || echo "❌ No reports found. Run 'make populate-small' first."
+
+# =============================================================================
 # 📊 MONITORING STACK - Prometheus + Grafana + Exporters
 # =============================================================================
 # help: 📊 MONITORING STACK
