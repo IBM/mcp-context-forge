@@ -480,7 +480,7 @@ async def test_toolops_generate_testcases_success(monkeypatch):
         number_of_nl_variations=1,
         mode="generate",
         db=MagicMock(),
-        _user={"email": "user@example.com"},
+        _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
     )
 
     assert result == [{"case": 1}]
@@ -507,7 +507,7 @@ async def test_toolops_generate_testcases_invalid_json(monkeypatch):
             number_of_nl_variations=1,
             mode="generate",
             db=MagicMock(),
-            _user={"email": "user@example.com"},
+            _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
         )
 
     assert exc.value.status_code == 400
@@ -531,7 +531,7 @@ async def test_toolops_execute_nl_testcases_success(monkeypatch):
         monkeypatch,
         tool_nl_test_input=payload,
         db=MagicMock(),
-        _user={"email": "user@example.com"},
+        _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
     )
 
     assert result == ["ok"]
@@ -558,7 +558,7 @@ async def test_toolops_enrich_tool_success(monkeypatch):
         monkeypatch,
         tool_id="tool1",
         db=MagicMock(),
-        _user={"email": "user@example.com"},
+        _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
     )
 
     assert result["tool_id"] == "tool1"
@@ -583,7 +583,7 @@ async def test_toolops_enrich_tool_error(monkeypatch):
             monkeypatch,
             tool_id="tool1",
             db=MagicMock(),
-            _user={"email": "user@example.com"},
+            _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
         )
 
     assert exc.value.status_code == 400

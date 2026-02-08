@@ -228,7 +228,7 @@ async def test_global_passthrough_headers_endpoints(monkeypatch):
     monkeypatch.setattr(admin.global_config_cache, "get_passthrough_headers", lambda *_args: ["X-Test"])
 
     get_func = _unwrap(admin.get_global_passthrough_headers)
-    result = await get_func(db, _user={"email": "user@example.com"})
+    result = await get_func(db, _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result.passthrough_headers == ["X-Test"]
 
     invalidate_called = []
@@ -237,14 +237,14 @@ async def test_global_passthrough_headers_endpoints(monkeypatch):
     config_update = admin.GlobalConfigUpdate(passthrough_headers=["X-New"])
     update_func = _unwrap(admin.update_global_passthrough_headers)
     db.query.return_value.first.return_value = None
-    update_result = await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+    update_result = await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert update_result.passthrough_headers == ["X-New"]
     assert invalidate_called
 
     stats = {"hits": 1}
     monkeypatch.setattr(admin.global_config_cache, "stats", lambda: stats)
     invalidate_func = _unwrap(admin.invalidate_passthrough_headers_cache)
-    cache_result = await invalidate_func(_user={"email": "user@example.com"})
+    cache_result = await invalidate_func(_user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert cache_result["status"] == "invalidated"
     assert cache_result["cache_stats"] == stats
 
@@ -262,13 +262,13 @@ async def test_update_global_passthrough_headers_errors(monkeypatch):
 
     db.commit.side_effect = IntegrityError("stmt", {}, None)
     with pytest.raises(admin.HTTPException) as excinfo:
-        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert excinfo.value.status_code == 409
     db.rollback.assert_called()
 
     db.commit.side_effect = PassthroughHeadersError("boom")
     with pytest.raises(admin.HTTPException) as excinfo:
-        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert excinfo.value.status_code == 500
 
 
@@ -371,7 +371,7 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
     request = _make_request(root_path="/root")
     mock_db = MagicMock()
     mock_db.commit = MagicMock()
-    user = {"email": "user@example.com", "is_admin": True, "db": mock_db}
+    user = {"email": "user@example.com", "is_admin": True, "db": mock_db, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
 
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
     monkeypatch.setattr(admin.settings, "mcpgateway_a2a_enabled", False)
@@ -476,7 +476,7 @@ async def test_change_password_required_handler(monkeypatch):
 async def test_admin_create_join_request_team_not_found(monkeypatch):
     request = _make_request()
     mock_db = MagicMock()
-    user = {"email": "user@example.com", "db": mock_db}
+    user = {"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: _StubTeamService(db, team=None))
 
@@ -490,7 +490,7 @@ async def test_admin_create_join_request_pending(monkeypatch):
     request = _make_request()
     request.form = AsyncMock(return_value={"message": "hello"})
     mock_db = MagicMock()
-    user = {"email": "user@example.com", "db": mock_db}
+    user = {"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", visibility="public")
@@ -510,7 +510,7 @@ async def test_admin_create_join_request_success(monkeypatch):
     request = _make_request()
     request.form = AsyncMock(return_value={"message": "please add me"})
     mock_db = MagicMock()
-    user = {"email": "user@example.com", "db": mock_db}
+    user = {"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", visibility="public")
@@ -527,7 +527,7 @@ async def test_admin_create_join_request_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_cancel_join_request_failure(monkeypatch):
     mock_db = MagicMock()
-    user = {"email": "user@example.com"}
+    user = {"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
     team_service = _StubTeamService(db=mock_db, cancel_ok=False)
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
@@ -541,7 +541,7 @@ async def test_admin_cancel_join_request_failure(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_cancel_join_request_success(monkeypatch):
     mock_db = MagicMock()
-    user = {"email": "user@example.com"}
+    user = {"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
     team_service = _StubTeamService(db=mock_db, cancel_ok=True)
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: team_service)
@@ -556,7 +556,7 @@ async def test_admin_cancel_join_request_success(monkeypatch):
 async def test_admin_list_join_requests_owner_no_pending(monkeypatch):
     request = _make_request()
     mock_db = MagicMock()
-    user = {"email": "owner@example.com"}
+    user = {"email": "owner@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", name="Alpha")
@@ -573,7 +573,7 @@ async def test_admin_list_join_requests_owner_no_pending(monkeypatch):
 async def test_admin_list_join_requests_with_entries(monkeypatch):
     request = _make_request()
     mock_db = MagicMock()
-    user = {"email": "owner@example.com"}
+    user = {"email": "owner@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", name="Alpha")
@@ -599,7 +599,7 @@ async def test_admin_list_join_requests_with_entries(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_approve_join_request_success(monkeypatch):
     mock_db = MagicMock()
-    user = {"email": "owner@example.com"}
+    user = {"email": "owner@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     member = SimpleNamespace(user_email="new@example.com")
@@ -616,7 +616,7 @@ async def test_admin_approve_join_request_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_admin_reject_join_request_not_owner(monkeypatch):
     mock_db = MagicMock()
-    user = {"email": "viewer@example.com"}
+    user = {"email": "viewer@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team_service = _StubTeamService(db=mock_db, user_role="member")
@@ -632,7 +632,7 @@ async def test_admin_reject_join_request_not_owner(monkeypatch):
 async def test_admin_leave_team_personal(monkeypatch):
     request = _make_request()
     mock_db = MagicMock()
-    user = {"email": "user@example.com"}
+    user = {"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", is_personal=True)
@@ -649,7 +649,7 @@ async def test_admin_leave_team_personal(monkeypatch):
 async def test_admin_leave_team_last_owner(monkeypatch):
     request = _make_request()
     mock_db = MagicMock()
-    user = {"email": "owner@example.com"}
+    user = {"email": "owner@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", is_personal=False)
@@ -666,7 +666,7 @@ async def test_admin_leave_team_last_owner(monkeypatch):
 async def test_admin_leave_team_success(monkeypatch):
     request = _make_request()
     mock_db = MagicMock()
-    user = {"email": "member@example.com"}
+    user = {"email": "member@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
 
     team = SimpleNamespace(id="team-1", is_personal=False)
@@ -782,12 +782,12 @@ async def test_admin_get_all_team_ids_admin_and_user(monkeypatch):
     _allow_permissions(monkeypatch)
 
     auth_service._user = SimpleNamespace(is_admin=True)
-    result = await admin.admin_get_all_team_ids(include_inactive=True, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com"})
+    result = await admin.admin_get_all_team_ids(include_inactive=True, visibility=None, q=None, db=mock_db, user={"email": "admin@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result["team_ids"] == ["team-1", "team-2"]
     assert result["count"] == 2
 
     auth_service._user = SimpleNamespace(is_admin=False)
-    result = await admin.admin_get_all_team_ids(include_inactive=False, visibility="public", q="alp", db=mock_db, user={"email": "user@example.com"})
+    result = await admin.admin_get_all_team_ids(include_inactive=False, visibility="public", q="alp", db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result["team_ids"] == ["team-3"]
     assert result["count"] == 1
 
@@ -804,7 +804,7 @@ async def test_admin_get_all_team_ids_user_not_found(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: MagicMock())
     _allow_permissions(monkeypatch)
 
-    result = await admin.admin_get_all_team_ids(db=mock_db, user={"email": "missing@example.com"})
+    result = await admin.admin_get_all_team_ids(db=mock_db, user={"email": "missing@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result == {"team_ids": [], "count": 0}
 
 
@@ -841,13 +841,13 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
     _allow_permissions(monkeypatch)
 
     auth_service._user = SimpleNamespace(is_admin=True)
-    result = await admin.admin_search_teams(q="alp", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@example.com"})
+    result = await admin.admin_search_teams(q="alp", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result == [
         {"id": "t-1", "name": "Alpha", "slug": "alpha", "description": "desc", "visibility": "public", "is_active": True}
     ]
 
     auth_service._user = SimpleNamespace(is_admin=False)
-    result = await admin.admin_search_teams(q="be", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@example.com"})
+    result = await admin.admin_search_teams(q="be", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result == [
         {"id": "t-2", "name": "Beta", "slug": "beta", "description": "desc", "visibility": "public", "is_active": True}
     ]
@@ -865,7 +865,7 @@ async def test_admin_search_teams_user_not_found(monkeypatch):
     monkeypatch.setattr(admin, "TeamManagementService", lambda db: MagicMock())
     _allow_permissions(monkeypatch)
 
-    result = await admin.admin_search_teams(db=mock_db, user={"email": "missing@example.com"})
+    result = await admin.admin_search_teams(db=mock_db, user={"email": "missing@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result == []
 
 
@@ -887,7 +887,7 @@ async def test_admin_list_servers_returns_paginated(monkeypatch):
 
     monkeypatch.setattr(admin.server_service, "list_servers", _fake_list_servers)
 
-    result = await admin.admin_list_servers(page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
+    result = await admin.admin_list_servers(page=1, per_page=10, include_inactive=False, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result["data"] == [{"id": "server-1"}]
     assert result["pagination"] == {"page": 1, "per_page": 10}
     assert result["links"] == {"self": "/admin/servers?page=1&per_page=10"}
@@ -905,7 +905,7 @@ async def test_admin_get_server_success(monkeypatch):
 
     monkeypatch.setattr(admin.server_service, "get_server", _fake_get_server)
 
-    result = await admin.admin_get_server("server-1", db=mock_db, user={"email": "user@example.com"})
+    result = await admin.admin_get_server("server-1", db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
     assert result == {"id": "server-1"}
 
 
@@ -919,7 +919,7 @@ async def test_admin_get_server_not_found(monkeypatch):
     monkeypatch.setattr(admin.server_service, "get_server", _fake_get_server)
 
     with pytest.raises(HTTPException) as exc:
-        await admin.admin_get_server("missing", db=mock_db, user={"email": "user@example.com"})
+        await admin.admin_get_server("missing", db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]})
 
     assert exc.value.status_code == 404
 
@@ -955,7 +955,7 @@ async def test_admin_servers_partial_html_render_variants(monkeypatch):
         render="controls",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
     )
     assert isinstance(response, HTMLResponse)
     assert request.app.state.templates.TemplateResponse.call_args[0][1] == "pagination_controls.html"
@@ -968,7 +968,7 @@ async def test_admin_servers_partial_html_render_variants(monkeypatch):
         render="selector",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
     )
     assert isinstance(response, HTMLResponse)
     assert request.app.state.templates.TemplateResponse.call_args[0][1] == "servers_selector_items.html"
@@ -981,7 +981,7 @@ async def test_admin_servers_partial_html_render_variants(monkeypatch):
         render=None,
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com"},
+        user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
     )
     assert isinstance(response, HTMLResponse)
     assert request.app.state.templates.TemplateResponse.call_args[0][1] == "servers_partial.html"

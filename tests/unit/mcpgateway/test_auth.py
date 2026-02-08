@@ -133,7 +133,7 @@ class TestGetCurrentUser:
         }
         cached_ctx = SimpleNamespace(
             is_token_revoked=False,
-            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]},
             personal_team_id="team_123",
         )
         request = SimpleNamespace(state=SimpleNamespace())
@@ -463,7 +463,7 @@ class TestGetCurrentUser:
         # Mock cached auth context with a user
         mock_cached_ctx = MagicMock()
         mock_cached_ctx.is_token_revoked = False
-        mock_cached_ctx.user = {"email": "cached@example.com", "is_active": True, "is_admin": False}
+        mock_cached_ctx.user = {"email": "cached@example.com", "is_active": True, "is_admin": False, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
         mock_cached_ctx.personal_team_id = None
 
         mock_auth_cache = MagicMock()

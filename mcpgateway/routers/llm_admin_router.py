@@ -19,13 +19,14 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import LLMProviderType
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db
 from mcpgateway.services.llm_provider_service import (
     LLMModelNotFoundError,
     LLMProviderNotFoundError,
     LLMProviderService,
 )
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 
 # Initialize logging
 logging_service = LoggingService()
@@ -44,7 +45,7 @@ llm_provider_service = LLMProviderService()
 
 
 @llm_admin_router.get("/providers/html", response_class=HTMLResponse)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_providers_partial(
     request: Request,
     page: int = Query(1, ge=1, description="Page number"),
@@ -121,7 +122,7 @@ async def get_providers_partial(
 
 
 @llm_admin_router.get("/models/html", response_class=HTMLResponse)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_models_partial(
     request: Request,
     provider_id: Optional[str] = Query(None, description="Filter by provider ID"),
@@ -220,7 +221,7 @@ async def get_models_partial(
 
 
 @llm_admin_router.post("/providers/{provider_id}/state", response_class=HTMLResponse)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def set_provider_state_html(
     request: Request,
     provider_id: str,
@@ -267,7 +268,7 @@ async def set_provider_state_html(
 
 
 @llm_admin_router.post("/providers/{provider_id}/health")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def check_provider_health(
     request: Request,
     provider_id: str,
@@ -302,7 +303,7 @@ async def check_provider_health(
 
 
 @llm_admin_router.delete("/providers/{provider_id}", response_class=HTMLResponse)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def delete_provider_html(
     request: Request,
     provider_id: str,
@@ -336,7 +337,7 @@ async def delete_provider_html(
 
 
 @llm_admin_router.post("/models/{model_id}/state", response_class=HTMLResponse)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def set_model_state_html(
     request: Request,
     model_id: str,
@@ -390,7 +391,7 @@ async def set_model_state_html(
 
 
 @llm_admin_router.delete("/models/{model_id}", response_class=HTMLResponse)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def delete_model_html(
     request: Request,
     model_id: str,
@@ -424,7 +425,7 @@ async def delete_model_html(
 
 
 @llm_admin_router.get("/api-info/html", response_class=HTMLResponse)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_api_info_partial(
     request: Request,
     db: Session = Depends(get_db),
@@ -491,7 +492,7 @@ async def get_api_info_partial(
 
 
 @llm_admin_router.post("/test")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def admin_test_api(
     request: Request,
     db: Session = Depends(get_db),
@@ -619,7 +620,7 @@ async def admin_test_api(
 
 
 @llm_admin_router.get("/provider-defaults")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_provider_defaults(
     request: Request,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
@@ -637,7 +638,7 @@ async def get_provider_defaults(
 
 
 @llm_admin_router.get("/provider-configs")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_provider_configs(
     request: Request,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
@@ -659,7 +660,7 @@ async def get_provider_configs(
 
 
 @llm_admin_router.post("/providers/{provider_id}/fetch-models")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def fetch_provider_models(
     request: Request,
     provider_id: str,
@@ -793,7 +794,7 @@ async def fetch_provider_models(
 
 
 @llm_admin_router.post("/providers/{provider_id}/sync-models")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def sync_provider_models(
     request: Request,
     provider_id: str,

@@ -546,7 +546,7 @@ class TestServerEndpointCoverage:
         monkeypatch.setattr("mcpgateway.main.session_registry.register_respond_task", MagicMock())
         monkeypatch.setattr("mcpgateway.main.session_registry.remove_session", AsyncMock())
 
-        response = await sse_endpoint(request, "server-1", user={"email": "user@example.com", "is_admin": True, "db": MagicMock()})
+        response = await sse_endpoint(request, "server-1", user={"email": "user@example.com", "is_admin": True, "db": MagicMock(), "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert response.status_code == 200
 
     @pytest.mark.asyncio
@@ -561,7 +561,7 @@ class TestServerEndpointCoverage:
         list_tools = AsyncMock(return_value=[tool])
         monkeypatch.setattr("mcpgateway.main.tool_service.list_server_tools", list_tools)
 
-        result = await server_get_tools(request, "server-1", include_metrics=True, db=MagicMock(), user={"email": "user@example.com"})
+        result = await server_get_tools(request, "server-1", include_metrics=True, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result == [{"id": "tool-1"}]
         list_tools.assert_called_once()
 
@@ -577,7 +577,7 @@ class TestServerEndpointCoverage:
         list_resources = AsyncMock(return_value=[resource])
         monkeypatch.setattr("mcpgateway.main.resource_service.list_server_resources", list_resources)
 
-        result = await server_get_resources(request, "server-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await server_get_resources(request, "server-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result == [{"id": "res-1"}]
         list_resources.assert_called_once()
 
@@ -593,7 +593,7 @@ class TestServerEndpointCoverage:
         list_prompts = AsyncMock(return_value=[prompt])
         monkeypatch.setattr("mcpgateway.main.prompt_service.list_server_prompts", list_prompts)
 
-        result = await server_get_prompts(request, "server-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await server_get_prompts(request, "server-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result == [{"id": "prompt-1"}]
         list_prompts.assert_called_once()
 
@@ -608,7 +608,7 @@ class TestServerEndpointCoverage:
             request,
             team_id="team-2",
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]},
         )
         assert response.status_code == 403
 
@@ -630,7 +630,7 @@ class TestServerEndpointCoverage:
             request,
             include_pagination=True,
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]},
         )
         assert result["resources"] == [{"id": "res-1"}]
         assert result["nextCursor"] == "next-cursor"
@@ -659,7 +659,7 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.tool_service.register_tool", AsyncMock(return_value=tool))
 
         tool_input = ToolCreate(name="tool-a", url="http://example.com")
-        result = await create_tool(tool_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await create_tool(tool_input, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result is tool
 
     @pytest.mark.asyncio
@@ -668,7 +668,7 @@ class TestCrudEndpoints:
         request.state = SimpleNamespace(team_id="team-1")
 
         tool_input = ToolCreate(name="tool-a", url="http://example.com")
-        response = await create_tool(tool_input, request, team_id="team-2", db=MagicMock(), user={"email": "user@example.com"})
+        response = await create_tool(tool_input, request, team_id="team-2", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert response.status_code == 403
 
     @pytest.mark.asyncio
@@ -690,13 +690,13 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.tool_service.update_tool", AsyncMock(return_value=tool))
 
         tool_update = ToolUpdate(name="tool-updated")
-        result = await update_tool("tool-1", tool_update, request, db=db, user={"email": "user@example.com"})
+        result = await update_tool("tool-1", tool_update, request, db=db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result is tool
 
     @pytest.mark.asyncio
     async def test_delete_tool_success(self, monkeypatch, allow_permission):
         monkeypatch.setattr("mcpgateway.main.tool_service.delete_tool", AsyncMock(return_value=None))
-        result = await delete_tool("tool-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await delete_tool("tool-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["status"] == "success"
 
     @pytest.mark.asyncio
@@ -705,7 +705,7 @@ class TestCrudEndpoints:
         tool.model_dump.return_value = {"id": "tool-1"}
         monkeypatch.setattr("mcpgateway.main.tool_service.set_tool_state", AsyncMock(return_value=tool))
 
-        result = await set_tool_state("tool-1", activate=True, db=MagicMock(), user={"email": "user@example.com"})
+        result = await set_tool_state("tool-1", activate=True, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["tool"] == {"id": "tool-1"}
 
     @pytest.mark.asyncio
@@ -728,7 +728,7 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.resource_service.register_resource", AsyncMock(return_value=resource))
 
         resource_input = ResourceCreate(uri="res://1", name="Res", content="data")
-        result = await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result is resource
 
     @pytest.mark.asyncio
@@ -747,13 +747,13 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.invalidate_resource_cache", AsyncMock(return_value=None))
 
         resource_update = ResourceUpdate(name="Res Updated")
-        result = await update_resource("res-1", resource_update, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await update_resource("res-1", resource_update, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["id"] == "res-1"
 
     @pytest.mark.asyncio
     async def test_delete_resource_success(self, monkeypatch, allow_permission):
         monkeypatch.setattr("mcpgateway.main.resource_service.delete_resource", AsyncMock(return_value=None))
-        result = await delete_resource("res-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await delete_resource("res-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["status"] == "success"
 
     @pytest.mark.asyncio
@@ -762,7 +762,7 @@ class TestCrudEndpoints:
         resource.model_dump.return_value = {"id": "res-1"}
         monkeypatch.setattr("mcpgateway.main.resource_service.set_resource_state", AsyncMock(return_value=resource))
 
-        result = await set_resource_state("res-1", activate=False, db=MagicMock(), user={"email": "user@example.com"})
+        result = await set_resource_state("res-1", activate=False, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["resource"] == {"id": "res-1"}
 
     @pytest.mark.asyncio
@@ -785,7 +785,7 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.prompt_service.register_prompt", AsyncMock(return_value=prompt))
 
         prompt_input = PromptCreate(name="Prompt A", template="Hello")
-        result = await create_prompt(prompt_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await create_prompt(prompt_input, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result is prompt
 
     @pytest.mark.asyncio
@@ -803,13 +803,13 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.prompt_service.update_prompt", AsyncMock(return_value={"id": "prompt-1"}))
 
         prompt_update = PromptUpdate(name="Prompt Updated")
-        result = await update_prompt("prompt-1", prompt_update, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await update_prompt("prompt-1", prompt_update, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["id"] == "prompt-1"
 
     @pytest.mark.asyncio
     async def test_delete_prompt_success(self, monkeypatch, allow_permission):
         monkeypatch.setattr("mcpgateway.main.prompt_service.delete_prompt", AsyncMock(return_value=None))
-        result = await delete_prompt("prompt-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await delete_prompt("prompt-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["status"] == "success"
 
     @pytest.mark.asyncio
@@ -818,7 +818,7 @@ class TestCrudEndpoints:
         prompt.model_dump.return_value = {"id": "prompt-1"}
         monkeypatch.setattr("mcpgateway.main.prompt_service.set_prompt_state", AsyncMock(return_value=prompt))
 
-        result = await set_prompt_state("prompt-1", activate=True, db=MagicMock(), user={"email": "user@example.com"})
+        result = await set_prompt_state("prompt-1", activate=True, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["prompt"] == {"id": "prompt-1"}
 class TestPassthroughHeaderSetup:
     """Cover passthrough header setup."""
@@ -1392,7 +1392,7 @@ class TestRpcHandling:
         request.body = AsyncMock(return_value=b"{bad")
         request.headers = {}
         request.query_params = {}
-        response = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        response = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert response.status_code == 400
 
     async def test_handle_rpc_tools_list_server(self):
@@ -1407,7 +1407,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["tools"][0]["id"] == "tool-1"
 
     async def test_handle_rpc_list_tools_with_cursor(self):
@@ -1422,7 +1422,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], "next-cursor"))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["nextCursor"] == "next-cursor"
 
     async def test_handle_rpc_list_gateways(self):
@@ -1434,7 +1434,7 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with patch("mcpgateway.main.gateway_service.list_gateways", new=AsyncMock(return_value=([gateway], None))):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["gateways"][0]["id"] == "gw-1"
 
     async def test_handle_rpc_resources_read_missing_uri(self):
@@ -1442,7 +1442,7 @@ class TestRpcHandling:
         request = self._make_request(payload)
 
         with patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert "error" in result
 
     async def test_handle_rpc_resources_list_with_cursor(self):
@@ -1457,7 +1457,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-cursor"))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["resources"][0]["id"] == "res-1"
             assert result["result"]["nextCursor"] == "next-cursor"
 
@@ -1473,7 +1473,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value=resource)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["contents"][0]["uri"] == "resource://one"
 
         with (
@@ -1481,7 +1481,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.gateway_service.forward_request", new=AsyncMock(return_value={"ok": True})),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["ok"] is True
 
     async def test_handle_rpc_resources_subscribe_unsubscribe(self):
@@ -1510,7 +1510,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.prompt_service.list_server_prompts", new=AsyncMock(return_value=[prompt])),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["prompts"][0]["name"] == "prompt-1"
 
         payload_get = {"jsonrpc": "2.0", "id": "7", "method": "prompts/get", "params": {"name": "prompt-1"}}
@@ -1523,13 +1523,13 @@ class TestRpcHandling:
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=prompt_payload)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request_get, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_get, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["name"] == "prompt-1"
 
     async def test_handle_rpc_ping_and_resource_templates(self):
         payload = {"jsonrpc": "2.0", "id": "8", "method": "ping", "params": {}}
         request = self._make_request(payload)
-        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["result"] == {}
 
         payload_templates = {"jsonrpc": "2.0", "id": "9", "method": "resources/templates/list", "params": {}}
@@ -1541,7 +1541,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["resourceTemplates"][0]["uriTemplate"] == "resource://{id}"
 
     async def test_handle_rpc_tools_call(self, monkeypatch):
@@ -1558,7 +1558,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["ok"] is True
 
     async def test_handle_rpc_notifications_and_sampling(self):
@@ -1569,19 +1569,19 @@ class TestRpcHandling:
             patch("mcpgateway.main.cancellation_service.cancel_run", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"] == {}
 
         payload_msg = {"jsonrpc": "2.0", "id": "12", "method": "notifications/message", "params": {"data": "hello", "level": "info", "logger": "tests"}}
         request_msg = self._make_request(payload_msg)
         with patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)):
-            result = await handle_rpc(request_msg, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_msg, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"] == {}
 
         payload_sampling = {"jsonrpc": "2.0", "id": "13", "method": "sampling/createMessage", "params": {"messages": []}}
         request_sampling = self._make_request(payload_sampling)
         with patch("mcpgateway.main.sampling_handler.create_message", new=AsyncMock(return_value={"text": "ok"})):
-            result = await handle_rpc(request_sampling, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_sampling, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["text"] == "ok"
 
     async def test_handle_rpc_elicitation_completion_logging(self, monkeypatch):
@@ -1618,19 +1618,19 @@ class TestRpcHandling:
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["status"] == "ok"
 
         payload_completion = {"jsonrpc": "2.0", "id": "15", "method": "completion/complete", "params": {"prompt": "hi"}}
         request_completion = self._make_request(payload_completion)
         with patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(return_value={"text": "done"})):
-            result = await handle_rpc(request_completion, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_completion, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["text"] == "done"
 
         payload_logging = {"jsonrpc": "2.0", "id": "16", "method": "logging/setLevel", "params": {"level": "info"}}
         request_logging = self._make_request(payload_logging)
         with patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)):
-            result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"] == {}
 
     async def test_handle_rpc_fallback_tool_and_gateway(self):
@@ -1641,21 +1641,21 @@ class TestRpcHandling:
         tool_result = MagicMock()
         tool_result.model_dump.return_value = {"ok": True}
         with patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["ok"] is True
 
         with (
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))),
             patch("mcpgateway.main.gateway_service.forward_request", new=AsyncMock(return_value={"via": "gateway"})),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["via"] == "gateway"
 
         with (
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))),
             patch("mcpgateway.main.gateway_service.forward_request", new=AsyncMock(side_effect=Exception("fail"))),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["error"]["code"] == -32000
 
     async def test_handle_rpc_user_object_and_auto_id(self):
@@ -1678,7 +1678,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([], None))) as list_tools,
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            await handle_rpc(request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             list_tools.assert_called_once()
 
         payload_legacy = {"jsonrpc": "2.0", "id": "19", "method": "list_tools", "params": {"server_id": "srv"}}
@@ -1690,7 +1690,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as list_server_tools,
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_legacy, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_legacy, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             list_server_tools.assert_called_once()
             assert result["result"]["tools"][0]["id"] == "tool-legacy"
 
@@ -1704,7 +1704,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], None))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["resources"][0]["id"] == "res-admin"
 
         payload_missing = {"jsonrpc": "2.0", "id": "21", "method": "resources/subscribe", "params": {}}
@@ -1730,7 +1730,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.gateway_service.forward_request", new=AsyncMock(return_value=gateway_result)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["forwarded"] is True
 
     async def test_handle_rpc_prompts_admin_bypass_and_missing_name(self):
@@ -1743,13 +1743,13 @@ class TestRpcHandling:
             patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], None))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["prompts"][0]["name"] == "prompt-admin"
 
         payload_missing = {"jsonrpc": "2.0", "id": "25", "method": "prompts/get", "params": {}}
         request_missing = self._make_request(payload_missing)
         request_missing.state = MagicMock()
-        result = await handle_rpc(request_missing, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(request_missing, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["error"]["code"] == -32602
 
         payload_get = {"jsonrpc": "2.0", "id": "26", "method": "prompts/get", "params": {"name": "prompt-admin"}}
@@ -1762,14 +1762,14 @@ class TestRpcHandling:
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=prompt_payload)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_get, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_get, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["name"] == "prompt-admin"
 
     async def test_handle_rpc_tools_call_missing_name_and_cancel(self, monkeypatch):
         payload_missing = {"jsonrpc": "2.0", "id": "27", "method": "tools/call", "params": {}}
         request_missing = self._make_request(payload_missing)
         request_missing.state = MagicMock()
-        result = await handle_rpc(request_missing, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(request_missing, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["error"]["code"] == -32602
 
         payload = {"jsonrpc": "2.0", "id": "28", "method": "tools/call", "params": {"name": "tool-cancel", "arguments": {}}}
@@ -1785,7 +1785,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value={"ok": True})),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["error"]["code"] == -32800
 
     async def test_handle_rpc_tools_call_cancel_after_creation(self, monkeypatch):
@@ -1806,7 +1806,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=_slow_tool)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["error"]["code"] == -32800
 
     async def test_handle_rpc_resource_templates_admin_and_notifications_other(self):
@@ -1819,12 +1819,12 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["resourceTemplates"][0]["uriTemplate"] == "resource://{id}"
 
         payload_other = {"jsonrpc": "2.0", "id": "31", "method": "notifications/other", "params": {}}
         request_other = self._make_request(payload_other)
-        result = await handle_rpc(request_other, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(request_other, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["result"] == {}
 
     async def test_handle_rpc_elicitation_error_paths(self, monkeypatch):
@@ -1832,7 +1832,7 @@ class TestRpcHandling:
 
         payload_invalid = {"jsonrpc": "2.0", "id": "32", "method": "elicitation/create", "params": {}}
         request_invalid = self._make_request(payload_invalid)
-        result = await handle_rpc(request_invalid, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(request_invalid, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert result["error"]["code"] == -32602
 
         payload_no_sessions = {
@@ -1843,7 +1843,7 @@ class TestRpcHandling:
         }
         request_no_sessions = self._make_request(payload_no_sessions)
         with patch("mcpgateway.main.session_registry.get_elicitation_capable_sessions", new=AsyncMock(return_value=[])):
-            result = await handle_rpc(request_no_sessions, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_no_sessions, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["error"]["code"] == -32000
 
         payload_not_capable = {
@@ -1854,7 +1854,7 @@ class TestRpcHandling:
         }
         request_not_capable = self._make_request(payload_not_capable)
         with patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=False)):
-            result = await handle_rpc(request_not_capable, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_not_capable, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["error"]["code"] == -32000
 
         class _EmptyService:
@@ -1876,7 +1876,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request_empty_pending, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_empty_pending, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["error"]["code"] == -32000
 
         class _TimeoutService:
@@ -1898,7 +1898,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request_timeout, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request_timeout, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["error"]["code"] == -32000
 
     async def test_handle_rpc_fallback_admin_bypass_and_plugin_error(self):
@@ -1912,7 +1912,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["result"]["ok"] is True
 
         from mcpgateway.plugins.framework.models import PluginErrorModel
@@ -1925,7 +1925,7 @@ class TestRpcHandling:
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             with pytest.raises(PluginError):
-                await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+                await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
 
 
 class TestA2AListAndGet:
@@ -1944,7 +1944,7 @@ class TestA2AListAndGet:
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             mock_service.list_agents = AsyncMock(return_value=([agent], "next-cursor"))
-            result = await list_a2a_agents(request, include_pagination=True, db=MagicMock(), user={"email": "user@example.com"})
+            result = await list_a2a_agents(request, include_pagination=True, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["agents"][0]["id"] == "agent-1"
             assert result["nextCursor"] == "next-cursor"
 
@@ -1958,7 +1958,7 @@ class TestA2AListAndGet:
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", ["team-a"], False)),
         ):
             mock_service.list_agents = AsyncMock(return_value=([], None))
-            response = await list_a2a_agents(request, team_id="team-b", db=MagicMock(), user={"email": "user@example.com"})
+            response = await list_a2a_agents(request, team_id="team-b", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert response.status_code == 403
 
     async def test_get_a2a_agent_success(self):
@@ -1969,7 +1969,7 @@ class TestA2AListAndGet:
             patch("mcpgateway.main.a2a_service.get_agent", new=AsyncMock(return_value={"id": "agent-1"})),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["id"] == "agent-1"
 
 
@@ -1981,7 +1981,7 @@ class TestExportImportEndpoints:
         export_service.export_configuration = AsyncMock(return_value={"tools": []})
 
         with patch("mcpgateway.main.export_service", export_service):
-            result = await export_configuration(MagicMock(spec=Request), types="tools", db=MagicMock(), user={"email": "user@example.com"})
+            result = await export_configuration(MagicMock(spec=Request), types="tools", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["tools"] == []
 
     async def test_export_selective_configuration_success(self):
@@ -1989,12 +1989,12 @@ class TestExportImportEndpoints:
         export_service.export_selective = AsyncMock(return_value={"tools": ["tool-1"]})
 
         with patch("mcpgateway.main.export_service", export_service):
-            result = await export_selective_configuration({"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
+            result = await export_selective_configuration({"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["tools"] == ["tool-1"]
 
     async def test_import_configuration_invalid_strategy(self):
         with pytest.raises(Exception):
-            await import_configuration(import_data={}, conflict_strategy="invalid", db=MagicMock(), user={"email": "user@example.com"})
+            await import_configuration(import_data={}, conflict_strategy="invalid", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
 
     async def test_import_configuration_success(self):
         status = MagicMock()
@@ -2003,7 +2003,7 @@ class TestExportImportEndpoints:
         import_service.import_configuration = AsyncMock(return_value=status)
 
         with patch("mcpgateway.main.import_service", import_service):
-            result = await import_configuration(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
+            result = await import_configuration(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
             assert result["status"] == "ok"
 
 
@@ -2029,7 +2029,7 @@ class TestMessageEndpointElicitation:
         broadcast = AsyncMock()
         monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
 
-        response = await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+        response = await message_endpoint(request, "server-1", user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert response.status_code == 202
         broadcast.assert_not_called()
 

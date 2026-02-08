@@ -81,7 +81,7 @@ def test_get_token_teams_from_request():
 
 def test_get_rpc_filter_context_admin_scoping():
     req = SimpleNamespace(state=SimpleNamespace(_jwt_verified_payload=("token", {"teams": [], "is_admin": True})))
-    user = {"email": "user@example.com", "is_admin": True}
+    user = {"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
     email, teams, is_admin = main._get_rpc_filter_context(req, user)
     assert email == "user@example.com"
     assert teams == []

@@ -156,7 +156,7 @@ class TestMultiAuthHeaders:
     async def test_admin_endpoint_with_invalid_json(self):
         """Test admin endpoint handling of invalid JSON."""
         mock_db = MagicMock()
-        mock_user = {"email": "test_user", "db": mock_db}
+        mock_user = {"email": "test_user", "db": mock_db, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import", "teams.read", "teams.create", "teams.update", "teams.delete", "teams.join", "teams.manage_members"]}
 
         form_data = FormData([("name", "Test Gateway"), ("url", "http://example.com"), ("auth_type", "authheaders"), ("auth_headers", "{invalid json}")])
 

@@ -2203,7 +2203,7 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(asyncio.CancelledError):
-                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com"})
+                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
 
     @pytest.mark.asyncio
     async def test_server_sse_failure_cleanup(self):
@@ -2231,7 +2231,7 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(HTTPException) as excinfo:
-                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com"})
+                await mcpgateway_main.sse_endpoint(request, "1", user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -2260,7 +2260,7 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(asyncio.CancelledError):
-                await mcpgateway_main.utility_sse_endpoint(request, user={"email": "user@example.com"})
+                await mcpgateway_main.utility_sse_endpoint(request, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
 
     @pytest.mark.asyncio
     async def test_utility_sse_failure_cleanup(self):
@@ -2288,7 +2288,7 @@ class TestRealtimeEndpoints:
             patch("mcpgateway.middleware.rbac.PermissionService.check_permission", new_callable=AsyncMock, return_value=True),
         ):
             with pytest.raises(HTTPException) as excinfo:
-                await mcpgateway_main.utility_sse_endpoint(request, user={"email": "user@example.com"})
+                await mcpgateway_main.utility_sse_endpoint(request, user={"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]})
         assert excinfo.value.status_code == 500
 
 
@@ -3085,7 +3085,7 @@ class TestGetRpcFilterContext:
         mock_request = MagicMock()
         # is_admin must be in the token payload, not the user dict (security fix)
         mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1", "t2"], "is_admin": True})
-        user = {"email": "test@example.com", "is_admin": True}  # User's is_admin is ignored
+        user = {"email": "test@example.com", "is_admin": True, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]}  # User's is_admin is ignored
 
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
@@ -3131,7 +3131,7 @@ class TestGetRpcFilterContext:
         mock_request = MagicMock()
         # is_admin must be in token payload - use non-empty teams to allow admin bypass
         mock_request.state._jwt_verified_payload = ("token", {"teams": ["team_x"], "user": {"is_admin": True}})
-        user = {"email": "nested@example.com", "user": {"is_admin": True}}
+        user = {"email": "nested@example.com", "user": {"is_admin": True, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]}, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]}
 
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
@@ -3145,7 +3145,7 @@ class TestGetRpcFilterContext:
         mock_request = MagicMock()
         # Token has is_admin but empty teams - admin bypass should be disabled
         mock_request.state._jwt_verified_payload = ("token", {"teams": [], "is_admin": True})
-        user = {"email": "admin@example.com", "is_admin": True}
+        user = {"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]}
 
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
@@ -3186,7 +3186,7 @@ class TestGetRpcFilterContext:
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = ("token", {"teams": ["t1"]})
-        user = {"email": "user@example.com"}
+        user = {"email": "user@example.com", "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]}
 
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
@@ -3199,7 +3199,7 @@ class TestGetRpcFilterContext:
 
         mock_request = MagicMock()
         mock_request.state._jwt_verified_payload = None  # No JWT - e.g., plugin auth
-        user = {"email": "plugin_user@example.com", "is_admin": False}
+        user = {"email": "plugin_user@example.com", "is_admin": False, "permissions": ["admin.*", "servers.read", "tools.read", "tools.create", "tools.update", "tools.delete", "resources.read", "resources.create", "resources.update", "resources.delete", "prompts.read", "prompts.create", "prompts.update", "prompts.delete", "a2a.read", "admin.export", "admin.import"]}
 
         email, teams, is_admin = _get_rpc_filter_context(mock_request, user)
 
