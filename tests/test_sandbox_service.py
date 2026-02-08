@@ -14,23 +14,25 @@ Tests the policy testing and simulation sandbox functionality including:
 
 Related to Issue #2226: Policy testing and simulation sandbox
 """
-from datetime import datetime, timezone
-from unittest.mock import Mock, AsyncMock, patch
 
-from mcpgateway.schemas.sandbox import (
-    TestCase,
-    SimulationResult,
-    BatchSimulationResult,
-    RegressionReport,
-)
-from mcpgateway.services.sandbox_service import SandboxService
+# Standard
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, Mock, patch
+
+# First-Party
 from mcpgateway.plugins.unified_pdp.pdp_models import (
-    Subject,
-    Resource,
     Context,
     Decision,
+    Resource,
+    Subject,
 )
-
+from mcpgateway.schemas.sandbox import (
+    BatchSimulationResult,
+    RegressionReport,
+    SimulationResult,
+    TestCase,
+)
+from mcpgateway.services.sandbox_service import SandboxService
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -277,12 +279,7 @@ async def test_run_regression_severity_calculation(sandbox_service):
 
     # Verify severity counts add up
     regressions_only = report.regressions_only
-    severity_sum = (
-        report.critical_regressions
-        + report.high_regressions
-        + report.medium_regressions
-        + report.low_regressions
-    )
+    severity_sum = report.critical_regressions + report.high_regressions + report.medium_regressions + report.low_regressions
     assert severity_sum == len(regressions_only)
 
 
@@ -329,21 +326,15 @@ async def test_fetch_historical_decisions(sandbox_service):
 def test_calculate_regression_severity(sandbox_service):
     """Test regression severity calculation."""
     # ALLOW -> DENY = high severity (lockout)
-    severity_high = sandbox_service._calculate_regression_severity(
-        Decision.ALLOW, Decision.DENY
-    )
+    severity_high = sandbox_service._calculate_regression_severity(Decision.ALLOW, Decision.DENY)
     assert severity_high == "high"
 
     # DENY -> ALLOW = critical severity (security gap)
-    severity_critical = sandbox_service._calculate_regression_severity(
-        Decision.DENY, Decision.ALLOW
-    )
+    severity_critical = sandbox_service._calculate_regression_severity(Decision.DENY, Decision.ALLOW)
     assert severity_critical == "critical"
 
     # No change = low severity
-    severity_low = sandbox_service._calculate_regression_severity(
-        Decision.ALLOW, Decision.ALLOW
-    )
+    severity_low = sandbox_service._calculate_regression_severity(Decision.ALLOW, Decision.ALLOW)
     assert severity_low == "low"
 
 
@@ -424,6 +415,7 @@ async def test_end_to_end_workflow(sandbox_service, sample_test_case):
 @pytest.mark.asyncio
 async def test_simulation_performance(sandbox_service, sample_test_case):
     """Test that simulation completes in reasonable time."""
+    # Standard
     import time
 
     start = time.perf_counter()
@@ -442,6 +434,7 @@ async def test_simulation_performance(sandbox_service, sample_test_case):
 @pytest.mark.asyncio
 async def test_batch_parallel_faster_than_sequential(sandbox_service, sample_test_cases):
     """Test that parallel execution is faster than sequential."""
+    # Standard
     import time
 
     # Sequential execution

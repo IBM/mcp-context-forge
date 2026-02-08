@@ -12,15 +12,19 @@ deployment. It exposes the SandboxService functionality via HTTP endpoints.
 Related to Issue #2226: Policy testing and simulation sandbox
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import logging
 from typing import Optional
 
+# Third-Party
 from fastapi import APIRouter, Depends, Form, HTTPException, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+# Local
 from ..database import get_db
 from ..schemas.sandbox import (
     BatchSimulateRequest,
@@ -32,7 +36,7 @@ from ..schemas.sandbox import (
     TestCase,
     TestSuite,
 )
-from ..services.sandbox_service import SandboxService, get_sandbox_service
+from ..services.sandbox_service import get_sandbox_service, SandboxService
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +90,14 @@ async def simulate_single_request(
     sandbox: SandboxService = Depends(get_sandbox_service),
 ) -> SimulationResult:
     """Simulate a single test case against a policy draft.
-    
+
     Args:
         request: Simulation request containing policy draft ID and test case
         sandbox: Injected sandbox service
-    
+
     Returns:
         SimulationResult with actual vs expected decision, timing, and explanation
-    
+
     Raises:
         HTTPException: 404 if policy draft not found, 500 on evaluation error
     """
@@ -164,14 +168,14 @@ async def run_batch_tests(
     sandbox: SandboxService = Depends(get_sandbox_service),
 ) -> BatchSimulationResult:
     """Execute multiple test cases in batch.
-    
+
     Args:
         request: Batch simulation request with test cases
         sandbox: Injected sandbox service
-    
+
     Returns:
         BatchSimulationResult with summary statistics and individual results
-    
+
     Raises:
         HTTPException: 404 if policy draft not found, 500 on evaluation error
     """
@@ -249,14 +253,14 @@ async def run_regression_tests(
     sandbox: SandboxService = Depends(get_sandbox_service),
 ) -> RegressionReport:
     """Run regression tests against historical decisions.
-    
+
     Args:
         request: Regression test request with parameters
         sandbox: Injected sandbox service
-    
+
     Returns:
         RegressionReport with comparisons and regression analysis
-    
+
     Raises:
         HTTPException: 404 if policy not found, 500 on evaluation error
     """
@@ -270,8 +274,7 @@ async def run_regression_tests(
     try:
         report = await sandbox.run_regression(
             policy_draft_id=request.policy_draft_id,
-            baseline_policy_version=request.baseline_policy_version
-            or "production",
+            baseline_policy_version=request.baseline_policy_version or "production",
             replay_last_days=request.replay_last_days,
             sample_size=request.sample_size or 1000,
             filter_by_subject=request.filter_by_subject,
@@ -334,14 +337,14 @@ async def create_test_suite(
     db: Session = Depends(get_db),
 ) -> TestSuite:
     """Create a new test suite.
-    
+
     Args:
         test_suite: Test suite to create
         db: Database session
-    
+
     Returns:
         Created test suite with generated ID
-    
+
     Raises:
         HTTPException: 500 on database error
     """
@@ -373,14 +376,14 @@ async def get_test_suite(
     db: Session = Depends(get_db),
 ) -> TestSuite:
     """Get a test suite by ID.
-    
+
     Args:
         suite_id: Test suite ID
         db: Database session
-    
+
     Returns:
         Test suite
-    
+
     Raises:
         HTTPException: 404 if suite not found
     """
@@ -416,14 +419,14 @@ async def list_test_suites(
     db: Session = Depends(get_db),
 ) -> list[TestSuite]:
     """List all test suites.
-    
+
     Args:
         tags: Comma-separated tags to filter by
         db: Database session
-    
+
     Returns:
         List of test suites
-    
+
     Raises:
         HTTPException: 500 on database error
     """
@@ -455,7 +458,7 @@ async def list_test_suites(
 )
 async def health_check() -> dict:
     """Health check endpoint.
-    
+
     Returns:
         Health status dictionary
     """
@@ -474,7 +477,7 @@ async def health_check() -> dict:
 )
 async def service_info() -> dict:
     """Service information endpoint.
-    
+
     Returns:
         Service information dictionary
     """
@@ -494,9 +497,10 @@ async def service_info() -> dict:
             "historical_replay": True,
         },
     }
+
+
 # Add this to mcpgateway/routes/sandbox.py
 # Place after the existing POST /sandbox/simulate endpoint
-
 
 
 @router.post("/sandbox/simulate", response_class=HTMLResponse)
@@ -513,18 +517,19 @@ async def simulate_form_submit(
     sandbox: SandboxService = Depends(get_sandbox_service),
 ):
     """Handle simulation form submission and return HTML results.
-    
+
     This endpoint is called via HTMX when the simulation form is submitted.
     It returns HTML that will be injected into the results container.
     """
     try:
         # Parse roles (comma-separated)
         roles = [r.strip() for r in subject_roles.split(",") if r.strip()]
-        
+
         # Create test case from form data
+        # First-Party
+        from mcpgateway.plugins.unified_pdp.pdp_models import Context, Decision, Resource, Subject
         from mcpgateway.schemas.sandbox import TestCase
-        from mcpgateway.plugins.unified_pdp.pdp_models import Subject, Resource, Context, Decision
-        
+
         test_case = TestCase(
             subject=Subject(
                 email=subject_email,
@@ -541,35 +546,37 @@ async def simulate_form_submit(
             expected_decision=Decision.ALLOW if expected_decision.lower() == "allow" else Decision.DENY,
             description=f"Test {action} on {resource_type} {resource_id}",
         )
-        
+
         # Run simulation
         result = await sandbox.simulate_single(
             policy_draft_id=policy_draft_id,
             test_case=test_case,
             include_explanation=True,
         )
-        
+
         # Generate HTML response
         passed_class = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" if result.passed else "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
         passed_text = "PASSED ✓" if result.passed else "FAILED ✗"
-        
-        policies_html = "".join([
-            f'<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">{policy}</span>'
-            for policy in result.matching_policies
-        ])
-        
+
+        policies_html = "".join(
+            [
+                f'<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">{policy}</span>'
+                for policy in result.matching_policies
+            ]
+        )
+
         explanation_html = ""
         if result.explanation:
-            explanation_html = f'''
+            explanation_html = f"""
             <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
                 <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Detailed Explanation</h4>
                 <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
                     <pre class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono">{result.explanation}</pre>
                 </div>
             </div>
-            '''
-        
-        html = f'''
+            """
+
+        html = f"""
         <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
             <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
                 <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -633,13 +640,13 @@ async def simulate_form_submit(
                 {explanation_html}
             </div>
         </div>
-        '''
-        
+        """
+
         return HTMLResponse(content=html)
-        
+
     except Exception as e:
         logger.exception("Error running simulation")
-        error_html = f'''
+        error_html = f"""
         <div class="bg-red-50 dark:bg-red-900 border-l-4 border-red-400 p-4 rounded-md">
             <div class="flex">
                 <div class="flex-shrink-0">
@@ -657,6 +664,5 @@ async def simulate_form_submit(
                 </div>
             </div>
         </div>
-        '''
+        """
         return HTMLResponse(content=error_html, status_code=500)
-
