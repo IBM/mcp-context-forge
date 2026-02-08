@@ -841,6 +841,10 @@ class TestBatchedSyncNoPTeam:
 class TestSetAuthMethodFromPayload:
     """Tests for _set_auth_method_from_payload inner function."""
 
+    @pytest.fixture(autouse=True)
+    def disable_auth_cache(self, monkeypatch):
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+
     @pytest.mark.asyncio
     async def test_api_token_auth_provider(self):
         """auth_provider == 'api_token' → request.state.auth_method = 'api_token' (lines 524-525)."""
