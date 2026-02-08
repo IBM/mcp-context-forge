@@ -138,22 +138,6 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Get user's teams for namespace information (ensure safe access)
-    try:
-        teams = user.get_teams() if callable(getattr(user, "get_teams", None)) else []
-    except Exception:
-        teams = []
-
-    # Extract team IDs as simple strings
-    team_ids = []
-    for team in teams or []:
-        try:
-            tid = getattr(team, "id", None)
-            if tid is not None:
-                team_ids.append(str(tid))
-        except Exception:  # nosec B110 - Team ID extraction failure is non-fatal
-            pass
-
     # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
         # Standard JWT claims

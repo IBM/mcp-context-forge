@@ -1771,11 +1771,11 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                 if is_admin_flag:
                     final_teams = None  # Admin bypass
                 elif user_email_for_teams:
-                    # Resolve teams synchronously (StreamableHTTP uses sync DB context)
+                    # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
                     # First-Party
-                    from mcpgateway.auth import _get_user_team_ids_sync  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
 
-                    final_teams = _get_user_team_ids_sync(user_email_for_teams)
+                    final_teams = _resolve_teams_from_db_sync(user_email_for_teams, is_admin=False)
                 else:
                     final_teams = []  # No email — public-only
             else:

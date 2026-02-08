@@ -173,6 +173,58 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
         return [row[0] for row in result.all()]
 
 
+def _resolve_teams_from_db_sync(email: str, is_admin: bool) -> Optional[List[str]]:
+    """Resolve teams synchronously with L1 cache support.
+
+    Used by StreamableHTTP transport which runs in a sync context.
+    Checks the in-memory L1 cache before falling back to DB.
+
+    Args:
+        email: User email address
+        is_admin: Whether the user is an admin
+
+    Returns:
+        None (admin bypass), [] (no teams), or list of team ID strings
+    """
+    if is_admin:
+        return None  # Admin bypass
+
+    cache_key = f"{email}:True"
+
+    # Check L1 in-memory cache (sync-safe, no network I/O)
+    try:
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+        entry = auth_cache._teams_list_cache.get(cache_key)  # pylint: disable=protected-access
+        if entry and not entry.is_expired():
+            auth_cache._hit_count += 1  # pylint: disable=protected-access
+            return entry.value
+    except Exception:  # nosec B110 - Cache unavailable is non-fatal
+        pass
+
+    # Cache miss: query DB
+    team_ids = _get_user_team_ids_sync(email)
+
+    # Populate L1 cache for subsequent requests
+    try:
+        # Standard
+        import time  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache, CacheEntry  # pylint: disable=import-outside-toplevel
+
+        with auth_cache._lock:  # pylint: disable=protected-access
+            auth_cache._teams_list_cache[cache_key] = CacheEntry(  # pylint: disable=protected-access
+                value=team_ids,
+                expiry=time.time() + auth_cache._teams_list_ttl,  # pylint: disable=protected-access
+            )
+    except Exception:  # nosec B110 - Cache write failure is non-fatal
+        pass
+
+    return team_ids
+
+
 async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
     """Resolve teams for session tokens from DB/cache.
 
