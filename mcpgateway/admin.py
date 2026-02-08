@@ -1008,7 +1008,7 @@ async def get_global_passthrough_headers(
 
     Args:
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         GlobalConfigRead: The current global passthrough headers configuration
@@ -1044,7 +1044,7 @@ async def update_global_passthrough_headers(
         request: HTTP request object
         config_update: The new configuration
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Raises:
         HTTPException: If there is a conflict or validation error
@@ -1098,7 +1098,7 @@ async def invalidate_passthrough_headers_cache(
     changes to propagate immediately across all workers.
 
     Args:
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1136,7 +1136,7 @@ async def get_passthrough_headers_cache_stats(
     Useful for monitoring cache effectiveness and debugging.
 
     Args:
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1174,7 +1174,7 @@ async def invalidate_a2a_stats_cache(
     changes to propagate immediately.
 
     Args:
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1210,7 +1210,7 @@ async def get_a2a_stats_cache_stats(
     Useful for monitoring cache effectiveness and debugging.
 
     Args:
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1243,7 +1243,7 @@ async def get_mcp_session_pool_metrics(
 
     Args:
         request: HTTP request object (required by rate_limit decorator)
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
         _db: Database session for permission checks.
 
     Returns:
@@ -1294,7 +1294,7 @@ async def get_configuration_settings(
 
     Args:
         _db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         Dict with configuration groups and their settings
@@ -4429,6 +4429,7 @@ async def admin_get_team_edit(
     Args:
         team_id: ID of the team to edit
         db: Database session
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         HTMLResponse: Rendered team edit form
@@ -6044,6 +6045,7 @@ async def admin_get_user_edit(
     Args:
         user_email: Email of user to edit
         db: Database session
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         HTMLResponse: User edit form HTML
@@ -6202,6 +6204,7 @@ async def admin_update_user(
         user_email: Email of user to update
         request: FastAPI request object
         db: Database session
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         HTMLResponse: Success message or error response
@@ -10670,6 +10673,7 @@ async def get_aggregated_metrics(
 
     Args:
         db (Session): Database session dependency for querying metrics.
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         Dict[str, Any]: A dictionary containing aggregated metrics and top performers
@@ -10981,7 +10985,7 @@ async def admin_events(request: Request, current_user_ctx=Depends(get_current_us
 
     Args:
         request (Request): The FastAPI request object, used to detect client disconnection.
-        _user (Any): Authenticated user dependency (ensures admin permissions).
+        current_user_ctx (Any): Authenticated user dependency (ensures admin permissions).
         _db: Database session for permission checks.
 
     Returns:
@@ -13727,7 +13731,7 @@ async def list_catalog_servers(
         limit: Maximum results
         offset: Pagination offset
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         List of catalog servers matching filters
@@ -13769,7 +13773,7 @@ async def register_catalog_server(
         http_request: FastAPI request object (for HTMX detection)
         request: Optional registration parameters
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         Registration response with success status (JSON or HTML)
@@ -13866,7 +13870,7 @@ async def check_catalog_server_status(
     Args:
         server_id: Catalog server ID to check
         _db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         Server status including availability and response time
@@ -13892,7 +13896,7 @@ async def bulk_register_catalog_servers(
     Args:
         request: Bulk registration request with server IDs
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         Bulk registration response with success/failure details
@@ -13926,7 +13930,7 @@ async def catalog_partial(
         search: Search term
         page: Page number (1-indexed)
         db: Database session
-        _user: Authenticated user
+        current_user_ctx: Authenticated user
 
     Returns:
         HTML partial with filtered catalog servers
@@ -14174,7 +14178,7 @@ async def get_maintenance_partial(
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user with admin permissions
+        current_user_ctx: Authenticated user with admin permissions
         _db: Database session for permission checks.
 
     Returns:
@@ -14745,7 +14749,7 @@ async def get_latency_percentiles(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         interval_minutes: Aggregation interval in minutes (5-1440)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -14914,7 +14918,7 @@ async def get_timeseries_metrics(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         interval_minutes: Aggregation interval in minutes (5-1440)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15241,7 +15245,7 @@ async def get_top_slow_endpoints(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15310,7 +15314,7 @@ async def get_top_volume_endpoints(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15377,7 +15381,7 @@ async def get_top_error_endpoints(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Number of results to return (1-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15452,7 +15456,7 @@ async def get_latency_heatmap(
         hours: Number of hours to look back (1-168)
         time_buckets: Number of time buckets (10-100)
         latency_buckets: Number of latency buckets (5-50)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15496,7 +15500,7 @@ async def get_tool_usage(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15569,7 +15573,7 @@ async def get_tool_performance(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15621,7 +15625,7 @@ async def get_tool_errors(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of tools to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15693,7 +15697,7 @@ async def get_tool_chains(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of chains to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15769,7 +15773,7 @@ async def get_tools_partial(
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         _db: Database session for permission checks.
 
     Returns:
@@ -15806,7 +15810,7 @@ async def get_prompt_usage(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of prompts to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15879,7 +15883,7 @@ async def get_prompt_performance(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of prompts to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15929,7 +15933,7 @@ async def get_prompts_errors(
     Args:
         hours: Time range in hours to analyze
         limit: Maximum number of prompts to return
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -15991,7 +15995,7 @@ async def get_prompts_partial(
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         _db: Database session for permission checks.
 
     Returns:
@@ -16028,7 +16032,7 @@ async def get_resource_usage(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of resources to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -16101,7 +16105,7 @@ async def get_resource_performance(
         request: FastAPI request object
         hours: Number of hours to look back (1-168)
         limit: Maximum number of resources to return (5-100)
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -16151,7 +16155,7 @@ async def get_resources_errors(
     Args:
         hours: Time range in hours to analyze
         limit: Maximum number of resources to return
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         db: Database session for permission checks.
 
     Returns:
@@ -16213,7 +16217,7 @@ async def get_resources_partial(
 
     Args:
         request: FastAPI request object
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
         _db: Database session for permission checks.
 
     Returns:
@@ -16250,7 +16254,7 @@ async def get_performance_stats(
     Args:
         request: FastAPI request object
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         HTMLResponse or JSONResponse: Performance dashboard data
@@ -16308,7 +16312,7 @@ async def get_performance_system(
 
     Args:
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: System metrics (CPU, memory, disk, network)
@@ -16334,7 +16338,7 @@ async def get_performance_workers(
 
     Args:
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: List of worker metrics
@@ -16360,7 +16364,7 @@ async def get_performance_requests(
 
     Args:
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: Request metrics from Prometheus
@@ -16386,7 +16390,7 @@ async def get_performance_cache(
 
     Args:
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: Redis cache metrics
@@ -16416,7 +16420,7 @@ async def get_performance_history(
         period_type: Aggregation type (hourly, daily)
         hours: Hours of history to retrieve
         db: Database session dependency
-        _user: Authenticated user (required by dependency)
+        current_user_ctx: Authenticated user (required by dependency)
 
     Returns:
         JSONResponse: Historical performance aggregates
