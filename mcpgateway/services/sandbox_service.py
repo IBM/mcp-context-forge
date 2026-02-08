@@ -15,16 +15,21 @@ Related to Issue #2226: Policy testing and simulation sandbox
 NOTE: Database integration uses mock data for now. See TODO comments for
 future database implementation.
 """
+
+# Future
 from __future__ import annotations
 
+# Standard
 import asyncio
+from datetime import datetime, timedelta, timezone
 import logging
 import time
-from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+# Third-Party
 from sqlalchemy.orm import Session
 
+# Local
 from ..plugins.unified_pdp.pdp import PolicyDecisionPoint
 from ..plugins.unified_pdp.pdp_models import (
     CacheConfig,
@@ -53,21 +58,21 @@ logger = logging.getLogger(__name__)
 
 class SandboxService:
     """Service for testing and simulating policy decisions in isolation.
-    
+
     This service creates isolated PDP instances for testing policy drafts
     without affecting production. It supports:
     - Single test case simulation
     - Batch test execution
     - Regression testing against historical decisions
     - Decision comparison and analysis
-    
+
     Attributes:
         db: Database session for accessing policy drafts and historical data
     """
 
     def __init__(self, db: Session):
         """Initialize the sandbox service.
-        
+
         Args:
             db: SQLAlchemy database session for accessing data
         """
@@ -84,24 +89,24 @@ class SandboxService:
         include_explanation: bool = True,
     ) -> SimulationResult:
         """Simulate a single test case against a policy draft.
-        
+
         Creates an isolated PDP instance with the draft policy configuration,
         evaluates the test case, and compares the result against the expected
         decision.
-        
+
         Args:
             policy_draft_id: ID of the policy draft to test
             test_case: Test case containing subject, action, resource, and expected decision
             include_explanation: Whether to generate detailed explanation (default: True)
-        
+
         Returns:
             SimulationResult containing actual vs expected decision, timing,
             and optional explanation
-        
+
         Raises:
             ValueError: If policy draft not found
             PolicyEvaluationError: If evaluation fails
-        
+
         Example:
             >>> service = SandboxService(db)
             >>> test_case = TestCase(
@@ -186,19 +191,19 @@ class SandboxService:
         parallel_execution: bool = True,
     ) -> BatchSimulationResult:
         """Execute multiple test cases in batch against a policy draft.
-        
+
         Runs all test cases and aggregates results. Can run tests in parallel
         for better performance or sequentially for deterministic ordering.
-        
+
         Args:
             policy_draft_id: ID of the policy draft to test
             test_cases: List of test cases to execute
             test_suite_id: Optional test suite ID for tracking
             parallel_execution: Whether to run tests in parallel (default: True)
-        
+
         Returns:
             BatchSimulationResult with summary statistics and individual results
-        
+
         Example:
             >>> results = await service.run_batch(
             ...     "draft-123",
@@ -265,10 +270,10 @@ class SandboxService:
         filter_by_action: Optional[str] = None,
     ) -> RegressionReport:
         """Run regression tests by replaying historical decisions.
-        
+
         Fetches historical production decisions and replays them against the
         policy draft to identify regressions (unintended behavior changes).
-        
+
         Args:
             policy_draft_id: ID of the policy draft to test
             baseline_policy_version: Production policy version to compare against
@@ -276,10 +281,10 @@ class SandboxService:
             sample_size: Maximum number of decisions to replay (default: 1000)
             filter_by_subject: Optional filter for specific subject email
             filter_by_action: Optional filter for specific action types
-        
+
         Returns:
             RegressionReport with comparisons and regression analysis
-        
+
         Example:
             >>> report = await service.run_regression(
             ...     "draft-123",
@@ -324,9 +329,7 @@ class SandboxService:
         total_decisions = len(comparisons)
         different_decisions = sum(1 for c in comparisons if c.is_regression)
         matching_decisions = total_decisions - different_decisions
-        regression_rate = (
-            (different_decisions / total_decisions * 100) if total_decisions > 0 else 0.0
-        )
+        regression_rate = (different_decisions / total_decisions * 100) if total_decisions > 0 else 0.0
 
         # Count regressions by severity
         regressions_only = [c for c in comparisons if c.is_regression]
@@ -369,13 +372,13 @@ class SandboxService:
 
     async def _load_draft_config(self, policy_draft_id: str) -> PDPConfig:
         """Load policy draft configuration from database.
-        
+
         Args:
             policy_draft_id: ID of the policy draft
-        
+
         Returns:
             PDPConfig for the draft policy
-        
+
         Raises:
             ValueError: If draft not found
         """
@@ -385,7 +388,7 @@ class SandboxService:
         # if not draft:
         #     raise ValueError(f"Policy draft not found: {policy_draft_id}")
         # return self._convert_draft_to_config(draft)
-        
+
         logger.info(
             "Loading policy draft %s (using mock data - database table not yet implemented)",
             policy_draft_id,
@@ -426,16 +429,16 @@ class SandboxService:
 
     def _create_sandbox_pdp(self, config: PDPConfig) -> PolicyDecisionPoint:
         """Create an isolated PDP instance for sandbox testing.
-        
+
         Args:
             config: PDP configuration with draft policies
-        
+
         Returns:
             PolicyDecisionPoint instance configured for sandbox use
         """
         # Ensure caching is disabled for sandbox
         config.cache.enabled = False
-        
+
         return PolicyDecisionPoint(config)
 
     async def _execute_parallel(
@@ -444,18 +447,15 @@ class SandboxService:
         test_cases: List[TestCase],
     ) -> List[SimulationResult]:
         """Execute test cases in parallel.
-        
+
         Args:
             policy_draft_id: Policy draft to test
             test_cases: Test cases to execute
-        
+
         Returns:
             List of simulation results
         """
-        tasks = [
-            self.simulate_single(policy_draft_id, tc, include_explanation=False)
-            for tc in test_cases
-        ]
+        tasks = [self.simulate_single(policy_draft_id, tc, include_explanation=False) for tc in test_cases]
         return await asyncio.gather(*tasks)
 
     async def _execute_sequential(
@@ -464,19 +464,17 @@ class SandboxService:
         test_cases: List[TestCase],
     ) -> List[SimulationResult]:
         """Execute test cases sequentially.
-        
+
         Args:
             policy_draft_id: Policy draft to test
             test_cases: Test cases to execute
-        
+
         Returns:
             List of simulation results
         """
         results = []
         for tc in test_cases:
-            result = await self.simulate_single(
-                policy_draft_id, tc, include_explanation=False
-            )
+            result = await self.simulate_single(policy_draft_id, tc, include_explanation=False)
             results.append(result)
         return results
 
@@ -489,35 +487,35 @@ class SandboxService:
         filter_by_action: Optional[str],
     ) -> List[HistoricalDecision]:
         """Fetch historical production decisions for regression testing.
-        
+
         Args:
             baseline_policy_version: Policy version to fetch decisions for
             replay_last_days: Number of days of history
             sample_size: Maximum number of decisions
             filter_by_subject: Optional subject filter
             filter_by_action: Optional action filter
-        
+
         Returns:
             List of historical decisions
         """
         # TODO: Replace with actual database query when audit tables are properly set up
         # Example query using AuditTrail table:
         # cutoff_date = datetime.now(timezone.utc) - timedelta(days=replay_last_days)
-        # 
+        #
         # query = self.db.query(AuditTrail).filter(
         #     AuditTrail.timestamp >= cutoff_date,
         #     AuditTrail.action.like('%policy%'),  # Filter for policy decisions
         # )
-        # 
+        #
         # if filter_by_subject:
         #     query = query.filter(AuditTrail.user_email == filter_by_subject)
         # if filter_by_action:
         #     query = query.filter(AuditTrail.action == filter_by_action)
-        # 
+        #
         # audit_records = query.order_by(AuditTrail.timestamp.desc()).limit(sample_size).all()
-        # 
+        #
         # return [self._convert_audit_to_historical(record) for record in audit_records]
-        
+
         logger.info(
             "Fetching historical decisions for %s (using mock data - database query not yet implemented)",
             baseline_policy_version,
@@ -566,11 +564,11 @@ class SandboxService:
         historical_decisions: List[HistoricalDecision],
     ) -> List[DecisionComparison]:
         """Replay historical decisions and compare results.
-        
+
         Args:
             policy_draft_id: Policy draft to test
             historical_decisions: Historical decisions to replay
-        
+
         Returns:
             List of decision comparisons
         """
@@ -588,15 +586,11 @@ class SandboxService:
             )
 
             # Simulate
-            result = await self.simulate_single(
-                policy_draft_id, test_case, include_explanation=False
-            )
+            result = await self.simulate_single(policy_draft_id, test_case, include_explanation=False)
 
             # Compare
             is_regression = result.actual_decision != hist.decision
-            severity = self._calculate_regression_severity(
-                hist.decision, result.actual_decision
-            )
+            severity = self._calculate_regression_severity(hist.decision, result.actual_decision)
 
             comparison = DecisionComparison(
                 historical_id=hist.id,
@@ -624,15 +618,13 @@ class SandboxService:
 
         return comparisons
 
-    def _calculate_regression_severity(
-        self, historical: Decision, simulated: Decision
-    ) -> str:
+    def _calculate_regression_severity(self, historical: Decision, simulated: Decision) -> str:
         """Calculate the severity of a regression.
-        
+
         Args:
             historical: Historical decision
             simulated: New simulated decision
-        
+
         Returns:
             Severity level: 'critical', 'high', 'medium', 'low'
         """
@@ -655,14 +647,14 @@ class SandboxService:
         new_decision: Decision,
     ) -> str:
         """Generate human-readable impact description.
-        
+
         Args:
             subject_email: Subject email
             action: Action being performed
             resource: Resource being accessed
             old_decision: Historical decision
             new_decision: New decision
-        
+
         Returns:
             Human-readable impact description
         """
@@ -670,15 +662,9 @@ class SandboxService:
             return "No change in behavior"
 
         if old_decision == Decision.ALLOW and new_decision == Decision.DENY:
-            return (
-                f"{subject_email} will lose access to {resource.type} "
-                f"'{resource.id}' for action '{action}'"
-            )
+            return f"{subject_email} will lose access to {resource.type} " f"'{resource.id}' for action '{action}'"
         else:
-            return (
-                f"{subject_email} will gain access to {resource.type} "
-                f"'{resource.id}' for action '{action}'"
-            )
+            return f"{subject_email} will gain access to {resource.type} " f"'{resource.id}' for action '{action}'"
 
 
 # ---------------------------------------------------------------------------
@@ -688,13 +674,13 @@ class SandboxService:
 
 def get_sandbox_service(db: Session) -> SandboxService:
     """Dependency injection helper for FastAPI routes.
-    
+
     Args:
         db: Database session
-    
+
     Returns:
         SandboxService instance
-    
+
     Example:
         @router.post("/sandbox/simulate")
         async def simulate(
