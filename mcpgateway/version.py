@@ -819,6 +819,7 @@ async def version_endpoint(
         >>> isinstance(response, JSONResponse)
         True
     """
+    _ = current_user_ctx
     # Redis health check - use shared client from factory
     redis_ok = False
     redis_version: Optional[str] = None
