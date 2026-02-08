@@ -320,10 +320,18 @@ class LoggingService:
         log_level = getattr(logging, settings.log_level.upper())
         root_logger.setLevel(log_level)
 
-        # Always add console/text handler for stdout/stderr
-        text_handler = _get_text_handler()
-        text_handler.setLevel(log_level)
-        root_logger.addHandler(text_handler)
+        # Console handler (stdout/stderr)
+        #
+        # LOG_FORMAT controls the console output format:
+        # - text: human-friendly
+        # - json: machine-friendly (Loki/ELK) and includes OTEL trace context when available
+        if getattr(settings, "log_format", "text").lower() == "json":
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(json_formatter)
+        else:
+            console_handler = _get_text_handler()
+        console_handler.setLevel(log_level)
+        root_logger.addHandler(console_handler)
 
         # Only add file handler if enabled
         if settings.log_to_file and settings.log_file:
