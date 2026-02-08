@@ -40,10 +40,6 @@ from .populators import (
 )
 from .utils.progress import MultiProgressTracker
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 # Populator registry: name -> class
@@ -291,9 +287,12 @@ Examples:
     else:
         config = load_config(args.profile)
 
-    # Set log level
-    log_level = args.log_level or config.get("global", {}).get("log_level", "INFO")
-    logging.getLogger().setLevel(getattr(logging, log_level))
+    # Configure logging: suppress noisy libraries to avoid flickering the Rich Live display
+    log_level = args.log_level or config.get("global", {}).get("log_level", "WARNING")
+    logging.basicConfig(level=getattr(logging, log_level), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("mcpgateway").setLevel(logging.WARNING)
 
     # Run
     try:
