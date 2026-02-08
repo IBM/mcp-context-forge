@@ -97,8 +97,8 @@ class APIClient:
         last_exc = None
 
         for attempt in range(self.max_retries + 1):
-            async with self._semaphore:
-                try:
+            try:
+                async with self._semaphore:
                     self.total_requests += 1
                     response = await self._client.request(
                         method,
@@ -108,36 +108,30 @@ class APIClient:
                         params=params,
                     )
 
-                    if response.status_code in expected_status:
-                        return response
-
-                    # Rate limited - backoff and retry
-                    if response.status_code == 429:
-                        self.total_rate_limited += 1
-                        retry_after = float(response.headers.get("Retry-After", self.retry_base_delay * (2**attempt)))
-                        logger.debug(f"Rate limited on {path}, waiting {retry_after:.1f}s")
-                        await asyncio.sleep(retry_after)
-                        continue
-
-                    # Server error - retry with backoff
-                    if response.status_code >= 500:
-                        self.total_retries += 1
-                        delay = self.retry_base_delay * (2**attempt)
-                        logger.debug(f"Server error {response.status_code} on {path}, retry in {delay:.1f}s")
-                        await asyncio.sleep(delay)
-                        continue
-
-                    # Client error - don't retry (except 429 handled above)
-                    self.total_errors += 1
-                    logger.warning(f"{method} {path} returned {response.status_code}: {response.text[:200]}")
+                if response.status_code in expected_status:
                     return response
 
-                except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
-                    last_exc = exc
+                # Rate limited - backoff and retry (semaphore released during sleep)
+                if response.status_code == 429:
+                    self.total_rate_limited += 1
+                    retry_after = float(response.headers.get("Retry-After", self.retry_base_delay * (2**attempt)))
+                    await asyncio.sleep(retry_after)
+                    continue
+
+                # Server error - retry with backoff
+                if response.status_code >= 500:
                     self.total_retries += 1
-                    delay = self.retry_base_delay * (2**attempt)
-                    logger.debug(f"Connection error on {path}: {exc}, retry in {delay:.1f}s")
-                    await asyncio.sleep(delay)
+                    await asyncio.sleep(self.retry_base_delay * (2**attempt))
+                    continue
+
+                # Client error - don't retry (except 429 handled above)
+                self.total_errors += 1
+                return response
+
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+                last_exc = exc
+                self.total_retries += 1
+                await asyncio.sleep(self.retry_base_delay * (2**attempt))
 
         self.total_errors += 1
         if last_exc:

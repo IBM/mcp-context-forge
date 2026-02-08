@@ -17,9 +17,9 @@ global:
   log_level: INFO
 
 concurrency:
-  max_connections: 100
-  max_concurrent: 50
-  batch_size: 50
+  max_connections: 300
+  max_concurrent: 200
+  batch_size: 200
   max_retries: 3
   retry_base_delay: 1.0
   timeout: 60.0
