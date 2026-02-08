@@ -1933,7 +1933,7 @@ class SessionRegistry(SessionBackend):
                         "aud": settings.jwt_audience,
                         "iat": int(now.timestamp()),
                         "jti": str(uuid.uuid4()),
-                        "token_use": "session",  # Session token — teams resolved server-side
+                        "token_use": "session",  # nosec B105 - token type marker, not a password
                         "user": {
                             "email": user.get("email", "system"),
                             "full_name": user.get("full_name", "System"),

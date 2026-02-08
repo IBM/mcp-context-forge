@@ -897,8 +897,7 @@ class SSOService:
             "auth_provider": user.auth_provider,
             "iat": int(utc_now().timestamp()),
             "user": {"email": user.email, "full_name": user.full_name, "is_admin": user.is_admin, "auth_provider": user.auth_provider},
-            # Session token marker — teams resolved from DB/cache at request time
-            "token_use": "session",
+            "token_use": "session",  # nosec B105 - token type marker, not a password
             # Scopes
             "scopes": {"server_id": None, "permissions": ["*"] if user.is_admin else [], "ip_restrictions": [], "time_restrictions": {}},
         }

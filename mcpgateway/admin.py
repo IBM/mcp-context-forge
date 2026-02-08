@@ -2841,7 +2841,7 @@ async def admin_ui(
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
                 "user": {"email": admin_email, "full_name": getattr(settings, "platform_admin_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
-                "token_use": "session",
+                "token_use": "session",  # nosec B105 - token type marker, not a password
                 "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
             }
 

@@ -287,7 +287,7 @@ class TokenCatalogService:
         # Generate JWT token using the centralized token creation utility
         # Pass structured data to the enhanced create_jwt_token function
         return await create_jwt_token(
-            data={"sub": user_email, "jti": jti, "token_use": "api"},
+            data={"sub": user_email, "jti": jti, "token_use": "api"},  # nosec B105 - token type marker, not a password
             expires_in_minutes=expires_in_minutes,
             user_data=user_data,
             teams=teams,

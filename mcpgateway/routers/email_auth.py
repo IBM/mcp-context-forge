@@ -154,8 +154,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
             "is_admin": bool(getattr(user, "is_admin", False)),
             "auth_provider": str(getattr(user, "auth_provider", "local")),
         },
-        # Session token marker — teams resolved from DB/cache at request time
-        "token_use": "session",
+        "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
     }
