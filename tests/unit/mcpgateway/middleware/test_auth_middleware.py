@@ -196,3 +196,105 @@ async def test_no_db_session_when_logging_disabled(monkeypatch):
     assert request.state.user.email == "user@example.com"
     # SessionLocal should NOT have been called - key optimization
     mock_session.assert_not_called()
+
+
+# ============================================================================
+# Coverage improvement tests
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_success_logging_exception(monkeypatch):
+    """log_authentication_attempt raises during success logging (lines 139-140)."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "token"}
+    request.headers = {}
+
+    mock_user = MagicMock()
+    mock_user.email = "user@example.com"
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("db error")
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    assert request.state.user.email == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_logging_disabled(monkeypatch):
+    """Auth fails but failure logging is disabled (branch 153->176)."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal") as mock_session, \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failure_logging_exception(monkeypatch):
+    """log_authentication_attempt raises during failure logging (lines 167-168)."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt.side_effect = RuntimeError("log fail")
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_failure_logging_close_exception(monkeypatch):
+    """db.close() raises during failure logging (lines 172-173)."""
+    middleware = AuthContextMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok"))
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/data"
+    request.cookies = {"jwt_token": "bad_token"}
+    request.headers = {}
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    mock_db = MagicMock()
+    mock_db.close.side_effect = RuntimeError("close fail")
+    mock_security_logger = MagicMock()
+
+    with patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=True), \
+         patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False), \
+         patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=mock_db), \
+         patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("bad"))), \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    mock_db.close.assert_called_once()

@@ -23,10 +23,10 @@ try:
     from grpc._utilities import first_version_is_lower
 
     _version_not_supported = first_version_is_lower(GRPC_VERSION, GRPC_GENERATED_VERSION)
-except ImportError:
+except ImportError:  # pragma: no cover
     _version_not_supported = True
 
-if _version_not_supported:
+if _version_not_supported:  # pragma: no cover
     raise RuntimeError(
         f"The grpc package installed is at version {GRPC_VERSION},"
         + " but the generated code in plugin_service_pb2_grpc.py depends on"

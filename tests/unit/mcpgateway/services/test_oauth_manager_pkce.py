@@ -960,5 +960,1127 @@ class TestOAuthManagerRefreshToken:
             await manager.refresh_token("refresh", credentials)
 
 
+# ============================================================================
+# Coverage improvement tests
+# ============================================================================
+
+
+class TestGetRedisClientNonRedis:
+    """Cover _get_redis_client when cache_type is not redis (line 74, branch 68->76)."""
+
+    @pytest.mark.asyncio
+    async def test_non_redis_cache_type(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        monkeypatch.setattr(om, "_REDIS_INITIALIZED", False)
+        monkeypatch.setattr(om, "_redis_client", "stale")
+        monkeypatch.setattr(om, "get_settings", lambda: SimpleNamespace(cache_type="memory", redis_url=None))
+
+        client = await om._get_redis_client()
+        assert client is None
+        assert om._REDIS_INITIALIZED is True
+
+    @pytest.mark.asyncio
+    async def test_redis_returns_none_client(self, monkeypatch):
+        """Redis factory returns None (line 68->76 partial: client is None)."""
+        import mcpgateway.services.oauth_manager as om
+
+        monkeypatch.setattr(om, "_REDIS_INITIALIZED", False)
+        monkeypatch.setattr(om, "_redis_client", None)
+        monkeypatch.setattr(om, "get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr(om, "_get_shared_redis_client", AsyncMock(return_value=None))
+
+        client = await om._get_redis_client()
+        assert client is None
+        assert om._REDIS_INITIALIZED is True
+
+
+class TestPasswordFlowFinalFallback:
+    """Cover _password_flow final fallback error (lines 389-392)."""
+
+    @pytest.mark.asyncio
+    async def test_zero_retries(self):
+        manager = OAuthManager(max_retries=0)
+        credentials = {"token_url": "https://auth.example.com/token", "username": "user", "password": "pass"}
+
+        with pytest.raises(OAuthError, match="Failed to obtain access token after all retry attempts"):
+            await manager._password_flow(credentials)
+
+
+class TestPasswordFlowHTTPErrorRetry:
+    """Cover _password_flow httpx.HTTPError with sleep (line 389)."""
+
+    @pytest.mark.asyncio
+    async def test_http_error_retry_then_success(self, monkeypatch):
+        manager = OAuthManager(max_retries=2)
+        credentials = {"token_url": "https://auth.example.com/token", "username": "user", "password": "pass"}
+
+        success_response = _make_response(headers={"content-type": "application/json"}, json_data={"access_token": "ok"})
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=[httpx.HTTPError("fail"), success_response])
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with patch("asyncio.sleep") as mock_sleep:
+            token = await manager._password_flow(credentials)
+            assert token == "ok"
+            mock_sleep.assert_called_once_with(1)  # 2**0 = 1
+
+
+class TestExchangeCodeForTokenDecrypt:
+    """Cover exchange_code_for_token encrypted secret decryption (branch 460->464)."""
+
+    @pytest.mark.asyncio
+    async def test_decrypt_long_secret(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        long_secret = "x" * 60
+        credentials = {
+            "client_id": "cid",
+            "client_secret": long_secret,
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+        }
+
+        decryptor = MagicMock()
+        decryptor.decrypt_secret_async = AsyncMock(return_value="decrypted")
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_encryption_service", lambda _s: decryptor)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(auth_encryption_secret="secret"))
+
+        response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager.exchange_code_for_token(credentials, code="c", state="s")
+        assert token == "tok"
+
+    @pytest.mark.asyncio
+    async def test_decrypt_returns_none(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        long_secret = "x" * 60
+        credentials = {
+            "client_id": "cid",
+            "client_secret": long_secret,
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+        }
+
+        decryptor = MagicMock()
+        decryptor.decrypt_secret_async = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_encryption_service", lambda _s: decryptor)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(auth_encryption_secret="secret"))
+
+        response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager.exchange_code_for_token(credentials, code="c", state="s")
+        assert token == "tok"
+
+    @pytest.mark.asyncio
+    async def test_decrypt_exception(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        long_secret = "x" * 60
+        credentials = {
+            "client_id": "cid",
+            "client_secret": long_secret,
+            "token_url": "https://auth.example.com/token",
+            "redirect_uri": "https://app.example.com/callback",
+        }
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_encryption_service", MagicMock(side_effect=RuntimeError("boom")))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(auth_encryption_secret="secret"))
+
+        response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager.exchange_code_for_token(credentials, code="c", state="s")
+        assert token == "tok"
+
+
+class TestExchangeCodeFinalFallback:
+    """Cover exchange_code_for_token final fallback (line 503)."""
+
+    @pytest.mark.asyncio
+    async def test_zero_retries(self):
+        manager = OAuthManager(max_retries=0)
+        credentials = {"client_id": "cid", "client_secret": "secret", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        with pytest.raises(OAuthError, match="Failed to exchange code for token after all retry attempts"):
+            await manager.exchange_code_for_token(credentials, code="c", state="s")
+
+    @pytest.mark.asyncio
+    async def test_http_error_retries(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "client_secret": "secret", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        response = _make_response(headers={"content-type": "application/json"}, json_data={"access_token": "x"})
+        response.raise_for_status.side_effect = httpx.HTTPError("bad")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="Failed to exchange code for token after 1 attempts"):
+            await manager.exchange_code_for_token(credentials, code="c", state="s")
+
+
+class TestInitiateFlowNoStorage:
+    """Cover initiate_authorization_code_flow without token_storage (branch 524->528)."""
+
+    @pytest.mark.asyncio
+    async def test_no_token_storage_skips_store(self):
+        from pydantic import SecretStr
+
+        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_get_settings:
+            mock_settings = MagicMock()
+            mock_settings.auth_encryption_secret = SecretStr("test-secret-key")
+            mock_get_settings.return_value = mock_settings
+
+            manager = OAuthManager(token_storage=None)
+            credentials = {"client_id": "cid", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback", "scopes": ["read"]}
+
+            result = await manager.initiate_authorization_code_flow("gw1", credentials, app_user_email="user@example.com")
+            assert "authorization_url" in result
+            assert "state" in result
+            assert result["gateway_id"] == "gw1"
+
+
+class TestCompleteFlowHMACBranches:
+    """Cover HMAC verification branches in complete_authorization_code_flow."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_hmac_signature_falls_back(self):
+        """Invalid HMAC triggers fallback to legacy format (line 570 via except)."""
+        import base64
+
+        from pydantic import SecretStr
+
+        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.auth_encryption_secret = SecretStr("test-secret")
+            settings.oauth_default_timeout = 3600
+            mock_settings.return_value = settings
+
+            manager = OAuthManager(token_storage=None)
+
+            # Create state with wrong HMAC signature
+            state_bytes = b'{"gateway_id":"gw1","app_user_email":"user@test.com"}'
+            bad_signature = b"\x00" * 32
+            state = base64.urlsafe_b64encode(state_bytes + bad_signature).decode()
+
+            with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}), patch.object(manager, "_extract_user_id", return_value="user1"):
+                result = await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
+                assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_gateway_mismatch_falls_back(self):
+        """Gateway mismatch triggers OAuthError caught in except (line 580)."""
+        import base64
+        import hashlib
+        import hmac as hmac_mod
+
+        from pydantic import SecretStr
+
+        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.auth_encryption_secret = SecretStr("test-secret")
+            settings.oauth_default_timeout = 3600
+            mock_settings.return_value = settings
+
+            manager = OAuthManager(token_storage=None)
+
+            # Create valid HMAC state but with different gateway_id
+            import orjson
+
+            state_data = {"gateway_id": "other_gw", "app_user_email": "user@test.com", "nonce": "abc", "timestamp": "2025-01-01T00:00:00"}
+            state_bytes = orjson.dumps(state_data)
+            secret_key = b"test-secret"
+            sig = hmac_mod.new(secret_key, state_bytes, hashlib.sha256).digest()
+            state = base64.urlsafe_b64encode(state_bytes + sig).decode()
+
+            with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}), patch.object(manager, "_extract_user_id", return_value="user1"):
+                # Gateway mismatch raises OAuthError which is caught in the except block,
+                # so app_user_email becomes None, but no token_storage so it proceeds
+                result = await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
+                assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_email_with_storage_raises(self):
+        """Token storage present but no email raises OAuthError (line 595)."""
+        import base64
+
+        from pydantic import SecretStr
+
+        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.auth_encryption_secret = SecretStr("test-secret")
+            mock_settings.return_value = settings
+
+            mock_storage = MagicMock()
+            manager = OAuthManager(token_storage=mock_storage)
+
+            # Create invalid state that triggers fallback → app_user_email = None
+            state = base64.urlsafe_b64encode(b"invalid_data_for_parsing").decode()
+
+            with patch.object(manager, "_validate_and_retrieve_state", return_value={"code_verifier": "v"}), patch.object(manager, "_exchange_code_for_tokens", return_value={"access_token": "tok"}), patch.object(manager, "_extract_user_id", return_value="user1"):
+                with pytest.raises(OAuthError, match="User context required"):
+                    await manager.complete_authorization_code_flow("gw1", "code", state, {"client_id": "cid"})
+
+
+class _MockColumn:
+    """Mock SQLAlchemy column that supports comparison operators."""
+
+    def __lt__(self, other):
+        return MagicMock()
+
+    def __eq__(self, other):
+        return MagicMock()
+
+    def __hash__(self):
+        return id(self)
+
+
+class TestStoreStateDatabasePath:
+    """Cover _store_authorization_state database path (lines 688-692)."""
+
+    @pytest.mark.asyncio
+    async def test_database_storage_success(self, monkeypatch):
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_db = MagicMock()
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        mock_oauth_state_cls = MagicMock()
+        mock_oauth_state_cls.expires_at = _MockColumn()
+
+        mock_db_module = MagicMock()
+        mock_db_module.get_db = MagicMock(return_value=mock_db_gen)
+        mock_db_module.OAuthState = mock_oauth_state_cls
+
+        with patch.dict("sys.modules", {"mcpgateway.db": mock_db_module}):
+            await manager._store_authorization_state("gw1", "state1", code_verifier="v1")
+
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_database_storage_failure_falls_back(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_db_module = MagicMock()
+        mock_db_module.get_db = MagicMock(side_effect=RuntimeError("db fail"))
+        mock_db_module.OAuthState = MagicMock()
+
+        with patch.dict("sys.modules", {"mcpgateway.db": mock_db_module}):
+            om._oauth_states.clear()
+            await manager._store_authorization_state("gw1", "state1", code_verifier="v1")
+
+        # Should fall back to in-memory
+        assert any(key.startswith("oauth:state:gw1") for key in om._oauth_states)
+
+
+class TestValidateAuthorizationStateRedisEdgeCases:
+    """Cover _validate_authorization_state Redis edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_redis_datetime_fallback_parse(self, monkeypatch):
+        """Datetime fromisoformat fails, fallback to strptime (lines 743-745)."""
+        import orjson
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        # Use a datetime format that fromisoformat can't parse but strptime can
+        state_data = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "2099-01-01T00:00:00", "used": False}
+        # This should work with fromisoformat, so use something that doesn't
+        bad_state = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "not-a-date", "used": False}
+        redis.getdel = AsyncMock(return_value=orjson.dumps(bad_state))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        # Both datetime parsers will fail, triggering exception handler (lines 763-764)
+        assert await manager._validate_authorization_state("gw", "s") is False
+
+    @pytest.mark.asyncio
+    async def test_redis_expired_state(self, monkeypatch):
+        """Expired state in Redis (lines 753-754)."""
+        import orjson
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        state_data = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "2000-01-01T00:00:00+00:00", "used": False}
+        redis.getdel = AsyncMock(return_value=orjson.dumps(state_data))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        assert await manager._validate_authorization_state("gw", "s") is False
+
+    @pytest.mark.asyncio
+    async def test_redis_naive_datetime(self, monkeypatch):
+        """Naive datetime in Redis requires UTC assumption (branch 747->752)."""
+        import orjson
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        # Naive datetime (no timezone info)
+        state_data = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "2099-01-01T00:00:00", "used": False}
+        redis.getdel = AsyncMock(return_value=orjson.dumps(state_data))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        assert await manager._validate_authorization_state("gw", "s") is True
+
+    @pytest.mark.asyncio
+    async def test_redis_exception_falls_back_to_memory(self, monkeypatch):
+        """Redis exception falls back (lines 763-764)."""
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        redis.getdel = AsyncMock(side_effect=RuntimeError("redis error"))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        # Falls back to memory, state not found
+        om._oauth_states.clear()
+        assert await manager._validate_authorization_state("gw", "s") is False
+
+
+class TestValidateAuthorizationStateDatabasePath:
+    """Cover _validate_authorization_state database path (lines 778-803)."""
+
+    @pytest.mark.asyncio
+    async def test_database_valid_state(self, monkeypatch):
+        from datetime import datetime, timezone
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_state = MagicMock()
+        mock_state.expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        mock_state.used = False
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_state
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            assert await manager._validate_authorization_state("gw", "s") is True
+            mock_db.delete.assert_called_once_with(mock_state)
+            mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_database_not_found(self, monkeypatch):
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            assert await manager._validate_authorization_state("gw", "s") is False
+
+    @pytest.mark.asyncio
+    async def test_database_expired_state(self, monkeypatch):
+        from datetime import datetime, timezone
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_state = MagicMock()
+        mock_state.expires_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        mock_state.used = False
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_state
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            assert await manager._validate_authorization_state("gw", "s") is False
+            mock_db.delete.assert_called_once_with(mock_state)
+
+    @pytest.mark.asyncio
+    async def test_database_used_state(self, monkeypatch):
+        from datetime import datetime, timezone
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_state = MagicMock()
+        mock_state.expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        mock_state.used = True
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_state
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            assert await manager._validate_authorization_state("gw", "s") is False
+
+    @pytest.mark.asyncio
+    async def test_database_naive_datetime(self, monkeypatch):
+        from datetime import datetime
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_state = MagicMock()
+        mock_state.expires_at = datetime(2099, 1, 1)  # Naive datetime
+        mock_state.used = False
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_state
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            assert await manager._validate_authorization_state("gw", "s") is True
+
+    @pytest.mark.asyncio
+    async def test_database_exception_falls_back(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        with patch("mcpgateway.db.get_db", side_effect=RuntimeError("db error")), patch("mcpgateway.db.OAuthState", MagicMock()):
+            om._oauth_states.clear()
+            assert await manager._validate_authorization_state("gw", "s") is False
+
+
+class TestValidateAuthorizationStateMemoryUsed:
+    """Cover in-memory used state (lines 831-832)."""
+
+    @pytest.mark.asyncio
+    async def test_memory_used_state(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
+
+        om._oauth_states.clear()
+        om._oauth_states["oauth:state:gw:used"] = {
+            "state": "used",
+            "gateway_id": "gw",
+            "code_verifier": None,
+            "expires_at": "2099-01-01T00:00:00+00:00",
+            "used": True,
+        }
+        assert await manager._validate_authorization_state("gw", "used") is False
+
+
+class TestValidateAndRetrieveStateRedisEdgeCases:
+    """Cover _validate_and_retrieve_state Redis edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_redis_datetime_fallback(self, monkeypatch):
+        """Fallback datetime parse (lines 866-867)."""
+        import orjson
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        # Use format that needs strptime fallback
+        bad_state = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "bad-date", "used": False}
+        redis.getdel = AsyncMock(return_value=orjson.dumps(bad_state))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        # Both parsers fail → exception → None (falls back)
+        result = await manager._validate_and_retrieve_state("gw", "s")
+        # Falls back to in-memory (no state there) → None
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_redis_expired(self, monkeypatch):
+        """Expired state returns None (line 873)."""
+        import orjson
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        state_data = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "2000-01-01T00:00:00+00:00", "used": False}
+        redis.getdel = AsyncMock(return_value=orjson.dumps(state_data))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        assert await manager._validate_and_retrieve_state("gw", "s") is None
+
+    @pytest.mark.asyncio
+    async def test_redis_naive_datetime(self, monkeypatch):
+        """Naive datetime requires UTC assumption (branch 869->872)."""
+        import orjson
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        state_data = {"state": "s", "gateway_id": "gw", "code_verifier": "v", "expires_at": "2099-01-01T00:00:00", "used": False}
+        redis.getdel = AsyncMock(return_value=orjson.dumps(state_data))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        result = await manager._validate_and_retrieve_state("gw", "s")
+        assert result is not None
+        assert result["code_verifier"] == "v"
+
+    @pytest.mark.asyncio
+    async def test_redis_exception(self, monkeypatch):
+        """Redis exception falls back (lines 876-877)."""
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        redis = AsyncMock()
+        redis.getdel = AsyncMock(side_effect=RuntimeError("redis error"))
+
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=redis))
+
+        om._oauth_states.clear()
+        assert await manager._validate_and_retrieve_state("gw", "s") is None
+
+
+class TestValidateAndRetrieveStateDatabasePath:
+    """Cover _validate_and_retrieve_state database path (lines 890-914)."""
+
+    @pytest.mark.asyncio
+    async def test_database_valid(self, monkeypatch):
+        from datetime import datetime, timezone
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_state = MagicMock()
+        mock_state.state = "s"
+        mock_state.gateway_id = "gw"
+        mock_state.code_verifier = "v"
+        mock_state.expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        mock_state.used = False
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_state
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            result = await manager._validate_and_retrieve_state("gw", "s")
+            assert result is not None
+            assert result["code_verifier"] == "v"
+            mock_db.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_database_not_found(self, monkeypatch):
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            assert await manager._validate_and_retrieve_state("gw", "s") is None
+
+    @pytest.mark.asyncio
+    async def test_database_expired(self, monkeypatch):
+        from datetime import datetime, timezone
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_state = MagicMock()
+        mock_state.expires_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        mock_state.used = False
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_state
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            assert await manager._validate_and_retrieve_state("gw", "s") is None
+            mock_db.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_database_used(self, monkeypatch):
+        from datetime import datetime, timezone
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_state = MagicMock()
+        mock_state.expires_at = datetime(2099, 1, 1, tzinfo=timezone.utc)
+        mock_state.used = True
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_state
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            assert await manager._validate_and_retrieve_state("gw", "s") is None
+
+    @pytest.mark.asyncio
+    async def test_database_naive_datetime(self, monkeypatch):
+        from datetime import datetime
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        mock_state = MagicMock()
+        mock_state.state = "s"
+        mock_state.gateway_id = "gw"
+        mock_state.code_verifier = "v"
+        mock_state.expires_at = datetime(2099, 1, 1)  # Naive
+        mock_state.used = False
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_state
+        mock_db_gen = MagicMock()
+        mock_db_gen.__next__ = MagicMock(return_value=mock_db)
+        mock_db_gen.close = MagicMock()
+
+        with patch("mcpgateway.db.get_db", return_value=mock_db_gen), patch("mcpgateway.db.OAuthState", MagicMock()):
+            result = await manager._validate_and_retrieve_state("gw", "s")
+            assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_database_exception(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="database"))
+
+        with patch("mcpgateway.db.get_db", side_effect=RuntimeError("db error")), patch("mcpgateway.db.OAuthState", MagicMock()):
+            om._oauth_states.clear()
+            assert await manager._validate_and_retrieve_state("gw", "s") is None
+
+
+class TestValidateAndRetrieveStateMemoryNaiveDatetime:
+    """Cover in-memory naive datetime (line 930)."""
+
+    @pytest.mark.asyncio
+    async def test_memory_naive_datetime(self, monkeypatch):
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="memory"))
+
+        om._oauth_states.clear()
+        om._oauth_states["oauth:state:gw:s"] = {
+            "state": "s",
+            "gateway_id": "gw",
+            "code_verifier": "v",
+            "expires_at": "2099-01-01T00:00:00",  # Naive
+            "used": False,
+        }
+        result = await manager._validate_and_retrieve_state("gw", "s")
+        assert result is not None
+        assert result["code_verifier"] == "v"
+
+
+class TestCreateAuthUrlWithPKCEResource:
+    """Cover _create_authorization_url_with_pkce resource param (lines 987-998)."""
+
+    def test_single_string_resource(self):
+        manager = OAuthManager()
+        credentials = {"client_id": "cid", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback", "scopes": [], "resource": "https://api.example.com"}
+
+        url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
+        assert "resource=https" in url
+
+    def test_list_resource(self):
+        manager = OAuthManager()
+        credentials = {"client_id": "cid", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback", "scopes": [], "resource": ["https://api1.example.com", "https://api2.example.com"]}
+
+        url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
+        assert "resource=" in url
+
+    def test_no_scopes(self):
+        """Test without scopes (branch 987->992 skipped)."""
+        manager = OAuthManager()
+        credentials = {"client_id": "cid", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback"}
+
+        url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
+        assert "scope=" not in url
+
+    def test_string_scopes(self):
+        """Test with scopes as string (not list)."""
+        manager = OAuthManager()
+        credentials = {"client_id": "cid", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback", "scopes": "read write"}
+
+        url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
+        assert "scope=read" in url
+
+
+class TestExchangeCodeForTokensEdgeCases:
+    """Cover _exchange_code_for_tokens edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_no_client_secret(self, monkeypatch):
+        """Public client without client_secret (branch 1046->1050)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager._exchange_code_for_tokens(credentials, "code")
+        assert result["access_token"] == "tok"
+        # Verify no client_secret in request
+        call_data = client.post.call_args[1]["data"]
+        assert "client_secret" not in call_data
+
+    @pytest.mark.asyncio
+    async def test_single_string_resource(self, monkeypatch):
+        """Single string resource param (line 1065)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "client_secret": "secret", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback", "resource": "https://api.example.com"}
+
+        response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager._exchange_code_for_tokens(credentials, "code")
+        assert result["access_token"] == "tok"
+        call_data = client.post.call_args[1]["data"]
+        assert call_data["resource"] == "https://api.example.com"
+
+    @pytest.mark.asyncio
+    async def test_resource_list_with_empty(self, monkeypatch):
+        """Resource list with falsy entry (branch 1061->1060)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback", "resource": ["https://api1.example.com", "", "https://api2.example.com"]}
+
+        response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager._exchange_code_for_tokens(credentials, "code")
+        assert result["access_token"] == "tok"
+        # Only 2 resources should be added (empty string skipped)
+        call_data = client.post.call_args[1]["data"]
+        resource_entries = [entry for entry in call_data if entry[0] == "resource"]
+        assert len(resource_entries) == 2
+
+    @pytest.mark.asyncio
+    async def test_json_parse_error(self, monkeypatch):
+        """JSON parse fails, fallback to text (branch 1081->1080)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        response = _make_response(headers={"content-type": "application/json"}, text="bad", json_exc=ValueError("bad json"))
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="No access_token"):
+            await manager._exchange_code_for_tokens(credentials, "code")
+
+    @pytest.mark.asyncio
+    async def test_final_fallback(self):
+        """Zero retries → final fallback (line 1104)."""
+        manager = OAuthManager(max_retries=0)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        with pytest.raises(OAuthError, match="Failed to exchange code for token after all retry attempts"):
+            await manager._exchange_code_for_tokens(credentials, "code")
+
+    @pytest.mark.asyncio
+    async def test_decrypt_long_secret(self, monkeypatch):
+        """Decrypt long client_secret in _exchange_code_for_tokens (branch 1024->...)."""
+        manager = OAuthManager(max_retries=1)
+        long_secret = "x" * 60
+        credentials = {"client_id": "cid", "client_secret": long_secret, "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        decryptor = MagicMock()
+        decryptor.decrypt_secret_async = AsyncMock(return_value="decrypted")
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_encryption_service", lambda _s: decryptor)
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(auth_encryption_secret="secret"))
+
+        response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager._exchange_code_for_tokens(credentials, "code")
+        assert result["access_token"] == "tok"
+
+    @pytest.mark.asyncio
+    async def test_form_encoded_response(self, monkeypatch):
+        """Form-encoded response handling."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&token_type=Bearer")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager._exchange_code_for_tokens(credentials, "code")
+        assert result["access_token"] == "tok"
+
+    @pytest.mark.asyncio
+    async def test_http_error_retry_then_success(self, monkeypatch):
+        """HTTPError on first attempt, success on retry triggers sleep (line 1104)."""
+        manager = OAuthManager(max_retries=2)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        success_response = _make_response(headers={"content-type": "application/json"}, json_data={"access_token": "tok"})
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=[httpx.HTTPError("fail"), success_response])
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with patch("asyncio.sleep") as mock_sleep:
+            result = await manager._exchange_code_for_tokens(credentials, "code")
+            assert result["access_token"] == "tok"
+            mock_sleep.assert_called_once_with(1)  # 2**0 = 1
+
+
+class TestRefreshTokenEdgeCases:
+    """Cover refresh_token edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_single_string_resource(self, monkeypatch):
+        """Single string resource in refresh (line 1158)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "resource": "https://api.example.com"}
+
+        response = _make_response(status_code=200, json_data={"access_token": "new"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager.refresh_token("refresh", credentials)
+        assert result["access_token"] == "new"
+        call_data = client.post.call_args[1]["data"]
+        assert call_data["resource"] == "https://api.example.com"
+
+    @pytest.mark.asyncio
+    async def test_no_access_token_in_response(self, monkeypatch):
+        """Missing access_token in 200 response (line 1170)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token"}
+
+        response = _make_response(status_code=200, json_data={"token_type": "Bearer"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="No access_token in refresh response"):
+            await manager.refresh_token("refresh", credentials)
+
+    @pytest.mark.asyncio
+    async def test_final_fallback_500_status(self, monkeypatch):
+        """500 status through all retries triggers final fallback (line 1187)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token"}
+
+        response = _make_response(status_code=500, text="server error")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with pytest.raises(OAuthError, match="Failed to refresh token after all retry attempts"):
+            await manager.refresh_token("refresh", credentials)
+
+    @pytest.mark.asyncio
+    async def test_http_error_with_retry(self, monkeypatch):
+        """HTTPError with retries triggers sleep (line 1185)."""
+        manager = OAuthManager(max_retries=2)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token"}
+
+        success_response = _make_response(status_code=200, json_data={"access_token": "new"})
+        client = AsyncMock()
+        client.post = AsyncMock(side_effect=[httpx.HTTPError("fail"), success_response])
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        with patch("asyncio.sleep") as mock_sleep:
+            result = await manager.refresh_token("refresh", credentials)
+            assert result["access_token"] == "new"
+            mock_sleep.assert_called_once_with(1)  # 2**0 = 1
+
+    @pytest.mark.asyncio
+    async def test_resource_list_with_empty(self, monkeypatch):
+        """Resource list with falsy entry (branch 1154->1153)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "resource": ["https://api1.example.com", "", "https://api2.example.com"]}
+
+        response = _make_response(status_code=200, json_data={"access_token": "new"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager.refresh_token("refresh", credentials)
+        assert result["access_token"] == "new"
+        call_data = client.post.call_args[1]["data"]
+        resource_entries = [entry for entry in call_data if entry[0] == "resource"]
+        assert len(resource_entries) == 2
+
+    @pytest.mark.asyncio
+    async def test_no_client_secret(self, monkeypatch):
+        """No client_secret in refresh."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token"}
+
+        response = _make_response(status_code=200, json_data={"access_token": "new"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager.refresh_token("refresh", credentials)
+        assert result["access_token"] == "new"
+        call_data = client.post.call_args[1]["data"]
+        assert "client_secret" not in call_data
+
+
+class TestFormEncodedParseBranches:
+    """Cover form-encoded parsing with pair lacking '=' (branches 267->266, 366->365, 477->476, 1081->1080)."""
+
+    @pytest.mark.asyncio
+    async def test_client_credentials_form_with_bad_pair(self, monkeypatch):
+        """_client_credentials_flow: pair without '=' (branch 267->266)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "client_secret": "secret", "token_url": "https://auth.example.com/token"}
+
+        response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&badpair&token_type=Bearer")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager._client_credentials_flow(credentials)
+        assert token == "tok"
+
+    @pytest.mark.asyncio
+    async def test_password_flow_form_with_bad_pair(self, monkeypatch):
+        """_password_flow: pair without '=' (branch 366->365)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"token_url": "https://auth.example.com/token", "username": "user", "password": "pass"}
+
+        response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&noequalssign&token_type=Bearer")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager._password_flow(credentials)
+        assert token == "tok"
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_form_with_bad_pair(self, monkeypatch):
+        """exchange_code_for_token: pair without '=' (branch 477->476)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "client_secret": "secret", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&orphan&token_type=Bearer")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager.exchange_code_for_token(credentials, code="c", state="s")
+        assert token == "tok"
+
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_form_with_bad_pair(self, monkeypatch):
+        """_exchange_code_for_tokens: pair without '=' (branch 1081->1080)."""
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        response = _make_response(headers={"content-type": "application/x-www-form-urlencoded"}, text="access_token=tok&noeq&token_type=Bearer")
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        result = await manager._exchange_code_for_tokens(credentials, "code")
+        assert result["access_token"] == "tok"
+
+
+class TestExchangeCodeNoClientSecret:
+    """Cover exchange_code_for_token without client_secret (branch 460->464)."""
+
+    @pytest.mark.asyncio
+    async def test_public_client_no_secret(self, monkeypatch):
+        manager = OAuthManager(max_retries=1)
+        credentials = {"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://app.example.com/callback"}
+
+        response = _make_response(json_data={"access_token": "tok"}, headers={"content-type": "application/json"})
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=response)
+        monkeypatch.setattr(manager, "_get_client", AsyncMock(return_value=client))
+
+        token = await manager.exchange_code_for_token(credentials, code="c", state="s")
+        assert token == "tok"
+        call_data = client.post.call_args[1]["data"]
+        assert "client_secret" not in call_data
+
+
+class TestRedisNoneFallthroughPaths:
+    """Cover paths where redis returns None and falls through (branches 664->676, 728->767, 854->880)."""
+
+    @pytest.mark.asyncio
+    async def test_store_state_redis_none_falls_to_memory(self, monkeypatch):
+        """_store_authorization_state: redis is None, falls through (branch 664->676)."""
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=None))
+
+        om._oauth_states.clear()
+        await manager._store_authorization_state("gw1", "state1", code_verifier="v1")
+        assert any(key.startswith("oauth:state:gw1") for key in om._oauth_states)
+
+    @pytest.mark.asyncio
+    async def test_validate_state_redis_none_falls_to_memory(self, monkeypatch):
+        """_validate_authorization_state: redis is None, falls through (branch 728->767)."""
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=None))
+
+        om._oauth_states.clear()
+        assert await manager._validate_authorization_state("gw", "s") is False
+
+    @pytest.mark.asyncio
+    async def test_validate_and_retrieve_redis_none_falls_to_memory(self, monkeypatch):
+        """_validate_and_retrieve_state: redis is None, falls through (branch 854->880)."""
+        import mcpgateway.services.oauth_manager as om
+
+        manager = OAuthManager()
+        monkeypatch.setattr("mcpgateway.services.oauth_manager.get_settings", lambda: SimpleNamespace(cache_type="redis", redis_url="redis://localhost"))
+        monkeypatch.setattr("mcpgateway.services.oauth_manager._get_redis_client", AsyncMock(return_value=None))
+
+        om._oauth_states.clear()
+        assert await manager._validate_and_retrieve_state("gw", "s") is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
