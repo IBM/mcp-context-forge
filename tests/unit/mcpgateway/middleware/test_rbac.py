@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import importlib
+
 import pytest
 import asyncio
 from contextlib import contextmanager
@@ -6,6 +8,37 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException, Request, status
 from mcpgateway.middleware import rbac
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_rbac_decorators():
+    """Reload rbac module to restore real decorator functions from source code.
+
+    e2e tests (test_main_apis.py, test_oauth_protected_resource.py) replace
+    rbac.require_permission/require_admin_permission/require_any_permission
+    with noop_decorator at module level without cleanup.  Under xdist, when
+    these e2e modules land on the same worker, the decorators stay permanently
+    patched as no-ops, causing 14 test failures here (DID NOT RAISE / 0 calls).
+
+    importlib.reload() re-executes the module source, restoring real decorators.
+    Non-decorator attributes are saved and restored to preserve object identity
+    for FastAPI dependency_overrides in other test files on the same worker.
+    """
+    saved_ps = rbac.PermissionService
+    saved_gcuwp = rbac.get_current_user_with_permissions
+    saved_get_db = rbac.get_db
+    saved_get_ps = rbac.get_permission_service
+
+    importlib.reload(rbac)
+
+    rbac.PermissionService = saved_ps
+    rbac.get_current_user_with_permissions = saved_gcuwp
+    rbac.get_db = saved_get_db
+    rbac.get_permission_service = saved_get_ps
+    yield
+    rbac.get_current_user_with_permissions = saved_gcuwp
+    rbac.get_db = saved_get_db
+    rbac.get_permission_service = saved_get_ps
 
 
 @pytest.mark.asyncio
