@@ -138,33 +138,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Get user's teams for namespace information (ensure safe access)
-    try:
-        teams = user.get_teams() if callable(getattr(user, "get_teams", None)) else []
-    except Exception:
-        teams = []
-
-    # Normalize teams into JSON-serializable primitives
-    safe_teams = []
-    for team in teams or []:
-        try:
-            safe_teams.append(
-                {
-                    "id": str(getattr(team, "id", None)) if getattr(team, "id", None) is not None else None,
-                    "name": str(getattr(team, "name", "")),
-                    "slug": str(getattr(team, "slug", "")),
-                    "is_personal": bool(getattr(team, "is_personal", False)),
-                    "role": str(next((m.role for m in getattr(user, "team_memberships", []) if getattr(m, "team_id", None) == getattr(team, "id", None)), "member")),
-                }
-            )
-        except Exception:
-            # Fallback to a string representation if anything goes wrong
-            try:
-                safe_teams.append({"id": None, "name": str(team), "slug": str(team), "is_personal": False, "role": "member"})
-            except Exception:
-                safe_teams.append({"id": None, "name": "", "slug": "", "is_personal": False, "role": "member"})
-
-    # Create enhanced JWT payload with team and namespace information
+    # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
         # Standard JWT claims
         "sub": user.email,
@@ -180,17 +154,10 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
             "is_admin": bool(getattr(user, "is_admin", False)),
             "auth_provider": str(getattr(user, "auth_provider", "local")),
         },
-        # Namespace access (backwards compatible)
-        "namespaces": [f"user:{getattr(user, 'email', '')}", *[f"team:{t.get('slug', '')}" for t in safe_teams], "public"],
+        "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
     }
-
-    # For admin users: omit "teams" key entirely to enable unrestricted access bypass
-    # For regular users: include teams for proper team-based scoping
-    if not bool(getattr(user, "is_admin", False)):
-        # Use only team IDs for the "teams" claim to match /tokens behavior
-        payload["teams"] = [t["id"] for t in safe_teams if t.get("id")]
 
     # Generate token using centralized token creation
     token = await create_jwt_token(payload)
