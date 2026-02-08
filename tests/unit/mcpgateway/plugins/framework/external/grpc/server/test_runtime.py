@@ -439,3 +439,73 @@ class TestGrpcPluginRuntimeUdsChmod:
                 assert os.path.exists(uds_path)
                 mode = oct(os.stat(uds_path).st_mode & 0o777)
                 assert mode == "0o600"
+
+
+class TestGrpcPluginRuntimeGetServerConfigNoPluginServer:
+    """Tests for _get_server_config when _plugin_server is None."""
+
+    def test_get_server_config_no_plugin_server_falls_to_env(self):
+        """Test _get_server_config falls through to env when _plugin_server is None."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import GrpcPluginRuntime
+
+        runtime = GrpcPluginRuntime()
+        runtime._plugin_server = None
+
+        with patch.object(GRPCServerConfig, "from_env", return_value=GRPCServerConfig(host="10.0.0.1", port=50055)):
+            config = runtime._get_server_config()
+            assert config.host == "10.0.0.1"
+            assert config.port == 50055
+
+    def test_get_server_config_no_plugin_server_falls_to_defaults(self):
+        """Test _get_server_config falls to defaults when _plugin_server is None and no env."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import GrpcPluginRuntime
+
+        runtime = GrpcPluginRuntime()
+        runtime._plugin_server = None
+
+        with patch.object(GRPCServerConfig, "from_env", return_value=None):
+            config = runtime._get_server_config()
+            assert config.host == "127.0.0.1"
+            assert config.port == 50051
+
+
+class TestGrpcPluginRuntimeSignalHandler:
+    """Tests for the signal handler in run_server."""
+
+    @pytest.mark.asyncio
+    async def test_signal_handler_calls_request_shutdown(self):
+        """Test that the signal handler triggers request_shutdown."""
+        from mcpgateway.plugins.framework.external.grpc.server.runtime import run_server
+
+        captured_handlers = {}
+
+        mock_runtime = MagicMock()
+        mock_runtime.request_shutdown = MagicMock()
+
+        async def mock_start():
+            pass
+
+        mock_runtime.start = AsyncMock(side_effect=mock_start)
+        mock_runtime.stop = AsyncMock()
+
+        mock_loop = MagicMock()
+
+        def capture_signal_handler(sig, handler):
+            captured_handlers[sig] = handler
+
+        mock_loop.add_signal_handler = MagicMock(side_effect=capture_signal_handler)
+
+        with patch(
+            "mcpgateway.plugins.framework.external.grpc.server.runtime.GrpcPluginRuntime",
+            return_value=mock_runtime,
+        ):
+            with patch("asyncio.get_running_loop", return_value=mock_loop):
+                await run_server()
+
+        # Signal handlers should have been registered
+        assert signal.SIGINT in captured_handlers
+        assert signal.SIGTERM in captured_handlers
+
+        # Call the handler - should trigger request_shutdown
+        captured_handlers[signal.SIGINT]()
+        mock_runtime.request_shutdown.assert_called_once()

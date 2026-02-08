@@ -2917,7 +2917,9 @@ async def admin_login_page(request: Request) -> Response:
 
     # Use external template file
     return request.app.state.templates.TemplateResponse(
-        request, "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email}
+        request,
+        "login.html",
+        {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email},
     )
 
 

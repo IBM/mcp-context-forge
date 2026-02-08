@@ -468,3 +468,95 @@ class TestGrpcExternalPluginRetry:
                 await plugin._get_plugin_config_with_retry(max_retries=3, base_delay=0.01)
 
         assert mock_stub.GetPluginConfig.call_count == 3
+
+
+class TestGrpcExternalPluginInitializeGenericError:
+    """Tests for generic (non-gRPC) exception paths in initialize()."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_generic_exception_wraps_in_plugin_error(self, mock_plugin_config):
+        """Test initialize wraps non-gRPC exceptions in PluginError."""
+        plugin = GrpcExternalPlugin(mock_plugin_config)
+
+        with patch(
+            "mcpgateway.plugins.framework.external.grpc.client.create_insecure_channel",
+            side_effect=ValueError("bad channel config"),
+        ):
+            with pytest.raises(PluginError):
+                await plugin.initialize()
+
+
+class TestGrpcExternalPluginGetConfigStubNone:
+    """Tests for _get_plugin_config when stub is None."""
+
+    @pytest.mark.asyncio
+    async def test_get_plugin_config_no_stub_raises(self, mock_plugin_config):
+        """Test _get_plugin_config raises PluginError when stub is None."""
+        plugin = GrpcExternalPlugin(mock_plugin_config)
+        # stub is None by default
+
+        with pytest.raises(PluginError, match="stub not initialized"):
+            await plugin._get_plugin_config()
+
+
+class TestGrpcExternalPluginInvokeHookEdgeCases:
+    """Tests for edge cases in invoke_hook()."""
+
+    @pytest.fixture
+    def initialized_plugin(self, mock_plugin_config):
+        """Create an initialized plugin for testing."""
+        plugin = GrpcExternalPlugin(mock_plugin_config)
+        plugin._channel = AsyncMock()
+        plugin._stub = MagicMock()
+        return plugin
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_error_with_details(self, initialized_plugin):
+        """Test invoke_hook handles error response that has details field."""
+        mock_response = MagicMock()
+        mock_response.HasField = MagicMock(side_effect=lambda x: x == "error")
+        mock_response.error = MagicMock()
+        mock_response.error.message = "Plugin failed"
+        mock_response.error.plugin_name = "TestGrpcPlugin"
+        mock_response.error.code = "ERR"
+        mock_response.error.mcp_error_code = -32603
+
+        details_struct = Struct()
+        json_format.ParseDict({"detail_key": "detail_value"}, details_struct)
+        mock_response.error.details = details_struct
+        mock_response.error.HasField = MagicMock(return_value=True)
+
+        initialized_plugin._stub.InvokeHook = AsyncMock(return_value=mock_response)
+
+        context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+
+        with pytest.raises(PluginError, match="Plugin failed"):
+            await initialized_plugin.invoke_hook("tool_pre_invoke", payload, context)
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_no_result_raises(self, initialized_plugin):
+        """Test invoke_hook raises when response has no error and no result."""
+        mock_response = MagicMock()
+        mock_response.HasField = MagicMock(return_value=False)
+        mock_response.error = MagicMock()
+        mock_response.error.message = ""
+
+        initialized_plugin._stub.InvokeHook = AsyncMock(return_value=mock_response)
+
+        context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+
+        with pytest.raises(PluginError, match="invalid response"):
+            await initialized_plugin.invoke_hook("tool_pre_invoke", payload, context)
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_generic_exception(self, initialized_plugin):
+        """Test invoke_hook wraps generic exceptions in PluginError."""
+        initialized_plugin._stub.InvokeHook = AsyncMock(side_effect=TypeError("unexpected"))
+
+        context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
+        payload = ToolPreInvokePayload(name="test_tool", args={})
+
+        with pytest.raises(PluginError):
+            await initialized_plugin.invoke_hook("tool_pre_invoke", payload, context)
