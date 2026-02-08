@@ -148,3 +148,22 @@ def test_discover_keycloak_endpoints_sync_http_error(monkeypatch: pytest.MonkeyP
     endpoints = keycloak_discovery.discover_keycloak_endpoints_sync("https://kc", "master")
 
     assert endpoints is None
+
+
+def test_discover_keycloak_endpoints_sync_incomplete(monkeypatch: pytest.MonkeyPatch):
+    """Sync discovery should return None for incomplete OIDC configs."""
+    response = DummySyncResponse({"authorization_endpoint": "https://kc/auth"})
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: DummySyncClient(response))
+
+    endpoints = keycloak_discovery.discover_keycloak_endpoints_sync("https://kc", "master")
+    assert endpoints is None
+
+
+def test_discover_keycloak_endpoints_sync_unexpected(monkeypatch: pytest.MonkeyPatch):
+    """Sync discovery should handle unexpected exceptions gracefully."""
+    def boom(*args, **kwargs):  # noqa: ANN001
+        raise RuntimeError("fail")
+
+    monkeypatch.setattr(httpx, "Client", boom)
+    endpoints = keycloak_discovery.discover_keycloak_endpoints_sync("https://kc", "master")
+    assert endpoints is None
