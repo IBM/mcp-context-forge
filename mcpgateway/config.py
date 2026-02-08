@@ -562,6 +562,11 @@ class Settings(BaseSettings):
     llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
     llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
 
+    # Embedding Service Settings
+    embedding_provider: str = Field(default="openai", description="Embedding provider")
+    embedding_model: str = Field(default="text-embedding-3-small", description="Embedding model name")
+    embedding_api_key: SecretStr = Field(default="", description="API key for embedding provider")
+
     @field_validator("allowed_roots", mode="before")
     @classmethod
     def parse_allowed_roots(cls, v):
