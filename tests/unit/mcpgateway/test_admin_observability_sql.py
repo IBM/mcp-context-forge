@@ -337,7 +337,7 @@ class TestToolUsageStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_tool_usage(mock_request, hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_tool_usage(mock_request, hours=24, limit=20, current_user_ctx=mock_user))
 
         assert "tools" in result
         assert result["tools"][0]["tool_name"] == "test_tool"
@@ -379,7 +379,7 @@ class TestToolErrorStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_tool_errors(mock_request, hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_tool_errors(mock_request, hours=24, limit=20, current_user_ctx=mock_user))
 
         assert "tools" in result
         assert result["tools"][0]["tool_name"] == "test_tool"
@@ -425,7 +425,7 @@ class TestToolChains:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_tool_chains(mock_request, hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_tool_chains(mock_request, hours=24, limit=20, current_user_ctx=mock_user))
 
         assert "chains" in result
         assert len(result["chains"]) > 0
@@ -466,7 +466,7 @@ class TestPromptStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_prompt_usage(mock_request, hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_prompt_usage(mock_request, hours=24, limit=20, current_user_ctx=mock_user))
 
         assert "prompts" in result
         assert result["prompts"][0]["prompt_id"] == "test_prompt"
@@ -502,7 +502,7 @@ class TestPromptStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_prompts_errors(hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_prompts_errors(hours=24, limit=20, current_user_ctx=mock_user))
 
         assert "prompts" in result
 
@@ -542,7 +542,7 @@ class TestResourceStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_resource_usage(mock_request, hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_resource_usage(mock_request, hours=24, limit=20, current_user_ctx=mock_user))
 
         assert "resources" in result
         assert result["resources"][0]["resource_uri"] == "file:///test.txt"
@@ -578,6 +578,6 @@ class TestResourceStatistics:
         with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
             with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
                 import asyncio
-                result = asyncio.run(get_resources_errors(hours=24, limit=20, _user=mock_user))
+                result = asyncio.run(get_resources_errors(hours=24, limit=20, current_user_ctx=mock_user))
 
         assert "resources" in result
