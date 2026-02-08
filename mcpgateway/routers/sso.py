@@ -334,9 +334,16 @@ async def handle_sso_callback(
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
-    from mcpgateway.utils.security_cookies import set_auth_cookie
+    from mcpgateway.utils.security_cookies import CookieTooLargeError, set_auth_cookie
 
-    set_auth_cookie(redirect_response, access_token, remember_me=False)
+    try:
+        set_auth_cookie(redirect_response, access_token, remember_me=False)
+    except CookieTooLargeError:
+        redirect_response = RedirectResponse(
+            url=f"{root_path}/admin/login?error=token_too_large",
+            status_code=302,
+        )
+        return redirect_response
 
     return redirect_response
 

@@ -811,6 +811,7 @@ class TestBatchedSyncNoPTeam:
                 created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
             ),
             None,  # no personal team
+            [],  # no team memberships (query 4: team_ids)
         ]
 
         class DummyResult:
@@ -818,6 +819,8 @@ class TestBatchedSyncNoPTeam:
                 self._val = val
             def scalar_one_or_none(self):
                 return self._val
+            def all(self):
+                return self._val if isinstance(self._val, list) else []
 
         class DummySession:
             def __init__(self):
@@ -836,6 +839,7 @@ class TestBatchedSyncNoPTeam:
         result = _get_auth_context_batched_sync("user@example.com")
         assert result["user"] is not None
         assert result["personal_team_id"] is None
+        assert result["team_ids"] == []
 
 
 class TestSetAuthMethodFromPayload:

@@ -889,7 +889,7 @@ class SSOService:
                     pending.status = "completed"
                     self.db.commit()
 
-        # Generate JWT token for user
+        # Generate JWT token for user — session token (teams resolved server-side)
         token_data = {
             "sub": user.email,
             "email": user.email,
@@ -897,24 +897,11 @@ class SSOService:
             "auth_provider": user.auth_provider,
             "iat": int(utc_now().timestamp()),
             "user": {"email": user.email, "full_name": user.full_name, "is_admin": user.is_admin, "auth_provider": user.auth_provider},
+            # Session token marker — teams resolved from DB/cache at request time
+            "token_use": "session",
+            # Scopes
+            "scopes": {"server_id": None, "permissions": ["*"] if user.is_admin else [], "ip_restrictions": [], "time_restrictions": {}},
         }
-
-        # Add user teams to token
-        # For admin users: omit "teams" key entirely to enable unrestricted access bypass
-        # This matches email_auth.py behavior - checks is_admin only, not provider
-        teams = user.get_teams()
-        if not user.is_admin:
-            token_data["teams"] = [team.id for team in teams]
-        # Admin users get no teams key for unrestricted bypass
-
-        # Add namespaces for RBAC (always included for consistency with email_auth.py)
-        namespaces = [f"user:{user.email}"]
-        namespaces.extend([f"team:{team.slug}" for team in teams])
-        namespaces.append("public")
-        token_data["namespaces"] = namespaces
-
-        # Add scopes
-        token_data["scopes"] = {"server_id": None, "permissions": ["*"] if user.is_admin else [], "ip_restrictions": [], "time_restrictions": {}}
 
         # Create JWT token
         token = await create_jwt_token(token_data)

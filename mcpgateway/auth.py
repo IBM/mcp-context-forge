@@ -145,6 +145,77 @@ def _get_personal_team_sync(user_email: str) -> Optional[str]:
         return personal_team.id if personal_team else None
 
 
+def _get_user_team_ids_sync(email: str) -> List[str]:
+    """Query all active team IDs for a user (including personal teams).
+
+    Uses a fresh DB session so this can be called from thread pool.
+    Matches the behavior of user.get_teams() which returns all active memberships.
+
+    Args:
+        email: User email address
+
+    Returns:
+        List of team ID strings
+    """
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(
+            select(EmailTeamMember.team_id).where(
+                EmailTeamMember.user_email == email,
+                EmailTeamMember.is_active.is_(True),
+            )
+        )
+        return [row[0] for row in result.all()]
+
+
+async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
+    """Resolve teams for session tokens from DB/cache.
+
+    For admin users, returns None (admin bypass).
+    For non-admin users, returns the full list of team IDs from DB/cache.
+
+    Args:
+        email: User email address
+        user_info: User dict or EmailUser instance
+
+    Returns:
+        None (admin bypass), [] (no teams), or list of team ID strings
+    """
+    is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else getattr(user_info, "is_admin", False)
+    if is_admin:
+        return None  # Admin bypass
+
+    # Try auth cache first
+    try:
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+        cached_teams = await auth_cache.get_user_teams(f"{email}:True")
+        if cached_teams is not None:
+            return cached_teams
+    except Exception:  # nosec B110 - Cache unavailable is non-fatal, fall through to DB
+        pass
+
+    # Cache miss: query DB
+    team_ids = await asyncio.to_thread(_get_user_team_ids_sync, email)
+
+    # Cache the result
+    try:
+        # First-Party
+        from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+        await auth_cache.set_user_teams(f"{email}:True", team_ids)
+    except Exception:  # nosec B110 - Cache write failure is non-fatal
+        pass
+
+    return team_ids
+
+
 def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
     """
     Normalize token teams to a canonical form for consistent security checks.
@@ -394,6 +465,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
     1. _get_user_by_email_sync - user data
     2. _get_personal_team_sync - personal team ID
     3. _check_token_revoked_sync - token revocation status
+    4. _get_user_team_ids - all active team memberships (for session tokens)
 
     This reduces thread pool contention and DB connection overhead.
 
@@ -403,7 +475,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
 
     Returns:
         Dict with keys: user (dict or None), personal_team_id (str or None),
-        is_token_revoked (bool)
+        is_token_revoked (bool), team_ids (list of str)
 
     Examples:
         >>> # This function runs in a thread pool
@@ -421,6 +493,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
             "user": None,
             "personal_team_id": None,
             "is_token_revoked": False,  # nosec B105 - boolean flag, not a password
+            "team_ids": [],
         }
 
         # Query 1: Get user data
@@ -454,6 +527,15 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
             personal_team = team_result.scalar_one_or_none()
             if personal_team:
                 result["personal_team_id"] = personal_team.id
+
+            # Query 4: Get all active team memberships (for session token team resolution)
+            team_ids_result = db.execute(
+                select(EmailTeamMember.team_id).where(
+                    EmailTeamMember.user_email == email,
+                    EmailTeamMember.is_active.is_(True),
+                )
+            )
+            result["team_ids"] = [row[0] for row in team_ids_result.all()]
 
         # Query 3: Check token revocation (if JTI provided)
         if jti:
@@ -724,26 +806,28 @@ async def get_current_user(
                             headers={"WWW-Authenticate": "Bearer"},
                         )
 
-                    # Set team_id from cache
+                    # Resolve teams based on token_use
                     if request:
-                        # SECURITY: Normalize token_teams for consistent security checks
-                        # normalize_token_teams returns: None (admin bypass), [] (public-only), or [...] (teams)
-                        teams = normalize_token_teams(payload)
+                        token_use = payload.get("token_use")
+                        request.state.token_use = token_use
+
+                        if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                            # Session token: resolve teams from DB/cache
+                            user_info = cached_ctx.user or {"is_admin": False}
+                            teams = await _resolve_teams_from_db(email, user_info)
+                        else:
+                            # API token or legacy: use embedded teams
+                            teams = normalize_token_teams(payload)
+
                         request.state.token_teams = teams
 
-                        # Determine team_id from normalized teams
+                        # Set team_id: only for single-team API tokens
                         if teams is None:
-                            # Admin bypass - team_id stays None (sees all)
                             request.state.team_id = None
-                        elif len(teams) == 0:
-                            # Public-only token - no team access
-                            request.state.team_id = None
+                        elif len(teams) == 1 and token_use != "session":  # nosec B105
+                            request.state.team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
                         else:
-                            # Has teams - use first one
-                            token_team_id = teams[0]
-                            if isinstance(token_team_id, dict):
-                                token_team_id = token_team_id.get("id")
-                            request.state.team_id = token_team_id
+                            request.state.team_id = None
 
                         await _set_auth_method_from_payload(payload)
 
@@ -790,27 +874,32 @@ async def get_current_user(
                         headers={"WWW-Authenticate": "Bearer"},
                     )
 
-                # SECURITY: Normalize token_teams for consistent security checks
-                # normalize_token_teams returns: None (admin bypass), [] (public-only), or [...] (teams)
-                teams = normalize_token_teams(payload)
+                # Resolve teams based on token_use
+                token_use = payload.get("token_use")
+                if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                    # Session token: use team_ids from batched query
+                    user_dict = auth_ctx.get("user")
+                    is_admin = user_dict.get("is_admin", False) if user_dict else False
+                    if is_admin:
+                        teams = None  # Admin bypass
+                    else:
+                        teams = auth_ctx.get("team_ids", [])
+                else:
+                    # API token or legacy: use embedded teams
+                    teams = normalize_token_teams(payload)
+
+                # Set team_id: only for single-team API tokens
+                if teams is None:
+                    team_id = None
+                elif len(teams) == 1 and token_use != "session":  # nosec B105
+                    team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
+                else:
+                    team_id = None
+
                 if request:
                     request.state.token_teams = teams
-
-                # Determine team_id from normalized teams
-                if teams is None:
-                    # Admin bypass - team_id stays None
-                    team_id = None
-                elif len(teams) == 0:
-                    # Public-only token - no team access
-                    team_id = None
-                else:
-                    # Has teams - use first one
-                    team_id = teams[0]
-                    if isinstance(team_id, dict):
-                        team_id = team_id.get("id")
-
-                if request:
                     request.state.team_id = team_id
+                    request.state.token_use = token_use
                     await _set_auth_method_from_payload(payload)
 
                 # Store in cache for future requests
@@ -911,13 +1000,28 @@ async def get_current_user(
                 # Log the error but don't fail authentication for admin tokens
                 logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
 
-        # SECURITY: Normalize token_teams for consistent security checks
-        # normalize_token_teams returns: None (admin bypass), [] (public-only), or [...] (teams)
-        normalized_teams = normalize_token_teams(payload)
-        team_id = await get_team_from_token(payload)
+        # Resolve teams based on token_use
+        token_use = payload.get("token_use")
+        if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+            # Session token: resolve teams from DB/cache (fallback path — separate query OK)
+            user_info = {"is_admin": payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)}
+            normalized_teams = await _resolve_teams_from_db(email, user_info)
+        else:
+            # API token or legacy: use embedded teams
+            normalized_teams = normalize_token_teams(payload)
+
+        # Set team_id: only for single-team API tokens
+        if normalized_teams is None:
+            team_id = None
+        elif len(normalized_teams) == 1 and token_use != "session":  # nosec B105
+            team_id = normalized_teams[0] if isinstance(normalized_teams[0], str) else normalized_teams[0].get("id")
+        else:
+            team_id = None
+
         if request:
             request.state.token_teams = normalized_teams
             request.state.team_id = team_id
+            request.state.token_use = token_use
             await _set_auth_method_from_payload(payload)
 
     except HTTPException:

@@ -12,6 +12,7 @@ functions for protecting routes.
 """
 
 # Standard
+import functools
 from functools import wraps
 import logging
 from typing import Callable, Generator, List, Optional
@@ -308,6 +309,9 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
+        # Get token_use from request.state (set by get_current_user)
+        token_use = getattr(request.state, "token_use", None)
+
         # Add request context for permission auditing
         return {
             "email": user.email,
@@ -319,6 +323,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "auth_method": auth_method,  # Include auth_method from plugin
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
+            "token_use": token_use,  # Include token_use for RBAC team derivation
             "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
             "plugin_global_context": plugin_global_context,  # Global context for consistency
         }
@@ -332,6 +337,108 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
+
+
+# --- Team derivation helpers for multi-team session tokens ---
+
+
+@functools.lru_cache(maxsize=1)
+def _get_resource_param_to_model():
+    """Lazy-initialize the resource param to model mapping.
+
+    Returns:
+        dict: Mapping of URL parameter names to SQLAlchemy model classes.
+    """
+    # First-Party
+    from mcpgateway.db import A2AAgent, Gateway, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+
+    return {
+        "tool_id": Tool,
+        "server_id": Server,
+        "resource_id": Resource,
+        "prompt_id": Prompt,
+        "gateway_id": Gateway,
+        "agent_id": A2AAgent,
+    }
+
+
+def _derive_team_from_resource(kwargs, db_session) -> Optional[str]:
+    """Look up resource's team_id from DB for RBAC context (Tier 1).
+
+    For endpoints that target a specific resource (get, update, delete, execute),
+    derive the team context from the resource's owner team.
+
+    Args:
+        kwargs: Endpoint function kwargs containing resource ID params
+        db_session: Active SQLAlchemy session
+
+    Returns:
+        team_id string if found, None otherwise
+    """
+    mapping = _get_resource_param_to_model()
+    for param_name, model_cls in mapping.items():
+        resource_id = kwargs.get(param_name)
+        if resource_id:
+            try:
+                resource = db_session.get(model_cls, resource_id)
+                if resource:
+                    return getattr(resource, "team_id", None)
+            except Exception:  # nosec B110 - DB lookup failure falls through to None
+                pass
+            return None  # Resource not found; let endpoint handle 404
+    return None  # No resource ID param
+
+
+async def _derive_team_from_payload(kwargs) -> Optional[str]:
+    """Extract team_id from create payload objects or form data (Tier 3).
+
+    For create endpoints, derive team context from the Pydantic payload or form data.
+
+    Args:
+        kwargs: Endpoint function kwargs
+
+    Returns:
+        team_id string if found, None otherwise
+    """
+    # Try Pydantic payload objects (API endpoints)
+    for param_name in ("gateway", "tool", "server", "resource", "prompt", "agent"):
+        payload_obj = kwargs.get(param_name)
+        if payload_obj and hasattr(payload_obj, "team_id"):
+            tid = getattr(payload_obj, "team_id", None)
+            if tid:
+                return tid
+
+    # Try request form data (admin UI endpoints)
+    request = kwargs.get("request")
+    if request:
+        content_type = request.headers.get("content-type", "")
+        if "form" in content_type:
+            try:
+                form = await request.form()
+                tid = form.get("team_id")
+                if tid:
+                    return tid
+            except Exception:  # nosec B110 - Form parse failure is non-fatal
+                pass
+
+    return None
+
+
+# Permissions that indicate create/mutate operations (not safe for "any-team" aggregation)
+_MUTATE_PERMISSION_ACTIONS = frozenset({"create", "update", "delete", "execute", "invoke", "toggle", "set_state"})
+
+
+def _is_mutate_permission(permission: str) -> bool:
+    """Check if a permission string represents a mutate operation.
+
+    Args:
+        permission: Permission string like 'tools.create' or 'resources.read'.
+
+    Returns:
+        bool: True if the permission's action component is a mutating operation.
+    """
+    parts = permission.split(".")
+    return parts[-1] in _MUTATE_PERMISSION_ACTIONS if len(parts) >= 2 else False
 
 
 def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
@@ -405,6 +512,27 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 # check if user_context has team_id
                 team_id = user_context.get("team_id", None)
 
+            # For multi-team session tokens (team_id is None), derive team from context
+            check_any_team = False
+            if not team_id and user_context.get("token_use") == "session":
+                db_session = kwargs.get("db") or user_context.get("db")
+                if db_session:
+                    # Tier 1: Try to derive team from existing resource
+                    team_id = _derive_team_from_resource(kwargs, db_session)
+                    # Tier 3: Try to derive team from create payload / form
+                    if team_id is None:
+                        team_id = await _derive_team_from_payload(kwargs)
+                # If still no team_id: Tier 2 for read/list, fail-closed for mutate
+                if not team_id:
+                    if _is_mutate_permission(permission):
+                        # Mutate without team context: resource derivation will have returned
+                        # None if no resource ID param. For creates, payload derivation returned None.
+                        # Fail closed only if there truly is no team context at all.
+                        pass  # Let standard RBAC proceed with team_id=None (global+personal only)
+                    else:
+                        # List/read endpoint: check if user has permission in any team
+                        check_any_team = True
+
             # First, check if any plugins want to handle permission checking
             # First-Party
             from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
@@ -470,6 +598,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     ip_address=user_context.get("ip_address"),
                     user_agent=user_context.get("user_agent"),
                     allow_admin_bypass=allow_admin_bypass,
+                    check_any_team=check_any_team,
                 )
             else:
                 # Create fresh db session for permission check
@@ -483,6 +612,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
+                        check_any_team=check_any_team,
                     )
 
             if not granted:
