@@ -729,7 +729,7 @@ async def version_endpoint(
     request: Request,
     fmt: Optional[str] = None,
     partial: Optional[bool] = False,
-    _user=Depends(require_auth),
+    current_user_ctx=Depends(require_auth),
 ) -> Response:
     """Serve diagnostics as JSON, full HTML, or partial HTML.
 
