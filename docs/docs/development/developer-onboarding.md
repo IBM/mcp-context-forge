@@ -140,7 +140,8 @@ If not using Dev Containers, set up manually:
 
 ???+ check "Load testing (Locust)"
 
-    - [ ] `locust -f tests/locust/locustfile.py --host=http://localhost:4444`
+    - [ ] `make testing-up` (containerized Locust + test services)
+    - [ ] Or run Locust locally: `locust -f tests/loadtest/locustfile.py --host=http://localhost:4444`
     - [ ] Access dashboard at http://localhost:8089
     - [ ] Verify no errors under moderate load (50-100 users)
 

@@ -830,7 +830,7 @@ generate-report:                           ## Display most recent load test repo
 # 📊 MONITORING STACK - Prometheus + Grafana + Exporters
 # =============================================================================
 # help: 📊 MONITORING STACK
-# help: monitoring-up          - Start monitoring stack (Prometheus, Grafana, exporters)
+# help: monitoring-up          - Start monitoring stack (Grafana, Prometheus, Loki, Tempo)
 # help: monitoring-down        - Stop monitoring stack
 # help: monitoring-clean       - Stop and remove all monitoring data (volumes)
 # help: monitoring-status      - Show status of monitoring services
@@ -867,6 +867,11 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 	else \
 		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
 	fi
+	# Enable OTEL tracing + JSON console logs for the monitoring profile (Tempo + Loki correlation)
+	LOG_FORMAT=json \
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_TRACES_EXPORTER=otlp \
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
 	$(COMPOSE_CMD_MONITOR) --profile monitoring up -d
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
@@ -882,6 +887,7 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 	@echo ""
 	@echo "   🌐 Grafana:    http://localhost:3000 (admin/changeme)"
 	@echo "   🔥 Prometheus: http://localhost:9090"
+	@echo "   🧵 Tempo:      http://localhost:3200 (OTLP: 4317 gRPC, 4318 HTTP)"
 	@echo ""
 	@echo "   ★ MCP Gateway Overview (home dashboard):"
 	@echo "      • Gateway replicas, Nginx, PostgreSQL, Redis status"
@@ -890,6 +896,9 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 	@echo "      • Database queries and cache hit ratio"
 	@echo "      • Redis memory, ops/sec, hit rate"
 	@echo "      • Container CPU and memory usage"
+	@echo ""
+	@echo "   🔎 Tracing:"
+	@echo "      • Grafana Explore → Tempo datasource"
 	@echo ""
 	@echo "   Run load test: make load-test-ui"
 
@@ -901,7 +910,7 @@ monitoring-down:                           ## Stop monitoring stack
 monitoring-status:                         ## Show status of monitoring services
 	@echo "📊 Monitoring stack status:"
 	@$(COMPOSE_CMD_MONITOR) ps --filter "label=com.docker.compose.profiles=monitoring" 2>/dev/null || \
-		$(COMPOSE_CMD_MONITOR) ps | grep -E "(prometheus|grafana|exporter|cadvisor)" || \
+		$(COMPOSE_CMD_MONITOR) ps | grep -E "(prometheus|grafana|loki|promtail|tempo|exporter|cadvisor)" || \
 		echo "   No monitoring services running. Start with 'make monitoring-up'"
 
 monitoring-logs:                           ## Show monitoring stack logs
@@ -913,29 +922,42 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 	@echo "✅ Monitoring stack stopped and volumes removed."
 
 # =============================================================================
-# help: 🧪 TESTING STACK (Rust fast-test-server)
-# help: testing-up            - Start testing stack (fast_test_server + auto-registration)
+# help: 🧪 TESTING STACK (Locust + A2A echo + fast_test_server)
+# help: testing-up            - Start testing stack (Locust + A2A echo + fast_test_server)
 # help: testing-down          - Stop testing stack
 # help: testing-status        - Show status of testing services
 # help: testing-logs          - Show testing stack logs
 
-testing-up:                                ## Start testing stack (fast_test_server + registration)
+TESTING_LOCUST_WORKERS ?= 1
+# Used by docker-compose testing profile to run Locust as the host user so it
+# can write reports to ./reports on bind mounts without EACCES.
+HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
+HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
+
+testing-up:                                ## Start testing stack (Locust + A2A echo + fast_test_server)
 	@echo "🧪 Starting testing stack (fast_test_server)..."
-	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector up -d
+	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
+	@mkdir -p reports
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
 	@echo ""
 	@echo "✅ Testing stack started!"
 	@echo ""
-	@echo "   🦀 Fast Test Server: http://localhost:9080"
-	@echo "      • MCP endpoint:  http://localhost:9080/mcp"
-	@echo "      • REST echo:     http://localhost:9080/api/echo"
-	@echo "      • REST time:     http://localhost:9080/api/time"
-	@echo "      • Health:        http://localhost:9080/health"
+	@echo "Service              URL                           Purpose"
+	@echo "──────────────────────────────────────────────────────────────────────────"
+	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
+	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
+	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
+	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
+	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
 	@echo ""
-	@echo "   🔍 MCP Inspector:   http://localhost:6274"
+	@echo "   📝 Auto-registered:"
+	@echo "      • MCP gateway: fast_test (from fast_test_server)"
+	@echo "      • A2A agent:   a2a-echo-agent"
 	@echo ""
-	@echo "   📝 Registered as 'fast_test' gateway in MCP Gateway"
-	@echo ""
-	@echo "   Run load test: cd mcp-servers/rust/fast-test-server && make locust-mcp"
+	@echo "   Next:"
+	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
 
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
@@ -944,8 +966,10 @@ testing-down:                              ## Stop testing stack
 
 testing-status:                            ## Show status of testing services
 	@echo "🧪 Testing stack status:"
-	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|mcp_inspector)" || \
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|a2a_echo_agent|locust|mcp_inspector)" || \
 		echo "   No testing services running. Start with 'make testing-up'"
+	@WORKERS=$$($(COMPOSE_CMD_MONITOR) ps | grep -c "locust_worker" || true); \
+		echo "   🦗 Locust workers: $$WORKERS"
 
 testing-logs:                              ## Show testing stack logs
 	$(COMPOSE_CMD_MONITOR) --profile testing --profile inspector logs -f --tail=100
@@ -1163,6 +1187,11 @@ performance-up:                            ## Start performance stack (7 gateway
 	@echo "   • PgBouncer with load balancing"
 	@echo "   • Full monitoring stack"
 	@echo ""
+	# Enable OTEL tracing + JSON console logs for the monitoring profile (Tempo + Loki correlation)
+	LOG_FORMAT=json \
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_TRACES_EXPORTER=otlp \
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
 	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica up -d
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12; do \
@@ -1178,6 +1207,7 @@ performance-up:                            ## Start performance stack (7 gateway
 	@echo ""
 	@echo "   🌐 Grafana:    http://localhost:3000 (admin/changeme)"
 	@echo "   🔥 Prometheus: http://localhost:9090"
+	@echo "   🧵 Tempo:      http://localhost:3200 (OTLP: 4317 gRPC, 4318 HTTP)"
 	@echo "   🐘 PostgreSQL: Primary + Read Replica (load balanced via PgBouncer)"
 	@echo ""
 	@echo "   📊 Key Dashboards:"
@@ -1220,6 +1250,7 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-spin-detector - CPU spin loop detector (spike/drop pattern, issue #2360)
 # help: load-test-report      - Show last load test HTML report
 # help: load-test-compose     - Light load test for compose stack (port 4444)
+# help: load-test-compose-docker - Light load test using containerized Locust (no local Locust required)
 # help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
 # help: load-test-fasttime    - Load test fast_time MCP tools (50 users, 60s)
 # help: load-test-1000        - High-load test (1000 users, 120s)
@@ -1463,6 +1494,20 @@ load-test-compose:                         ## Light load test for compose stack 
 			--csv=reports/loadtest_compose \
 			--only-summary"
 	@echo "✅ Report: reports/loadtest_compose.html"
+
+load-test-compose-docker:                  ## Light load test using containerized Locust (10 users, 30s)
+	@echo "🐳 Running compose load test with CONTAINERIZED Locust..."
+	@echo "   Target: http://nginx:80 (docker network)"
+	@echo "   Users: 10, Duration: 30s"
+	@echo "   💡 Requires: make testing-up"
+	@mkdir -p reports
+	@# Ensure a JWT exists in the shared locust_token volume (no host-side python/locust required)
+	@HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+		$(COMPOSE_CMD_MONITOR) --profile testing run --rm locust_token >/dev/null 2>&1 || true
+	@HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+		LOCUST_MODE=headless LOCUST_USERS=10 LOCUST_SPAWN_RATE=2 LOCUST_RUN_TIME=30s \
+		$(COMPOSE_CMD_MONITOR) --profile testing run --rm locust
+	@echo "✅ Reports: reports/locust_report.html and reports/locust_*.csv"
 
 load-test-timeserver:                      ## Load test fast_time_server tools (5 users, 30s)
 	@echo "⏰ Running time server load test..."
