@@ -856,13 +856,21 @@ class TokenScopingMiddleware:
             # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
             user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
 
-            # SECURITY: Use normalize_token_teams for consistent secure-first semantics
-            # - teams key missing → [] (public-only, secure default)
-            # - teams key null + is_admin=true → None (admin bypass)
-            # - teams key null + is_admin=false → [] (public-only)
-            # - teams key [] → [] (explicit public-only)
-            # - teams key [...] → normalized list of string IDs
-            token_teams = normalize_token_teams(payload)
+            # Resolve teams based on token_use claim
+            token_use = payload.get("token_use")
+            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                # Session token: resolve teams from DB/cache directly
+                # Cannot rely on request.state.token_teams — AuthContextMiddleware
+                # is gated by security_logging_enabled (defaults to False)
+                # First-Party
+                from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+
+                is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+                user_info = {"is_admin": is_admin}
+                token_teams = await _resolve_teams_from_db(user_email, user_info)
+            else:
+                # API token or legacy: use embedded teams with normalize_token_teams
+                token_teams = normalize_token_teams(payload)
 
             # Check if admin bypass is active (token_teams is None means admin with explicit null teams)
             is_admin_bypass = token_teams is None
