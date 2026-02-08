@@ -1481,7 +1481,7 @@ services:
   ###############################################################################
   a2a_echo_agent:
     build:
-      context: ./a2agents/go/a2a-echo-agent
+      context: ./a2a-agents/go/a2a-echo-agent
       dockerfile: Dockerfile
     image: mcpgateway/a2a-echo-agent:latest
     restart: unless-stopped

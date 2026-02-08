@@ -121,6 +121,7 @@ exclude AGENTS.md
 # Exclude deployment, mcp-servers, agent_runtimes and llms
 prune deployment
 prune mcp-servers
+prune a2a-agents
 prune agent_runtimes
 prune llms
 
