@@ -656,3 +656,128 @@ async def test_check_provider_health_timeout(service, db, monkeypatch: pytest.Mo
 
     assert result.status.value == "unhealthy"
     assert result.error == "Connection timeout"
+
+
+def test_set_model_state_toggle(service, db):
+    """Test set_model_state with activate=None toggles enabled state."""
+    model = SimpleNamespace(id="m1", model_id="gpt", enabled=True)
+    service.get_model = MagicMock(return_value=model)
+
+    updated = service.set_model_state(db, "m1", activate=None)
+
+    assert updated.enabled is False
+    db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_provider_health_request_error(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Test health check when httpx.RequestError occurs."""
+    provider = SimpleNamespace(
+        id="p1",
+        name="Provider",
+        provider_type=LLMProviderType.OPENAI,
+        api_key=None,
+        api_base="http://api",
+        health_status=None,
+        last_health_check=None,
+    )
+    service.get_provider = MagicMock(return_value=provider)
+
+    class DummyClient:
+        async def get(self, url, headers=None, timeout=10.0):
+            raise httpx.RequestError("connection failed")
+
+    async def fake_get_http_client():
+        return DummyClient()
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", fake_get_http_client)
+
+    result = await service.check_provider_health(db, "p1")
+
+    assert result.status.value == "unhealthy"
+    assert "Connection error" in result.error
+
+
+@pytest.mark.asyncio
+async def test_check_provider_health_generic_exception(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Test health check when a generic exception occurs."""
+    provider = SimpleNamespace(
+        id="p1",
+        name="Provider",
+        provider_type=LLMProviderType.OPENAI,
+        api_key=None,
+        api_base="http://api",
+        health_status=None,
+        last_health_check=None,
+    )
+    service.get_provider = MagicMock(return_value=provider)
+
+    class DummyClient:
+        async def get(self, url, headers=None, timeout=10.0):
+            raise ValueError("unexpected error")
+
+    async def fake_get_http_client():
+        return DummyClient()
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", fake_get_http_client)
+
+    result = await service.check_provider_health(db, "p1")
+
+    assert result.status.value == "unhealthy"
+    assert "Error:" in result.error
+
+
+@pytest.mark.asyncio
+async def test_check_provider_health_generic_type_status_500(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Test generic provider health check when status >= 500 (unhealthy)."""
+    provider = SimpleNamespace(
+        id="p1",
+        name="Provider",
+        provider_type="custom",
+        api_key=None,
+        api_base="http://custom-api",
+        health_status=None,
+        last_health_check=None,
+    )
+    service.get_provider = MagicMock(return_value=provider)
+
+    class DummyClient:
+        async def get(self, url, timeout=5.0):
+            return SimpleNamespace(status_code=500)
+
+    async def fake_get_http_client():
+        return DummyClient()
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", fake_get_http_client)
+
+    result = await service.check_provider_health(db, "p1")
+
+    assert result.status.value == "unhealthy"
+
+
+@pytest.mark.asyncio
+async def test_check_provider_health_generic_type_status_ok(service, db, monkeypatch: pytest.MonkeyPatch):
+    """Test generic provider health check when status < 500 (healthy)."""
+    provider = SimpleNamespace(
+        id="p1",
+        name="Provider",
+        provider_type="custom",
+        api_key=None,
+        api_base="http://custom-api",
+        health_status=None,
+        last_health_check=None,
+    )
+    service.get_provider = MagicMock(return_value=provider)
+
+    class DummyClient:
+        async def get(self, url, timeout=5.0):
+            return SimpleNamespace(status_code=200)
+
+    async def fake_get_http_client():
+        return DummyClient()
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", fake_get_http_client)
+
+    result = await service.check_provider_health(db, "p1")
+
+    assert result.status.value == "healthy"
