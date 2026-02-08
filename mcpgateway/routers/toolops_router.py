@@ -87,6 +87,7 @@ async def generate_testcases_for_tool(
         number_of_nl_variations: Number of Natural language variations(parapharses) per test case (optional)
         mode: Three supported modes - 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status
         db: DB session to connect with database
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         List: A list of test cases generated for the tool , each test case is dictionary object
@@ -121,6 +122,7 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
             - tool_id: Tool ID in context forge\
             - tool_nl_test_cases: List of natural language test cases (utteances) for testing MCP tool with the agent
         db: DB session to connect with database
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         List: A list of tool outputs after agent execution for the provided tool nl test cases
@@ -151,6 +153,7 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
     Args:
         tool_id: Unique Tool ID MCP-CF.
         db: The database session used to interact with the data store.
+        current_user_ctx: Authenticated user context (required by dependency)
 
     Returns:
         result: A dict having the keys "tool_id", "tool_name", "original_desc" and "enriched_desc" with their corresponding values
