@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Standard
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -46,6 +47,29 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Basic env parsing helpers (kept local to avoid adding new dependencies).
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_int(name: str, *, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %d", name, raw, default)
+        return default
+
+
+def _parse_csv(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="MCP Langchain Agent",
@@ -54,13 +78,29 @@ app = FastAPI(
 )
 
 # Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors_origins_raw = os.getenv("CORS_ORIGINS", "").strip()
+cors_allow_credentials = _env_bool("CORS_CREDENTIALS", default=False)
+
+# NOTE: `CORS_ORIGINS=*` with `allow_credentials=True` effectively allows any web origin
+# to read credentialed responses (unsafe for network-exposed servers). We force credentials
+# off in that case to avoid a common footgun.
+if cors_origins_raw:
+    if cors_origins_raw == "*":
+        cors_allow_origins = ["*"]
+        if cors_allow_credentials:
+            logger.warning("CORS_CREDENTIALS=true with CORS_ORIGINS=* is unsafe; disabling CORS credentials.")
+            cors_allow_credentials = False
+    else:
+        cors_allow_origins = _parse_csv(cors_origins_raw)
+
+    if cors_allow_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_allow_origins,
+            allow_credentials=cors_allow_credentials,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
 # Initialize settings and agent
 settings = get_settings()
@@ -289,4 +329,4 @@ if __name__ == "__main__":
     # Third-Party
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=os.getenv("HOST", "127.0.0.1"), port=_env_int("PORT", default=8000))

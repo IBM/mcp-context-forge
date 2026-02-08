@@ -7,6 +7,7 @@ Startup script for the MCP Langchain Agent
 # Standard
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -110,12 +111,23 @@ def main():
     logger.info("Starting FastAPI server...")
 
     try:
+        host = os.getenv("HOST", "127.0.0.1")
+        port_raw = os.getenv("PORT", "8000")
+        try:
+            port = int(port_raw)
+        except ValueError:
+            logger.warning("Invalid PORT=%r; using 8000", port_raw)
+            port = 8000
+
+        env_log_level = os.getenv("LOG_LEVEL")
+        log_level = (env_log_level or ("debug" if settings.debug_mode else "info")).lower()
+
         uvicorn.run(
             "agent_runtimes.langchain_agent.app:app",
-            host="0.0.0.0",
-            port=8000,
+            host=host,
+            port=port,
             reload=settings.debug_mode,
-            log_level="info" if not settings.debug_mode else "debug",
+            log_level=log_level,
             access_log=True,
         )
     except KeyboardInterrupt:
