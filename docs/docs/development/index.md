@@ -56,7 +56,7 @@ Test coverage includes:
 * Integration tests under `tests/integration/`
 * End-to-end tests under `tests/e2e/`
 * UI automation under `tests/playwright/` (Playwright)
-* Load testing under `tests/locust/` (Locust)
+* Load testing under `tests/loadtest/` (Locust)
 * Example payload performance testing under `tests/hey/`
 
 Use:
@@ -66,7 +66,7 @@ make test                        # run full suite
 pytest tests/unit/               # run only unit tests
 pytest tests/e2e/                # run end-to-end scenarios
 pytest tests/playwright/         # run UI automation tests
-locust -f tests/locust/locustfile.py --host=http://localhost:4444  # load testing
+locust -f tests/loadtest/locustfile.py --host=http://localhost:4444  # load testing
 ```
 
 Note: JavaScript unit tests are not yet implemented; frontend testing relies on Playwright for UI automation.

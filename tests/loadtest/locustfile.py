@@ -2054,6 +2054,85 @@ class A2AFullCRUDUser(BaseUser):
                 response.success()  # Conflict, validation error, or load-related
 
 
+# =============================================================================
+# A2A Protocol End-to-End Invocation (Echo Agent)
+# =============================================================================
+
+
+class A2AEchoInvokeUser(BaseUser):
+    """Invoke the docker-compose A2A echo agent end-to-end.
+
+    This exercises the full A2A pipeline:
+    - Discover agent via GET /a2a
+    - Invoke via POST /a2a/{agent_name}/invoke
+    - Gateway performs outbound HTTP call to the agent and returns response
+
+    The docker-compose testing profile auto-registers an agent named:
+      a2a-echo-agent
+    """
+
+    weight = 2
+    wait_time = between(0.5, 1.5)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.agent_name: str | None = None
+
+    def on_start(self):
+        super().on_start()
+        self._discover_agent()
+
+    def _discover_agent(self) -> None:
+        """Best-effort discovery. If not present, keep running without failing."""
+        try:
+            resp = self.client.get("/a2a", headers=self.auth_headers, name="/a2a [discover echo]", catch_response=True)
+            if resp.status_code != 200:
+                resp.success()
+                return
+            data = resp.json()
+            agents = data if isinstance(data, list) else data.get("agents", data.get("items", []))
+            for agent in agents:
+                if agent.get("name") == "a2a-echo-agent":
+                    self.agent_name = "a2a-echo-agent"
+                    break
+            resp.success()
+        except Exception:
+            # Discovery failures shouldn't stop other scenarios.
+            self.agent_name = None
+
+    @task(10)
+    @tag("a2a", "invoke", "echo")
+    def invoke_echo_agent(self):
+        """POST /a2a/{agent_name}/invoke (echo)."""
+        if not self.agent_name:
+            self._discover_agent()
+            return
+
+        payload = {
+            "parameters": {
+                # A2A v0.3.x JSON-RPC: message/send expects params.message as a Message object.
+                "message": {
+                    "kind": "message",
+                    "role": "user",
+                    "messageId": str(uuid.uuid4()),
+                    "parts": [
+                        {"kind": "text", "text": f"locust ping {uuid.uuid4().hex[:8]}"},
+                    ],
+                },
+            },
+            "interaction_type": "query",
+        }
+
+        with self.client.post(
+            f"/a2a/{self.agent_name}/invoke",
+            json=payload,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/a2a/a2a-echo-agent/invoke",
+            catch_response=True,
+        ) as response:
+            self._validate_status(response, allowed_codes=[200, 400, 404, 422, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
+
+
 # NOTE: GatewayFullCRUDUser removed - causes instability under load
 # Gateway CRUD operations (create, update, refresh, delete) trigger slow network
 # calls to external MCP servers, causing timeouts and cascading failures.
