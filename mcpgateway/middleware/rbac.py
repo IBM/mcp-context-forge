@@ -425,18 +425,41 @@ async def _derive_team_from_payload(kwargs) -> Optional[str]:
 
 
 # Permissions that indicate create/mutate operations (not safe for "any-team" aggregation)
-_MUTATE_PERMISSION_ACTIONS = frozenset({"create", "update", "delete", "execute", "invoke", "toggle", "set_state"})
+_MUTATE_PERMISSION_ACTIONS = frozenset(
+    {
+        "create",
+        "update",
+        "delete",
+        "execute",
+        "invoke",
+        "toggle",
+        "set_state",
+        "revoke",
+        "manage_members",
+        "join",
+        "manage",
+        "share",
+        "invite",
+    }
+)
 
 
 def _is_mutate_permission(permission: str) -> bool:
     """Check if a permission string represents a mutate operation.
 
+    Handles both dot-separated (tools.create) and colon-separated
+    (admin.sso_providers:create) permission formats.
+
     Args:
-        permission: Permission string like 'tools.create' or 'resources.read'.
+        permission: Permission string like 'tools.create' or 'admin.sso_providers:create'.
 
     Returns:
         bool: True if the permission's action component is a mutating operation.
     """
+    # Handle colon separator: admin.sso_providers:create → action is "create"
+    if ":" in permission:
+        action = permission.rsplit(":", 1)[-1]
+        return action in _MUTATE_PERMISSION_ACTIONS
     parts = permission.split(".")
     return parts[-1] in _MUTATE_PERMISSION_ACTIONS if len(parts) >= 2 else False
 
@@ -777,6 +800,23 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                 # check if user_context has team_id
                 team_id = user_context.get("team_id", None)
 
+            # For multi-team session tokens (team_id is None), derive team from context
+            check_any_team = False
+            if not team_id and user_context.get("token_use") == "session":
+                db_session = kwargs.get("db") or user_context.get("db")
+                if db_session:
+                    # Tier 1: Try to derive team from existing resource
+                    team_id = _derive_team_from_resource(kwargs, db_session)
+                    # Tier 3: Try to derive team from create payload / form
+                    if team_id is None:
+                        team_id = await _derive_team_from_payload(kwargs)
+                # If still no team_id: check if any permission is read-only
+                if not team_id:
+                    # If ALL permissions are mutating, fail closed (team_id=None, global+personal only)
+                    # If ANY permission is non-mutating, use check_any_team for broader access
+                    if any(not _is_mutate_permission(p) for p in permissions):
+                        check_any_team = True
+
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
             db_session = kwargs.get("db") or user_context.get("db")
             if db_session:
@@ -793,6 +833,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                         ip_address=user_context.get("ip_address"),
                         user_agent=user_context.get("user_agent"),
                         allow_admin_bypass=allow_admin_bypass,
+                        check_any_team=check_any_team,
                     ):
                         granted = True
                         break
@@ -811,6 +852,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                             ip_address=user_context.get("ip_address"),
                             user_agent=user_context.get("user_agent"),
                             allow_admin_bypass=allow_admin_bypass,
+                            check_any_team=check_any_team,
                         ):
                             granted = True
                             break

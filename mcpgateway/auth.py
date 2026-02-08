@@ -969,6 +969,10 @@ async def get_current_user(
                                 is_token_revoked=auth_ctx.get("is_token_revoked", False),
                             ),
                         )
+                        # Also populate teams-list cache so cached-path requests
+                        # don't need an extra DB query via _resolve_teams_from_db()
+                        if token_use == "session" and teams is not None:  # nosec B105
+                            await auth_cache.set_user_teams(f"{email}:True", teams)
                     except Exception as cache_set_error:
                         logger.debug(f"Failed to cache auth context: {cache_set_error}")
 

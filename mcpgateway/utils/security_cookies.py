@@ -98,7 +98,7 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
 
         parts = token.split(".")
         if len(parts) >= 2:
-            padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
+            padded = parts[1] + "=" * (-len(parts[1]) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded))
             sub_for_log = payload.get("sub", "")
     except Exception:  # nosec B110 - Best-effort sub extraction for logging
