@@ -147,7 +147,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.security_cookies import set_auth_cookie
+from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.validate_signature import sign_data
 
@@ -2831,7 +2831,7 @@ async def admin_ui(
             admin_email = get_user_email(user)
             is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
 
-            # Generate a comprehensive JWT token that matches the email auth format
+            # Generate a lightweight session JWT token
             now = datetime.now(timezone.utc)
             payload = {
                 "sub": admin_email,
@@ -2841,25 +2841,16 @@ async def admin_ui(
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
                 "user": {"email": admin_email, "full_name": getattr(settings, "platform_admin_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
-                "teams": [],  # Teams populated downstream when needed
-                "namespaces": [f"user:{admin_email}", "public"],
+                "token_use": "session",
                 "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
             }
 
             # Generate token using centralized token creation
             token = await create_jwt_token(payload)
 
-            # Set HTTP-only cookie for security
-            response.set_cookie(
-                key="jwt_token",
-                value=token,
-                httponly=True,
-                secure=getattr(settings, "secure_cookies", False),
-                samesite=getattr(settings, "cookie_samesite", "lax"),
-                max_age=settings.token_expiry * 60,  # Convert minutes to seconds
-                path=settings.app_root_path or "/",  # Make cookie available for all paths
-            )
-            LOGGER.debug(f"Set comprehensive JWT token cookie for user: {admin_email}")
+            # Set HTTP-only cookie using centralized security cookie utility
+            set_auth_cookie(response, token, remember_me=False)
+            LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
 
@@ -3042,7 +3033,14 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
-                set_auth_cookie(response, token, remember_me=False)
+                try:
+                    set_auth_cookie(response, token, remember_me=False)
+                except CookieTooLargeError:
+                    root_path = request.scope.get("root_path", "")
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                        status_code=303,
+                    )
 
                 return response
 
@@ -3054,7 +3052,13 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
-            set_auth_cookie(response, token, remember_me=False)
+            try:
+                set_auth_cookie(response, token, remember_me=False)
+            except CookieTooLargeError:
+                return RedirectResponse(
+                    url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                    status_code=303,
+                )
 
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
@@ -3131,8 +3135,8 @@ async def _admin_logout(request: Request) -> Response:
         # User-initiated logout: clear cookie and redirect to login
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
-    # Clear JWT token cookie
-    response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
+    # Clear JWT token cookie using centralized security cookie utility
+    clear_auth_cookie(response)
 
     return response
 
@@ -3288,21 +3292,15 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         # Get user from JWT token in cookie
         try:
             jwt_token = request.cookies.get("jwt_token")
-            if not jwt_token:
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
-
-            # Authenticate using the token
-            # Create credentials object from cookie
-            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
-            # get_current_user now uses fresh DB sessions internally
-            current_user = await get_current_user(credentials, request=request)
-
-            if not current_user:
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+            current_user = None
+            if jwt_token:
+                credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+                current_user = await get_current_user(credentials, request=request)
         except Exception as e:
             LOGGER.error(f"Authentication error: {e}")
+            current_user = None
+
+        if not current_user:
             root_path = request.scope.get("root_path", "")
             return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
@@ -3349,7 +3347,13 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
                 # Update JWT token cookie
-                set_auth_cookie(response, token, remember_me=False)
+                try:
+                    set_auth_cookie(response, token, remember_me=False)
+                except CookieTooLargeError:
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=token_too_large",
+                        status_code=303,
+                    )
 
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response

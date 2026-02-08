@@ -1691,7 +1691,7 @@ async def test_streamable_http_auth_handles_missing_teams_key(monkeypatch):
     assert result is True
 
     user_ctx = tr.user_context_var.get()
-    assert user_ctx.get("teams") is None  # None = unrestricted (legacy token without teams key)
+    assert user_ctx.get("teams") == []  # [] = public-only (missing teams key = secure default)
 
 
 @pytest.mark.asyncio
@@ -1795,7 +1795,7 @@ async def test_streamable_http_auth_handles_null_teams(monkeypatch):
     assert result is True
 
     user_ctx = tr.user_context_var.get()
-    assert user_ctx.get("teams") is None  # None = teams: null treated same as missing
+    assert user_ctx.get("teams") == []  # [] = public-only (null without is_admin = secure default)
 
 
 @pytest.mark.asyncio

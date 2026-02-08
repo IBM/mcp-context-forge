@@ -233,11 +233,12 @@ class TestCreateAccessTokenTeamsFormat:
         return user
 
     @pytest.mark.asyncio
-    async def test_create_access_token_teams_are_list_of_strings(self, mock_user_with_teams):
-        """Test that create_access_token emits teams as List[str] of IDs, not List[dict].
+    async def test_create_access_token_is_session_token(self, mock_user_with_teams):
+        """Test that create_access_token creates lightweight session tokens.
 
-        This is a regression test for issue #1486 where login tokens used int() casting
-        on UUID team IDs and returned full team dicts instead of just IDs.
+        Session tokens should have token_use='session' and NOT embed teams.
+        Teams are resolved server-side at request time from DB/cache.
+        This is a fix for issue #2757 where large team lists caused cookies to exceed 4KB.
         """
         # First-Party
         from mcpgateway.routers.email_auth import create_access_token
@@ -261,25 +262,16 @@ class TestCreateAccessTokenTeamsFormat:
                 # Call create_access_token
                 token, expires_in = await create_access_token(mock_user_with_teams)
 
-                # Verify teams claim is List[str], not List[dict]
-                assert "teams" in captured_payload, "teams claim missing from payload"
-                teams = captured_payload["teams"]
-
-                assert isinstance(teams, list), "teams should be a list"
-                assert len(teams) == 2, "should have 2 teams"
-
-                # Each team entry should be a string (team ID), not a dict
-                for team_id in teams:
-                    assert isinstance(team_id, str), f"team entry should be string, got {type(team_id)}"
-                    assert "-" in team_id, "team ID should be a UUID string"
-
-                # Verify the actual team IDs are present
-                assert "550e8400-e29b-41d4-a716-446655440001" in teams
-                assert "550e8400-e29b-41d4-a716-446655440002" in teams
+                # Session token: no teams/namespaces embedded, has token_use
+                assert "teams" not in captured_payload, "session tokens should not embed teams"
+                assert "namespaces" not in captured_payload, "session tokens should not embed namespaces"
+                assert captured_payload.get("token_use") == "session", "session tokens must have token_use='session'"
+                assert "user" in captured_payload, "session tokens must have user info"
+                assert "scopes" in captured_payload, "session tokens must have scopes"
 
     @pytest.mark.asyncio
-    async def test_create_access_token_admin_omits_teams(self):
-        """Test that admin users do not have teams claim in token (unrestricted access)."""
+    async def test_create_access_token_admin_is_session_token(self):
+        """Test that admin session tokens also use token_use='session' and omit teams."""
         # First-Party
         from mcpgateway.routers.email_auth import create_access_token
 
@@ -309,8 +301,9 @@ class TestCreateAccessTokenTeamsFormat:
 
                 await create_access_token(admin_user)
 
-                # Admin tokens should NOT have teams key (for unrestricted access)
-                assert "teams" not in captured_payload, "admin tokens should omit teams key"
+                # Admin session tokens: same as regular — no teams, has token_use
+                assert "teams" not in captured_payload, "admin session tokens should omit teams key"
+                assert captured_payload.get("token_use") == "session", "admin session tokens must have token_use='session'"
 
 
 @pytest.mark.asyncio

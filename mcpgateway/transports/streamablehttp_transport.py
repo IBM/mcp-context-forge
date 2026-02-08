@@ -1762,23 +1762,28 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         user_payload = await verify_credentials(token)
         # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
-            # Check if "teams" key exists and is not None to distinguish:
-            # - Key exists with non-None value (even empty []) -> normalized list (scoped token)
-            # - Key absent OR key is None -> None (unrestricted for admin, public-only for non-admin)
-            teams_value = user_payload.get("teams") if "teams" in user_payload else None
-            if teams_value is not None:
-                normalized_teams = []
-                for team in teams_value or []:
-                    if isinstance(team, dict):
-                        team_id = team.get("id")
-                        if team_id:
-                            normalized_teams.append(team_id)
-                    elif isinstance(team, str):
-                        normalized_teams.append(team)
-                final_teams = normalized_teams
+            # Resolve teams based on token_use claim
+            token_use = user_payload.get("token_use")
+            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                # Session token: resolve teams from DB/cache
+                user_email_for_teams = user_payload.get("sub") or user_payload.get("email")
+                is_admin_flag = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
+                if is_admin_flag:
+                    final_teams = None  # Admin bypass
+                elif user_email_for_teams:
+                    # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
+                    # First-Party
+                    from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+
+                    final_teams = _resolve_teams_from_db_sync(user_email_for_teams, is_admin=False)
+                else:
+                    final_teams = []  # No email — public-only
             else:
-                # No "teams" key or teams is null - treat as unrestricted (None)
-                final_teams = None
+                # API token or legacy: use embedded teams from JWT
+                # First-Party
+                from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
+
+                final_teams = normalize_token_teams(user_payload)
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Validate team membership for team-scoped tokens

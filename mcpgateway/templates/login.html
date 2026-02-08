@@ -571,6 +571,10 @@
             case "sso_cancelled":
               errorMessage = "SSO authentication was cancelled";
               break;
+            case "token_too_large":
+              errorMessage =
+                "Your account has too many team memberships for cookie-based authentication. Please contact your administrator.";
+              break;
             default:
               errorMessage = error
                 .replace(/_/g, " ")

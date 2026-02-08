@@ -83,7 +83,6 @@ def _create_jwt_token(
     algorithm: str = "",  # Optional override; uses config if empty
     user_data: Optional[Dict[str, Any]] = None,
     teams: Optional[List[str]] = None,
-    namespaces: Optional[List[str]] = None,
     scopes: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Create a signed JWT token with automatic key selection and validation.
@@ -94,7 +93,7 @@ def _create_jwt_token(
     a properly formatted JWT token with standard claims.
 
     Supports both simple tokens (minimal claims) and rich tokens (with user, teams,
-    namespaces, and scopes). This enables consistent token format across CLI and API
+    and scopes). This enables consistent token format across CLI and API
     token creation paths.
 
     Args:
@@ -104,7 +103,6 @@ def _create_jwt_token(
         algorithm: Optional signing algorithm. If empty, uses JWT_ALGORITHM from config.
         user_data: Optional user information dict with keys: email, full_name, is_admin, auth_provider.
         teams: Optional list of team IDs the token is scoped to.
-        namespaces: Optional list of namespaces for access control. Auto-generated from teams if not provided.
         scopes: Optional scopes dict with keys: server_id, permissions, ip_restrictions, time_restrictions.
 
     Returns:
@@ -153,14 +151,6 @@ def _create_jwt_token(
     if teams is not None:
         payload["teams"] = teams
 
-    # Auto-generate namespaces from teams if not explicitly provided
-    if namespaces is not None:
-        payload["namespaces"] = namespaces
-    elif teams is not None:
-        # Build namespaces: user namespace + public + team namespaces
-        user_email = data.get("sub") or data.get("username", "")
-        payload["namespaces"] = [f"user:{user_email}", "public"] + [f"team:{t}" for t in teams]
-
     if scopes is not None:
         payload["scopes"] = scopes
 
@@ -195,7 +185,6 @@ async def create_jwt_token(
     algorithm: str = None,
     user_data: Optional[Dict[str, Any]] = None,
     teams: Optional[List[str]] = None,
-    namespaces: Optional[List[str]] = None,
     scopes: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
@@ -209,7 +198,6 @@ async def create_jwt_token(
         algorithm: Optional signing algorithm. If None/empty, uses JWT_ALGORITHM from config.
         user_data: Optional user information dict with keys: email, full_name, is_admin, auth_provider.
         teams: Optional list of team IDs the token is scoped to.
-        namespaces: Optional list of namespaces for access control.
         scopes: Optional scopes dict with keys: server_id, permissions, ip_restrictions, time_restrictions.
 
     Returns:
@@ -228,7 +216,7 @@ async def create_jwt_token(
     True
     """
     # Pass through secret/algorithm; _create_jwt_token will use config as fallback
-    return _create_jwt_token(data, expires_in_minutes, secret or "", algorithm or "", user_data, teams, namespaces, scopes)
+    return _create_jwt_token(data, expires_in_minutes, secret or "", algorithm or "", user_data, teams, scopes)
 
 
 async def get_jwt_token() -> str:
@@ -489,7 +477,6 @@ def main() -> None:  # pragma: no cover
     # Build rich token parameters if provided
     user_data = None
     teams = None
-    namespaces = None
     scopes_dict = None
 
     if args.admin or args.teams or args.scopes or args.full_name:
@@ -528,7 +515,7 @@ def main() -> None:  # pragma: no cover
             print(orjson.dumps(scopes_dict, default=str, option=orjson.OPT_INDENT_2).decode())
         print("-")
 
-    token = _create_jwt_token(payload, args.exp, args.secret, args.algo, user_data, teams, namespaces, scopes_dict)
+    token = _create_jwt_token(payload, args.exp, args.secret, args.algo, user_data, teams, scopes_dict)
     print(token)
 
 
