@@ -25,6 +25,7 @@ from __future__ import annotations
 # Standard
 import json
 import sys
+import time
 from types import SimpleNamespace
 from typing import Any, Dict
 
@@ -82,6 +83,17 @@ def test_create_token_paths():
     dec2 = jwt.decode(tok2, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
     # Check that the original payload keys are present
     assert dec2["foo"] == "bar"
+
+
+def test_create_token_preserves_existing_exp():
+    """If payload already contains exp>0, _create_jwt_token should not override it."""
+    existing_exp = int(time.time()) + 3600
+    payload: Dict[str, Any] = {"sub": "test@example.com", "exp": existing_exp}
+
+    tok = _create(payload, expires_in_minutes=10, secret=TEST_SECRET, algorithm=TEST_ALGO)
+    dec = jwt.decode(tok, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+
+    assert dec["exp"] == existing_exp
 
 
 def test_create_token_includes_jti():

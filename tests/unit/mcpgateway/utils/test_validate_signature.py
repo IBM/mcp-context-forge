@@ -9,10 +9,11 @@ Unit Tests for ./mcpgateway/utils/validate_signature.py
 
 import pytest
 import logging
-from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 from cryptography.hazmat.primitives import serialization
 
 from mcpgateway.utils.validate_signature import sign_data, validate_signature, resign_data
+import mcpgateway.utils.validate_signature as vs
 
 @pytest.fixture
 def ed25519_keys():
@@ -45,6 +46,22 @@ def test_sign_data_invalid_key_type(ed25519_keys):
     data = b"invalid"
     with pytest.raises((TypeError, ValueError)):
         sign_data(data, public_pem)
+
+
+def test_sign_data_non_ed25519_private_key_raises_type_error(caplog):
+    """A valid private key PEM of the wrong type should hit the explicit isinstance check."""
+    caplog.set_level(logging.ERROR)
+    rsa_private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    rsa_pem = rsa_private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    with pytest.raises(TypeError, match="Expected an Ed25519 private key"):
+        sign_data(b"data", rsa_pem)
+
+    assert "Error signing data" in caplog.text
 
 def test_sign_data_invalid_pem_logs_error(caplog):
     caplog.set_level(logging.ERROR)
@@ -117,6 +134,14 @@ def test_resign_data_valid_old_signature(ed25519_keys):
     assert len(new_signature) > 0
 
 
+def test_resign_data_old_signature_as_str(ed25519_keys):
+    """Cover the old_signature str -> bytes conversion branch."""
+    private_pem, public_pem, _private_key, _ = ed25519_keys
+    data = b"data"
+    result = resign_data(data, public_pem, "invalidsig", private_pem)
+    assert result is None
+
+
 def test_signature_validation_cached(ed25519_keys):
     """Verify that signature validation results are cached."""
     from mcpgateway.utils.validate_signature import clear_signature_caches
@@ -171,3 +196,30 @@ def test_public_key_caching(ed25519_keys):
 
     assert result1 == True
     assert result2 == True
+
+
+def test_public_key_cache_clears_when_over_limit(ed25519_keys):
+    """Cover the cache size guard in _load_public_key_cached()."""
+    vs.clear_signature_caches()
+    # Pre-fill with dummy entries so len(cache) > 100 triggers a clear.
+    vs._public_key_cache.update({f"dummy{i}": object() for i in range(101)})  # noqa: SLF001
+
+    private_pem, public_pem, private_key, _ = ed25519_keys
+    data = b"cache-test"
+    sig = private_key.sign(data)
+    assert validate_signature(data, sig, public_pem) is True
+
+    assert len(vs._public_key_cache) == 1  # noqa: SLF001
+
+
+def test_signature_validation_cache_trims_when_over_limit(ed25519_keys):
+    """Cover the signature validation cache trimming branch."""
+    vs.clear_signature_caches()
+    vs._signature_validation_cache.update({("d", str(i), "k"): False for i in range(1001)})  # noqa: SLF001
+
+    _private_pem, public_pem, private_key, _ = ed25519_keys
+    data = b"trim-test"
+    sig = private_key.sign(data)
+    assert validate_signature(data, sig, public_pem) is True
+
+    assert len(vs._signature_validation_cache) == 501  # noqa: SLF001
