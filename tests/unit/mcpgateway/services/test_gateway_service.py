@@ -3338,3 +3338,262 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     assert len(gateway.tools) == 1
     assert len(gateway.resources) == 1
     assert len(gateway.prompts) == 1
+
+
+# ---------------------------------------------------------------------------
+# Notification method tests
+# ---------------------------------------------------------------------------
+
+
+class TestNotificationMethods:
+    """Tests for gateway notification methods."""
+
+    @pytest.mark.asyncio
+    async def test_notify_gateway_added(self, gateway_service):
+        gateway_service._event_service = AsyncMock()
+        gw = _make_gateway(id=1, name="test", url="http://example.com", description="desc", enabled=True)
+        await gateway_service._notify_gateway_added(gw)
+        gateway_service._event_service.publish_event.assert_awaited_once()
+        event = gateway_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "gateway_added"
+        assert event["data"]["name"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_notify_gateway_updated(self, gateway_service):
+        gateway_service._event_service = AsyncMock()
+        gw = _make_gateway(id=1, name="updated", url="http://example.com", description="desc", enabled=True)
+        await gateway_service._notify_gateway_updated(gw)
+        gateway_service._event_service.publish_event.assert_awaited_once()
+        event = gateway_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "gateway_updated"
+
+    @pytest.mark.asyncio
+    async def test_notify_gateway_deleted(self, gateway_service):
+        gateway_service._event_service = AsyncMock()
+        info = {"id": 1, "name": "deleted-gw"}
+        await gateway_service._notify_gateway_deleted(info)
+        gateway_service._event_service.publish_event.assert_awaited_once()
+        event = gateway_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "gateway_deleted"
+        assert event["data"]["name"] == "deleted-gw"
+
+    @pytest.mark.asyncio
+    async def test_notify_gateway_activated(self, gateway_service):
+        gateway_service._event_service = AsyncMock()
+        gw = _make_gateway(id=1, enabled=True, reachable=True)
+        await gateway_service._notify_gateway_activated(gw)
+        event = gateway_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "gateway_activated"
+
+    @pytest.mark.asyncio
+    async def test_notify_gateway_deactivated(self, gateway_service):
+        gateway_service._event_service = AsyncMock()
+        gw = _make_gateway(id=1, enabled=False, reachable=False)
+        await gateway_service._notify_gateway_deactivated(gw)
+        event = gateway_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "gateway_deactivated"
+
+    @pytest.mark.asyncio
+    async def test_notify_gateway_offline(self, gateway_service):
+        gateway_service._event_service = AsyncMock()
+        gw = _make_gateway(id=1, enabled=True, reachable=False)
+        await gateway_service._notify_gateway_offline(gw)
+        event = gateway_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "gateway_offline"
+        assert event["data"]["enabled"] is True
+        assert event["data"]["reachable"] is False
+
+    @pytest.mark.asyncio
+    async def test_notify_gateway_removed(self, gateway_service):
+        gateway_service._event_service = AsyncMock()
+        gw = _make_gateway(id=1, enabled=False)
+        await gateway_service._notify_gateway_removed(gw)
+        event = gateway_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "gateway_removed"
+
+    @pytest.mark.asyncio
+    async def test_publish_event(self, gateway_service):
+        gateway_service._event_service = AsyncMock()
+        test_event = {"type": "test", "data": {"foo": "bar"}}
+        await gateway_service._publish_event(test_event)
+        gateway_service._event_service.publish_event.assert_awaited_once_with(test_event)
+
+
+# ---------------------------------------------------------------------------
+# Aggregate capabilities tests
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateCapabilities:
+    @pytest.mark.asyncio
+    async def test_aggregate_capabilities_empty(self, gateway_service):
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        result = await gateway_service.aggregate_capabilities(db)
+        assert "tools" in result
+        assert "prompts" in result
+        assert "resources" in result
+        assert result["tools"]["listChanged"] is True
+
+    @pytest.mark.asyncio
+    async def test_aggregate_capabilities_merge(self, gateway_service):
+        gw1 = SimpleNamespace(capabilities={"tools": {"feature1": True}, "custom": {"flag": True}})
+        gw2 = SimpleNamespace(capabilities={"tools": {"feature2": True}})
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [gw1, gw2]
+        result = await gateway_service.aggregate_capabilities(db)
+        assert result["tools"]["listChanged"] is True
+        assert result["tools"]["feature1"] is True
+        assert result["tools"]["feature2"] is True
+        assert result["custom"]["flag"] is True
+
+    @pytest.mark.asyncio
+    async def test_aggregate_capabilities_none_caps(self, gateway_service):
+        gw = SimpleNamespace(capabilities=None)
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = [gw]
+        result = await gateway_service.aggregate_capabilities(db)
+        # Should still have defaults
+        assert "tools" in result
+
+
+# ---------------------------------------------------------------------------
+# Subscribe events test
+# ---------------------------------------------------------------------------
+
+
+class TestSubscribeEvents:
+    @pytest.mark.asyncio
+    async def test_subscribe_events(self, gateway_service):
+        async def mock_event_gen():
+            yield {"type": "gateway_added", "data": {"id": 1}}
+            yield {"type": "gateway_deleted", "data": {"id": 2}}
+
+        gateway_service._event_service = MagicMock()
+        gateway_service._event_service.subscribe_events.return_value = mock_event_gen()
+
+        events = []
+        async for event in gateway_service.subscribe_events():
+            events.append(event)
+
+        assert len(events) == 2
+        assert events[0]["type"] == "gateway_added"
+        assert events[1]["type"] == "gateway_deleted"
+
+
+# ---------------------------------------------------------------------------
+# Tool validation tests
+# ---------------------------------------------------------------------------
+
+
+class TestValidateTools:
+    def test_validate_tools_success(self, gateway_service):
+        tools = [{"name": "test_tool", "description": "A test tool", "inputSchema": {"type": "object"}}]
+        valid_tools, errors = gateway_service._validate_tools(tools)
+        assert len(valid_tools) == 1
+        assert len(errors) == 0
+
+    def test_validate_tools_invalid(self, gateway_service):
+        # Missing required 'name' field should cause validation error
+        tools = [{"description": "No name tool"}]
+        with pytest.raises(GatewayConnectionError):
+            gateway_service._validate_tools(tools)
+
+    def test_validate_tools_mixed(self, gateway_service):
+        tools = [
+            {"name": "good_tool", "description": "Valid tool", "inputSchema": {"type": "object"}},
+            {"description": "Bad tool - no name"},  # Invalid
+        ]
+        valid_tools, errors = gateway_service._validate_tools(tools)
+        assert len(valid_tools) == 1
+        assert len(errors) == 1
+
+    def test_validate_tools_all_fail_oauth_context(self, gateway_service):
+        tools = [{"description": "Bad tool"}]
+        with pytest.raises(OAuthToolValidationError):
+            gateway_service._validate_tools(tools, context="oauth")
+
+    def test_validate_tools_empty(self, gateway_service):
+        valid_tools, errors = gateway_service._validate_tools([])
+        assert len(valid_tools) == 0
+        assert len(errors) == 0
+
+
+# ---------------------------------------------------------------------------
+# Handle gateway failure tests
+# ---------------------------------------------------------------------------
+
+
+class TestHandleGatewayFailure:
+    @pytest.mark.asyncio
+    async def test_failure_counting(self, gateway_service):
+        gw = SimpleNamespace(id="gw1", name="test", enabled=True, reachable=True)
+        gateway_service._gateway_failure_counts = {}
+        await gateway_service._handle_gateway_failure(gw)
+        assert gateway_service._gateway_failure_counts["gw1"] == 1
+
+    @pytest.mark.asyncio
+    async def test_disabled_gateway_no_action(self, gateway_service):
+        gw = SimpleNamespace(id="gw1", name="test", enabled=False, reachable=True)
+        gateway_service._gateway_failure_counts = {}
+        await gateway_service._handle_gateway_failure(gw)
+        assert "gw1" not in gateway_service._gateway_failure_counts
+
+    @pytest.mark.asyncio
+    async def test_unreachable_gateway_no_action(self, gateway_service):
+        gw = SimpleNamespace(id="gw1", name="test", enabled=True, reachable=False)
+        gateway_service._gateway_failure_counts = {}
+        await gateway_service._handle_gateway_failure(gw)
+        assert "gw1" not in gateway_service._gateway_failure_counts
+
+
+# ---------------------------------------------------------------------------
+# _prepare_gateway_for_read tests (deprecated but still exercised)
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareGatewayForRead:
+    def test_prepare_gateway_encodes_dict_auth(self, gateway_service, mock_gateway):
+        mock_gateway.auth_value = {"Authorization": "Bearer token"}
+        mock_gateway.tags = []
+        result = gateway_service._prepare_gateway_for_read(mock_gateway)
+        # Auth value should be encoded as string now
+        assert isinstance(result.auth_value, str)
+
+    def test_prepare_gateway_converts_string_tags(self, gateway_service, mock_gateway):
+        mock_gateway.tags = ["tag1", "tag2"]
+        mock_gateway.auth_value = None
+        result = gateway_service._prepare_gateway_for_read(mock_gateway)
+        # Tags should be converted from List[str] to List[Dict]
+        assert isinstance(result.tags[0], dict)
+
+
+# ---------------------------------------------------------------------------
+# _get_auth_headers test
+# ---------------------------------------------------------------------------
+
+
+class TestGetAuthHeaders:
+    def test_returns_content_type_only(self, gateway_service):
+        headers = gateway_service._get_auth_headers()
+        assert headers == {"Content-Type": "application/json"}
+        assert "Authorization" not in headers
+
+
+# ---------------------------------------------------------------------------
+# normalize_url test
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeUrl:
+    def test_normalize_preserves_domain(self):
+        result = GatewayService.normalize_url("http://EXAMPLE.COM/path/")
+        assert result == "http://EXAMPLE.COM/path/"
+
+    def test_normalize_127_to_localhost(self):
+        result = GatewayService.normalize_url("http://127.0.0.1:8080/path")
+        assert result == "http://localhost:8080/path"
+
+    def test_normalize_preserves_https(self):
+        result = GatewayService.normalize_url("https://example.com/api")
+        assert result == "https://example.com/api"

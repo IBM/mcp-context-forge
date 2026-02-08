@@ -35,6 +35,9 @@ class DummyLogger:
     def warning(self, msg):
         self.warnings.append(msg)
 
+    def debug(self, msg):
+        pass
+
 @pytest.fixture
 def dummy_logger(monkeypatch):
     logger = DummyLogger()
@@ -464,3 +467,342 @@ async def test_log_resolve_user_identity_true_attempts_db_lookup(mock_structured
     assert response.status_code == 200
     # get_current_user SHOULD be called when log_resolve_user_identity=True
     assert len(get_current_user_called) == 1
+
+
+# --- _resolve_user_identity tests ---
+
+@pytest.mark.asyncio
+async def test_resolve_user_identity_from_request_state(mock_structured_logger, dummy_call_next):
+    """User identity resolved from request.state.user."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+    )
+    scope: Scope = {
+        "type": "http", "method": "GET", "path": "/test",
+        "headers": [], "query_string": b"", "state": {},
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    request.state.user = MagicMock(id=42, email="user@test.com")
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Verify structured logger was called with user info
+    assert mock_structured_logger.log.called
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("user_email") == "user@test.com"
+    assert call_kwargs.get("user_id") == "42"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_identity_cookie_token(mock_structured_logger, dummy_call_next, monkeypatch):
+    """User identity resolved from jwt_token cookie when log_resolve_user_identity=True."""
+    async def mock_get_current_user(credentials):
+        return MagicMock(id=7, email="cookie@test.com")
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.get_current_user", mock_get_current_user)
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        log_resolve_user_identity=True,
+    )
+    scope: Scope = {
+        "type": "http", "method": "GET", "path": "/test",
+        "headers": Headers({"cookie": "jwt_token=some-token"}).raw,
+        "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("user_email") == "cookie@test.com"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_identity_no_token(mock_structured_logger, dummy_call_next):
+    """No cookies, no auth header returns (None, None)."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        log_resolve_user_identity=True,
+    )
+    scope: Scope = {
+        "type": "http", "method": "GET", "path": "/test",
+        "headers": [], "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("user_id") is None
+    assert call_kwargs.get("user_email") is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_identity_exception(mock_structured_logger, dummy_call_next, monkeypatch):
+    """get_current_user raises → returns (None, None)."""
+    async def mock_get_current_user(credentials):
+        raise RuntimeError("DB error")
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.get_current_user", mock_get_current_user)
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        log_resolve_user_identity=True,
+    )
+    scope: Scope = {
+        "type": "http", "method": "GET", "path": "/test",
+        "headers": Headers({"Authorization": "Bearer bad-token"}).raw,
+        "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("user_id") is None
+
+
+# --- Sampling exception fallback ---
+
+@pytest.mark.asyncio
+async def test_sampling_exception_fallback(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
+    """If secrets.randbelow raises, detailed logging defaults to enabled."""
+    def bad_randbelow(_):
+        raise OSError("entropy")
+    import secrets as _secrets
+    monkeypatch.setattr(_secrets, "randbelow", bad_randbelow)
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=False, log_detailed_requests=True,
+        log_detailed_sample_rate=0.5,
+    )
+    body = b'{"data": "test"}'
+    request = make_request(body=body)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Should still log (fallback to log on sampling failure)
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+# --- Detailed-only user identity from cached state ---
+
+@pytest.mark.asyncio
+async def test_detailed_only_user_identity(dummy_logger, mock_structured_logger, dummy_call_next):
+    """When only detailed logging is enabled, user identity from cached state."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=False, log_detailed_requests=True,
+    )
+    body = b'{"data": "test"}'
+    scope: Scope = {
+        "type": "http", "method": "POST", "path": "/test",
+        "headers": Headers({}).raw,
+        "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+    request = Request(scope, receive=receive)
+    request.state.user = MagicMock(id=99, email="detail@test.com")
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+
+
+# --- log_request_start ---
+
+@pytest.mark.asyncio
+async def test_log_request_start_enabled(mock_structured_logger, dummy_call_next):
+    """When log_request_start=True, structured logger called with request_started event."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+        log_request_start=True,
+    )
+    scope: Scope = {
+        "type": "http", "method": "GET", "path": "/test",
+        "headers": [], "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Should have at least 2 calls: request_started + request_completed
+    assert mock_structured_logger.log.call_count >= 2
+    first_call_kwargs = mock_structured_logger.log.call_args_list[0].kwargs
+    assert first_call_kwargs.get("metadata", {}).get("event") == "request_started"
+
+
+# --- Boundary-only without detailed ---
+
+@pytest.mark.asyncio
+async def test_boundary_only_no_detailed(mock_structured_logger, dummy_call_next):
+    """Boundary logging enabled, detailed disabled: logs request_completed."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=False,
+    )
+    scope: Scope = {
+        "type": "http", "method": "GET", "path": "/test",
+        "headers": [], "query_string": b"",
+    }
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    assert mock_structured_logger.log.call_count == 1
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("metadata", {}).get("event") == "request_completed"
+
+
+# --- Logger TypeError fallback ---
+
+@pytest.mark.asyncio
+async def test_logger_type_error_fallback(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Logger.log raises TypeError on first call → falls back without extra."""
+    call_count = [0]
+    original_log = dummy_logger.log
+    def patched_log(level, msg, extra=None):
+        call_count[0] += 1
+        if call_count[0] == 1 and extra is not None:
+            raise TypeError("unexpected keyword argument 'extra'")
+        original_log(level, msg)
+    dummy_logger.log = patched_log
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=False, log_detailed_requests=True,
+    )
+    body = b'{"data": "test"}'
+    request = make_request(body=body)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Should have fallen back and logged
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+# --- Large body exception with boundary logging ---
+
+@pytest.mark.asyncio
+async def test_large_body_exception_with_boundary(dummy_logger, mock_structured_logger):
+    """Large body fast path + call_next raises + boundary logging."""
+    async def _call_next(_request):
+        raise RuntimeError("server error")
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=100,
+    )
+    body = b"x" * 500
+    request = make_request_with_headers(body=body, headers={"content-length": "500"})
+    with pytest.raises(RuntimeError):
+        await middleware.dispatch(request, _call_next)
+
+    # Structured logger should log request_failed
+    assert mock_structured_logger.log.called
+    call_kwargs = mock_structured_logger.log.call_args.kwargs
+    assert call_kwargs.get("metadata", {}).get("event") == "request_failed"
+
+
+# --- Body read with full dispatch (covers receive/content-length/empty paths) ---
+
+@pytest.mark.asyncio
+async def test_body_read_with_receive(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Full dispatch with body - covers body read + new request creation."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=True,
+    )
+    body = b'{"name": "test"}'
+    request = make_request(body=body, headers={"content-length": str(len(body))})
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+    # Boundary logging should also have been called
+    assert mock_structured_logger.log.called
+
+
+# --- Exception during processing with boundary log ---
+
+@pytest.mark.asyncio
+async def test_exception_during_processing_boundary_log(dummy_logger, mock_structured_logger):
+    """call_next raises during detailed+boundary processing."""
+    async def _call_next(_request):
+        raise ValueError("processing error")
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=True,
+    )
+    body = b'{"data": "test"}'
+    request = make_request(body=body)
+    with pytest.raises(ValueError):
+        await middleware.dispatch(request, _call_next)
+
+    # Boundary should log request_failed
+    found_failed = False
+    for call_args in mock_structured_logger.log.call_args_list:
+        if call_args.kwargs.get("metadata", {}).get("event") == "request_failed":
+            found_failed = True
+            break
+    assert found_failed
+
+
+# --- Response completion logging ---
+
+@pytest.mark.asyncio
+async def test_response_completion_logging(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Successful response with boundary logging: logs request_completed with status code."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=True,
+    )
+    body = b'{"data": "test"}'
+    request = make_request(body=body)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Find the request_completed event
+    found_completed = False
+    for call_args in mock_structured_logger.log.call_args_list:
+        metadata = call_args.kwargs.get("metadata", {})
+        if metadata.get("event") == "request_completed":
+            found_completed = True
+            assert call_args.kwargs.get("response_status_code") == 200
+            assert "response_time_category" in metadata
+            break
+    assert found_completed
+
+
+# --- _categorize_response_time ---
+
+def test_categorize_response_time():
+    """Test all 4 response time categories."""
+    assert RequestLoggingMiddleware._categorize_response_time(50) == "fast"
+    assert RequestLoggingMiddleware._categorize_response_time(99.9) == "fast"
+    assert RequestLoggingMiddleware._categorize_response_time(100) == "normal"
+    assert RequestLoggingMiddleware._categorize_response_time(499) == "normal"
+    assert RequestLoggingMiddleware._categorize_response_time(500) == "slow"
+    assert RequestLoggingMiddleware._categorize_response_time(1999) == "slow"
+    assert RequestLoggingMiddleware._categorize_response_time(2000) == "very_slow"
+    assert RequestLoggingMiddleware._categorize_response_time(10000) == "very_slow"
+
+
+# --- Invalid content-length ---
+
+@pytest.mark.asyncio
+async def test_invalid_content_length(dummy_logger, mock_structured_logger, dummy_call_next):
+    """Invalid content-length header should be handled gracefully."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=100,
+    )
+    body = b'{"data": "test"}'
+    request = make_request_with_headers(body=body, headers={"content-length": "not-a-number"})
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    # Should still log the request (falls through to normal body read)
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+# --- mask_jwt_in_cookies with no-equals cookie ---
+
+def test_mask_jwt_in_cookies_no_equals():
+    """Cookie without '=' should be preserved as-is."""
+    cookie = "flagonly; jwt_token=abc"
+    masked = mask_jwt_in_cookies(cookie)
+    assert "flagonly" in masked
+    assert "jwt_token=******" in masked
