@@ -831,8 +831,12 @@ async def test_make_request_returns_if_shutdown_triggered_in_exception(monkeypat
 async def test_main_async_smoke(monkeypatch):
     wrapper._shutdown.clear()
 
+    worker_done = asyncio.Event()
+
     async def fake_reader(queue):
         await queue.put({"foo": "bar"})
+        # Let the worker run before sending EOF
+        await worker_done.wait()
         await queue.put(None)
 
     # simple make_request that just records calls
@@ -840,8 +844,7 @@ async def test_main_async_smoke(monkeypatch):
 
     async def fake_make_request(client, settings, payload):
         called["n"] += 1
-        # simulate small work
-        await asyncio.sleep(0)
+        worker_done.set()
 
     class DummyResilient:
         def __init__(self, *a, **k):
@@ -856,7 +859,7 @@ async def test_main_async_smoke(monkeypatch):
 
     settings = wrapper.Settings("http://x/mcp", None)
     await wrapper.main_async(settings)
-    assert wrapper.shutting_down() or called["n"] >= 0
+    assert called["n"] >= 1, "make_request should have been called at least once"
 
 
 @pytest.mark.asyncio

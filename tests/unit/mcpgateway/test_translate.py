@@ -2956,23 +2956,6 @@ async def test_run_stdio_to_streamable_http_handle_request_and_pump_http_to_stdi
 
             await handlers["/mcp"](DummyRequest())
 
-            # Also reach into the caller frame to invoke pump_http_to_stdio which is
-            # otherwise unused in the implementation.
-            import inspect
-
-            frame = inspect.currentframe()
-            assert frame is not None
-            f = frame.f_back
-            while f and f.f_code.co_name != "_run_stdio_to_streamable_http":
-                f = f.f_back
-            assert f is not None
-            pump_http_to_stdio = f.f_locals["pump_http_to_stdio"]
-            await pump_http_to_stdio('{"method":"test"}')
-            # Exercise the error path too.
-            proc.stdin = None
-            with pytest.raises(RuntimeError, match="Process stdin not available"):
-                await pump_http_to_stdio('{"method":"test2"}')
-
             # Let the stdout pump and signal-triggered shutdown task run.
             await asyncio.sleep(0)
 
@@ -3712,11 +3695,12 @@ async def test_read_stdout_message_endpoint_error(monkeypatch, translate):
 
     monkeypatch.setattr(translate.httpx, "AsyncClient", MockClient)
 
-    # This will test the POST error handling path in read_stdout
+    # Exercise the POST error handling path in read_stdout.
+    # The function may raise due to the mocked ConnectError or handle it internally.
     try:
         await translate._run_sse_to_stdio("http://test/sse", None, stdio_command="echo test", max_retries=1)
-    except Exception:
-        pass  # Expected to fail
+    except (real_httpx.ConnectError, ConnectionError, OSError):
+        pass  # Expected: the mocked stream raises ConnectError
 
 
 def test_main_function_streamable_http_connect(monkeypatch, translate, capsys):

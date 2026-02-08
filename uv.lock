@@ -1281,6 +1281,18 @@ wheels = [
 ]
 
 [[package]]
+name = "faker"
+version = "40.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/7e/dccb7013c9f3d66f2e379383600629fec75e4da2698548bdbf2041ea4b51/faker-40.4.0.tar.gz", hash = "sha256:76f8e74a3df28c3e2ec2caafa956e19e37a132fdc7ea067bc41783affcfee364", size = 1952221, upload-time = "2026-02-06T23:30:15.515Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/63/58efa67c10fb27810d34351b7a10f85f109a7f7e2a07dc3773952459c47b/faker-40.4.0-py3-none-any.whl", hash = "sha256:486d43c67ebbb136bc932406418744f9a0bdf2c07f77703ea78b58b77e9aa443", size = 1987060, upload-time = "2026-02-06T23:30:13.44Z" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.128.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3502,6 +3514,7 @@ dev = [
     { name = "darglint" },
     { name = "dlint" },
     { name = "dodgy" },
+    { name = "faker" },
     { name = "fawltydeps" },
     { name = "flake8" },
     { name = "gprof2dot" },
@@ -3543,6 +3556,7 @@ dev = [
     { name = "pyupgrade" },
     { name = "radon" },
     { name = "redis" },
+    { name = "rich" },
     { name = "ruff" },
     { name = "settings-doc" },
     { name = "snakeviz" },
@@ -3658,6 +3672,7 @@ dev = [
     { name = "darglint", specifier = ">=1.8.1" },
     { name = "dlint", specifier = ">=0.16.0" },
     { name = "dodgy", specifier = ">=0.2.1" },
+    { name = "faker", specifier = ">=20.0.0" },
     { name = "fawltydeps", specifier = ">=0.20.0" },
     { name = "flake8", specifier = ">=7.3.0" },
     { name = "gprof2dot", specifier = ">=2025.4.14" },
@@ -3699,6 +3714,7 @@ dev = [
     { name = "pyupgrade", specifier = ">=3.20.0" },
     { name = "radon", specifier = ">=6.0.1" },
     { name = "redis", specifier = ">=6.4.0" },
+    { name = "rich", specifier = ">=13.0.0" },
     { name = "ruff", specifier = ">=0.13.3" },
     { name = "settings-doc", specifier = ">=4.3.2" },
     { name = "snakeviz", specifier = ">=2.2.2" },
