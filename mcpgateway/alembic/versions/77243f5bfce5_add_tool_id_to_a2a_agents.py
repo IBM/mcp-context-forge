@@ -88,9 +88,7 @@ def upgrade() -> None:
     if dialect_name == "sqlite":
         # SQLite JSON extraction
         # Find tools where annotations contains the agent's ID as a2a_agent_id
-        bind.execute(
-            sa.text(
-                """
+        bind.execute(sa.text("""
             UPDATE a2a_agents
             SET tool_id = (
                 SELECT id FROM tools
@@ -103,14 +101,10 @@ def upgrade() -> None:
                 WHERE integration_type = 'A2A'
                 AND json_extract(annotations, '$.a2a_agent_id') = a2a_agents.id
             )
-        """
-            )
-        )
+        """))
     elif dialect_name == "postgresql":
         # PostgreSQL JSONB operators
-        bind.execute(
-            sa.text(
-                """
+        bind.execute(sa.text("""
             UPDATE a2a_agents
             SET tool_id = (
                 SELECT id FROM tools
@@ -123,14 +117,10 @@ def upgrade() -> None:
                 WHERE integration_type = 'A2A'
                 AND annotations->>'a2a_agent_id' = a2a_agents.id
             )
-        """
-            )
-        )
+        """))
     elif dialect_name == "mysql":
         # MySQL JSON extraction (MySQL 5.7+)
-        bind.execute(
-            sa.text(
-                """
+        bind.execute(sa.text("""
             UPDATE a2a_agents
             SET tool_id = (
                 SELECT id FROM tools
@@ -143,9 +133,7 @@ def upgrade() -> None:
                 WHERE integration_type = 'A2A'
                 AND JSON_UNQUOTE(JSON_EXTRACT(annotations, '$.a2a_agent_id')) = a2a_agents.id
             )
-        """
-            )
-        )
+        """))
     else:
         print(f"WARNING: Backfill not implemented for dialect '{dialect_name}'. tool_id will remain NULL for existing agents.")
 

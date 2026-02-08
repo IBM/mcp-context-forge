@@ -558,8 +558,7 @@ def _get_span_entity_performance(
     # Use database-native percentiles only if enabled in config and using PostgreSQL
     if dialect_name == "postgresql" and settings.use_postgresdb_percentiles:
         # Safe: uses SQLAlchemy's bindparam for the IN-list
-        stats_sql = text(
-            """
+        stats_sql = text("""
             SELECT
                 (attributes->> :json_key) AS entity,
                 COUNT(*) AS count,
@@ -578,8 +577,7 @@ def _get_span_entity_performance(
             GROUP BY entity
             ORDER BY avg_duration_ms DESC
             LIMIT :limit
-            """
-        ).bindparams(bindparam("names", expanding=True))
+            """).bindparams(bindparam("names", expanding=True))
 
         results = db.execute(
             stats_sql,
@@ -6070,8 +6068,7 @@ async def admin_get_user_edit(
         # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
         if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
             pr_lines = []
-            pr_lines.append(
-                f"""                <!-- Password Requirements -->
+            pr_lines.append(f"""                <!-- Password Requirements -->
                 <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
                     <div class="flex items-start">
                         <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
@@ -6084,40 +6081,29 @@ async def admin_get_user_edit(
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
                                     <span>At least {settings.password_min_length} characters long</span>
                                 </div>
-            """
-            )
+            """)
             if settings.password_require_uppercase:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
-                """
-                )
+                """)
             if settings.password_require_lowercase:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
-                """
-                )
+                """)
             if settings.password_require_numbers:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
-                """
-                )
+                """)
             if settings.password_require_special:
-                pr_lines.append(
-                    """
+                pr_lines.append("""
                                 <div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
-                """
-                )
-            pr_lines.append(
-                """
+                """)
+            pr_lines.append("""
                             </div>
                         </div>
                     </div>
                 </div>
-            """
-            )
+            """)
             password_requirements_html = "".join(pr_lines)
         else:
             # Intentionally an empty string for HTML insertion when no requirements apply.
@@ -14605,8 +14591,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
         dict: Time-series percentile data
     """
     # PostgreSQL query with epoch-based bucketing (works for any interval including > 60 min)
-    stats_sql = text(
-        """
+    stats_sql = text("""
         SELECT
             TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
             percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms) as p50,
@@ -14617,8 +14602,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
         GROUP BY bucket
         ORDER BY bucket
-        """
-    )
+        """)
 
     interval_seconds = interval_minutes * 60
     results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
@@ -14774,8 +14758,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         dict: Time-series metrics data
     """
     # Use epoch-based bucketing (works for any interval including > 60 min)
-    stats_sql = text(
-        """
+    stats_sql = text("""
         SELECT
             TO_TIMESTAMP(FLOOR(EXTRACT(EPOCH FROM start_time) / :interval_seconds) * :interval_seconds) as bucket,
             COUNT(*) as total,
@@ -14785,8 +14768,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         WHERE start_time >= :cutoff_time
         GROUP BY bucket
         ORDER BY bucket
-        """
-    )
+        """)
 
     interval_seconds = interval_minutes * 60
     results = db.execute(stats_sql, {"cutoff_time": cutoff_time, "interval_seconds": interval_seconds}).fetchall()
@@ -14896,13 +14878,11 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
         dict: Heatmap data with time and latency dimensions
     """
     # First, get min/max durations
-    stats_query = text(
-        """
+    stats_query = text("""
         SELECT MIN(duration_ms) as min_d, MAX(duration_ms) as max_d
         FROM observability_traces
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
-    """
-    )
+    """)
     stats_row = db.execute(stats_query, {"cutoff_time": cutoff_time}).fetchone()
 
     if not stats_row or stats_row.min_d is None:
@@ -14922,8 +14902,7 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
     time_bucket_minutes = time_range_minutes / time_buckets
 
     # Use SQL arithmetic for 2D histogram bucketing
-    heatmap_query = text(
-        """
+    heatmap_query = text("""
         SELECT
             LEAST(GREATEST(
                 (EXTRACT(EPOCH FROM (start_time - :cutoff_time)) / 60.0 / :time_bucket_minutes)::int,
@@ -14937,8 +14916,7 @@ def _get_latency_heatmap_postgresql(db: Session, cutoff_time: datetime, hours: i
         FROM observability_traces
         WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL
         GROUP BY time_idx, latency_idx
-    """
-    )
+    """)
 
     rows = db.execute(
         heatmap_query,
@@ -16258,8 +16236,9 @@ async def get_performance_history(
 
     return history.model_dump()
 
-
     # ============================================================================
+
+
 # Sandbox Policy Testing Routes (Issue #2226)
 # ============================================================================
 
@@ -16271,10 +16250,10 @@ async def sandbox_dashboard(
     current_user=Depends(get_current_user),
 ):
     """Sandbox dashboard - Policy testing overview.
-    
+
     Displays statistics, recent simulations, and quick action buttons
     for policy testing and simulation.
-    
+
     Related to Issue #2226: Policy testing and simulation sandbox
     """
     # Mock stats for now - replace with real database queries later
@@ -16285,7 +16264,7 @@ async def sandbox_dashboard(
         "pass_rate": 87.5,
         "critical_regressions": 2,
     }
-    
+
     # Mock recent simulations - replace with database query later
     # TODO: Query recent simulation results from database
     recent_simulations = [
@@ -16314,7 +16293,7 @@ async def sandbox_dashboard(
             "timestamp": datetime.now(timezone.utc),
         },
     ]
-    
+
     return templates.TemplateResponse(
         "admin.html",
         {
@@ -16337,10 +16316,10 @@ async def sandbox_simulate_page(
     current_user=Depends(get_current_user),
 ):
     """Simulation runner page - Run single test case.
-    
+
     Provides a form to create and run a single policy test case
     with detailed results and explanation.
-    
+
     Related to Issue #2226: Policy testing and simulation sandbox
     """
     return templates.TemplateResponse(
@@ -16363,14 +16342,14 @@ async def sandbox_test_cases_page(
     current_user=Depends(get_current_user),
 ):
     """Test case management page.
-    
+
     List, create, edit, and delete test cases for policy testing.
-    
+
     Related to Issue #2226: Policy testing and simulation sandbox
     """
     # TODO: Query test cases from database
     test_cases = []
-    
+
     return templates.TemplateResponse(
         "admin.html",
         {
@@ -16383,6 +16362,7 @@ async def sandbox_test_cases_page(
             "ui_airgapped": settings.ui_airgapped,
         },
     )
+
 
 @admin_router.get("/admin/sandbox/batch", response_class=HTMLResponse)
 async def sandbox_batch_page(
@@ -16402,6 +16382,7 @@ async def sandbox_batch_page(
             "ui_airgapped": settings.ui_airgapped,
         },
     )
+
 
 @admin_router.get("/admin/sandbox/regression", response_class=HTMLResponse)
 async def sandbox_regression_page(

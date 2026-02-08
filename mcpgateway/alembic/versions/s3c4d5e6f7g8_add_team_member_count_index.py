@@ -58,13 +58,11 @@ def upgrade() -> None:
         #   CREATE INDEX CONCURRENTLY idx_email_team_members_team_active_partial
         #   ON email_team_members(team_id) WHERE is_active = true;
         if not _index_exists("email_team_members", "idx_email_team_members_team_active_partial"):
-            op.execute(
-                """
+            op.execute("""
                 CREATE INDEX idx_email_team_members_team_active_partial
                 ON email_team_members(team_id)
                 WHERE is_active = true
-            """
-            )
+            """)
             print("Created partial index idx_email_team_members_team_active_partial")
     else:
         # SQLite/MySQL: Regular composite index (no partial index support)

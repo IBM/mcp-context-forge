@@ -320,19 +320,11 @@ def upgrade() -> None:
     _upgrade_json_client_secret(conn, t["a2a_agents"])
 
     # oauth_tokens: access_token, refresh_token
-    rows = (
-        bind.execute(
-            text(
-                """
+    rows = bind.execute(text("""
         SELECT id, access_token, refresh_token
         FROM oauth_tokens
         WHERE (access_token IS NOT NULL OR refresh_token IS NOT NULL)
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
+    """)).mappings().all()
 
     for r in rows:
         tid = r["id"]
@@ -342,32 +334,22 @@ def upgrade() -> None:
         nrt = _upgrade_value(rt)
         if nat or nrt:
             bind.execute(
-                text(
-                    """
+                text("""
                     UPDATE oauth_tokens
                     SET access_token  = COALESCE(:nat, access_token),
                         refresh_token = COALESCE(:nrt, refresh_token)
                     WHERE id = :id
-                """
-                ),
+                """),
                 {"nat": nat, "nrt": nrt, "id": tid},
             )
 
     # registered_oauth_clients: client_secret_encrypted, registration_access_token_encrypted
-    rows = (
-        bind.execute(
-            text(
-                """
+    rows = bind.execute(text("""
         SELECT id, client_secret_encrypted, registration_access_token_encrypted
         FROM registered_oauth_clients
         WHERE client_secret_encrypted IS NOT NULL
            OR registration_access_token_encrypted IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
+    """)).mappings().all()
 
     for r in rows:
         rid = r["id"]
@@ -377,31 +359,21 @@ def upgrade() -> None:
         nrat = _upgrade_value(rat)
         if ncs or nrat:
             bind.execute(
-                text(
-                    """
+                text("""
                     UPDATE registered_oauth_clients
                     SET client_secret_encrypted = COALESCE(:ncs, client_secret_encrypted),
                         registration_access_token_encrypted = COALESCE(:nrat, registration_access_token_encrypted)
                     WHERE id = :id
-                """
-                ),
+                """),
                 {"ncs": ncs, "nrat": nrat, "id": rid},
             )
 
     # sso_providers: client_secret_encrypted
-    rows = (
-        bind.execute(
-            text(
-                """
+    rows = bind.execute(text("""
         SELECT id, client_secret_encrypted
         FROM sso_providers
         WHERE client_secret_encrypted IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
+    """)).mappings().all()
 
     for r in rows:
         sid = r["id"]
@@ -409,13 +381,11 @@ def upgrade() -> None:
         ncs = _upgrade_value(cs)
         if ncs:
             bind.execute(
-                text(
-                    """
+                text("""
                     UPDATE sso_providers
                     SET client_secret_encrypted = :ncs
                     WHERE id = :id
-                """
-                ),
+                """),
                 {"ncs": ncs, "id": sid},
             )
 
@@ -433,19 +403,11 @@ def downgrade() -> None:
     _downgrade_json_client_secret(bind, "a2a_agents")
 
     # oauth_tokens: access_token, refresh_token
-    rows = (
-        bind.execute(
-            text(
-                """
+    rows = bind.execute(text("""
         SELECT id, access_token, refresh_token
         FROM oauth_tokens
         WHERE (access_token IS NOT NULL OR refresh_token IS NOT NULL)
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
+    """)).mappings().all()
 
     for r in rows:
         tid = r["id"]
@@ -455,32 +417,22 @@ def downgrade() -> None:
         nrt = _downgrade_value(rt)
         if nat or nrt:
             bind.execute(
-                text(
-                    """
+                text("""
                     UPDATE oauth_tokens
                     SET access_token  = COALESCE(:nat, access_token),
                         refresh_token = COALESCE(:nrt, refresh_token)
                     WHERE id = :id
-                """
-                ),
+                """),
                 {"nat": nat, "nrt": nrt, "id": tid},
             )
 
     # registered_oauth_clients: client_secret_encrypted, registration_access_token_encrypted
-    rows = (
-        bind.execute(
-            text(
-                """
+    rows = bind.execute(text("""
         SELECT id, client_secret_encrypted, registration_access_token_encrypted
         FROM registered_oauth_clients
         WHERE client_secret_encrypted IS NOT NULL
            OR registration_access_token_encrypted IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
+    """)).mappings().all()
 
     for r in rows:
         rid = r["id"]
@@ -490,31 +442,21 @@ def downgrade() -> None:
         nrat = _downgrade_value(rat)
         if ncs or nrat:
             bind.execute(
-                text(
-                    """
+                text("""
                     UPDATE registered_oauth_clients
                     SET client_secret_encrypted = COALESCE(:ncs, client_secret_encrypted),
                         registration_access_token_encrypted = COALESCE(:nrat, registration_access_token_encrypted)
                     WHERE id = :id
-                """
-                ),
+                """),
                 {"ncs": ncs, "nrat": nrat, "id": rid},
             )
 
     # sso_providers: client_secret_encrypted
-    rows = (
-        bind.execute(
-            text(
-                """
+    rows = bind.execute(text("""
         SELECT id, client_secret_encrypted
         FROM sso_providers
         WHERE client_secret_encrypted IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
+    """)).mappings().all()
 
     for r in rows:
         sid = r["id"]
@@ -522,13 +464,11 @@ def downgrade() -> None:
         ncs = _downgrade_value(cs)
         if ncs:
             bind.execute(
-                text(
-                    """
+                text("""
                     UPDATE sso_providers
                     SET client_secret_encrypted = :ncs
                     WHERE id = :id
-                """
-                ),
+                """),
                 {"ncs": ncs, "id": sid},
             )
 

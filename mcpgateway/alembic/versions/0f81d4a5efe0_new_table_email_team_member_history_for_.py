@@ -50,26 +50,18 @@ def upgrade() -> None:
     # PostgreSQL uses TRUE/FALSE, MySQL and SQLite use 1/0
     if bind.dialect.name == "postgresql":
         # For PostgreSQL, use proper boolean comparison
-        result = bind.execute(
-            sa.text(
-                """
+        result = bind.execute(sa.text("""
             SELECT id, team_id, user_email, role
             FROM email_team_members
             WHERE is_active = TRUE
-        """
-            )
-        )
+        """))
     else:
         # For MySQL and SQLite, use integer comparison
-        result = bind.execute(
-            sa.text(
-                """
+        result = bind.execute(sa.text("""
             SELECT id, team_id, user_email, role
             FROM email_team_members
             WHERE is_active = 1
-        """
-            )
-        )
+        """))
 
     # Process results and insert history records
     for row in result:

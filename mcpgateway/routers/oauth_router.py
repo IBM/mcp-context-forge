@@ -379,8 +379,7 @@ async def oauth_callback(
         logger.info(f"Completed OAuth flow for gateway {gateway_id}, user {result.get('user_id')}")
 
         # Return success page with option to return to admin
-        return HTMLResponse(
-            content=f"""
+        return HTMLResponse(content=f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -466,8 +465,7 @@ async def oauth_callback(
             </script>
         </body>
         </html>
-        """
-        )
+        """)
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
