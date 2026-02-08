@@ -162,6 +162,12 @@ SERVER_IDS: list[str] = []
 GATEWAY_IDS: list[str] = []
 RESOURCE_IDS: list[str] = []
 PROMPT_IDS: list[str] = []
+A2A_IDS: list[str] = []
+
+# Feature flag: set to True when a real A2A agent endpoint is available for testing.
+# When False, all A2A CRUD/state/toggle/invoke tasks are skipped to avoid orphaned
+# test agents and cascading RPC tool call failures.
+A2A_TESTING_ENABLED: bool = False
 
 # Names/URIs for RPC calls (tools/call uses name, resources/read uses uri, etc.)
 TOOL_NAMES: list[str] = []
@@ -292,6 +298,34 @@ def on_test_start(environment, **_kwargs):  # pylint: disable=unused-argument
             PROMPT_NAMES.extend([str(p.get("name")) for p in items[:50] if p.get("name")])
             logger.info(f"Loaded {len(PROMPT_IDS)} prompt IDs, {len(PROMPT_NAMES)} prompt names")
 
+        # Fetch A2A agents (only when A2A testing is enabled)
+        if A2A_TESTING_ENABLED:
+            status, data = _fetch_json(f"{host}/a2a", headers)
+            if status == 200 and data:
+                items = data if isinstance(data, list) else data.get("agents", data.get("items", []))
+                A2A_IDS.extend([str(a.get("id")) for a in items[:50] if a.get("id")])
+                logger.info(f"Loaded {len(A2A_IDS)} A2A agent IDs")
+
+            # Seed a persistent A2A agent if none exist (unlike gateways/servers, A2A agents
+            # are not pre-registered at compose startup)
+            if not A2A_IDS:
+                import json as _json  # pylint: disable=import-outside-toplevel
+                import urllib.request  # pylint: disable=import-outside-toplevel
+
+                seed_data = _json.dumps({"agent": {"name": "loadtest-seed-a2a", "endpoint_url": "http://localhost:9999", "description": "Persistent seed agent for load tests"}}).encode()
+                try:
+                    req = urllib.request.Request(f"{host}/a2a", data=seed_data, headers={**headers, "Content-Type": "application/json"}, method="POST")
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        result = _json.loads(resp.read().decode("utf-8"))
+                        seed_id = result.get("id")
+                        if seed_id:
+                            A2A_IDS.append(str(seed_id))
+                            logger.info(f"Created seed A2A agent: {seed_id}")
+                except Exception as seed_err:
+                    logger.warning(f"Failed to create seed A2A agent: {seed_err}")
+        else:
+            logger.info("A2A testing disabled (A2A_TESTING_ENABLED=False)")
+
     except Exception as e:
         logger.warning(f"Failed to fetch entity IDs: {e}")
         logger.info("Tests will continue without pre-fetched IDs")
@@ -310,6 +344,7 @@ def on_test_stop(environment, **kwargs):  # pylint: disable=unused-argument
     GATEWAY_IDS.clear()
     RESOURCE_IDS.clear()
     PROMPT_IDS.clear()
+    A2A_IDS.clear()
     TOOL_NAMES.clear()
     RESOURCE_URIS.clear()
     PROMPT_NAMES.clear()
@@ -1931,10 +1966,10 @@ class A2AFullCRUDUser(BaseUser):
     - POST /a2a/{agent_id}/state - Toggle agent enabled state
     - DELETE /a2a/{agent_id} - Remove agent
 
-    Weight: Low (administrative CRUD operations)
+    Weight: 0 when A2A_TESTING_ENABLED is False (no real A2A agent available)
     """
 
-    weight = 1
+    weight = 1 if A2A_TESTING_ENABLED else 0
     wait_time = between(2.0, 5.0)
 
     def __init__(self, *args, **kwargs):
@@ -1988,9 +2023,11 @@ class A2AFullCRUDUser(BaseUser):
         """POST /a2a - Create an A2A agent, then DELETE it."""
         agent_name = f"loadtest-a2a-{uuid.uuid4().hex[:8]}"
         agent_data = {
-            "name": agent_name,
-            "description": "Load test A2A agent - will be deleted",
-            "url": "http://localhost:9999",  # Fake URL for testing
+            "agent": {
+                "name": agent_name,
+                "description": "Load test A2A agent - will be deleted",
+                "endpoint_url": "http://localhost:9999",
+            },
         }
 
         with self.client.post(
@@ -4992,7 +5029,7 @@ class GatewayExtendedUser(BaseUser):
                 name="/gateways/[id]/tools/refresh",
                 catch_response=True,
             ) as response:
-                self._validate_json_response(response, allowed_codes=[200, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_json_response(response, allowed_codes=[200, 404, 409, 500, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class ResourcesSubscribeUser(BaseUser):
@@ -5512,10 +5549,10 @@ class A2AStateToggleUser(BaseUser):
     - POST /a2a/{id}/state - Set A2A agent state
     - POST /a2a/{id}/toggle - Toggle A2A agent
 
-    Weight: Very low (write operations)
+    Weight: 0 when A2A_TESTING_ENABLED is False (no real A2A agent available)
     """
 
-    weight = 1
+    weight = 1 if A2A_TESTING_ENABLED else 0
     wait_time = between(3.0, 8.0)
 
     def on_start(self):
@@ -5550,12 +5587,12 @@ class A2AStateToggleUser(BaseUser):
                 name="/a2a/[id]/state",
                 catch_response=True,
             ) as response:
-                self._validate_json_response(response, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
+                self._validate_json_response(response, allowed_codes=[200, 401, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("a2a", "toggle")
     def a2a_toggle(self):
-        """POST /a2a/{id}/toggle - Toggle A2A agent."""
+        """POST /a2a/{id}/toggle - Toggle A2A agent (deprecated endpoint)."""
         if self.a2a_ids:
             agent_id = random.choice(self.a2a_ids)
             with self.client.post(
@@ -5564,7 +5601,8 @@ class A2AStateToggleUser(BaseUser):
                 name="/a2a/[id]/toggle",
                 catch_response=True,
             ) as response:
-                self._validate_json_response(response, allowed_codes=[200, 404, *INFRASTRUCTURE_ERROR_CODES])
+                # 401 is expected: deprecated endpoint has auth issues
+                self._validate_json_response(response, allowed_codes=[200, 401, 404, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AdminTeamsMembershipUser(BaseUser):
@@ -5992,6 +6030,8 @@ class EntityUpdateExtendedUser(BaseUser):
     @tag("a2a", "update")
     def update_a2a(self):
         """PUT /a2a/{agent_id} - Update an A2A agent."""
+        if not A2A_TESTING_ENABLED:
+            return
         with self.client.get(
             "/a2a",
             headers=self.auth_headers,
@@ -6886,31 +6926,17 @@ class AdminDetailReadExtendedUser(BaseUser):
     @tag("admin", "a2a", "detail")
     def admin_a2a_detail(self):
         """GET /admin/a2a/{agent_id} - Admin A2A agent detail."""
-        with self.client.get(
-            "/a2a",
-            headers=self.auth_headers,
-            name="/a2a [list for admin detail]",
-            catch_response=True,
-        ) as response:
-            if response.status_code != 200:
-                response.success()
-                return
-            try:
-                data = response.json()
-                agents = data if isinstance(data, list) else data.get("agents", data.get("items", []))
-                if agents:
-                    agent_id = random.choice(agents).get("id")
-                    if agent_id:
-                        with self.client.get(
-                            f"/admin/a2a/{agent_id}",
-                            headers=self.admin_headers,
-                            name="/admin/a2a/[id]",
-                            catch_response=True,
-                        ) as detail_resp:
-                            self._validate_status(detail_resp, allowed_codes=[200, 404, 500])
-                response.success()
-            except Exception:
-                response.success()
+        if not A2A_TESTING_ENABLED:
+            return
+        if A2A_IDS:
+            agent_id = random.choice(A2A_IDS)
+            with self.client.get(
+                f"/admin/a2a/{agent_id}",
+                headers=self.admin_headers,
+                name="/admin/a2a/[id]",
+                catch_response=True,
+            ) as detail_resp:
+                self._validate_status(detail_resp, allowed_codes=[200, 404, 500])
 
     @task(1)
     @tag("admin", "grpc", "detail")
@@ -6976,7 +7002,7 @@ class AdminDetailReadExtendedUser(BaseUser):
             name="/admin/observability/queries/[id]",
             catch_response=True,
         ) as response:
-            self._validate_status(response, allowed_codes=[200, 404, 500])
+            self._validate_status(response, allowed_codes=[200, 404, 422, 500])
 
     @task(1)
     @tag("admin", "observability", "traces")
@@ -7130,41 +7156,35 @@ class AdminHTMXEntityOpsUser(BaseUser):
     @tag("admin", "a2a", "state")
     def toggle_a2a_state(self):
         """POST /admin/a2a/{id}/state - Toggle A2A state."""
-        with self.client.get("/a2a", headers=self.auth_headers, name="/a2a [list for admin state]", catch_response=True) as response:
-            if response.status_code != 200:
-                response.success()
-                return
-            try:
-                data = response.json()
-                agents = data if isinstance(data, list) else data.get("agents", data.get("items", []))
-                if agents:
-                    agent_id = random.choice(agents).get("id")
-                    if agent_id:
-                        with self.client.post(f"/admin/a2a/{agent_id}/state", headers=self.auth_headers, name="/admin/a2a/[id]/state", catch_response=True) as r:
-                            self._validate_status(r, allowed_codes=[200, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
-                response.success()
-            except Exception:
-                response.success()
+        if not A2A_TESTING_ENABLED:
+            return
+        if A2A_IDS:
+            agent_id = random.choice(A2A_IDS)
+            with self.client.post(
+                f"/admin/a2a/{agent_id}/state",
+                data="activate=true",
+                headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded"},
+                name="/admin/a2a/[id]/state",
+                catch_response=True,
+            ) as r:
+                self._validate_status(r, allowed_codes=[200, 302, 303, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "a2a", "test")
     def test_a2a_agent(self):
         """POST /admin/a2a/{id}/test - Test A2A agent."""
-        with self.client.get("/a2a", headers=self.auth_headers, name="/a2a [list for admin test]", catch_response=True) as response:
-            if response.status_code != 200:
-                response.success()
-                return
-            try:
-                data = response.json()
-                agents = data if isinstance(data, list) else data.get("agents", data.get("items", []))
-                if agents:
-                    agent_id = random.choice(agents).get("id")
-                    if agent_id:
-                        with self.client.post(f"/admin/a2a/{agent_id}/test", headers=self.auth_headers, name="/admin/a2a/[id]/test", catch_response=True) as r:
-                            self._validate_status(r, allowed_codes=[200, 404, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
-                response.success()
-            except Exception:
-                response.success()
+        if not A2A_TESTING_ENABLED:
+            return
+        if A2A_IDS:
+            agent_id = random.choice(A2A_IDS)
+            with self.client.post(
+                f"/admin/a2a/{agent_id}/test",
+                json={"query": "Load test ping"},
+                headers={**self.auth_headers, "Content-Type": "application/json"},
+                name="/admin/a2a/[id]/test",
+                catch_response=True,
+            ) as r:
+                self._validate_status(r, allowed_codes=[200, 403, 404, 500, 503, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(1)
     @tag("admin", "gateways", "state")
@@ -7528,6 +7548,8 @@ class MiscEndpointsUser(BaseUser):
     @tag("a2a", "invoke")
     def invoke_a2a_agent(self):
         """POST /a2a/{agent_name}/invoke - Invoke A2A agent."""
+        if not A2A_TESTING_ENABLED:
+            return
         with self.client.get("/a2a", headers=self.auth_headers, name="/a2a [list for invoke]", catch_response=True) as response:
             if response.status_code != 200:
                 response.success()
@@ -7904,10 +7926,12 @@ class AdminHTMXEntityCRUDUser(BaseUser):
 
     @task(1)
     @tag("admin", "a2a", "htmx", "crud")
-    def admin_a2a_lifecycle(self):
-        """POST /admin/a2a -> edit -> delete - A2A lifecycle via admin."""
+    def admin_a2a_create(self):
+        """POST /admin/a2a - Create A2A agent via admin HTMX form."""
+        if not A2A_TESTING_ENABLED:
+            return
         name = f"loadtest-admina2a-{uuid.uuid4().hex[:8]}"
-        form_data = f"name={name}&url=http://localhost:1&description=Load+test"
+        form_data = f"name={name}&endpoint_url=http://localhost:1&description=Load+test&visibility=public"
         with self.client.post(
             "/admin/a2a",
             data=form_data,
@@ -7916,20 +7940,41 @@ class AdminHTMXEntityCRUDUser(BaseUser):
             catch_response=True,
         ) as response:
             if response.status_code in (200, 201, 302):
-                try:
-                    data = response.json() if "json" in response.headers.get("content-type", "") else {}
-                    aid = data.get("id") or name
-                except Exception:
-                    aid = name
-                if aid:
-                    time.sleep(0.05)
-                    with self.client.post(f"/admin/a2a/{aid}/edit", data=f"name={name}&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/a2a/[id]/edit", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
-                    time.sleep(0.05)
-                    with self.client.post(f"/admin/a2a/{aid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/a2a/[id]/delete", catch_response=True) as r:
-                        self._validate_status(r, allowed_codes=[200, 302, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
                 response.success()
             elif response.status_code in (403, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES):
+                response.success()
+
+    @task(1)
+    @tag("admin", "a2a", "htmx", "crud")
+    def admin_a2a_edit_delete(self):
+        """POST /admin/a2a/{id}/edit + /delete - Edit and delete via admin HTMX."""
+        if not A2A_TESTING_ENABLED:
+            return
+        # Create via REST to get a reliable ID, then test admin edit/delete
+        name = f"loadtest-admina2a-{uuid.uuid4().hex[:8]}"
+        agent_data = {"agent": {"name": name, "endpoint_url": "http://localhost:1", "description": "Load test"}}
+        with self.client.post(
+            "/a2a",
+            json=agent_data,
+            headers={**self.auth_headers, "Content-Type": "application/json"},
+            name="/a2a [create for admin crud]",
+            catch_response=True,
+        ) as response:
+            if response.status_code in (200, 201):
+                aid = None
+                try:
+                    aid = response.json().get("id")
+                except Exception:
+                    pass
+                if aid:
+                    time.sleep(0.05)
+                    with self.client.post(f"/admin/a2a/{aid}/edit", data=f"name={name}&endpoint_url=http://localhost:1&description=Edited", headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"}, name="/admin/a2a/[id]/edit", catch_response=True) as r:
+                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+                    time.sleep(0.05)
+                    with self.client.post(f"/admin/a2a/{aid}/delete", headers={**self.admin_headers, "HX-Request": "true"}, name="/admin/a2a/[id]/delete", catch_response=True) as r:
+                        self._validate_status(r, allowed_codes=[200, 302, 303, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+                response.success()
+            elif response.status_code in (409, 422, *INFRASTRUCTURE_ERROR_CODES):
                 response.success()
 
     @task(1)

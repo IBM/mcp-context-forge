@@ -1,0 +1,85 @@
+# Small REST API population profile - Development testing
+# Target: 100 users, ~600 teams, ~200 tokens, ~200 tools
+# Estimated time: ~2 minutes (network + validation bound)
+# Database: SQLite OK
+
+profile:
+  name: small
+  description: "Small-scale API population (100 users, ~3K entities)"
+  version: 1.0
+
+global:
+  random_seed: 42
+  progress_bar: true
+  progress_update_frequency: 10
+  email_domain: "loadtest.example.com"
+  output_report: "reports/small_populate_report.json"
+  log_level: INFO
+
+concurrency:
+  max_connections: 50
+  max_concurrent: 25
+  batch_size: 25
+  max_retries: 3
+  retry_base_delay: 1.0
+  timeout: 30.0
+
+scale:
+  # Users
+  users: 100
+  users_admin_percent: 5
+
+  # Teams
+  additional_teams_per_user: 6
+  teams_private_percent: 60
+  teams_public_percent: 40
+  members_per_team_min: 1
+  members_per_team_max: 5
+
+  # API Tokens
+  tokens_per_user_min: 1
+  tokens_per_user_max: 3
+  tokens_per_user_avg: 2
+
+  # Gateways
+  gateways: 10
+  tools_per_gateway_min: 10
+  tools_per_gateway_max: 30
+  tools_per_gateway_avg: 20
+
+  # Resources
+  resources_per_user_min: 10
+  resources_per_user_max: 30
+  resources_per_user_avg: 20
+
+  # Prompts
+  prompts_per_user_min: 10
+  prompts_per_user_max: 30
+  prompts_per_user_avg: 20
+
+  # Virtual Servers
+  servers_per_user_min: 1
+  servers_per_user_max: 3
+  servers_per_user_avg: 2
+
+  # A2A Agents
+  a2a_agents_per_user_min: 0
+  a2a_agents_per_user_max: 2
+  a2a_agents_per_user_avg: 1
+
+population_order:
+  - users
+  - teams
+  - rbac
+  - gateways
+  - tools
+  - resources
+  - prompts
+  - servers
+  - a2a_agents
+  - tokens
+
+reporting:
+  enabled: true
+  format: json
+  output_file: "reports/small_populate_report.json"
