@@ -102,7 +102,25 @@ class SemanticSearchService:
             threshold=threshold,
         )
 
-        return results
+        # Return empty list if no matches
+        if not results:
+            return []
+        
+        # Ensure all results have a similarity score
+        safe_results: List[ToolSearchResult] = []
+        for r in results:
+            if getattr(r, "score", None) is not None:
+                safe_results.append(r)
+
+        # Enforce threshold even if vector service didn't
+        if threshold is not None:
+            safe_results = [r for r in safe_results if r.score >= threshold]
+
+        # Higher score = higher relevance (guarantee ranking)
+        safe_results.sort(key=lambda r: r.score, reverse=True)
+
+        # Respect limit strictly
+        return safe_results[:limit]
 
 
 # Singleton instance
