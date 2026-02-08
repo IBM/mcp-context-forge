@@ -83,6 +83,36 @@ def test_translate_importerror(monkeypatch, translate):
     asyncio.run(test_sse_without_httpx())
 
 
+def test_translate_module_level_import_fallbacks(monkeypatch):
+    """Force ImportError inside mcpgateway.translate module-level optional imports."""
+    # Standard
+    import builtins
+    import importlib
+    import sys
+
+    # Ensure a fresh import for this test.
+    sys.modules.pop("mcpgateway.translate", None)
+
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        caller = sys._getframe(1).f_globals.get("__name__")
+        if caller == "mcpgateway.translate" and name in {"httpx", "mcpgateway.config"}:
+            raise ImportError(f"blocked import: {name}")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    mod = importlib.import_module("mcpgateway.translate")
+    assert mod.httpx is None
+    assert mod.DEFAULT_KEEP_ALIVE_INTERVAL == 30
+    assert mod.DEFAULT_KEEPALIVE_ENABLED is True
+    assert mod.DEFAULT_SSL_VERIFY is True
+
+    # Clean up so other tests can import the normal module variant.
+    sys.modules.pop("mcpgateway.translate", None)
+
+
 # ---------------------------------------------------------------------------#
 # Dummy subprocess plumbing                                                  #
 # ---------------------------------------------------------------------------#
@@ -201,6 +231,42 @@ async def test_stdio_endpoint_flow(monkeypatch, translate):
 
 
 @pytest.mark.asyncio
+async def test_stdio_endpoint_start_stops_existing_process_and_manages_env(monkeypatch, translate):
+    """Cover StdIOEndpoint.start() paths: stop existing proc, env updates, and header mapping clears."""
+    ps = translate._PubSub()
+
+    # Existing running proc should be stopped first.
+    old_proc = _FakeProc(lines=[])
+
+    captured: dict[str, Any] = {}
+
+    async def _fake_exec(*_a, **kwargs):
+        captured["env"] = kwargs.get("env") or {}
+        return _FakeProc(lines=[])
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", _fake_exec)
+
+    # Provide a header mapping that would clear DYNAMIC_VAR unless explicitly provided.
+    ep = translate.StdIOEndpoint(
+        "echo hi",
+        ps,
+        env_vars={"DYNAMIC_VAR": "secret"},
+        header_mappings={"X-Var": "DYNAMIC_VAR", "X-Path": "PATH"},
+    )
+    ep._proc = old_proc
+
+    await ep.start(additional_env_vars={"EXTRA": "1"})
+
+    assert old_proc.terminated is True
+    assert captured["env"].get("EXTRA") == "1"
+    assert "DYNAMIC_VAR" not in captured["env"]
+    assert "PATH" in captured["env"]
+    assert ep.is_running() is True
+
+    await ep.stop()
+
+
+@pytest.mark.asyncio
 async def test_stdio_send_without_start(translate):
     with pytest.raises(RuntimeError):
         await translate.StdIOEndpoint("cmd", translate._PubSub()).send("x")
@@ -244,6 +310,31 @@ async def test_stdio_endpoint_stop_timeout(monkeypatch, translate):
     await ep.start()
     await ep.stop()  # Should handle timeout gracefully
     assert fake.terminated
+
+
+@pytest.mark.asyncio
+async def test_stdio_endpoint_stop_handles_process_lookup_error_and_cancels_pump(translate):
+    """Cover stop() ProcessLookupError branch and pump task cancellation/await."""
+    ps = translate._PubSub()
+    ep = translate.StdIOEndpoint("echo hi", ps)
+
+    class Proc:
+        pid = 123
+        returncode = None
+
+        def terminate(self):
+            raise ProcessLookupError
+
+        async def wait(self):
+            return 0
+
+    ep._proc = Proc()
+    ep._stdin = _DummyWriter()
+    ep._pump_task = asyncio.create_task(asyncio.sleep(10))
+
+    await ep.stop()
+    assert ep._proc is None
+    assert ep._stdin is None
 
 
 @pytest.mark.asyncio
@@ -468,6 +559,159 @@ async def test_fastapi_sse_header_mappings_restart(monkeypatch, translate):
 
 
 @pytest.mark.asyncio
+async def test_fastapi_sse_header_mappings_no_restart_and_timeout_keepalive(monkeypatch, translate):
+    """Cover SSE generator keepalive timeout path and the no-restart branch when mappings yield no env vars."""
+    ps = translate._PubSub()
+    stdio = AsyncMock()
+    stdio.stop = AsyncMock()
+    stdio.start = AsyncMock()
+
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", True)
+    monkeypatch.setattr(translate, "extract_env_vars_from_headers", lambda *_args, **_kwargs: {})
+
+    # Force wait_for to time out immediately so we exercise the keepalive timeout branch.
+    async def fake_wait_for(queue_get_coro, _timeout):
+        queue_get_coro.close()
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(translate.asyncio, "wait_for", fake_wait_for)
+    app = translate._build_fastapi(ps, stdio, header_mappings={"X-Env": "ENV"}, keep_alive=0.01)
+
+    class DummyResponse:
+        def __init__(self, gen, headers=None):
+            self.gen = gen
+            self.headers = headers
+
+    monkeypatch.setattr(translate, "EventSourceResponse", DummyResponse)
+    handler = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/sse")
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers = {"X-Env": "ignored"}
+
+        def __init__(self):
+            self.calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            # Only two loop iterations are needed:
+            # 1) allow one timeout keepalive to be yielded
+            # 2) then disconnect so the generator hits the unsubscribe path
+            return self.calls > 1
+
+    resp = await handler(DummyRequest())
+    first = await resp.gen.__anext__()
+    second = await resp.gen.__anext__()
+    third = await resp.gen.__anext__()
+    assert first["event"] == "endpoint"
+    assert second["event"] == "keepalive"
+    assert third["event"] == "keepalive"
+
+    with pytest.raises(StopAsyncIteration):
+        await resp.gen.__anext__()
+
+    assert stdio.stop.await_count == 0
+    assert stdio.start.await_count == 0
+    assert len(ps._subscribers) == 0
+
+
+@pytest.mark.asyncio
+async def test_fastapi_sse_keepalive_disabled_yields_message(monkeypatch, translate):
+    """Cover keepalive-disabled branch (no immediate keepalive) and message yield path."""
+    ps = translate._PubSub()
+    stdio = AsyncMock()
+
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", False)
+
+    app = translate._build_fastapi(ps, stdio, keep_alive=0.01)
+
+    class DummyResponse:
+        def __init__(self, gen, headers=None):
+            self.gen = gen
+            self.headers = headers
+
+    monkeypatch.setattr(translate, "EventSourceResponse", DummyResponse)
+    handler = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/sse")
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers = {}
+
+        def __init__(self):
+            self.calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            return self.calls > 1
+
+    resp = await handler(DummyRequest())
+    first = await resp.gen.__anext__()
+    assert first["event"] == "endpoint"
+
+    await ps.publish("hello\n")
+    second = await resp.gen.__anext__()
+    assert second["event"] == "message"
+    assert second["data"] == "hello"
+
+    with pytest.raises(StopAsyncIteration):
+        await resp.gen.__anext__()
+
+    # keepalive disabled still unsubscribes on close when pubsub is truthy
+    assert len(ps._subscribers) == 0
+
+
+@pytest.mark.asyncio
+async def test_fastapi_sse_keepalive_disabled_timeout_and_falsy_pubsub_skips_unsubscribe(monkeypatch, translate):
+    """Cover timeout exception path when keepalive is disabled and the falsy-pubsub cleanup branch."""
+
+    class FalsyPubSub(translate._PubSub):
+        def __bool__(self):
+            return False
+
+    ps = FalsyPubSub()
+    stdio = AsyncMock()
+
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", False)
+
+    # Force wait_for to raise, even though timeout=None when keepalive is disabled.
+    async def fake_wait_for(queue_get_coro, _timeout):
+        queue_get_coro.close()
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(translate.asyncio, "wait_for", fake_wait_for)
+
+    app = translate._build_fastapi(ps, stdio, keep_alive=0.01)
+
+    class DummyResponse:
+        def __init__(self, gen, headers=None):
+            self.gen = gen
+            self.headers = headers
+
+    monkeypatch.setattr(translate, "EventSourceResponse", DummyResponse)
+    handler = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/sse")
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers = {}
+
+        def __init__(self):
+            self.calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            return self.calls > 1
+
+    resp = await handler(DummyRequest())
+    first = await resp.gen.__anext__()
+    assert first["event"] == "endpoint"
+    with pytest.raises(StopAsyncIteration):
+        await resp.gen.__anext__()
+
+    # Pubsub is falsy, so unsubscribe is skipped.
+    assert len(ps._subscribers) == 1
+
+
+@pytest.mark.asyncio
 async def test_fastapi_message_header_mappings_restart(monkeypatch, translate):
     """Test /message restarts stdio when header mappings yield env vars."""
     ps = translate._PubSub()
@@ -493,6 +737,35 @@ async def test_fastapi_message_header_mappings_restart(monkeypatch, translate):
     assert resp.status_code == 202
     assert stdio.stop.await_count == 1
     assert stdio.start.await_count >= 2
+    stdio.send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_fastapi_message_no_restart_when_no_env_vars_and_already_running(monkeypatch, translate):
+    """Cover /message branch where header mappings exist but no env vars are extracted and stdio is already running."""
+    ps = translate._PubSub()
+    stdio = AsyncMock()
+    stdio.stop = AsyncMock()
+    stdio.start = AsyncMock()
+    stdio.send = AsyncMock()
+    stdio.is_running = Mock(return_value=True)
+
+    monkeypatch.setattr(translate, "extract_env_vars_from_headers", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    app = translate._build_fastapi(ps, stdio, header_mappings={"X-Env": "ENV"})
+    handler = next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/message")
+
+    class DummyRequest:
+        headers = {"X-Env": "ignored"}
+
+        async def body(self):
+            return b'{"jsonrpc":"2.0","method":"ping","id":1}'
+
+    resp = await handler(DummyRequest(), session_id="abc")
+    assert resp.status_code == 202
+    assert stdio.stop.await_count == 0
+    assert stdio.start.await_count == 0
     stdio.send.assert_called_once()
 
 
@@ -794,6 +1067,52 @@ async def test_run_stdio_to_sse_signal_handling_windows(monkeypatch, translate):
     await asyncio.wait_for(_test_logic(), timeout=3.0)
 
 
+@pytest.mark.asyncio
+async def test_run_stdio_to_sse_shutdown_idempotent(monkeypatch, translate):
+    """Trigger shutdown via signal callback so the final cleanup hits the early-return branch."""
+
+    async def _test_logic():
+        calls: list[str] = []
+
+        class _DummyStd:
+            def __init__(self, *_, **__):
+                calls.append("init")
+
+            async def start(self, *_a, **_k):
+                calls.append("start")
+
+            async def stop(self):
+                calls.append("stop")
+
+        class _Cfg:
+            def __init__(self, *args, **kwargs):
+                self.__dict__.update(kwargs)
+
+        class _Srv:
+            def __init__(self, cfg):
+                self.cfg = cfg
+                self.should_exit = False
+
+            async def serve(self):
+                # Let the signal-triggered shutdown task run.
+                await asyncio.sleep(0)
+
+        # Immediately invoke the registered handler to schedule shutdown.
+        def immediate_add_signal_handler(_sig, cb):
+            cb()
+
+        monkeypatch.setattr(translate, "StdIOEndpoint", _DummyStd)
+        monkeypatch.setattr(translate.uvicorn, "Config", _Cfg)
+        monkeypatch.setattr(translate.uvicorn, "Server", _Srv)
+        monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=immediate_add_signal_handler))
+
+        await translate._run_stdio_to_sse("cmd", port=0)
+        # stop should have been called despite shutdown being requested early
+        assert calls.count("stop") == 1
+
+    await asyncio.wait_for(_test_logic(), timeout=3.0)
+
+
 # ---------------------------------------------------------------------------#
 # Tests: _run_sse_to_stdio (stubbed I/O)                                     #
 # ---------------------------------------------------------------------------#
@@ -966,6 +1285,863 @@ async def test_run_sse_to_stdio_importerror(monkeypatch, translate):
 
 
 @pytest.mark.asyncio
+async def test_run_sse_to_stdio_simple_mode_returns(monkeypatch, translate):
+    """Ensure simple-mode uses get_isolated_http_client and returns cleanly."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    # Patch the isolated client context so no real network calls happen.
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class DummyClient:
+        pass
+
+    class DummyCtx:
+        async def __aenter__(self):
+            return DummyClient()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: DummyCtx())
+    pump = AsyncMock()
+    monkeypatch.setattr(translate, "_simple_sse_pump", pump)
+
+    await translate._run_sse_to_stdio("http://dummy/sse", "token", stdio_command=None, max_retries=1, initial_retry_delay=0.0)
+    pump.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_missing_pipes_raises(monkeypatch, translate):
+    """Cover missing stdin/stdout pipes RuntimeError in full mode."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class FakeProcess:
+        stdin = None
+        stdout = None
+        returncode = None
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return FakeProcess()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError, match="Failed to create subprocess"):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=0)
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_read_stdout_raises_when_stdout_missing_initial(monkeypatch, translate):
+    """Cover read_stdout guard when process.stdout is missing."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class FlakyProc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self._stdout_obj = _DummyReader([])
+            self._stdout_access = 0
+            self.returncode = None
+
+        @property
+        def stdout(self):
+            self._stdout_access += 1
+            # Pipe check sees stdout, read_stdout sees None.
+            return self._stdout_obj if self._stdout_access == 1 else None
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    proc = FlakyProc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class DummyClient:
+        async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
+            raise AssertionError("post should not be called")
+
+    class DummyCtx:
+        async def __aenter__(self):
+            return DummyClient()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: DummyCtx())
+
+    with pytest.raises(RuntimeError, match="Process stdout not available"):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=0)
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_read_stdout_raises_when_stdout_missing_in_loop(monkeypatch, translate):
+    """Cover read_stdout guard when process.stdout disappears during the loop."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class FlakyProc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self._stdout_obj = _DummyReader([])
+            self._stdout_access = 0
+            self.returncode = None
+
+        @property
+        def stdout(self):
+            self._stdout_access += 1
+            # Pipe check + initial read_stdout check see stdout; loop check sees None.
+            return self._stdout_obj if self._stdout_access <= 2 else None
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    proc = FlakyProc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class DummyClient:
+        async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
+            raise AssertionError("post should not be called")
+
+    class DummyCtx:
+        async def __aenter__(self):
+            return DummyClient()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: DummyCtx())
+
+    with pytest.raises(RuntimeError, match="Process stdout not available"):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=0)
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_read_stdout_skips_blank_lines(monkeypatch, translate):
+    """Cover read_stdout continue branch when a decoded line is empty."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader(["\n"])
+            self.returncode = None
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class DummyClient:
+        async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
+            raise AssertionError("post should not be called")
+
+    class DummyCtx:
+        async def __aenter__(self):
+            return DummyClient()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: DummyCtx())
+
+    await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=0)
+    assert proc.terminated is True
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_read_stdout_no_endpoint_after_retries(monkeypatch, translate):
+    """Cover read_stdout path where no message endpoint is ever received."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader(['{"test": "data"}\n'])
+            self.returncode = None
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class DummyClient:
+        async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
+            raise AssertionError("post should not be called")
+
+    class DummyCtx:
+        async def __aenter__(self):
+            return DummyClient()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: DummyCtx())
+
+    await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=0)
+    assert proc.terminated is True
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_read_stdout_posts_and_handles_errors(monkeypatch, translate):
+    """Cover read_stdout POST warning + exception branches once an endpoint is received."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    endpoint_ready = asyncio.Event()
+    posts_done = asyncio.Event()
+
+    class Stdout:
+        def __init__(self):
+            self._lines = [
+                b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+                b'{"jsonrpc":"2.0","id":2,"method":"ping"}\n',
+                b"",
+            ]
+
+        async def readline(self):
+            await endpoint_ready.wait()
+            line = self._lines.pop(0)
+            if not line:
+                posts_done.set()
+            return line
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = Stdout()
+            self.returncode = None
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class FakeResp:
+        status_code = 200
+        request = real_httpx.Request("GET", "http://dummy/sse")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: endpoint"
+            yield "data: http://example.com/message"
+            yield ""
+            # Called only after the empty line is processed by the pump.
+            endpoint_ready.set()
+            await posts_done.wait()
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, *_a, **_k):
+            return FakeResp()
+
+        async def post(self, *_a, **_k):
+            self.calls += 1
+            if self.calls == 1:
+                return types.SimpleNamespace(status_code=500, text="fail")
+            raise Exception("post failed")
+
+    fake_client = FakeClient()
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class DummyCtx:
+        async def __aenter__(self):
+            return fake_client
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: DummyCtx())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=1, initial_retry_delay=0.0)
+    assert proc.terminated is True
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_read_stdout_posts_status_202_and_process_already_exited_skips_terminate(monkeypatch, translate):
+    """Cover read_stdout branch where POST returns 202 and the loop continues; also cover cleanup when process already exited."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    endpoint_ready = asyncio.Event()
+    posts_done = asyncio.Event()
+
+    class Stdout:
+        def __init__(self):
+            self._lines = [
+                b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+                b'{"jsonrpc":"2.0","id":2,"method":"ping"}\n',
+                b"",
+            ]
+
+        async def readline(self):
+            await endpoint_ready.wait()
+            line = self._lines.pop(0)
+            if not line:
+                posts_done.set()
+            return line
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = Stdout()
+            self.returncode = 0  # already "exited" so terminate() is skipped
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://dummy/sse")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: endpoint"
+            yield "data: http://example.com/message"
+            yield ""
+            endpoint_ready.set()
+            await posts_done.wait()
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class Client:
+        def __init__(self):
+            self.post_calls = 0
+
+        def stream(self, *_a, **_k):
+            return Resp()
+
+        async def post(self, *_a, **_k):
+            self.post_calls += 1
+            return types.SimpleNamespace(status_code=202, text="ok")
+
+    client = Client()
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=1, initial_retry_delay=0.0)
+
+    assert client.post_calls == 2
+    assert proc.terminated is False
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_pump_status_error_when_httpx_falsy_raises_generic_exception(monkeypatch, translate):
+    """Cover pump status-code error branch when httpx is truthy for startup but falsy inside the status check."""
+
+    class TruthyThenFalsyHttpx:
+        AsyncClient = object  # for annotation evaluation
+
+        def __init__(self):
+            self.calls = 0
+
+        def __bool__(self):
+            self.calls += 1
+            return self.calls == 1
+
+    monkeypatch.setattr(translate, "httpx", TruthyThenFalsyHttpx())
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class BadResp:
+        status_code = 500
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            if False:  # pragma: no cover
+                yield ""
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return BadResp()
+
+        async def post(self, *_a, **_k):
+            return types.SimpleNamespace(status_code=202, text="ok")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(Exception, match="SSE endpoint returned 500"):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=1, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_pump_message_does_not_forward_when_stdin_falsy_and_unknown_event(monkeypatch, translate):
+    """Cover message event branch when stdin is falsy and an unknown event type is encountered."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class ToggleStdin:
+        def __init__(self):
+            self.calls = 0
+            self.writes: list[bytes] = []
+
+        def __bool__(self):
+            self.calls += 1
+            return self.calls == 1
+
+        def write(self, data: bytes):
+            self.writes.append(data)
+
+        async def drain(self):
+            return None
+
+    class Proc:
+        def __init__(self):
+            self.stdin = ToggleStdin()
+            self.stdout = _DummyReader([])
+            self.returncode = 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://dummy/sse")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: endpoint"
+            yield "data: http://example.com/message"
+            yield ""
+            yield "event: message"
+            yield 'data: {"jsonrpc":"2.0","result":"ok"}'
+            yield ""
+            yield "event: keepalive"
+            yield "data: {}"
+            yield ""
+            yield "event: mystery"
+            yield "data: hi"
+            yield ""
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+        async def post(self, *_a, **_k):
+            return types.SimpleNamespace(status_code=202, text="ok")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=1, initial_retry_delay=0.0)
+
+    assert proc.stdin.writes == []
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_pump_status_error_raises_httpstatuserror(monkeypatch, translate):
+    """Cover pump_sse_to_stdio HTTP status error branch (non-200 response)."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = None
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class BadResp:
+        status_code = 500
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://dummy/sse")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            if False:  # pragma: no cover
+                yield ""
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return BadResp()
+
+        async def post(self, *_a, **_k):
+            return types.SimpleNamespace(status_code=202, text="ok")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.HTTPStatusError):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=1, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_pump_message_and_keepalive_forwarding(monkeypatch, translate):
+    """Cover pump_sse_to_stdio message forwarding and keepalive handling."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class CapturingStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, data: bytes):
+            self.writes.append(data)
+
+        async def drain(self):
+            return None
+
+    class Proc:
+        def __init__(self):
+            self.stdin = CapturingStdin()
+            self.stdout = _DummyReader([])
+            self.returncode = None
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://dummy/sse")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: endpoint"
+            yield "data: http://example.com/message"
+            yield ""
+            yield "event: message"
+            yield 'data: {"jsonrpc":"2.0","result":"ok"}'
+            yield ""
+            yield "event: keepalive"
+            yield "data: {}"
+            yield ""
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+        async def post(self, *_a, **_k):
+            return types.SimpleNamespace(status_code=202, text="ok")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=1, initial_retry_delay=0.0)
+
+    assert any(b'{"jsonrpc":"2.0","result":"ok"}\n' == w for w in proc.stdin.writes)
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_pump_retry_warning_and_backoff(monkeypatch, translate):
+    """Cover pump retry warning + sleep/backoff path."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = None
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    class Client:
+        def __init__(self):
+            self.n = 0
+
+        def stream(self, *_a, **_k):
+            self.n += 1
+            raise real_httpx.ConnectError("boom", request=real_httpx.Request("GET", "http://dummy/sse"))
+
+        async def post(self, *_a, **_k):
+            return types.SimpleNamespace(status_code=202, text="ok")
+
+    client = Client()
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=2, initial_retry_delay=0.0)
+
+    assert translate.asyncio.sleep.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_run_sse_to_stdio_pump_unexpected_error(monkeypatch, translate):
+    """Cover pump unexpected exception branch."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = None
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            raise ValueError("unexpected")
+
+        async def post(self, *_a, **_k):
+            return types.SimpleNamespace(status_code=202, text="ok")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(ValueError, match="unexpected"):
+        await translate._run_sse_to_stdio("http://dummy/sse", None, stdio_command="echo test", max_retries=1, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
 async def test_pump_sse_to_stdio_full(monkeypatch, translate):
     # First, ensure httpx is properly imported and set
     # Third-Party
@@ -1090,6 +2266,169 @@ def test_main_function_sse(monkeypatch, translate):
 
     translate.main(["--connect-sse", "http://example.com/sse"])
     mock_sse_runner.assert_called_once()
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_main_dynamic_env_parses_header_mappings_and_disables_default_protocol_branch(monkeypatch, translate):
+    """Cover dynamic env header mapping parse path and the branch where a protocol is explicitly enabled."""
+    mock_multi = AsyncMock()
+    monkeypatch.setattr(translate, "_run_multi_protocol_server", mock_multi)
+
+    # Avoid actually running the coroutine; just record the call site.
+    def fake_run(coro):
+        coro.close()
+        return None
+
+    monkeypatch.setattr(translate.asyncio, "run", fake_run)
+    monkeypatch.setattr(translate, "parse_header_mappings", lambda _items: {"X-Env": "ENV"})
+
+    monkeypatch.setattr(
+        translate,
+        "_parse_args",
+        lambda _argv: type(
+            "Args",
+            (),
+            {
+                "stdio": "echo test",
+                "connect_sse": None,
+                "connect_streamable_http": None,
+                "connect_grpc": None,
+                "grpc": None,
+                "grpc_metadata": None,
+                "grpc_tls": False,
+                "grpc_cert": None,
+                "grpc_key": None,
+                "enable_dynamic_env": True,
+                "header_to_env": ["X-Env=ENV"],
+                "expose_sse": True,  # makes the default-to-SSE branch false
+                "expose_streamable_http": False,
+                "ssePath": "/sse",
+                "messagePath": "/message",
+                "keepAlive": 30,
+                "stateless": False,
+                "jsonResponse": False,
+                "logLevel": "info",
+                "cors": None,
+                "host": "127.0.0.1",
+                "port": 8000,
+                "oauth2Bearer": None,
+                "stdioCommand": None,
+            },
+        )(),
+    )
+
+    translate.main(["--stdio", "echo test"])
+    assert mock_multi.call_count == 1
+    assert mock_multi.call_args.kwargs["header_mappings"] is not None
+
+
+def test_main_dynamic_env_parse_failure_raises(monkeypatch, translate):
+    """Cover dynamic env header mapping parse error path."""
+    monkeypatch.setattr(translate, "parse_header_mappings", lambda _items: (_ for _ in ()).throw(ValueError("bad mappings")))
+    monkeypatch.setattr(
+        translate,
+        "_parse_args",
+        lambda _argv: type(
+            "Args",
+            (),
+            {
+                "enable_dynamic_env": True,
+                "header_to_env": ["X-Env=ENV"],
+                "grpc": None,
+                "stdio": None,
+                "connect_sse": None,
+                "connect_streamable_http": None,
+                "connect_grpc": None,
+                "logLevel": "info",
+            },
+        )(),
+    )
+
+    with pytest.raises(ValueError, match="bad mappings"):
+        translate.main([])
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_main_grpc_metadata_parsing(monkeypatch, translate):
+    """Cover gRPC branch and metadata parsing in main()."""
+    recorded: dict[str, Any] = {}
+
+    async def expose_grpc_via_sse(**kwargs):
+        recorded.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "mcpgateway.translate_grpc", types.SimpleNamespace(expose_grpc_via_sse=expose_grpc_via_sse))
+    monkeypatch.setattr(
+        translate,
+        "_parse_args",
+        lambda _argv: type(
+            "Args",
+            (),
+            {
+                "grpc": "host:123",
+                "grpc_metadata": ["k=v", "bad"],
+                "grpc_tls": True,
+                "grpc_cert": "/tmp/cert",
+                "grpc_key": "/tmp/key",
+                "port": 8000,
+                "logLevel": "info",
+                "enable_dynamic_env": False,
+                "stdio": None,
+                "connect_sse": None,
+                "connect_streamable_http": None,
+                "connect_grpc": None,
+            },
+        )(),
+    )
+
+    translate.main([])
+    assert recorded["target"] == "host:123"
+    assert recorded["metadata"] == {"k": "v"}
+
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
+def test_main_grpc_without_metadata(monkeypatch, translate):
+    """Cover gRPC branch when no metadata is provided."""
+    recorded: dict[str, Any] = {}
+
+    async def expose_grpc_via_sse(**kwargs):
+        recorded.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "mcpgateway.translate_grpc", types.SimpleNamespace(expose_grpc_via_sse=expose_grpc_via_sse))
+    monkeypatch.setattr(
+        translate,
+        "_parse_args",
+        lambda _argv: type(
+            "Args",
+            (),
+            {
+                "grpc": "host:123",
+                "grpc_metadata": None,
+                "grpc_tls": False,
+                "grpc_cert": None,
+                "grpc_key": None,
+                "port": 8000,
+                "logLevel": "info",
+                "enable_dynamic_env": False,
+                "stdio": None,
+                "connect_sse": None,
+                "connect_streamable_http": None,
+                "connect_grpc": None,
+            },
+        )(),
+    )
+
+    translate.main([])
+    assert recorded["metadata"] == {}
+
+
+def test_main_connect_grpc_not_implemented(monkeypatch, translate, capsys):
+    """Cover --connect-grpc not implemented branch."""
+    with pytest.raises(SystemExit) as exc:
+        translate.main(["--connect-grpc", "host:123"])
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "not yet implemented" in captured.err
 
 
 @pytest.mark.filterwarnings("ignore::RuntimeWarning")
@@ -1533,6 +2872,232 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
         sys.modules.pop("starlette.middleware.cors", None)
 
 
+@pytest.mark.asyncio
+async def test_run_stdio_to_streamable_http_missing_pipes_raises(monkeypatch, translate):
+    """Cover RuntimeError when subprocess stdin/stdout pipes are missing."""
+
+    class BadProc:
+        stdin = None
+        stdout = None
+        returncode = None
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return BadProc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError, match="Failed to create subprocess"):
+        await translate._run_stdio_to_streamable_http("echo test", 8000, "info")
+
+
+@pytest.mark.asyncio
+async def test_run_stdio_to_streamable_http_handle_request_and_pump_http_to_stdio(monkeypatch, translate):
+    """Cover handle_mcp -> session_manager.handle_request and pump_http_to_stdio helper."""
+    calls: list[str] = []
+    handlers: dict[str, Any] = {}
+    mgr_holder: dict[str, Any] = {}
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader(["line1\n"])
+            self.returncode = None
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class MockMCPServer:
+        def __init__(self, name):
+            calls.append(f"mcp_server:{name}")
+
+    class MockSessionManager:
+        def __init__(self, app, stateless=False, json_response=False):
+            mgr_holder["mgr"] = self
+            self.handle_request = AsyncMock()
+            calls.append("session_manager_init")
+
+    class Route:
+        def __init__(self, path, handler, methods=None):
+            handlers[path] = handler
+
+    class Starlette:
+        def __init__(self, routes=None):
+            self.routes = routes or []
+
+        def add_middleware(self, *_a, **_k):
+            return None
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            # Call the /mcp route handler (handle_mcp) to exercise handle_request path.
+            class DummyRequest:
+                scope = {"type": "http"}
+
+                async def receive(self):
+                    return {}
+
+                async def _send(self, _msg):
+                    return None
+
+            await handlers["/mcp"](DummyRequest())
+
+            # Also reach into the caller frame to invoke pump_http_to_stdio which is
+            # otherwise unused in the implementation.
+            import inspect
+
+            frame = inspect.currentframe()
+            assert frame is not None
+            f = frame.f_back
+            while f and f.f_code.co_name != "_run_stdio_to_streamable_http":
+                f = f.f_back
+            assert f is not None
+            pump_http_to_stdio = f.f_locals["pump_http_to_stdio"]
+            await pump_http_to_stdio('{"method":"test"}')
+            # Exercise the error path too.
+            proc.stdin = None
+            with pytest.raises(RuntimeError, match="Process stdin not available"):
+                await pump_http_to_stdio('{"method":"test2"}')
+
+            # Let the stdout pump and signal-triggered shutdown task run.
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(translate, "MCPServer", MockMCPServer)
+    monkeypatch.setattr(translate, "StreamableHTTPSessionManager", MockSessionManager)
+    monkeypatch.setattr(translate, "Route", Route)
+    monkeypatch.setattr(translate, "Starlette", Starlette)
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+
+    # Immediately invoke signal callbacks to schedule shutdown early (idempotent cleanup path).
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda _sig, cb: cb()))
+
+    await translate._run_stdio_to_streamable_http("echo test", 8000, "info")
+
+    assert mgr_holder["mgr"].handle_request.await_count == 1
+    assert proc.terminated is True
+
+
+@pytest.mark.asyncio
+async def test_run_stdio_to_streamable_http_pump_stdio_to_http_exception(monkeypatch, translate):
+    """Cover pump_stdio_to_http exception handling."""
+
+    class BadStdout:
+        async def readline(self):
+            raise Exception("boom")
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = BadStdout()
+            self.returncode = None
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            await asyncio.sleep(0)
+
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda *_a, **_k: None))
+
+    await translate._run_stdio_to_streamable_http("echo test", 8000, "info")
+    assert proc.terminated is True
+
+
+@pytest.mark.asyncio
+async def test_run_stdio_to_streamable_http_shutdown_skips_terminate_when_process_exited_and_stdout_missing(monkeypatch, translate):
+    """Cover shutdown branch when process.returncode is set and pump_stdio_to_http stdout-missing error."""
+    calls: list[str] = []
+    pump_ran = asyncio.Event()
+
+    class ToggleStdout:
+        def __init__(self):
+            self.calls = 0
+
+        def __bool__(self):
+            self.calls += 1
+            # First truthiness check is the startup guard. Second check is inside pump_stdio_to_http.
+            if self.calls >= 2:
+                pump_ran.set()
+                return False
+            return True
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = ToggleStdout()
+            self.returncode = 0
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    monkeypatch.setattr(translate, "MCPServer", lambda *a, **k: None)
+    monkeypatch.setattr(translate, "StreamableHTTPSessionManager", lambda **k: types.SimpleNamespace(handle_request=AsyncMock()))
+    monkeypatch.setattr(translate, "Route", lambda *a, **k: None)
+    monkeypatch.setattr(translate, "Starlette", lambda *a, **k: types.SimpleNamespace(add_middleware=lambda *_a, **_k: None))
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda *_a, **_k: None))
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+            calls.append("server_init")
+
+        async def serve(self):
+            # Ensure the pump task runs at least once.
+            await pump_ran.wait()
+            calls.append("server_serve")
+
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+
+    await translate._run_stdio_to_streamable_http("echo test", 8000, "info")
+    assert proc.terminated is False
+    assert "server_serve" in calls
+
+
 def test_main_module_name_check(translate, capsys):
     """Test the main function error handling with no arguments."""
     # This should trigger an error since no transport is specified
@@ -1710,6 +3275,125 @@ async def test_simple_sse_pump_error_handling(monkeypatch, translate):
 
     # Verify message was printed
     assert "test" in printed
+
+
+@pytest.mark.asyncio
+async def test_simple_sse_pump_max_retries_zero_returns(monkeypatch, translate):
+    """Cover loop-not-entered branch in _simple_sse_pump."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Client:
+        def stream(self, *_a, **_k):  # pragma: no cover - should not be called
+            raise AssertionError("stream should not be called")
+
+    await translate._simple_sse_pump(Client(), "http://test/sse", max_retries=0, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
+async def test_simple_sse_pump_status_error_when_httpx_missing_raises_exception(monkeypatch, translate):
+    """Cover status-code error branch when httpx is falsy (generic Exception path)."""
+    monkeypatch.setattr(translate, "httpx", None)
+
+    class Resp:
+        status_code = 500
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            if False:  # pragma: no cover
+                yield ""
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+    with pytest.raises(Exception, match="SSE endpoint returned 500"):
+        await translate._simple_sse_pump(Client(), "http://test/sse", max_retries=1, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
+async def test_simple_sse_pump_keepalive_event(monkeypatch, translate):
+    """Cover keepalive event branch in _simple_sse_pump."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    printed: list[str] = []
+    monkeypatch.setattr("builtins.print", lambda x: printed.append(x))
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://test/sse")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: keepalive"
+            yield "data: {}"
+            yield ""
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._simple_sse_pump(Client(), "http://test/sse", max_retries=1, initial_retry_delay=0.0)
+
+    assert printed == []
+
+
+@pytest.mark.asyncio
+async def test_simple_sse_pump_unknown_event_type(monkeypatch, translate):
+    """Cover unknown SSE event type branch in _simple_sse_pump (neither endpoint/message/keepalive)."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    printed: list[str] = []
+    monkeypatch.setattr("builtins.print", lambda x: printed.append(x))
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://test/sse")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: mystery"
+            yield "data: hi"
+            yield ""
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._simple_sse_pump(Client(), "http://test/sse", max_retries=1, initial_retry_delay=0.0)
+
+    assert printed == []
 
 
 @pytest.mark.asyncio
@@ -2182,6 +3866,125 @@ async def test_simple_streamable_http_pump_status_error(monkeypatch, translate):
 
 
 @pytest.mark.asyncio
+async def test_simple_streamable_http_pump_max_retries_zero_returns(monkeypatch, translate):
+    """Cover loop-not-entered branch in _simple_streamable_http_pump."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Client:
+        def stream(self, *_a, **_k):  # pragma: no cover - should not be called
+            raise AssertionError("stream should not be called")
+
+    await translate._simple_streamable_http_pump(Client(), "http://test/mcp", 0, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_simple_streamable_http_pump_status_error_when_httpx_missing_raises_exception(monkeypatch, translate):
+    """Cover status-code error branch when httpx is falsy (generic Exception path)."""
+    monkeypatch.setattr(translate, "httpx", None)
+
+    class Resp:
+        status_code = 500
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            if False:  # pragma: no cover
+                yield ""
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+    with pytest.raises(Exception, match="Streamable HTTP endpoint returned 500"):
+        await translate._simple_streamable_http_pump(Client(), "http://test/mcp", 1, 0.0)
+
+
+@pytest.mark.asyncio
+async def test_simple_streamable_http_pump_skips_non_data_and_empty_data_lines(monkeypatch, translate):
+    """Cover non-data and empty-data skip branches in _simple_streamable_http_pump."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    printed: list[str] = []
+    monkeypatch.setattr("builtins.print", lambda x: printed.append(x))
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://test/mcp")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: ignore"
+            yield "data: "
+            yield "data: ok"
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._simple_streamable_http_pump(Client(), "http://test/mcp", 1, 0.0)
+
+    assert printed == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_simple_streamable_http_pump_retry_warning_and_backoff(monkeypatch, translate):
+    """Cover retry warning + sleep/backoff branch in _simple_streamable_http_pump."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    class Client:
+        def __init__(self):
+            self.calls = 0
+
+        def stream(self, *_a, **_k):
+            self.calls += 1
+            raise real_httpx.ConnectError("boom", request=real_httpx.Request("GET", "http://test/mcp"))
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._simple_streamable_http_pump(Client(), "http://test/mcp", 2, 0.0)
+
+    assert translate.asyncio.sleep.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_simple_streamable_http_pump_unexpected_error_branch(monkeypatch, translate):
+    """Cover unexpected error branch in _simple_streamable_http_pump."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            raise ValueError("unexpected")
+
+    with pytest.raises(ValueError, match="unexpected"):
+        await translate._simple_streamable_http_pump(Client(), "http://test/mcp", 1, 0.0)
+
+
+@pytest.mark.asyncio
 async def test_run_streamable_http_to_stdio_with_stdio_command(monkeypatch, translate):
     """Test _run_streamable_http_to_stdio with stdio command and retry path."""
     # Third-Party
@@ -2380,6 +4183,589 @@ async def test_run_streamable_http_to_stdio_form_encoded(monkeypatch, translate)
 
 
 @pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_read_stdout_raises_when_stdout_missing_initial(monkeypatch, translate):
+    """Cover read_stdout initial stdout-missing RuntimeError and cleanup when process already exited."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class ToggleStdout:
+        def __init__(self):
+            self.calls = 0
+
+        def __bool__(self):
+            self.calls += 1
+            return self.calls == 1
+
+        async def readline(self):
+            return b""
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = ToggleStdout()
+            self.returncode = 0
+            self.terminated = False
+
+        def terminate(self):
+            self.terminated = True
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Client:
+        async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
+            raise AssertionError("post should not be called")
+
+        def stream(self, *_a, **_k):  # pragma: no cover - should not be reached
+            raise AssertionError("stream should not be called")
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    async def fake_gather(coro1, coro2):
+        with pytest.raises(RuntimeError, match="Process stdout not available"):
+            await coro1
+        coro2.close()
+        return [None, None]
+
+    monkeypatch.setattr(translate.asyncio, "gather", fake_gather)
+
+    await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+    assert proc.terminated is False
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_read_stdout_raises_when_stdout_missing_in_loop_after_blank_line(monkeypatch, translate):
+    """Cover blank-line continue and subsequent stdout-missing check inside read_stdout loop."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class ToggleStdout:
+        def __init__(self):
+            self.calls = 0
+            self._lines = [b"\n"]
+
+        def __bool__(self):
+            self.calls += 1
+            # True for: startup guard, read_stdout initial check, first loop check.
+            # False for: second loop check (after hitting the blank-line continue).
+            return self.calls <= 3
+
+        async def readline(self):
+            return self._lines.pop(0) if self._lines else b""
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = ToggleStdout()
+            self.returncode = 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Client:
+        async def post(self, *_a, **_k):  # pragma: no cover - should not be reached
+            raise AssertionError("post should not be called")
+
+        def stream(self, *_a, **_k):  # pragma: no cover - should not be reached
+            raise AssertionError("stream should not be called")
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    async def fake_gather(coro1, coro2):
+        with pytest.raises(RuntimeError, match="Process stdout not available"):
+            await coro1
+        coro2.close()
+        return [None, None]
+
+    monkeypatch.setattr(translate.asyncio, "gather", fake_gather)
+
+    await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_read_stdout_skips_writing_empty_response_and_logs_post_exception(monkeypatch, translate):
+    """Cover response_data-empty no-forward branch and POST exception handling in read_stdout."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class CapturingStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, data: bytes) -> None:
+            self.writes.append(data)
+
+        async def drain(self) -> None:
+            return None
+
+    class Stdout:
+        def __init__(self):
+            self._lines = [
+                b'{"jsonrpc":"2.0","id":1,"method":"ping"}\n',
+                b'{"jsonrpc":"2.0","id":2,"method":"ping"}\n',
+                b"",
+            ]
+
+        async def readline(self) -> bytes:
+            return self._lines.pop(0)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = CapturingStdin()
+            self.stdout = Stdout()
+            self.returncode = 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Client:
+        def __init__(self):
+            self.calls = 0
+
+        async def post(self, *_a, **_k):
+            self.calls += 1
+            if self.calls == 1:
+                return types.SimpleNamespace(status_code=200, text="")
+            raise Exception("boom")
+
+        def stream(self, *_a, **_k):  # pragma: no cover - closed by fake_gather
+            raise AssertionError("stream should not be called")
+
+    client = Client()
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    async def fake_gather(coro1, coro2):
+        await coro1
+        coro2.close()
+        return [None, None]
+
+    monkeypatch.setattr(translate.asyncio, "gather", fake_gather)
+
+    await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+    assert client.calls == 2
+    assert proc.stdin.writes == []
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_pump_max_retries_zero_skips_loop(monkeypatch, translate):
+    """Cover pump_streamable_http_to_stdio loop-not-entered branch (max_retries=0)."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = 0
+
+        def terminate(self):  # pragma: no cover
+            self.returncode = 0
+
+        async def wait(self):  # pragma: no cover
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Client:
+        def __init__(self):
+            self.stream_calls = 0
+
+        def stream(self, *_a, **_k):
+            self.stream_calls += 1
+            raise AssertionError("stream should not be called")
+
+        async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
+            raise AssertionError("post should not be called")
+
+    client = Client()
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=0, initial_retry_delay=0.0)
+    assert client.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_pump_status_error_raises_httpstatuserror(monkeypatch, translate):
+    """Cover pump_streamable_http_to_stdio status-code error branch."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class BadResp:
+        status_code = 500
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://example.com/mcp")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            if False:  # pragma: no cover
+                yield ""
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return BadResp()
+
+        async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
+            raise AssertionError("post should not be called")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.HTTPStatusError):
+        await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_pump_status_error_when_httpx_falsy_raises_generic_exception(monkeypatch, translate):
+    """Cover generic status-code error branch when httpx is truthy for startup but falsy in the status check."""
+
+    class TruthyThenFalsyHttpx:
+        AsyncClient = object  # for annotation evaluation
+
+        def __init__(self):
+            self.calls = 0
+
+        def __bool__(self):
+            self.calls += 1
+            return self.calls == 1
+
+    monkeypatch.setattr(translate, "httpx", TruthyThenFalsyHttpx())
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = 0
+
+        def terminate(self):  # pragma: no cover
+            self.returncode = 0
+
+        async def wait(self):  # pragma: no cover
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class BadResp:
+        status_code = 500
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            if False:  # pragma: no cover
+                yield ""
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return BadResp()
+
+        async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
+            raise AssertionError("post should not be called")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(Exception, match="Streamable HTTP endpoint returned 500"):
+        await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_pump_skips_non_data_and_empty_data_lines(monkeypatch, translate):
+    """Cover pump loop skipping non-data lines and empty data payloads."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class CapturingStdin:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, data: bytes) -> None:
+            self.writes.append(data)
+
+        async def drain(self) -> None:
+            return None
+
+    class Proc:
+        def __init__(self):
+            self.stdin = CapturingStdin()
+            self.stdout = _DummyReader([])
+            self.returncode = 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    proc = Proc()
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return proc
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Resp:
+        status_code = 200
+
+        def __init__(self):
+            self.request = real_httpx.Request("GET", "http://example.com/mcp")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return None
+
+        async def aiter_lines(self):
+            yield "event: ignore"
+            yield "data: "
+            yield "data: hello"
+            raise real_httpx.ConnectError("done", request=self.request)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            return Resp()
+
+        async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
+            raise AssertionError("post should not be called")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+
+    assert proc.stdin.writes == [b"hello\n"]
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_pump_retry_warning_and_backoff(monkeypatch, translate):
+    """Cover retry warning + sleep/backoff path in pump_streamable_http_to_stdio."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    class Client:
+        def stream(self, *_a, **_k):
+            raise real_httpx.ConnectError("boom", request=real_httpx.Request("GET", "http://example.com/mcp"))
+
+        async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
+            raise AssertionError("post should not be called")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(real_httpx.ConnectError):
+        await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=2, initial_retry_delay=0.0)
+
+    assert translate.asyncio.sleep.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_to_stdio_pump_unexpected_error(monkeypatch, translate):
+    """Cover unexpected error branch in pump_streamable_http_to_stdio."""
+    # Third-Party
+    import httpx as real_httpx
+
+    setattr(translate, "httpx", real_httpx)
+
+    class Proc:
+        def __init__(self):
+            self.stdin = _DummyWriter()
+            self.stdout = _DummyReader([])
+            self.returncode = 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        async def wait(self):
+            return 0
+
+    async def fake_create_subprocess_exec(*_a, **_k):
+        return Proc()
+
+    monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    class Client:
+        def stream(self, *_a, **_k):
+            raise ValueError("unexpected")
+
+        async def post(self, *_a, **_k):  # pragma: no cover - stdout is empty
+            raise AssertionError("post should not be called")
+
+    import mcpgateway.services.http_client_service as http_client_service
+
+    class Ctx:
+        async def __aenter__(self):
+            return Client()
+
+        async def __aexit__(self, *_a):
+            return None
+
+    monkeypatch.setattr(http_client_service, "get_isolated_http_client", lambda **_k: Ctx())
+
+    with pytest.raises(ValueError, match="unexpected"):
+        await translate._run_streamable_http_to_stdio("http://example.com/mcp", None, 5.0, "echo test", max_retries=1, initial_retry_delay=0.0)
+
+
+@pytest.mark.asyncio
 async def test_run_streamable_http_to_stdio_missing_pipes(monkeypatch, translate):
     """Test _run_streamable_http_to_stdio raises when stdin/stdout are missing."""
     # Third-Party
@@ -2475,6 +4861,56 @@ async def test_multi_protocol_server_basic(monkeypatch, translate):
     assert "stdio_start" in calls
     assert "fastapi_init" in calls
     assert "server_serve" in calls
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_no_transports_exposes_health_only(monkeypatch, translate):
+    """Cover branches when no transports are enabled (stdio/pubsub are None) and exercise /healthz."""
+    routes: dict[str, Any] = {}
+
+    class FastAPI:
+        def __init__(self):
+            self.user_middleware = []
+            self.routes = []
+
+        def add_middleware(self, *_a, **_k):
+            return None
+
+        def get(self, path):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        def post(self, path, **_k):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        async def __call__(self, *_a, **_k):  # pragma: no cover
+            return None
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            return None
+
+    monkeypatch.setattr(translate, "FastAPI", FastAPI)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda *_a, **_k: None))
+
+    await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=False, expose_streamable_http=False)
+
+    health = routes["/healthz"]
+    resp = await health()
+    assert resp.status_code == 200
+    assert getattr(resp, "body", b"") == b"ok"
 
 
 @pytest.mark.asyncio
@@ -2613,6 +5049,711 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
 
     bad_response = await mcp_handler(BadRequest())
     assert bad_response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_sse_message_keepalive_disabled_and_post_message_header_mappings_skipped(monkeypatch, translate):
+    """Cover SSE message yield with keepalive disabled and POST /message with header_mappings disabled."""
+    routes: dict[str, Any] = {}
+    pubsub_holder: dict[str, Any] = {}
+    stdio_holder: dict[str, Any] = {}
+
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", False)
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    class PubSub(translate._PubSub):
+        def __init__(self):
+            super().__init__()
+            pubsub_holder["pubsub"] = self
+
+    class StdIO:
+        def __init__(self, _cmd, pubsub, **_k):
+            self._running = False
+            self._pubsub = pubsub
+            self.send = AsyncMock()
+            stdio_holder["stdio"] = self
+
+        async def start(self, *_a, **_k):
+            self._running = True
+
+        async def stop(self):
+            self._running = False
+
+        def is_running(self):
+            return self._running
+
+    class FastAPI:
+        def __init__(self):
+            self.user_middleware = []
+            self.routes = []
+
+        def add_middleware(self, *_a, **_k):
+            return None
+
+        def get(self, path):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        def post(self, path, **_k):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+    class DummyResponse:
+        def __init__(self, gen, headers=None):
+            self.gen = gen
+            self.headers = headers
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            return None
+
+    monkeypatch.setattr(translate, "_PubSub", PubSub)
+    monkeypatch.setattr(translate, "StdIOEndpoint", StdIO)
+    monkeypatch.setattr(translate, "FastAPI", FastAPI)
+    monkeypatch.setattr(translate, "EventSourceResponse", DummyResponse)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda *_a, **_k: None))
+
+    await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=True, expose_streamable_http=False, header_mappings=None)
+
+    sse_handler = routes["/sse"]
+    message_handler = routes["/message"]
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers: dict[str, str] = {}
+
+        def __init__(self):
+            self.calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            return self.calls > 1
+
+    resp = await sse_handler(DummyRequest())
+    first = await resp.gen.__anext__()
+    assert first["event"] == "endpoint"
+    await pubsub_holder["pubsub"].publish("hi\n")
+    second = await resp.gen.__anext__()
+    assert second["event"] == "message"
+    assert second["data"] == "hi"
+    with pytest.raises(StopAsyncIteration):
+        await resp.gen.__anext__()
+
+    class Raw:
+        headers: dict[str, str] = {}
+
+        async def body(self):
+            return b'{"jsonrpc":"2.0","method":"ping"}'
+
+    stdio_holder["stdio"]._running = False
+    ok = await message_handler(Raw(), session_id="abc")
+    assert ok.status_code == 202
+    assert stdio_holder["stdio"].send.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_sse_header_mappings_empty_env_no_restart_and_post_message_starts_stdio(monkeypatch, translate):
+    """Cover header_mappings enabled but env extraction yields no vars (no restart)."""
+    routes: dict[str, Any] = {}
+    stdio_holder: dict[str, Any] = {}
+
+    monkeypatch.setattr(translate, "extract_env_vars_from_headers", lambda *_a, **_k: {})
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    class StdIO:
+        def __init__(self, _cmd, _pubsub, **_k):
+            self._running = True
+            self.start = AsyncMock(side_effect=self._mark_running)
+            self.stop = AsyncMock(side_effect=self._mark_stopped)
+            self.send = AsyncMock()
+            stdio_holder["stdio"] = self
+
+        async def _mark_running(self, *_a, **_k):
+            self._running = True
+
+        async def _mark_stopped(self, *_a, **_k):
+            self._running = False
+
+        def is_running(self):
+            return self._running
+
+    class FastAPI:
+        def __init__(self):
+            self.user_middleware = []
+            self.routes = []
+
+        def add_middleware(self, *_a, **_k):
+            return None
+
+        def get(self, path):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        def post(self, path, **_k):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+    class DummyResponse:
+        def __init__(self, gen, headers=None):
+            self.gen = gen
+            self.headers = headers
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            return None
+
+    monkeypatch.setattr(translate, "StdIOEndpoint", StdIO)
+    monkeypatch.setattr(translate, "FastAPI", FastAPI)
+    monkeypatch.setattr(translate, "EventSourceResponse", DummyResponse)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda *_a, **_k: None))
+
+    await translate._run_multi_protocol_server(
+        "test_cmd",
+        8000,
+        "info",
+        None,
+        "127.0.0.1",
+        expose_sse=True,
+        expose_streamable_http=False,
+        header_mappings={"X-Env": "ENV"},
+    )
+
+    sse_handler = routes["/sse"]
+    message_handler = routes["/message"]
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers = {"X-Env": "ignored"}
+
+        async def is_disconnected(self):
+            return True
+
+    resp = await sse_handler(DummyRequest())
+    first = await resp.gen.__anext__()
+    assert first["event"] == "endpoint"
+    # Default keepalive yields one extra frame before the disconnect check runs.
+    second = await resp.gen.__anext__()
+    assert second["event"] == "keepalive"
+    with pytest.raises(StopAsyncIteration):
+        await resp.gen.__anext__()
+
+    class Raw:
+        headers = {"X-Env": "ignored"}
+
+        async def body(self):
+            return b'{"jsonrpc":"2.0","method":"ping"}'
+
+    stdio_holder["stdio"]._running = False
+    ok = await message_handler(Raw(), session_id="abc")
+    assert ok.status_code == 202
+    assert stdio_holder["stdio"].start.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_sse_get_sse_raises_when_pubsub_falsy(monkeypatch, translate):
+    """Cover get_sse guard raising when pubsub is falsy at request time."""
+    routes: dict[str, Any] = {}
+    pubsub_holder: dict[str, Any] = {}
+
+    class PubSub(translate._PubSub):
+        def __init__(self):
+            super().__init__()
+            self.truthy = True
+            pubsub_holder["pubsub"] = self
+
+        def __bool__(self):
+            return self.truthy
+
+    class StdIO:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def start(self, *_a, **_k):
+            return None
+
+        async def stop(self):
+            return None
+
+        def is_running(self):
+            return True
+
+    class FastAPI:
+        def __init__(self):
+            self.user_middleware = []
+            self.routes = []
+
+        def add_middleware(self, *_a, **_k):
+            return None
+
+        def get(self, path):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        def post(self, path, **_k):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            return None
+
+    monkeypatch.setattr(translate, "_PubSub", PubSub)
+    monkeypatch.setattr(translate, "StdIOEndpoint", StdIO)
+    monkeypatch.setattr(translate, "FastAPI", FastAPI)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda *_a, **_k: None))
+
+    await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=True, expose_streamable_http=False)
+
+    pubsub_holder["pubsub"].truthy = False
+
+    sse_handler = routes["/sse"]
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers: dict[str, str] = {}
+
+        async def is_disconnected(self):  # pragma: no cover
+            return True
+
+    with pytest.raises(RuntimeError, match="PubSub not available"):
+        await sse_handler(DummyRequest())
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_sse_timeout_keepalive_disabled_and_pubsub_falsy_skips_unsubscribe(monkeypatch, translate):
+    """Cover timeout handling when keepalive disabled and pubsub falsy cleanup branch in SSE generator."""
+    routes: dict[str, Any] = {}
+    pubsub_holder: dict[str, Any] = {}
+
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", False)
+
+    async def fake_wait_for(queue_get_coro, _timeout):
+        queue_get_coro.close()
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(translate.asyncio, "wait_for", fake_wait_for)
+
+    class PubSub(translate._PubSub):
+        def __init__(self):
+            super().__init__()
+            self.truthy = True
+            pubsub_holder["pubsub"] = self
+
+        def __bool__(self):
+            return self.truthy
+
+    class StdIO:
+        def __init__(self, *_a, **_k):
+            pass
+
+        async def start(self, *_a, **_k):
+            return None
+
+        async def stop(self):
+            return None
+
+        def is_running(self):
+            return True
+
+    class FastAPI:
+        def __init__(self):
+            self.user_middleware = []
+            self.routes = []
+
+        def add_middleware(self, *_a, **_k):
+            return None
+
+        def get(self, path):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        def post(self, path, **_k):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+    class DummyResponse:
+        def __init__(self, gen, headers=None):
+            self.gen = gen
+            self.headers = headers
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            return None
+
+    monkeypatch.setattr(translate, "_PubSub", PubSub)
+    monkeypatch.setattr(translate, "StdIOEndpoint", StdIO)
+    monkeypatch.setattr(translate, "FastAPI", FastAPI)
+    monkeypatch.setattr(translate, "EventSourceResponse", DummyResponse)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda *_a, **_k: None))
+
+    await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=True, expose_streamable_http=False)
+
+    sse_handler = routes["/sse"]
+
+    class DummyRequest:
+        base_url = "http://test/"
+        headers: dict[str, str] = {}
+
+        def __init__(self):
+            self.calls = 0
+
+        async def is_disconnected(self):
+            self.calls += 1
+            return self.calls > 1
+
+    resp = await sse_handler(DummyRequest())
+    first = await resp.gen.__anext__()
+    assert first["event"] == "endpoint"
+    pubsub_holder["pubsub"].truthy = False
+    with pytest.raises(StopAsyncIteration):
+        await resp.gen.__anext__()
+    assert len(pubsub_holder["pubsub"]._subscribers) == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_post_message_raises_when_stdio_falsy(monkeypatch, translate):
+    """Cover post_message runtime guard raising when stdio becomes falsy."""
+    routes: dict[str, Any] = {}
+    stdio_holder: dict[str, Any] = {}
+
+    monkeypatch.setattr(translate.asyncio, "sleep", AsyncMock())
+
+    class StdIO:
+        def __init__(self, *_a, **_k):
+            self.truthy = True
+            self.send = AsyncMock()
+            stdio_holder["stdio"] = self
+
+        def __bool__(self):
+            return self.truthy
+
+        async def start(self, *_a, **_k):
+            return None
+
+        async def stop(self):
+            return None
+
+        def is_running(self):
+            # Flip after the running check so the later "if not stdio" guard triggers.
+            self.truthy = False
+            return True
+
+    class FastAPI:
+        def __init__(self):
+            self.user_middleware = []
+            self.routes = []
+
+        def add_middleware(self, *_a, **_k):
+            return None
+
+        def get(self, path):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        def post(self, path, **_k):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            return None
+
+    monkeypatch.setattr(translate, "StdIOEndpoint", StdIO)
+    monkeypatch.setattr(translate, "FastAPI", FastAPI)
+    monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda *_a, **_k: None))
+
+    await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=True, expose_streamable_http=False)
+
+    message_handler = routes["/message"]
+
+    class Raw:
+        headers: dict[str, str] = {}
+
+        async def body(self):
+            return b'{"jsonrpc":"2.0","method":"ping"}'
+
+    with pytest.raises(RuntimeError, match="Stdio endpoint not available"):
+        await message_handler(Raw(), session_id="abc")
+
+
+@pytest.mark.asyncio
+async def test_multi_protocol_server_mcp_post_branches_asgi_wrapper_shutdown_idempotent_and_cleanup_fallbacks(monkeypatch, translate):
+    """Cover /mcp branches, ASGI wrapper routing, shutdown idempotency, and cleanup fallback/timeout paths."""
+    # Standard
+    import builtins
+    from contextlib import suppress
+
+    calls: list[tuple[str, str | None]] = []
+    routes: dict[str, Any] = {}
+    app_holder: dict[str, Any] = {}
+    pubsub_holder: dict[str, Any] = {}
+    stdio_holder: dict[str, Any] = {}
+    stop_called = asyncio.Event()
+
+    class PubSub:
+        def __init__(self):
+            self.truthy = True
+            self._subscribers: list[asyncio.Queue[str]] = []
+            pubsub_holder["pubsub"] = self
+
+        def __bool__(self):
+            return self.truthy
+
+        def subscribe(self):
+            q: asyncio.Queue[str] = asyncio.Queue()
+            self._subscribers.append(q)
+            return q
+
+        def unsubscribe(self, q):
+            with suppress(ValueError):
+                self._subscribers.remove(q)
+
+    class StdIO:
+        def __init__(self, _cmd, pubsub, **_k):
+            self.truthy = True
+            self._pubsub = pubsub
+            self.send = AsyncMock()
+            stdio_holder["stdio"] = self
+
+        def __bool__(self):
+            return self.truthy
+
+        async def start(self, *_a, **_k):
+            return None
+
+        async def stop(self):
+            stop_called.set()
+
+        def is_running(self):
+            return True
+
+    class FastAPI:
+        def __init__(self):
+            self.routes = []
+            self.user_middleware = []
+
+        def add_middleware(self, *_a, **_k):
+            return None
+
+        def get(self, path):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        def post(self, path, **_k):
+            def decorator(func):
+                routes[path] = func
+                return func
+
+            return decorator
+
+        async def __call__(self, scope, receive, send):
+            _ = receive, send
+            calls.append(("original_app", scope.get("path")))
+
+    class StreamableManager:
+        def __init__(self, *a, **k):
+            _ = a, k
+
+        def run(self):
+            class Ctx:
+                async def __aenter__(self):
+                    calls.append(("ctx_enter", None))
+                    return self
+
+                async def __aexit__(self, *_a):
+                    calls.append(("ctx_exit", None))
+                    raise Exception("cleanup boom")
+
+            return Ctx()
+
+    class DummyScope:
+        def __init__(self, _timeout):
+            self.cancelled_caught = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+    monkeypatch.setattr(translate, "_PubSub", PubSub)
+    monkeypatch.setattr(translate, "StdIOEndpoint", StdIO)
+    monkeypatch.setattr(translate, "FastAPI", FastAPI)
+    monkeypatch.setattr(translate, "MCPServer", lambda *_a, **_k: None)
+    monkeypatch.setattr(translate, "StreamableHTTPSessionManager", StreamableManager)
+    monkeypatch.setattr(translate.anyio, "move_on_after", lambda timeout: DummyScope(timeout))
+
+    # Force mcpgateway.config import inside translate cleanup to fail (exercise fallback timeout).
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        caller = sys._getframe(1).f_globals.get("__name__")
+        if caller == "mcpgateway.translate" and name == "mcpgateway.config":
+            raise ImportError("blocked")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    # Capture the ASGI app passed to uvicorn (wrapper when streamable HTTP is enabled).
+    class Config:
+        def __init__(self, app, **_k):
+            app_holder["asgi_app"] = app
+
+    class Server:
+        def __init__(self, _cfg):
+            self.should_exit = False
+
+        async def serve(self):
+            await stop_called.wait()
+
+    monkeypatch.setattr(translate.uvicorn, "Config", Config)
+    monkeypatch.setattr(translate.uvicorn, "Server", Server)
+
+    # Immediately invoke signal callbacks to schedule shutdown early (idempotent path).
+    monkeypatch.setattr(translate.asyncio, "get_running_loop", lambda: types.SimpleNamespace(add_signal_handler=lambda _sig, cb: cb()))
+
+    await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=False, expose_streamable_http=True)
+
+    # ASGI wrapper routes both branches to original_app.
+    async def receive():
+        return {}
+
+    async def send(_msg):
+        return None
+
+    wrapper = app_holder["asgi_app"]
+    await wrapper({"type": "http", "path": "/mcp"}, receive, send)
+    await wrapper({"type": "http", "path": "/other"}, receive, send)
+    assert ("original_app", "/mcp") in calls
+    assert ("original_app", "/other") in calls
+
+    mcp_handler = routes["/mcp"]
+    pubsub = pubsub_holder["pubsub"]
+    stdio = stdio_holder["stdio"]
+
+    # Notification -> 202
+    class NotifyReq:
+        async def body(self):
+            return b'{"method":"ping"}'
+
+    notif = await mcp_handler(NotifyReq())
+    assert notif.status_code == 202
+
+    # Pubsub missing -> accepted (202)
+    pubsub.truthy = False
+
+    class IdReq:
+        async def body(self):
+            return b'{"id": 1, "method":"ping"}'
+
+    accepted = await mcp_handler(IdReq())
+    assert accepted.status_code == 202
+    pubsub.truthy = True
+
+    # TimeoutError -> accepted no response yet (covers TimeoutError break).
+    async def timeout_wait_for(queue_get_coro, timeout=None):
+        _ = timeout
+        queue_get_coro.close()
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(translate.asyncio, "wait_for", timeout_wait_for)
+    no_resp = await mcp_handler(IdReq())
+    assert no_resp.status_code == 202
+
+    # Skip non-JSON and wrong-id candidate, then timeout.
+    msgs = iter(["not json", '{\"id\": 999, \"result\": \"no\"}'])
+
+    async def seq_wait_for(queue_get_coro, timeout=None):
+        _ = timeout
+        queue_get_coro.close()
+        try:
+            return next(msgs)
+        except StopIteration:
+            raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(translate.asyncio, "wait_for", seq_wait_for)
+    no_match = await mcp_handler(IdReq())
+    assert no_match.status_code == 202
+
+    # remaining==0 path -> accept.
+    times = iter([0.0, 10.0])
+
+    class Loop:
+        def time(self):
+            return next(times)
+
+    # Patch asyncio.get_event_loop only for this call; leaving it patched breaks pytest-asyncio teardown.
+    real_get_event_loop = translate.asyncio.get_event_loop
+    translate.asyncio.get_event_loop = lambda: Loop()  # type: ignore[assignment]
+    try:
+        monkeypatch.setattr(translate.asyncio, "wait_for", timeout_wait_for)
+        remaining_zero = await mcp_handler(IdReq())
+        assert remaining_zero.status_code == 202
+    finally:
+        translate.asyncio.get_event_loop = real_get_event_loop  # type: ignore[assignment]
+
+    # stdio missing -> raise
+    stdio.truthy = False
+    with pytest.raises(RuntimeError, match="Stdio endpoint not available"):
+        await mcp_handler(IdReq())
 
 
 @pytest.mark.asyncio
