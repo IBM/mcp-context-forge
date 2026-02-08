@@ -539,7 +539,10 @@ services:
 ###############################################################################
 
   postgres:
-    image: postgres:18
+    build:
+      context: ./infra/postgres
+      dockerfile: Dockerfile
+    image: postgres:18-pgvector
     ulimits:
       nofile:
         soft: 8192
