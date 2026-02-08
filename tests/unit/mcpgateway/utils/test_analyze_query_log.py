@@ -46,6 +46,34 @@ def test_analyze_logs_basic_stats():
     assert analysis["top_n1_patterns"][0][0].startswith("t:")
 
 
+def test_analyze_logs_skips_average_calc_when_endpoint_count_zero(monkeypatch: pytest.MonkeyPatch):
+    """Cover the defensive avg-calculation guard for count==0."""
+
+    class NoCountDict(dict):
+        def __setitem__(self, key, value):
+            # Keep count at 0 to exercise the branch where avg isn't calculated.
+            if key == "count":
+                return super().__setitem__(key, 0)
+            return super().__setitem__(key, value)
+
+    class FakeDefaultDict(dict):
+        def __init__(self, factory):  # noqa: D107
+            super().__init__()
+            self._factory = factory
+
+        def __getitem__(self, key):
+            if key not in self:
+                super().__setitem__(key, NoCountDict(self._factory()))
+            return super().__getitem__(key)
+
+    monkeypatch.setattr(analyze_query_log, "defaultdict", FakeDefaultDict)
+
+    analysis = analyze_query_log.analyze_logs([{"method": "GET", "path": "/x", "query_count": 1, "total_query_ms": 1, "n1_issues": []}])
+    _endpoint, stats = analysis["endpoint_stats"][0]
+
+    assert stats["count"] == 0
+
+
 def test_print_report_outputs_summary(capsys: pytest.CaptureFixture[str]):
     analysis = {
         "total_requests": 1,
@@ -62,6 +90,28 @@ def test_print_report_outputs_summary(capsys: pytest.CaptureFixture[str]):
 
     assert "DATABASE QUERY LOG ANALYSIS" in captured
     assert "SUMMARY" in captured
+
+
+def test_print_report_outputs_high_query_recommendations(capsys: pytest.CaptureFixture[str]):
+    analysis = {
+        "total_requests": 2,
+        "total_queries": 50,
+        "avg_queries_per_request": 25.0,
+        "requests_with_n1": 0,
+        "n1_percentage": 0,
+        "endpoint_stats": [
+            ("GET /hot", {"count": 2, "total_queries": 50, "avg_queries": 25.0, "max_queries": 30, "n1_count": 0}),
+            ("GET /cold", {"count": 1, "total_queries": 1, "avg_queries": 1.0, "max_queries": 1, "n1_count": 0}),
+        ],
+        "top_n1_patterns": [],
+    }
+
+    analyze_query_log.print_report(analysis)
+    captured = capsys.readouterr().out
+
+    assert "RECOMMENDATIONS" in captured
+    assert "endpoints average >10 queries" in captured
+    assert "GET /hot" in captured
 
 
 def test_main_missing_log_file(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch):

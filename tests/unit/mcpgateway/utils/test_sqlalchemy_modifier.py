@@ -238,6 +238,60 @@ def test_json_contains_tag_expr_no_bind_collision(mock_session: Any):
     assert values == {"tag1", "tag2", "cat1", "cat2"}
 
 
+def test_json_contains_tag_expr_mysql_match_any(mock_session: Any):
+    """MySQL path uses json_search/json_contains and returns OR of conditions."""
+    mock_session.get_bind().dialect.name = "mysql"
+    col = DummyColumn(name="tags", table_name="tools")
+    expr = json_contains_tag_expr(mock_session, col, ["api", "db"], match_any=True)
+    assert isinstance(expr, BooleanClauseList)
+
+
+def test_json_contains_tag_expr_mysql_match_all(mock_session: Any):
+    """MySQL path returns AND of conditions when match_any=False."""
+    mock_session.get_bind().dialect.name = "mysql"
+    col = DummyColumn(name="tags", table_name="tools")
+    expr = json_contains_tag_expr(mock_session, col, ["api", "db"], match_any=False)
+    assert isinstance(expr, BooleanClauseList)
+
+
+def test_json_contains_expr_mysql_fallback_match_all(mock_session: Any):
+    """When JSON_OVERLAPS/JSON_CONTAINS isn't available, match_all should build AND of JSON_CONTAINS."""
+    import orjson
+
+    mock_session.get_bind().dialect.name = "mysql"
+    col = DummyColumn()
+
+    real_dumps = orjson.dumps
+
+    def dumps_side_effect(value):
+        # Trigger the except block by failing only for the list argument used in the try-path.
+        if isinstance(value, list):
+            raise Exception("boom")  # noqa: TRY002 - intentional to force fallback
+        return real_dumps(value)
+
+    with patch("mcpgateway.utils.sqlalchemy_modifier.orjson.dumps", side_effect=dumps_side_effect):
+        expr = json_contains_expr(mock_session, col, ["a", "b"], match_any=False)
+        assert isinstance(expr, BooleanClauseList)
+
+
+def test_json_contains_tag_expr_sqlite_redundant_empty_guard(mock_session: Any):
+    """Cover the defensive n==0 guard inside the sqlite branch."""
+    mock_session.get_bind().dialect.name = "sqlite"
+
+    class TruthyEmptyValues:
+        def __bool__(self) -> bool:
+            return True
+
+        def __len__(self) -> int:
+            return 0
+
+        def __iter__(self):
+            return iter(())
+
+    with patch("mcpgateway.utils.sqlalchemy_modifier._ensure_list", return_value=TruthyEmptyValues()):
+        with pytest.raises(ValueError, match="values must be non-empty"):
+            json_contains_tag_expr(mock_session, DummyColumn(name="tags", table_name="tools"), ["ignored"])
+
 def test_json_contains_tag_expr_same_column_no_collision(mock_session: Any):
     """Test that filtering the same column twice doesn't cause collision."""
     mock_session.get_bind().dialect.name = "sqlite"
