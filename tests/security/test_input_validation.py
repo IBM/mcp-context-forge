@@ -15,7 +15,7 @@ pytest test_input_validation.py -v
 pytest test_input_validation.py::TestSecurityValidation -v
 
 # Run with coverage
-pytest test_input_validation.py --cov=mcpgateway.schemas --cov=mcpgateway.validators
+pytest test_input_validation.py --cov=mcpgateway.schemas --cov=mcpgateway.common.validators
 
 # Run specific attack category
 pytest test_input_validation.py::TestSpecificAttackVectors -v
