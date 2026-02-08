@@ -168,6 +168,9 @@ def make_mock_integrity_error(msg):
         ("UNIQUE constraint failed: tools.name", "A tool with this name already exists"),
         ("UNIQUE constraint failed: resources.uri", "A resource with this URI already exists"),
         ("UNIQUE constraint failed: servers.name", "A server with this name already exists"),
+        ("UNIQUE constraint failed: prompts.name", "A prompt with this name already exists"),
+        ("UNIQUE constraint failed: servers.id", "A server with this ID already exists"),
+        ("UNIQUE constraint failed: a2a_agents.slug", "An A2A agent with this name already exists"),
         ("FOREIGN KEY constraint failed", "Referenced item not found"),
         ("NOT NULL constraint failed", "Required field is missing"),
         ("CHECK constraint failed: invalid_data", "Validation failed. Please check the input data."),
@@ -182,6 +185,14 @@ def test_format_database_error_integrity_patterns(msg, expected):
 
 def test_format_database_error_generic_integrity():
     err = make_mock_integrity_error("SOME OTHER ERROR")
+    result = ErrorFormatter.format_database_error(err)
+    assert result["message"].startswith("Unable to complete")
+    assert result["success"] is False
+
+
+def test_format_database_error_unique_constraint_unknown_table_falls_back():
+    """Unique constraint errors without a known mapping should use the generic message."""
+    err = make_mock_integrity_error("UNIQUE constraint failed: unknown.table")
     result = ErrorFormatter.format_database_error(err)
     assert result["message"].startswith("Unable to complete")
     assert result["success"] is False
