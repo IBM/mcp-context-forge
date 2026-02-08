@@ -229,6 +229,8 @@ alembic = [
 observability = [
     "opentelemetry-api>=1.39.1",
     "opentelemetry-sdk>=1.39.1",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.39.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.39.1",
 ]
 
 # Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)

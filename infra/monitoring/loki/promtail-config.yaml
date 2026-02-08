@@ -40,11 +40,10 @@ scrape_configs:
       # Try to parse JSON logs (MCP Gateway uses structured logging)
       - json:
           expressions:
-            level: level
+            level: levelname
             message: message
-            timestamp: timestamp
-            logger: logger
-            correlation_id: correlation_id
-      # Fall back to raw log if not JSON
-      - output:
-          source: message
+            timestamp: "@timestamp"
+            logger: name
+            request_id: request_id
+            trace_id: trace_id
+            span_id: span_id
