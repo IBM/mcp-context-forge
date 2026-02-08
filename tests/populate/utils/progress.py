@@ -10,7 +10,6 @@ from typing import Dict, Optional
 
 # Third-Party
 from rich.console import Console, Group, RenderableType
-from rich.layout import Layout
 from rich.live import Live
 from rich.panel import Panel
 from rich.progress import (
@@ -116,10 +115,13 @@ class MultiProgressTracker:
         self.log_buffer.append((styled_message, style))
 
     def _make_log_panel(self) -> RenderableType:
-        if not self.log_buffer:
-            return Text("Waiting for activity...", style="dim italic")
-        log_lines = [Text.from_markup(msg) for msg, _ in self.log_buffer]
-        return Group(*log_lines)
+        # Always render exactly max_log_lines to prevent layout height changes
+        lines: list[RenderableType] = []
+        for msg, _ in self.log_buffer:
+            lines.append(Text.from_markup(msg))
+        while len(lines) < self.max_log_lines:
+            lines.append(Text(""))
+        return Group(*lines)
 
     def _make_stats_table(self) -> Table:
         table = Table(show_header=False, box=None, padding=(0, 1), collapse_padding=True)
@@ -197,27 +199,21 @@ class MultiProgressTracker:
 
         return table
 
-    def _make_layout(self) -> Layout:
-        layout = Layout()
-        layout.split_column(
-            Layout(name="stats", size=8),
-            Layout(name="populators"),
-            Layout(name="progress", size=8),
-            Layout(name="logs", size=self.max_log_lines + 2),
+    def _make_layout(self) -> RenderableType:
+        # Use a simple Group instead of Layout to avoid height calculation issues
+        # that cause the terminal to jump around
+        return Group(
+            Panel(self._make_stats_table(), title="[bold]Overall Statistics[/bold]", border_style="cyan"),
+            Panel(self._make_populator_status_table(), title="[bold]Populator Status[/bold]", border_style="blue"),
+            self.progress,
+            Panel(self._make_log_panel(), title="[bold]Activity Log[/bold]", border_style="green"),
         )
-
-        layout["stats"].update(Panel(self._make_stats_table(), title="[bold]Overall Statistics[/bold]", border_style="cyan"))
-        layout["populators"].update(Panel(self._make_populator_status_table(), title="[bold]Populator Status[/bold]", border_style="blue"))
-        layout["progress"].update(self.progress)
-        layout["logs"].update(Panel(self._make_log_panel(), title="[bold]Activity Log[/bold]", border_style="green"))
-
-        return layout
 
     @contextmanager
     def live_display(self):
         try:
             if self.is_interactive:
-                with Live(self._make_layout(), console=self.console, refresh_per_second=10, transient=False, auto_refresh=True) as live:
+                with Live(self._make_layout(), console=self.console, refresh_per_second=4, transient=False, auto_refresh=True, vertical_overflow="visible") as live:
                     self.live = live
                     yield self
             else:
