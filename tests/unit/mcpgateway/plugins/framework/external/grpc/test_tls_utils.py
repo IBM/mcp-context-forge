@@ -431,3 +431,13 @@ class TestTLSUtilsIntegration:
 
                 call_kwargs = mock_ssl.call_args[1]
                 assert call_kwargs["require_client_auth"] is expected_require, f"Failed for mode={mode}"
+
+    def test_missing_certfile_raises_value_error(self):
+        """Test create_server_credentials raises ValueError when certfile is missing."""
+        from mcpgateway.plugins.framework.external.grpc.tls_utils import create_server_credentials
+
+        config = GRPCServerTLSConfig(client_auth="none")
+        assert config.certfile is None
+
+        with pytest.raises(ValueError, match="certfile.*keyfile.*required"):
+            create_server_credentials(config)

@@ -145,7 +145,7 @@ class GrpcExternalPlugin(Plugin):
                 logger.info("Retrying in %ss...", delay)
                 await asyncio.sleep(delay)
 
-        return None
+        return None  # pragma: no cover
 
     async def _get_plugin_config(self) -> Optional[PluginConfig]:
         """Retrieve plugin configuration from the remote gRPC server.
