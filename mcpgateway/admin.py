@@ -12902,7 +12902,15 @@ async def admin_test_a2a_agent(
             # JSONRPC format for agents that expect it
             test_params = {
                 "method": "message/send",
-                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": user_query}]}},
+                # A2A v0.3.x: message.parts use "kind" (not "type").
+                "params": {
+                    "message": {
+                        "kind": "message",
+                        "messageId": f"admin-test-{int(time.time())}",
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": user_query}],
+                    }
+                },
             }
         else:
             # Generic test format
