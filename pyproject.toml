@@ -46,40 +46,37 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "aiohttp>=3.13.3",
-    "alembic>=1.18.1",
+    "alembic>=1.18.3",
     "argon2-cffi>=25.1.0",
-    "cryptography>=46.0.3",
-    "fastapi>=0.128.0",
+    "cryptography>=46.0.4",
+    "fastapi>=0.128.5",
     "filelock>=3.20.3",
-    "gunicorn>=24.1.1",
+    "gunicorn>=25.0.3",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
     "jinja2>=3.1.6",
     "jq>=1.11.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.26.0",
-    "mcp>=1.25.0",
-    "oauthlib>=3.3.1",
-    "orjson>=3.11.5",
-    "parse>=1.20.2",
+    "mcp>=1.26.0",
+    "orjson>=3.11.7",
+    "parse>=1.21.0",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "prometheus_client>=0.24.1",
-    "psutil>=7.2.1",
+    "psutil>=7.2.2",
     "pydantic>=2.12.5",
     "pydantic[email]>=2.12.5",
     "pydantic-settings>=2.12.0",
-    "pyjwt>=2.10.1",
+    "pyjwt>=2.11.0",
     "python-json-logger>=4.0.0",
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.46",
     "sse-starlette>=3.2.0",
-    "starlette>=0.40.0,<0.51.0",
-    "starlette-compress>=1.6.1",
+    "starlette>=0.52.1",
+    "starlette-compress>=1.7.0",
     "typer>=0.21.1",
     "uvicorn[standard]>=0.40.0",
-    "zeroconf>=0.148.0",
 ]
 
 # ----------------------------------------------------------------
@@ -88,7 +85,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "a2a-sdk[http-server]",
-    "aiohttp>=3.12.15",
+    "aiohttp>=3.13.3",
     "argparse-manpage>=4.7",
     "autoflake>=2.3.1",
     "bandit>=1.8.6",
@@ -201,19 +198,19 @@ mariadb = [
 ]
 
 llmchat = [
-    "langchain-core>=1.2.7",
+    "langchain-core>=1.2.9",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.7",
-    "langgraph>=1.0.7",
+    "langgraph>=1.0.8",
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.150.3",
+    "hypothesis>=6.151.5",
     "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.9.4",
+    "schemathesis>=4.10.0",
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -221,23 +218,19 @@ fuzz-atheris = [
     "atheris>=3.0.0",
 ]
 
-alembic = [
-    "alembic>=1.18.1",
-]
-
 # Observability dependencies (optional)
 observability = [
     "opentelemetry-api>=1.39.1",
-    "opentelemetry-sdk>=1.39.1",
     "opentelemetry-exporter-otlp-proto-grpc>=1.39.1",
     "opentelemetry-exporter-otlp-proto-http>=1.39.1",
+    "opentelemetry-sdk>=1.39.1",
 ]
 
 # Granian HTTP server (optional, alternative to Gunicorn+Uvicorn)
 # Rust-based ASGI server with native HTTP/2, WebSocket, and mTLS support
 # Includes extras: pname (process naming), uvloop (faster event loop), reload (dev hot-reload)
 granian = [
-    "granian[pname,uvloop,reload]>=2.6.1",
+    "granian[pname,uvloop,reload]>=2.7.1",
 ]
 
 # Async SQLite Driver (optional)
@@ -257,8 +250,8 @@ asyncpg = [
 #        memray flamegraph profile.bin -o flamegraph.html
 # See docs/docs/development/profiling.md for detailed usage
 profiling = [
-    "memray>=1.17.0",
-    "py-spy>=0.4.0",
+    "memray>=1.19.1",
+    "py-spy>=0.4.1",
 ]
 
 # Plugin templating tools (optional) - copier pulls jinja2-ansible-filters which is GPL licensed
@@ -274,25 +267,25 @@ altk = [
 # Agent Lifecycle Toolkit(optional)
 toolops = [
     "agent-lifecycle-toolkit>=0.10.0",
-    "langchain-core>=1.2.7",
+    "langchain-core>=1.2.9",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.7",
-    "langgraph>=1.0.7",
+    "langgraph>=1.0.8",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
-    "grpcio>=1.76.0",
-    "grpcio-reflection>=1.76.0",
-    "grpcio-tools>=1.76.0",
-    "protobuf>=6.33.4",
+    "grpcio>=1.78.0",
+    "grpcio-reflection>=1.78.0",
+    "grpcio-tools>=1.78.0",
+    "protobuf>=6.33.5",
 ]
 
 # UI Testing
 playwright = [
-    "playwright>=1.57.0",
+    "playwright>=1.58.0",
     "pytest-html>=4.2.0",
     "pytest-playwright>=0.7.2",
     "pytest-timeout>=2.4.0",
