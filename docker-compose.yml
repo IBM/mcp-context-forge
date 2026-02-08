@@ -15,6 +15,7 @@
 #
 #  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
+#  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
@@ -48,6 +49,8 @@ volumes:                # Named volumes survive podman-compose down/up
   grafanadata:
   prometheusdata:
   lokidata:
+  tempodata:
+  locust_token:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -482,6 +485,15 @@ services:
       # - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
       # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
       # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+
+      # OpenTelemetry (Tempo / OTLP) - enabled automatically by `make monitoring-up`
+      - LOG_FORMAT=${LOG_FORMAT:-text}  # text (human) or json (Loki-friendly)
+      - OTEL_ENABLE_OBSERVABILITY=${OTEL_ENABLE_OBSERVABILITY:-false}
+      - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
 
     # TCP kernel tuning for high-concurrency MCP tool invocations
     # Each tool call creates a new connection → many TIME_WAIT sockets
@@ -946,6 +958,25 @@ services:
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
+  # Tempo - Distributed tracing backend (OTLP receiver + TraceQL query API)
+  # Completes the Grafana observability stack: Prometheus (metrics) + Loki (logs) + Tempo (traces)
+  # Query traces via Grafana Explore → Tempo datasource using TraceQL
+  # ──────────────────────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "3200:3200"      # Tempo HTTP API / query frontend
+      - "4317:4317"      # OTLP gRPC receiver
+      - "4318:4318"      # OTLP HTTP receiver
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempodata:/var/tempo
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
   # Promtail - Log collector for Loki
   # Collects logs from all containers via Docker socket
   # ──────────────────────────────────────────────────────────────────────
@@ -987,6 +1018,8 @@ services:
       - ./infra/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
+      - loki
+      - tempo
     profiles: ["monitoring"]
 
 ###############################################################################
@@ -1440,6 +1473,235 @@ services:
         "
         echo "✅ Registration complete!"
     profiles: ["testing", "monitoring"]
+
+  ###############################################################################
+  # A2A Echo Agent - Lightweight A2A-compatible agent for end-to-end testing
+  # Provides a simple JSON-RPC endpoint and A2A discovery card (no LLM dependency)
+  # Usage: docker compose --profile testing up -d
+  ###############################################################################
+  a2a_echo_agent:
+    build:
+      context: ./a2agents/go/a2a-echo-agent
+      dockerfile: Dockerfile
+    image: mcpgateway/a2a-echo-agent:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9100:9100"
+    environment:
+      - A2A_ECHO_ADDR=0.0.0.0:9100
+      - A2A_ECHO_NAME=a2a-echo-agent
+      - A2A_ECHO_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    profiles: ["testing"]
+
+  ###############################################################################
+  # Auto-registration service - registers a2a_echo_agent with gateway
+  ###############################################################################
+  register_a2a_echo:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      a2a_echo_agent:
+        condition: service_healthy
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering a2a_echo_agent with gateway..."
+
+        # Generate JWT token (stdout only)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        python3 -c "
+        import json
+        import os
+        import urllib.request
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            body = json.dumps(data).encode('utf-8') if data is not None else None
+            req = urllib.request.Request(url, data=body, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+
+        # Delete existing agent if present
+        try:
+            agents = api_request('GET', '/a2a')
+            items = agents if isinstance(agents, list) else agents.get('agents', agents.get('items', []))
+            for a in items:
+                if a.get('name') == 'a2a-echo-agent':
+                    print(f'Deleting existing A2A agent {a.get(\"id\")}...')
+                    api_request('DELETE', f'/a2a/{a.get(\"id\")}')
+        except Exception as e:
+            print(f'Note: {e}')
+
+        # Register agent (JSON-RPC endpoint at /)
+        payload = {
+            'agent': {
+                'name': 'a2a-echo-agent',
+                'description': 'Lightweight A2A echo agent for docker-compose testing',
+                'endpoint_url': 'http://a2a_echo_agent:9100/',
+                'agent_type': 'jsonrpc',
+                'protocol_version': '0.3.0',
+                'capabilities': {'echo': True, 'preferredTransport': 'JSONRPC'},
+                'tags': ['testing', 'a2a', 'echo']
+            },
+            'visibility': 'public'
+        }
+
+        result = api_request('POST', '/a2a', payload)
+        print(f'✅ Registered a2a_echo_agent: {result.get(\"id\", \"unknown\")}')
+        "
+        echo "✅ Registration complete!"
+    profiles: ["testing"]
+
+  ###############################################################################
+  # Locust JWT token generator - produces a gateway JWT for containerized load tests
+  ###############################################################################
+  locust_token:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    restart: "no"
+    # The gateway image runs as non-root (uid 1001). Docker named volumes are
+    # root-owned by default, so writing /tokens/gateway.jwt can fail unless we
+    # run this one-shot init container as root.
+    user: "0"
+    volumes:
+      - locust_token:/tokens
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "Generating JWT token for Locust..."
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        printf "%s" "$$TOKEN" > /tokens/gateway.jwt
+        echo ""
+        echo "✅ Token written to /tokens/gateway.jwt"
+    profiles: ["testing"]
+
+  ###############################################################################
+  # Locust - Containerized load testing with web UI (master + optional workers)
+  # Web UI: http://localhost:8089
+  # Target: http://nginx:80 (internal network)
+  ###############################################################################
+  locust:
+    image: locustio/locust:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    # Run as the host UID/GID (set by Makefile) so reports written to ./reports
+    # don't end up root-owned and so non-1000 host users don't hit EACCES.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    ports:
+      - "8089:8089"
+    working_dir: /mnt/locust
+    volumes:
+      - ./tests/loadtest:/mnt/locust:ro
+      - locust_token:/tokens:ro
+      - ./reports:/mnt/reports
+    depends_on:
+      gateway:
+        condition: service_healthy
+      nginx:
+        condition: service_healthy
+      locust_token:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        while [ ! -s /tokens/gateway.jwt ]; do echo "Waiting for gateway JWT..."; sleep 0.5; done
+        export MCPGATEWAY_BEARER_TOKEN="$$(cat /tokens/gateway.jwt)"
+        MODE="$${LOCUST_MODE:-master}"
+        if [ "$$MODE" = "headless" ]; then
+          exec locust -f /mnt/locust/locustfile.py \
+            --host=http://nginx:80 \
+            --users="$${LOCUST_USERS:-100}" \
+            --spawn-rate="$${LOCUST_SPAWN_RATE:-10}" \
+            --run-time="$${LOCUST_RUN_TIME:-5m}" \
+            --headless \
+            --html=/mnt/reports/locust_report.html \
+            --csv=/mnt/reports/locust \
+            --only-summary
+        fi
+
+        exec locust -f /mnt/locust/locustfile.py \
+          --host=http://nginx:80 \
+          --web-host=0.0.0.0 --web-port=8089 \
+          --master --expect-workers="$${LOCUST_EXPECT_WORKERS:-1}" \
+          --class-picker
+    environment:
+      - HOME=/tmp
+      - LOCUST_EXPECT_WORKERS=${LOCUST_EXPECT_WORKERS:-1}
+      - LOCUST_MODE=${LOCUST_MODE:-master}          # master (default) or headless
+      - LOCUST_USERS=${LOCUST_USERS:-100}
+      - LOCUST_SPAWN_RATE=${LOCUST_SPAWN_RATE:-10}
+      - LOCUST_RUN_TIME=${LOCUST_RUN_TIME:-5m}
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    profiles: ["testing"]
+
+  locust_worker:
+    image: locustio/locust:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /mnt/locust
+    volumes:
+      - ./tests/loadtest:/mnt/locust:ro
+      - locust_token:/tokens:ro
+    depends_on:
+      locust:
+        condition: service_started
+      locust_token:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        while [ ! -s /tokens/gateway.jwt ]; do echo "Waiting for gateway JWT..."; sleep 0.5; done
+        export MCPGATEWAY_BEARER_TOKEN="$$(cat /tokens/gateway.jwt)"
+        exec locust -f /mnt/locust/locustfile.py \
+          --host=http://nginx:80 \
+          --worker --master-host=locust
+    environment:
+      - HOME=/tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    profiles: ["testing"]
 
   ###############################################################################
   # Benchmark Server - Multi-server MCP benchmark tool
