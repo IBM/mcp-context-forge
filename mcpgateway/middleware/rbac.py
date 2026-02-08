@@ -440,6 +440,7 @@ _MUTATE_PERMISSION_ACTIONS = frozenset(
         "manage",
         "share",
         "invite",
+        "use",
     }
 )
 
@@ -545,13 +546,14 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     # Tier 3: Try to derive team from create payload / form
                     if team_id is None:
                         team_id = await _derive_team_from_payload(kwargs)
-                # If still no team_id: Tier 2 for read/list, fail-closed for mutate
+                # If still no team_id: Tier 2 for read/list, fail-closed-for-teams for mutate
                 if not team_id:
                     if _is_mutate_permission(permission):
-                        # Mutate without team context: resource derivation will have returned
-                        # None if no resource ID param. For creates, payload derivation returned None.
-                        # Fail closed only if there truly is no team context at all.
-                        pass  # Let standard RBAC proceed with team_id=None (global+personal only)
+                        # Mutate without team context: proceed with team_id=None which
+                        # restricts RBAC to global + personal roles only. Team-scoped
+                        # roles cannot match (fail-closed for team grants), but global
+                        # roles (e.g. platform_admin) still work as intended.
+                        pass
                     else:
                         # List/read endpoint: check if user has permission in any team
                         check_any_team = True
