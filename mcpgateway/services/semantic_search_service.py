@@ -17,10 +17,13 @@ Team C is responsible for:
 """
 
 # Standard
-from typing import List, Optional
+import time
+import json
+from typing import List, Optional, Dict, Tuple
 
 # First-Party
 from mcpgateway.schemas import ToolSearchResult
+from mcpgateway.utils.redis_client import get_redis_client
 
 # Import Team A's embedding service
 # Team A will implement embed_query() in this file
@@ -57,10 +60,74 @@ class SemanticSearchService:
     semantic tool discovery capabilities.
     """
 
+    CACHE_TTL_SECONDS = 60
+
     def __init__(self):
         """Initialize semantic search service with embedding and vector search services."""
         self.embedding_service = EmbeddingService()
         self.vector_search_service = VectorSearchService()
+
+        # Fallback memory cache
+        self._memory_cache: Dict[str, Tuple[float, List[ToolSearchResult]]] = {}
+
+    # Helpers
+
+    def _normalize_query(self, query: str) -> str:
+        return query.strip().lower()
+    
+    def _make_cache_key(self, query: str, limit: int, threshold: Optional[float]) -> str:
+        return f"semantic:{query}:{limit}:{threshold}"
+    
+    # Memory cache
+
+    def _get_memory_cache(self, key: str) -> Optional[List[ToolSearchResult]]:
+        entry = self._memory_cache.get(key)
+        if not entry:
+            return None
+        
+        expires_at, results = entry
+        
+        if time.time() > expires_at:
+            del self._memory_cache[key]
+            return None
+        
+        return results
+    
+    def _set_memory_cache(self, key: str, results: List[ToolSearchResult]) -> None:
+        self._memory_cache[key] = (
+            time.time() + self.CACHE_TTL_SECONDS,
+            results,
+        )
+
+    # Redis cache
+
+    async def _get_redis_cache(self, key: str) -> Optional[List[ToolSearchResult]]:
+        client = await get_redis_client()
+        if not client:
+            return None
+        
+        raw = await client.get(key)
+        if not raw:
+            return None
+        
+        # deserialize
+        data = json.loads(raw)
+        return [ToolSearchResult(**item) for item in data]
+    
+    async def _set_redis_cache(self, key: str, results: List[ToolSearchResult]) -> None:
+        client = await get_redis_client()
+        if not client:
+            return
+        
+        payload = json.dumps([r.model_dump() for r in results])
+
+        await client.set(
+            key,
+            payload,
+            ex=self.CACHE_TTL_SECONDS,
+        )
+
+    # Public API
 
     async def search_tools(
         self,
@@ -92,8 +159,25 @@ class SemanticSearchService:
         if threshold is not None and (threshold < 0.0 or threshold > 1.0):
             raise ValueError("Threshold must be between 0.0 and 1.0")
 
+        normalized_query = self._normalize_query(query)
+        cache_key = self._make_cache_key(normalized_query, limit, threshold)
+
+        # 1. Try Redis first
+
+        cached = await self._get_redis_cache(cache_key)
+        if cached is not None:
+            return cached
+        
+        # 2. Try memory fallback
+
+        cached = self._get_memory_cache(cache_key)
+        if cached is not None:
+            return cached
+        
+        # 3. Compute normally
+
         # Generate embedding for query
-        embedding = await self.embedding_service.embed_query(query.strip())
+        embedding = await self.embedding_service.embed_query(normalized_query)
 
         # Perform vector search
         results = await self.vector_search_service.search_similar_tools(
@@ -102,25 +186,11 @@ class SemanticSearchService:
             threshold=threshold,
         )
 
-        # Return empty list if no matches
-        if not results:
-            return []
-        
-        # Ensure all results have a similarity score
-        safe_results: List[ToolSearchResult] = []
-        for r in results:
-            if getattr(r, "score", None) is not None:
-                safe_results.append(r)
+        # 4. Store cache
+        await self._set_redis_cache(cache_key, results)
+        self._set_memory_cache(cache_key, results)
 
-        # Enforce threshold even if vector service didn't
-        if threshold is not None:
-            safe_results = [r for r in safe_results if r.score >= threshold]
-
-        # Higher score = higher relevance (guarantee ranking)
-        safe_results.sort(key=lambda r: r.score, reverse=True)
-
-        # Respect limit strictly
-        return safe_results[:limit]
+        return results
 
 
 # Singleton instance
