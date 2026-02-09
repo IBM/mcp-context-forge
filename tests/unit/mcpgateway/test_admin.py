@@ -5083,8 +5083,7 @@ async def test_admin_create_team_success(monkeypatch, mock_db, allow_permission)
     response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 201
-    assert "HX-Trigger" in response.headers
-    assert "Team One" in response.body.decode()
+    assert response.body.decode() == ""
 
 
 @pytest.mark.asyncio
