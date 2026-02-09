@@ -2677,3 +2677,352 @@ class TestInvokeResourceCoverage:
                 db, "res-1", "http://test.com",
                 resource_obj=resource, gateway_obj=gateway,
             )
+
+
+# ============================================================================
+# set_resource_state lock and permission error paths
+# ============================================================================
+
+
+class TestSetResourceStateLockAndPermission:
+    """Tests for set_resource_state OperationalError and PermissionError paths."""
+
+    @pytest.fixture
+    def resource_service(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        return ResourceService()
+
+    @pytest.mark.asyncio
+    async def test_lock_conflict_raises_error(self, resource_service):
+        """OperationalError from get_for_update raises ResourceLockConflictError."""
+        from mcpgateway.services.resource_service import ResourceLockConflictError
+        from sqlalchemy.exc import OperationalError
+
+        db = MagicMock()
+        with patch("mcpgateway.services.resource_service.get_for_update", side_effect=OperationalError("locked", {}, None)):
+            with pytest.raises(ResourceLockConflictError):
+                await resource_service.set_resource_state(db, "res-1", activate=True)
+        db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_permission_error_activate(self, resource_service):
+        """set_resource_state raises PermissionError when user doesn't own resource."""
+        db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.id = "res-1"
+        mock_resource.name = "Test Resource"
+        mock_resource.enabled = False
+
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
+             patch("mcpgateway.services.resource_service.PermissionService") as MockPS:
+            mock_ps = AsyncMock()
+            mock_ps.check_resource_ownership = AsyncMock(return_value=False)
+            MockPS.return_value = mock_ps
+            with pytest.raises(PermissionError):
+                await resource_service.set_resource_state(db, "res-1", activate=True, user_email="notowner@test.com")
+
+    @pytest.mark.asyncio
+    async def test_permission_error_deactivate(self, resource_service):
+        """set_resource_state raises PermissionError for deactivation."""
+        db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.id = "res-1"
+        mock_resource.name = "Test Resource"
+        mock_resource.enabled = True
+
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
+             patch("mcpgateway.services.resource_service.PermissionService") as MockPS:
+            mock_ps = AsyncMock()
+            mock_ps.check_resource_ownership = AsyncMock(return_value=False)
+            MockPS.return_value = mock_ps
+            with pytest.raises(PermissionError):
+                await resource_service.set_resource_state(db, "res-1", activate=False, user_email="notowner@test.com")
+
+
+# ============================================================================
+# delete_resource permission and metrics purge paths
+# ============================================================================
+
+
+class TestDeleteResourcePermissionAndPurge:
+    """Tests for delete_resource PermissionError and purge_metrics paths."""
+
+    @pytest.fixture
+    def resource_service(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        return ResourceService()
+
+    @pytest.mark.asyncio
+    async def test_permission_error_on_delete(self, resource_service):
+        """delete_resource raises PermissionError when user doesn't own resource."""
+        db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.id = "res-1"
+        mock_resource.name = "Test Resource"
+        mock_resource.uri = "http://example.com"
+        mock_resource.tags = []
+        mock_resource.team_id = None
+
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
+             patch("mcpgateway.services.resource_service.PermissionService") as MockPS:
+            mock_ps = AsyncMock()
+            mock_ps.check_resource_ownership = AsyncMock(return_value=False)
+            MockPS.return_value = mock_ps
+            with pytest.raises(PermissionError):
+                await resource_service.delete_resource(db, "res-1", user_email="notowner@test.com")
+        db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_with_purge_metrics(self, resource_service):
+        """delete_resource with purge_metrics=True calls delete_metrics_in_batches."""
+        db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.id = "res-1"
+        mock_resource.name = "Test Resource"
+        mock_resource.uri = "http://example.com"
+        mock_resource.description = "A resource"
+        mock_resource.enabled = True
+        mock_resource.tags = []
+        mock_resource.team_id = None
+        mock_resource.gateway_id = None
+        mock_resource.__dict__ = {"id": "res-1", "name": "Test Resource", "_sa_instance_state": MagicMock()}
+
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
+             patch("mcpgateway.services.resource_service.delete_metrics_in_batches") as mock_delete, \
+             patch("mcpgateway.services.resource_service.pause_rollup_during_purge") as mock_pause, \
+             patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache, \
+             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+            mock_pause.return_value.__enter__ = MagicMock()
+            mock_pause.return_value.__exit__ = MagicMock(return_value=False)
+            mock_cache.return_value = MagicMock()
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            await resource_service.delete_resource(db, "res-1", purge_metrics=True)
+        assert mock_delete.call_count == 2  # ResourceMetric + ResourceMetricsHourly
+
+
+# ============================================================================
+# update_resource permission and URI conflict paths
+# ============================================================================
+
+
+class TestUpdateResourcePermissionAndConflict:
+    """Tests for update_resource PermissionError and URI conflict paths."""
+
+    @pytest.fixture
+    def resource_service(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        return ResourceService()
+
+    @pytest.mark.asyncio
+    async def test_permission_error_on_update(self, resource_service):
+        """update_resource raises PermissionError when user doesn't own resource."""
+        db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.id = "res-1"
+        mock_resource.name = "Test Resource"
+        mock_resource.uri = "http://example.com"
+        mock_resource.visibility = "public"
+
+        update = ResourceUpdate(name="Updated")
+
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
+             patch("mcpgateway.services.resource_service.PermissionService") as MockPS:
+            mock_ps = AsyncMock()
+            mock_ps.check_resource_ownership = AsyncMock(return_value=False)
+            MockPS.return_value = mock_ps
+            with pytest.raises(PermissionError):
+                await resource_service.update_resource(db, "res-1", update, user_email="notowner@test.com")
+        db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_uri_conflict_public_resource(self, resource_service):
+        """update_resource raises ResourceURIConflictError for public URI conflict."""
+        from mcpgateway.services.resource_service import ResourceURIConflictError
+
+        db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.id = "res-1"
+        mock_resource.name = "Test Resource"
+        mock_resource.uri = "http://example.com"
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+        mock_resource.version = 1
+        mock_resource.tags = []
+        mock_resource.description = "desc"
+        mock_resource.mime_type = "text/plain"
+
+        # Existing resource with same URI
+        existing = MagicMock()
+        existing.id = "res-2"
+        existing.enabled = True
+
+        update = ResourceUpdate(uri="http://conflict.com")
+
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource):
+            # Mock DB query for URI conflict check
+            db.execute.return_value.scalar_one_or_none.return_value = existing
+            with pytest.raises(ResourceURIConflictError):
+                await resource_service.update_resource(db, "res-1", update)
+
+
+# ============================================================================
+# convert_resource_to_read with metrics
+# ============================================================================
+
+
+class TestConvertResourceToReadMetrics:
+    """Tests for convert_resource_to_read with include_metrics=True."""
+
+    @pytest.fixture
+    def resource_service(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        return ResourceService()
+
+    def test_include_metrics_true_with_data(self, resource_service):
+        """convert_resource_to_read aggregates metrics when include_metrics=True."""
+        from types import SimpleNamespace
+        now = datetime.now(timezone.utc)
+        m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
+        m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
+        resource = SimpleNamespace(
+            id="39334ce0ed2644d79ede8913a66930c9",
+            uri="res://x",
+            name="R",
+            description="desc",
+            mime_type="text/plain",
+            size=123,
+            created_at=now,
+            updated_at=now,
+            enabled=True,
+            tags=[],
+            metrics=[m1, m2],
+            uri_template=None,
+            team_id=None,
+            team=None,
+            visibility="public",
+            owner_email=None,
+            gateway_id=None,
+            version=1,
+            created_by="user@test.com",
+            modified_by="user@test.com",
+            _sa_instance_state=MagicMock(),
+        )
+        result = resource_service.convert_resource_to_read(resource, include_metrics=True)
+        assert result.metrics is not None
+        assert result.metrics.total_executions == 2
+        assert result.metrics.successful_executions == 1
+        assert result.metrics.failed_executions == 1
+
+    def test_include_metrics_true_empty(self, resource_service):
+        """convert_resource_to_read with no metrics gives zeros."""
+        from types import SimpleNamespace
+        now = datetime.now(timezone.utc)
+        resource = SimpleNamespace(
+            id="39334ce0ed2644d79ede8913a66930c9",
+            uri="res://x",
+            name="R",
+            description="desc",
+            mime_type="text/plain",
+            size=0,
+            created_at=now,
+            updated_at=now,
+            enabled=True,
+            tags=[],
+            metrics=[],
+            uri_template=None,
+            team_id=None,
+            team=None,
+            visibility="public",
+            owner_email=None,
+            gateway_id=None,
+            version=1,
+            created_by="user@test.com",
+            modified_by="user@test.com",
+            _sa_instance_state=MagicMock(),
+        )
+        result = resource_service.convert_resource_to_read(resource, include_metrics=True)
+        assert result.metrics is not None
+        assert result.metrics.total_executions == 0
+
+    def test_include_metrics_false(self, resource_service):
+        """convert_resource_to_read with include_metrics=False gives None metrics."""
+        from types import SimpleNamespace
+        now = datetime.now(timezone.utc)
+        resource = SimpleNamespace(
+            id="39334ce0ed2644d79ede8913a66930c9",
+            uri="res://x",
+            name="R",
+            description="desc",
+            mime_type="text/plain",
+            size=0,
+            created_at=now,
+            updated_at=now,
+            enabled=True,
+            tags=[],
+            metrics=[],
+            uri_template=None,
+            team_id=None,
+            team=None,
+            visibility="public",
+            owner_email=None,
+            gateway_id=None,
+            version=1,
+            created_by="user@test.com",
+            modified_by="user@test.com",
+            _sa_instance_state=MagicMock(),
+        )
+        result = resource_service.convert_resource_to_read(resource, include_metrics=False)
+        assert result.metrics is None
+
+
+# ============================================================================
+# Resource notification methods
+# ============================================================================
+
+
+class TestResourceNotificationMethods:
+    """Tests for resource event notification methods."""
+
+    @pytest.fixture
+    def resource_service(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        svc = ResourceService()
+        svc._event_service = AsyncMock()
+        return svc
+
+    @pytest.fixture
+    def mock_resource(self):
+        resource = MagicMock()
+        resource.id = "res-1"
+        resource.uri = "http://example.com/res"
+        resource.name = "Test"
+        resource.description = "Test resource"
+        resource.enabled = True
+        return resource
+
+    @pytest.mark.asyncio
+    async def test_notify_resource_added(self, resource_service, mock_resource):
+        """_notify_resource_added publishes resource_added event."""
+        await resource_service._notify_resource_added(mock_resource)
+
+    @pytest.mark.asyncio
+    async def test_notify_resource_updated(self, resource_service, mock_resource):
+        """_notify_resource_updated publishes resource_updated event."""
+        await resource_service._notify_resource_updated(mock_resource)
+
+    @pytest.mark.asyncio
+    async def test_notify_resource_activated(self, resource_service, mock_resource):
+        """_notify_resource_activated publishes resource_activated event."""
+        await resource_service._notify_resource_activated(mock_resource)
+
+    @pytest.mark.asyncio
+    async def test_notify_resource_deactivated(self, resource_service, mock_resource):
+        """_notify_resource_deactivated publishes resource_deactivated event."""
+        mock_resource.enabled = False
+        await resource_service._notify_resource_deactivated(mock_resource)
+
+    @pytest.mark.asyncio
+    async def test_notify_resource_deleted(self, resource_service):
+        """_notify_resource_deleted publishes resource_deleted event with dict payload."""
+        resource_info = {"id": "res-1", "uri": "http://example.com", "name": "Test"}
+        await resource_service._notify_resource_deleted(resource_info)

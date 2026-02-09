@@ -2664,3 +2664,295 @@ class TestToolHealthValidationCoverage:
         tool = MagicMock(spec=DbTool)
         tool.url = "http://example.com"
         assert await tool_service._check_tool_health(tool) is False
+
+
+# ============================================================================
+# Notification methods coverage
+# ============================================================================
+
+
+class TestToolNotificationMethods:
+    """Tests for tool event notification methods."""
+
+    @pytest.fixture
+    def tool_service(self):
+        service = ToolService()
+        service._http_client = AsyncMock()
+        service._event_service = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def mock_tool(self):
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool-1"
+        tool.name = "test_tool"
+        tool.url = "http://example.com/tool"
+        tool.description = "A test tool"
+        tool.enabled = True
+        tool.reachable = True
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_updated(self, tool_service, mock_tool):
+        """_notify_tool_updated publishes tool_updated event."""
+        await tool_service._notify_tool_updated(mock_tool)
+        tool_service._event_service._publish_event.assert_not_called()  # It uses _publish_event on self
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_activated(self, tool_service, mock_tool):
+        """_notify_tool_activated publishes tool_activated event."""
+        await tool_service._notify_tool_activated(mock_tool)
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_deactivated(self, tool_service, mock_tool):
+        """_notify_tool_deactivated publishes tool_deactivated event."""
+        mock_tool.enabled = False
+        await tool_service._notify_tool_deactivated(mock_tool)
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_deleted(self, tool_service):
+        """_notify_tool_deleted publishes tool_deleted event with dict payload."""
+        tool_info = {"id": "tool-1", "name": "test_tool", "url": "http://example.com"}
+        await tool_service._notify_tool_deleted(tool_info)
+
+
+# ============================================================================
+# set_tool_state error paths
+# ============================================================================
+
+
+class TestSetToolStateLockAndPermission:
+    """Tests for set_tool_state lock conflict and permission error paths."""
+
+    @pytest.fixture
+    def tool_service(self):
+        service = ToolService()
+        service._http_client = AsyncMock()
+        service._event_service = AsyncMock()
+        return service
+
+    @pytest.mark.asyncio
+    async def test_lock_conflict_raises_tool_lock_conflict_error(self, tool_service):
+        """OperationalError from get_for_update raises ToolLockConflictError."""
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=OperationalError("locked", {}, None)):
+            with pytest.raises(ToolLockConflictError, match="currently being modified"):
+                await tool_service.set_tool_state(db, "tool-1", activate=True, reachable=True)
+        db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_permission_error_activate(self, tool_service):
+        """set_tool_state raises PermissionError when user doesn't own tool (activate)."""
+        db = MagicMock()
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.id = "tool-1"
+        mock_tool.name = "test_tool"
+        mock_tool.enabled = False
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), \
+             patch("mcpgateway.services.tool_service.PermissionService") as MockPS:
+            mock_ps = AsyncMock()
+            mock_ps.check_resource_ownership = AsyncMock(return_value=False)
+            MockPS.return_value = mock_ps
+            with pytest.raises(PermissionError, match="owner can activate"):
+                await tool_service.set_tool_state(db, "tool-1", activate=True, reachable=True, user_email="notowner@test.com")
+
+    @pytest.mark.asyncio
+    async def test_permission_error_deactivate(self, tool_service):
+        """set_tool_state raises PermissionError when user doesn't own tool (deactivate)."""
+        db = MagicMock()
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.id = "tool-1"
+        mock_tool.name = "test_tool"
+        mock_tool.enabled = True
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), \
+             patch("mcpgateway.services.tool_service.PermissionService") as MockPS:
+            mock_ps = AsyncMock()
+            mock_ps.check_resource_ownership = AsyncMock(return_value=False)
+            MockPS.return_value = mock_ps
+            with pytest.raises(PermissionError, match="owner can deactivate"):
+                await tool_service.set_tool_state(db, "tool-1", activate=False, reachable=False, user_email="notowner@test.com")
+
+
+# ============================================================================
+# delete_tool permission and metrics purge
+# ============================================================================
+
+
+class TestDeleteToolPermissionAndPurge:
+    """Tests for delete_tool PermissionError and purge_metrics paths."""
+
+    @pytest.fixture
+    def tool_service(self):
+        service = ToolService()
+        service._http_client = AsyncMock()
+        service._event_service = AsyncMock()
+        return service
+
+    @pytest.mark.asyncio
+    async def test_permission_error_on_delete(self, tool_service):
+        """delete_tool raises PermissionError when user doesn't own tool."""
+        db = MagicMock()
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.id = "tool-1"
+        mock_tool.name = "test_tool"
+        mock_tool.url = "http://example.com"
+        mock_tool.tags = []
+        mock_tool.team_id = None
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), \
+             patch("mcpgateway.services.tool_service.PermissionService") as MockPS:
+            mock_ps = AsyncMock()
+            mock_ps.check_resource_ownership = AsyncMock(return_value=False)
+            MockPS.return_value = mock_ps
+            with pytest.raises(PermissionError, match="owner can delete"):
+                await tool_service.delete_tool(db, "tool-1", user_email="notowner@test.com")
+        db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_with_purge_metrics(self, tool_service):
+        """delete_tool with purge_metrics=True calls delete_metrics_in_batches."""
+        db = MagicMock()
+        mock_tool = MagicMock(spec=DbTool)
+        mock_tool.id = "tool-1"
+        mock_tool.name = "test_tool"
+        mock_tool.url = "http://example.com"
+        mock_tool.description = "A tool"
+        mock_tool.enabled = True
+        mock_tool.tags = []
+        mock_tool.team_id = None
+        mock_tool.gateway_id = None
+        mock_tool.__dict__ = {"id": "tool-1", "name": "test_tool", "_sa_instance_state": MagicMock()}
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), \
+             patch("mcpgateway.services.tool_service.delete_metrics_in_batches") as mock_delete, \
+             patch("mcpgateway.services.tool_service.pause_rollup_during_purge") as mock_pause, \
+             patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache, \
+             patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_tool_cache, \
+             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+            mock_pause.return_value.__enter__ = MagicMock()
+            mock_pause.return_value.__exit__ = MagicMock(return_value=False)
+            mock_cache.return_value = MagicMock()
+            mock_tool_cache.return_value = MagicMock()
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            await tool_service.delete_tool(db, "tool-1", purge_metrics=True)
+        assert mock_delete.call_count == 2  # ToolMetric + ToolMetricsHourly
+
+
+# ============================================================================
+# convert_tool_to_read with metrics
+# ============================================================================
+
+
+class TestConvertToolToReadMetrics:
+    """Tests for convert_tool_to_read with include_metrics=True."""
+
+    @pytest.fixture
+    def tool_service(self):
+        service = ToolService()
+        service._http_client = AsyncMock()
+        return service
+
+    def test_include_metrics_true(self, tool_service):
+        """convert_tool_to_read with include_metrics=True populates metrics."""
+        now = datetime.now(timezone.utc)
+        tool = SimpleNamespace(
+            id="abcdef1234567890abcdef1234567890",
+            name="test_tool",
+            slug="test-tool",
+            display_name="Test Tool",
+            description="A test tool",
+            url="http://example.com/tool",
+            input_schema={"type": "object"},
+            output_schema=None,
+            jq_filter=None,
+            pre_tool_code=None,
+            post_tool_code=None,
+            enabled=True,
+            reachable=True,
+            created_at=now,
+            updated_at=now,
+            created_by="user@test.com",
+            modified_by="user@test.com",
+            tags=[],
+            team_id=None,
+            team=None,
+            visibility="public",
+            owner_email=None,
+            gateway_id=None,
+            gateway=None,
+            a2a_agent_id=None,
+            a2a_agent=None,
+            auth_type=None,
+            auth_value={},
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            version=1,
+            passthrough_headers=[],
+            execution_count=None,
+            metrics=[],
+            metrics_summary={
+                "total_executions": 5,
+                "successful_executions": 4,
+                "failed_executions": 1,
+                "failure_rate": 0.2,
+                "min_response_time": 0.05,
+                "max_response_time": 1.2,
+                "avg_response_time": 0.5,
+                "last_execution_time": now.isoformat(),
+            },
+            _sa_instance_state=MagicMock(),
+        )
+        result = tool_service.convert_tool_to_read(tool, include_metrics=True)
+        assert result.metrics is not None
+        assert result.execution_count == 5
+
+    def test_include_metrics_false(self, tool_service):
+        """convert_tool_to_read with include_metrics=False gives None metrics."""
+        now = datetime.now(timezone.utc)
+        tool = SimpleNamespace(
+            id="abcdef1234567890abcdef1234567890",
+            name="test_tool",
+            slug="test-tool",
+            display_name="Test Tool",
+            description="A test tool",
+            url="http://example.com/tool",
+            input_schema={"type": "object"},
+            output_schema=None,
+            jq_filter=None,
+            pre_tool_code=None,
+            post_tool_code=None,
+            enabled=True,
+            reachable=True,
+            created_at=now,
+            updated_at=now,
+            created_by="user@test.com",
+            modified_by="user@test.com",
+            tags=[],
+            team_id=None,
+            team=None,
+            visibility="public",
+            owner_email=None,
+            gateway_id=None,
+            gateway=None,
+            a2a_agent_id=None,
+            a2a_agent=None,
+            auth_type=None,
+            auth_value={},
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            version=1,
+            passthrough_headers=[],
+            execution_count=None,
+            metrics=[],
+            metrics_summary={},
+            _sa_instance_state=MagicMock(),
+        )
+        result = tool_service.convert_tool_to_read(tool, include_metrics=False)
+        assert result.metrics is None
+        assert result.execution_count is None
