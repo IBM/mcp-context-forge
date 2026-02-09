@@ -435,19 +435,19 @@ class EmailAuthService:
                             logger.warning(f"team_admin role not found. User {email} created without team admin role.")
 
                 else:
-                    # Non-admin users get: viewer (global) + team_admin (team-scoped to personal team)
+                    # Non-admin users get: platform_viewer_role (global) + team_admin (team-scoped to personal team)
 
-                    # 1. Assign viewer role with global scope
-                    viewer_role = self.db.execute(select(Role).where(and_(Role.name == "viewer", Role.is_active.is_(True)))).scalar_one_or_none()
+                    # 1. Assign platform_viewer_role role with global scope
+                    platform_viewer_role = self.db.execute(select(Role).where(and_(Role.name == "platform_viewer", Role.is_active.is_(True)))).scalar_one_or_none()
 
-                    if viewer_role:
+                    if platform_viewer_role:
                         try:
-                            await role_service.assign_role_to_user(user_email=email, role_id=viewer_role.id, scope="global", scope_id=None, granted_by=granter)
-                            logger.info(f"Assigned viewer role (global scope) to user {email}")
+                            await role_service.assign_role_to_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None, granted_by=granter)
+                            logger.info(f"Assigned platform_viewer role (global scope) to user {email}")
                         except ValueError as e:
                             logger.warning(f"Could not assign viewer role to {email}: {e}")
                     else:
-                        logger.warning(f"viewer role not found. User {email} created without global viewer role.")
+                        logger.warning(f"platform_viewer role not found. User {email} created without global viewer role.")
 
                     # 2. Assign team_admin role with team scope (if personal team exists)
                     if personal_team_id:
