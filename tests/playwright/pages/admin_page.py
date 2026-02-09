@@ -174,7 +174,7 @@ class AdminPage(BasePage):
     @property
     def add_server_btn(self) -> Locator:
         """Add server submit button."""
-        return self.add_server_form.locator('button[type="submit"]')
+        return self.add_server_form.get_by_role("button", name="Add Server")
 
     @property
     def search_input(self) -> Locator:
