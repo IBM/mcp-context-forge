@@ -24,6 +24,7 @@ class MockPermissionService:
 
     # Class-level mock that can be patched by individual tests
     check_permission = AsyncMock(return_value=True)
+    check_admin_permission = AsyncMock(return_value=True)
 
     def __init__(self, db=None):
         self.db = db
@@ -50,5 +51,6 @@ def mock_permission_service(monkeypatch):
 
     # Reset the mock before each test to ensure clean state
     MockPermissionService.check_permission = AsyncMock(return_value=True)
+    MockPermissionService.check_admin_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     return MockPermissionService
