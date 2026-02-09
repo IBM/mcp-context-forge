@@ -29,4 +29,3 @@ storage:
       path: /var/tempo/wal
 
 search_enabled: true
-
