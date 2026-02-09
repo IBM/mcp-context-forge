@@ -6683,10 +6683,21 @@ async def admin_tools_partial_html(
     # Team names are loaded via joinedload(DbTool.email_team) in the query
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email)
     tools_pydantic = []
     for t in tools_db:
         try:
-            tools_pydantic.append(tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False))
+            tools_pydantic.append(
+                tool_service.convert_tool_to_read(
+                    t,
+                    include_metrics=False,
+                    include_auth=False,
+                    requesting_user_email=user_email,
+                    requesting_user_is_admin=_is_admin,
+                    requesting_user_team_roles=_team_roles,
+                )
+            )
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
 
@@ -6727,8 +6738,6 @@ async def admin_tools_partial_html(
         )
 
     # Render template with paginated data
-    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
-    _team_roles = _get_user_team_roles(db, user_email)
     return request.app.state.templates.TemplateResponse(
         request,
         "tools_partial.html",
@@ -6838,10 +6847,19 @@ async def admin_tool_ops_partial(
     )
 
     tools_db = paginated_result["data"]
-    tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False) for t in tools_db]
-
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     _team_roles = _get_user_team_roles(db, user_email)
+    tools_pydantic = [
+        tool_service.convert_tool_to_read(
+            t,
+            include_metrics=False,
+            include_auth=False,
+            requesting_user_email=user_email,
+            requesting_user_is_admin=_is_admin,
+            requesting_user_team_roles=_team_roles,
+        )
+        for t in tools_db
+    ]
     db.commit()
 
     return request.app.state.templates.TemplateResponse(

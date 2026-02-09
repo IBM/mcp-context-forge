@@ -19,7 +19,7 @@
       {% set prompt_label = prompt.displayName or prompt.originalName or prompt.name or prompt.id %}
       {% set prompt_gateway = prompt.gatewaySlug or 'Local' %}
       {% set prompt_tech_name = prompt.name or prompt.originalName or prompt.id %}
-      {% set can_modify = is_admin or prompt.owner_email == current_user_email or prompt.ownerEmail == current_user_email or (prompt.teamId and user_team_roles.get(prompt.teamId|string) == 'owner') or (prompt.team_id and user_team_roles.get(prompt.team_id|string) == 'owner') %}
+      {% set can_modify = is_admin or prompt.owner_email == current_user_email or prompt.ownerEmail == current_user_email or (prompt.visibility == 'team' and prompt.teamId and user_team_roles.get(prompt.teamId|string) == 'owner') or (prompt.visibility == 'team' and prompt.team_id and user_team_roles.get(prompt.team_id|string) == 'owner') %}
       <tr data-enabled="{{ prompt.enabled|lower }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
@@ -63,7 +63,7 @@
         </td>
         <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{% set clean_desc = (prompt.description or "") | replace('\n', ' ') | replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags | trim | escape %} {% if refactor_desc | length is greaterthan 220 %} {{ refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}</td>
         <td class="px-6 py-4 whitespace-nowrap">{% if prompt.tags %} {% for tag in prompt.tags %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}</span>{% endfor %} {% else %}<span class="text-gray-500 dark:text-gray-300 text-xs">None</span>{% endif %}</td>
-        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{{ prompt.owner_email }}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{{ prompt.ownerEmail or prompt.owner_email }}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{% if prompt.team %}{{ prompt.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm w-20">
           <div class="flex flex-col gap-1">

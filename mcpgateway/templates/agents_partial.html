@@ -19,7 +19,7 @@
   <tbody id="agents-table-body" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
     {% for agent in data %}
     {% set agent_label = agent.name or agent.id %}
-    {% set can_modify = is_admin or agent.ownerEmail == current_user_email or (agent.teamId and user_team_roles.get(agent.teamId|string) == 'owner') %}
+    {% set can_modify = is_admin or agent.ownerEmail == current_user_email or (agent.visibility == 'team' and agent.teamId and user_team_roles.get(agent.teamId|string) == 'owner') %}
       <tr data-enabled="{{ agent.enabled|lower }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
