@@ -482,8 +482,8 @@ def _is_api_token_jti_sync(jti: str) -> bool:
                     return value
                 # expired
                 _api_jti_cache.pop(jti, None)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).debug("API JTI cache lookup failed: %s", e)
 
     # Cache miss: query DB and populate cache
     try:
@@ -493,8 +493,8 @@ def _is_api_token_jti_sync(jti: str) -> bool:
             try:
                 with _api_jti_lock:
                     _api_jti_cache[jti] = (exists, time.time() + _api_jti_ttl)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.getLogger(__name__).debug("Failed to write API JTI cache: %s", e)
             return exists
     except Exception as e:
         logging.getLogger(__name__).warning(f"Legacy API token check failed, failing closed: {e}")
@@ -628,11 +628,11 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                 try:
                     with _api_jti_lock:
                         _api_jti_cache[jti] = (is_api_token, time.time() + _api_jti_ttl)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logging.getLogger(__name__).debug("Failed to prime API JTI cache: %s", e)
             except Exception:
                 # Don't fail the whole auth flow on caching errors
-                pass
+                logging.getLogger(__name__).debug("Unable to prime API JTI cache: %s", exc_info=True)
 
         return result
 
