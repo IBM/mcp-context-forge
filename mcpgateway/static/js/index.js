@@ -54,6 +54,20 @@ Admin.removeAuthHeader = removeAuthHeader;
 Admin.updateAuthHeadersJSON = updateAuthHeadersJSON;
 Admin.fetchToolsForGateway = fetchToolsForGateway;
 
+// File Transfer
+import { 
+  previewImport, 
+  resetImportFile 
+} from './fileTransfer.js';
+
+Admin.previewImport = previewImport;
+Admin.resetImportFile = resetImportFile;
+
+// Form Fields
+import { updateRequestTypeOptions } from './formFieldHandlers.js';
+
+Admin.updateRequestTypeOptions = updateRequestTypeOptions;
+
 // Form Handlers
 import {
   handleToggleSubmit,
@@ -64,6 +78,25 @@ import {
 Admin.handleToggleSubmit = handleToggleSubmit;
 Admin.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 Admin.handleDeleteSubmit = handleDeleteSubmit;
+
+// LLM Chat
+import {
+  connectLLMChat,
+  disconnectLLMChat,
+  handleChatInputKeydown,
+  handleLLMModelChange,
+  loadVirtualServersForChat,
+  selectServerForChat,
+  sendChatMessage,
+} from './llmChat.js';
+
+Admin.connectLLMChat = connectLLMChat;
+Admin.disconnectLLMChat = disconnectLLMChat;
+Admin.handleChatInputKeydown = handleChatInputKeydown;
+Admin.handleLLMModelChange = handleLLMModelChange;
+Admin.loadVirtualServersForChat = loadVirtualServersForChat;
+Admin.selectServerForChat = selectServerForChat;
+Admin.sendChatMessage = sendChatMessage;
 
 // MCP Controller
 import {

@@ -1,3 +1,4 @@
+import { generateSchema } from './formFieldHandlers';
 import { 
   validateInputName, 
   validateJson, 
@@ -592,7 +593,7 @@ export const handleToolFormSubmit = async function (event) {
     );
     if (mode && mode.value === "ui") {
       if (window.schemaEditor) {
-        const generatedSchema = Admin.generateSchema();
+        const generatedSchema = generateSchema();
         const schemaValidation = validateJson(
           generatedSchema,
           "Generated Schema",

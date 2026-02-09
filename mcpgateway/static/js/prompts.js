@@ -1,7 +1,7 @@
 import { AppState } from "./appState";
 import { openModal } from "./modals";
 import { escapeHtml } from "./security";
-import { safeGetElement, showErrorMessage } from "./utils";
+import { getCurrentTeamId, safeGetElement, showErrorMessage } from "./utils";
 
 export const initPromptSelect = function (
   selectId,
@@ -219,7 +219,7 @@ export const initPromptSelect = function (
           const selectedGatewayIds = Admin.getSelectedGatewayIds
           ? Admin.getSelectedGatewayIds()
           : [];
-          const selectedTeamId = Admin.getCurrentTeamId();
+          const selectedTeamId = getCurrentTeamId();
           const params = new URLSearchParams();
           if (selectedGatewayIds && selectedGatewayIds.length) {
             params.set("gateway_id", selectedGatewayIds.join(","));

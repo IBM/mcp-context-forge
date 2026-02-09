@@ -1,6 +1,7 @@
 import { loadAuthHeaders, updateAuthHeadersJSON } from './auth';
 import { getCatalogUrl } from './configExport';
 import { MASKED_AUTH_VALUE } from './constants';
+import { updateEditToolRequestTypes } from './formFieldHandlers';
 import { openModal } from './modals';
 import { initResourceSelect } from './resources';
 import { validateInputName, validateJson, validateUrl } from './security';
@@ -208,7 +209,7 @@ export const editTool = async function (toolId) {
             } else {
                 typeField.disabled = false;
             }
-            Admin.updateEditToolRequestTypes(tool.requestType || null); // preselect from DB
+            updateEditToolRequestTypes(tool.requestType || null); // preselect from DB
             Admin.updateEditToolUrl(tool.url || null);
         }
 
@@ -316,7 +317,7 @@ export const editTool = async function (toolId) {
                 }
             }
             // Update request types and URL field
-            Admin.updateEditToolRequestTypes(tool.requestType || null);
+            updateEditToolRequestTypes(tool.requestType || null);
             Admin.updateEditToolUrl(tool.url || null);
         }
 
