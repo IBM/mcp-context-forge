@@ -233,7 +233,6 @@ class PermissionService:
 
         # Get all active roles for the user (with eager-loaded role relationship)
         user_roles = await self._get_user_roles(user_email, team_id, include_all_teams=include_all_teams)
-        user_roles = await self._get_user_roles(user_email, team_id)
         logger.debug(f"[RBAC DEBUG] Found {len(user_roles)} roles for {user_email} (team_id={team_id})")
 
         # Collect permissions from all roles
@@ -463,10 +462,15 @@ class PermissionService:
 
         if team_id:
             # Filter to specific team's roles only
-            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id == team_id))
+            scope_conditions.append(and_(UserRole.scope == "team", or_(UserRole.scope_id == team_id, UserRole.scope_id.is_(None))))
         elif include_all_teams:
-            scope_conditions.append(UserRole.scope == "team")  # All team roles
-        
+            # Include ALL team-scoped roles (for list/read endpoints with session tokens)
+            scope_conditions.append(UserRole.scope == "team")
+        else:
+            # When team_id is None and include_all_teams is False (e.g., during login),
+            # include team-scoped roles with scope_id=None (roles that apply to all teams)
+            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id.is_(None)))
+
         query = query.where(or_(*scope_conditions))
 
         # Filter out expired roles

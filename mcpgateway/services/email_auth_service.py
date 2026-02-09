@@ -299,7 +299,16 @@ class EmailAuthService:
             return None
 
     async def create_user(
-        self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local", skip_password_validation: bool = False, granted_by: Optional[str] = None
+        self,
+        email: str,
+        password: str,
+        full_name: Optional[str] = None,
+        is_admin: bool = False,
+        is_active: bool = True,
+        password_change_required: bool = False,
+        auth_provider: str = "local",
+        skip_password_validation: bool = False,
+        granted_by: Optional[str] = None,
     ) -> EmailUser:
         """Create a new user with email authentication.
 
