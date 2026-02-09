@@ -768,9 +768,10 @@ class ToolService:
         tool_dict["tags"] = getattr(tool, "tags", []) or []
         tool_dict["team"] = getattr(tool, "team", None)
 
-        # Mask custom headers unless the requester is allowed to modify this tool
+        # Mask custom headers unless the requester is allowed to modify this tool.
+        # Safe default: if no requester context is provided, mask everything.
         headers = tool_dict.get("headers")
-        if headers and requesting_user_email is not None:
+        if headers:
             can_view = requesting_user_is_admin
             if not can_view and getattr(tool, "owner_email", None) == requesting_user_email:
                 can_view = True
@@ -1207,7 +1208,7 @@ class ToolService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return self.convert_tool_to_read(db_tool)
+            return self.convert_tool_to_read(db_tool, requesting_user_email=getattr(db_tool, "owner_email", None))
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
@@ -2512,7 +2513,7 @@ class ToolService:
                     db=db,
                 )
 
-            return self.convert_tool_to_read(tool)
+            return self.convert_tool_to_read(tool, requesting_user_email=getattr(tool, "owner_email", None))
         except PermissionError as e:
             # Structured logging: Log permission error
             structured_logger.log(
@@ -3984,7 +3985,7 @@ class ToolService:
 
             await admin_stats_cache.invalidate_tags()
 
-            return self.convert_tool_to_read(tool)
+            return self.convert_tool_to_read(tool, requesting_user_email=getattr(tool, "owner_email", None))
         except PermissionError as pe:
             db.rollback()
 

@@ -5352,10 +5352,10 @@ class TestConvertToolToReadHeaderMasking:
             assert v == settings.masked_auth_value
 
     def test_headers_masked_when_no_context(self, service, tool_with_headers):
-        """Default params (all None) leave headers unmasked (no requesting_user_email means no masking)."""
+        """Default params (all None) mask headers (safe default — no context means mask everything)."""
         result = service.convert_tool_to_read(tool_with_headers)
-        # When requesting_user_email is None, the masking branch is skipped
-        assert result.headers["Authorization"] == "Bearer secret-token"
+        # When requesting_user_email is None, headers are masked as safe default
+        assert result.headers["Authorization"] == "*****"
 
     def test_headers_none_no_masking(self, service, mock_tool):
         """Tool with headers=None does not error."""
