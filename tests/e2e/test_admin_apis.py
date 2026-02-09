@@ -114,6 +114,67 @@ async def client(app_with_temp_db):
 
     # Create mock user context with actual test database session
     test_db_session = get_test_db_session()
+
+    # Admin UI endpoints enforce granular RBAC (allow_admin_bypass=False).
+    # Seed a platform_admin-style role grant so /admin/* endpoints return 200
+    # without patching RBAC decorators (which can leak under xdist).
+    from sqlalchemy import select
+
+    from mcpgateway.db import EmailUser, Role, UserRole
+
+    if test_db_session.get(EmailUser, "admin@example.com") is None:
+        test_db_session.add(
+            EmailUser(
+                email="admin@example.com",
+                password_hash="not-a-real-hash",
+                full_name="Test Admin",
+                is_admin=True,
+                is_active=True,
+            )
+        )
+        test_db_session.commit()
+
+    role = test_db_session.execute(select(Role).where(Role.name == "platform_admin", Role.scope == "global")).scalars().first()
+    if role is None:
+        role = Role(
+            name="platform_admin",
+            description="Test platform admin role (wildcard permissions)",
+            scope="global",
+            permissions=["*"],
+            created_by="admin@example.com",
+            is_system_role=True,
+            is_active=True,
+        )
+        test_db_session.add(role)
+        test_db_session.commit()
+        test_db_session.refresh(role)
+
+    assignment = (
+        test_db_session.execute(
+            select(UserRole).where(
+                UserRole.user_email == "admin@example.com",
+                UserRole.role_id == role.id,
+                UserRole.scope == "global",
+                UserRole.scope_id.is_(None),
+                UserRole.is_active.is_(True),
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if assignment is None:
+        test_db_session.add(
+            UserRole(
+                user_email="admin@example.com",
+                role_id=role.id,
+                scope="global",
+                scope_id=None,
+                granted_by="admin@example.com",
+                is_active=True,
+            )
+        )
+        test_db_session.commit()
+
     test_user_context = create_mock_user_context(email="admin@example.com", full_name="Test Admin", is_admin=True)
     test_user_context["db"] = test_db_session
 

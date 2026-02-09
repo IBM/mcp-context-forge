@@ -74,7 +74,7 @@ class TestCrossUserIsolation:
                 headers=user_b_headers,
             )
 
-            async def create_session_by_headers(url, headers, transport_type, httpx_client_factory, timeout=None):
+            async def create_session_by_headers(url, headers, transport_type, httpx_client_factory, timeout=None, gateway_id=None):
                 if headers and headers.get("Authorization") == "Bearer user-a-token":
                     return session_a
                 return session_b
@@ -210,7 +210,7 @@ class TestSessionLifecycle:
             # Track sessions created
             sessions_created = []
 
-            async def create_session(url, headers, transport_type, httpx_client_factory, timeout=None):
+            async def create_session(url, headers, transport_type, httpx_client_factory, timeout=None, gateway_id=None):
                 session = PooledSession(
                     session=MagicMock(),
                     transport_context=MagicMock(),
@@ -346,7 +346,7 @@ class TestPoolMetricsIsolation:
                 mock_validate.return_value = True
 
                 # Create sessions for different users
-                def create_session_for_headers(url, headers, transport_type, httpx_client_factory, timeout=None):
+                def create_session_for_headers(url, headers, transport_type, httpx_client_factory, timeout=None, gateway_id=None):
                     return PooledSession(
                         session=MagicMock(),
                         transport_context=MagicMock(),
