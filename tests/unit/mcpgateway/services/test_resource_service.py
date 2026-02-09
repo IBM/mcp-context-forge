@@ -2714,7 +2714,7 @@ class TestSetResourceStateLockAndPermission:
         mock_resource.enabled = False
 
         with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
-             patch("mcpgateway.services.resource_service.PermissionService") as MockPS:
+             patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -2731,7 +2731,7 @@ class TestSetResourceStateLockAndPermission:
         mock_resource.enabled = True
 
         with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
-             patch("mcpgateway.services.resource_service.PermissionService") as MockPS:
+             patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -2763,8 +2763,10 @@ class TestDeleteResourcePermissionAndPurge:
         mock_resource.tags = []
         mock_resource.team_id = None
 
-        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
-             patch("mcpgateway.services.resource_service.PermissionService") as MockPS:
+        # Set up db.execute chain properly
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_resource)))
+
+        with patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -2785,16 +2787,20 @@ class TestDeleteResourcePermissionAndPurge:
         mock_resource.tags = []
         mock_resource.team_id = None
         mock_resource.gateway_id = None
-        mock_resource.__dict__ = {"id": "res-1", "name": "Test Resource", "_sa_instance_state": MagicMock()}
 
-        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
-             patch("mcpgateway.services.resource_service.delete_metrics_in_batches") as mock_delete, \
+        # Set up db.execute chain properly
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_resource)))
+        resource_service._notify_resource_deleted = AsyncMock()
+
+        with patch("mcpgateway.services.resource_service.delete_metrics_in_batches") as mock_delete, \
              patch("mcpgateway.services.resource_service.pause_rollup_during_purge") as mock_pause, \
              patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache, \
              patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
             mock_pause.return_value.__enter__ = MagicMock()
             mock_pause.return_value.__exit__ = MagicMock(return_value=False)
-            mock_cache.return_value = MagicMock()
+            mock_cache_obj = AsyncMock()
+            mock_cache_obj.invalidate_resources = AsyncMock()
+            mock_cache.return_value = mock_cache_obj
             mock_admin_cache.invalidate_tags = AsyncMock()
             await resource_service.delete_resource(db, "res-1", purge_metrics=True)
         assert mock_delete.call_count == 2  # ResourceMetric + ResourceMetricsHourly
@@ -2826,7 +2832,7 @@ class TestUpdateResourcePermissionAndConflict:
         update = ResourceUpdate(name="Updated")
 
         with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource), \
-             patch("mcpgateway.services.resource_service.PermissionService") as MockPS:
+             patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps

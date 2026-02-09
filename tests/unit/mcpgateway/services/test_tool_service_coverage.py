@@ -2750,7 +2750,7 @@ class TestSetToolStateLockAndPermission:
         mock_tool.enabled = False
 
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), \
-             patch("mcpgateway.services.tool_service.PermissionService") as MockPS:
+             patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -2767,7 +2767,7 @@ class TestSetToolStateLockAndPermission:
         mock_tool.enabled = True
 
         with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), \
-             patch("mcpgateway.services.tool_service.PermissionService") as MockPS:
+             patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -2801,8 +2801,9 @@ class TestDeleteToolPermissionAndPurge:
         mock_tool.tags = []
         mock_tool.team_id = None
 
-        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), \
-             patch("mcpgateway.services.tool_service.PermissionService") as MockPS:
+        db.get.return_value = mock_tool
+
+        with patch("mcpgateway.services.permission_service.PermissionService") as MockPS:
             mock_ps = AsyncMock()
             mock_ps.check_resource_ownership = AsyncMock(return_value=False)
             MockPS.return_value = mock_ps
@@ -2823,19 +2824,14 @@ class TestDeleteToolPermissionAndPurge:
         mock_tool.tags = []
         mock_tool.team_id = None
         mock_tool.gateway_id = None
-        mock_tool.__dict__ = {"id": "tool-1", "name": "test_tool", "_sa_instance_state": MagicMock()}
 
-        with patch("mcpgateway.services.tool_service.get_for_update", return_value=mock_tool), \
-             patch("mcpgateway.services.tool_service.delete_metrics_in_batches") as mock_delete, \
-             patch("mcpgateway.services.tool_service.pause_rollup_during_purge") as mock_pause, \
-             patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache, \
-             patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_tool_cache, \
-             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+        db.get.return_value = mock_tool
+        db.execute.return_value.rowcount = 1
+
+        with patch("mcpgateway.services.tool_service.delete_metrics_in_batches") as mock_delete, \
+             patch("mcpgateway.services.tool_service.pause_rollup_during_purge") as mock_pause:
             mock_pause.return_value.__enter__ = MagicMock()
             mock_pause.return_value.__exit__ = MagicMock(return_value=False)
-            mock_cache.return_value = MagicMock()
-            mock_tool_cache.return_value = MagicMock()
-            mock_admin_cache.invalidate_tags = AsyncMock()
             await tool_service.delete_tool(db, "tool-1", purge_metrics=True)
         assert mock_delete.call_count == 2  # ToolMetric + ToolMetricsHourly
 
@@ -2860,12 +2856,20 @@ class TestConvertToolToReadMetrics:
         tool = SimpleNamespace(
             id="abcdef1234567890abcdef1234567890",
             name="test_tool",
+            original_name="test_tool",
+            custom_name="test_tool",
+            custom_name_slug="test-tool",
             slug="test-tool",
             display_name="Test Tool",
             description="A test tool",
             url="http://example.com/tool",
+            integration_type="direct",
+            request_type="GET",
+            headers={},
             input_schema={"type": "object"},
             output_schema=None,
+            annotations={},
+            jsonpath_filter="",
             jq_filter=None,
             pre_tool_code=None,
             post_tool_code=None,
@@ -2882,6 +2886,7 @@ class TestConvertToolToReadMetrics:
             owner_email=None,
             gateway_id=None,
             gateway=None,
+            gateway_slug="",
             a2a_agent_id=None,
             a2a_agent=None,
             auth_type=None,
@@ -2916,12 +2921,20 @@ class TestConvertToolToReadMetrics:
         tool = SimpleNamespace(
             id="abcdef1234567890abcdef1234567890",
             name="test_tool",
+            original_name="test_tool",
+            custom_name="test_tool",
+            custom_name_slug="test-tool",
             slug="test-tool",
             display_name="Test Tool",
             description="A test tool",
             url="http://example.com/tool",
+            integration_type="direct",
+            request_type="GET",
+            headers={},
             input_schema={"type": "object"},
             output_schema=None,
+            annotations={},
+            jsonpath_filter="",
             jq_filter=None,
             pre_tool_code=None,
             post_tool_code=None,
@@ -2938,6 +2951,7 @@ class TestConvertToolToReadMetrics:
             owner_email=None,
             gateway_id=None,
             gateway=None,
+            gateway_slug="",
             a2a_agent_id=None,
             a2a_agent=None,
             auth_type=None,
