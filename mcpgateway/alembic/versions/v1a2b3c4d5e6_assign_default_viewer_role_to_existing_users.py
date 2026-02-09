@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Assign default roles to existing users without roles.
 
 Revision ID: v1a2b3c4d5e6
-Revises: b1b2b3b4b5b6
+Revises: 04cda6733305
 Create Date: 2026-02-04 12:30:00.000000
 
 This migration assigns appropriate default roles to all existing users
@@ -30,7 +30,7 @@ from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "v1a2b3c4d5e6"
-down_revision: Union[str, Sequence[str], None] = "b1b2b3b4b5b6"
+down_revision: Union[str, Sequence[str], None] = "04cda6733305"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
