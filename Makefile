@@ -631,6 +631,7 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage report -m --no-skip-covered"
 	@echo "🔍  Generating annotated coverage files..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage annotate -d ."
 	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML, badge & annotated files (.py,cover) ✔"
