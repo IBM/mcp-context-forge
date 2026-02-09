@@ -325,7 +325,7 @@ async def test_get_user_roles_with_scope(svc, mock_db):
 async def test_get_user_roles_include_all_teams(svc, mock_db):
     """_get_user_roles with include_all_teams=True."""
     mock_db.execute.return_value.scalars.return_value.all.return_value = []
-    roles = await svc._get_user_roles("user@test.com", include_all_teams=True)
+    roles = await svc._get_user_roles("user@test.com", team_id=None, include_all_teams=True)
     assert roles == []
 
 
