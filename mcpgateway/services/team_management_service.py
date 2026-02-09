@@ -704,7 +704,26 @@ class TeamManagementService:
             if cached_team_ids is not None:
                 if not cached_team_ids:  # Empty list = user has no teams
                     return []
-                # Fetch full team objects by IDs (fast indexed lookup)
+
+                # If cache contains serialized team dicts, reconstruct EmailTeam objects
+                if isinstance(cached_team_ids, list) and cached_team_ids and isinstance(cached_team_ids[0], dict):
+                    teams = []
+                    try:
+                        for t in cached_team_ids:
+                            team = EmailTeam(
+                                id=t.get("id"),
+                                name=t.get("name"),
+                                is_personal=t.get("is_personal", False),
+                                is_active=t.get("is_active", True),
+                            )
+                            teams.append(team)
+                        # No DB needed; return reconstructed objects
+                        return teams
+                    except Exception as e:
+                        logger.warning(f"Failed to reconstruct teams from cache: {e}")
+                        # Fall through to full DB query
+
+                # Otherwise assume list of IDs: fetch full team objects by IDs (fast indexed lookup)
                 try:
                     teams = self.db.query(EmailTeam).filter(EmailTeam.id.in_(cached_team_ids), EmailTeam.is_active.is_(True)).all()
                     self.db.commit()  # Release transaction to avoid idle-in-transaction

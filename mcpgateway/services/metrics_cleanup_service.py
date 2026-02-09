@@ -181,6 +181,9 @@ class MetricsCleanupService:
         self._cleanup_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
 
+        # Throttle between batches to avoid saturating DB under heavy deletes
+        self._batch_sleep_ms = getattr(settings, "metrics_cleanup_batch_sleep_ms", 50)
+
         # Stats
         self._total_cleaned = 0
         self._cleanup_runs = 0
@@ -373,6 +376,13 @@ class MetricsCleanupService:
                     total_deleted += batch_deleted
 
                     logger.debug(f"Cleaned {batch_deleted} records from {table_name}")
+
+                    # Throttle to reduce DB CPU pressure if configured
+                    try:
+                        if batch_deleted >= self.batch_size and self._batch_sleep_ms > 0:
+                            time.sleep(self._batch_sleep_ms / 1000.0)
+                    except Exception:
+                        pass
 
                     # If we deleted less than batch size, we're done
                     if batch_deleted < self.batch_size:

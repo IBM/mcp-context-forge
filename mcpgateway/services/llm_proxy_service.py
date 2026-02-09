@@ -414,6 +414,16 @@ class LLMProxyService:
 
         provider, model = self._resolve_model(db, request.model)
 
+        # Release the DB session after resolving provider/model so the
+        # streaming request does not hold a DB connection for the whole
+        # duration of the stream.
+        try:
+            db.commit()
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
         # Build request based on provider type
         if provider.provider_type == LLMProviderType.AZURE_OPENAI:
             url, headers, body = self._build_azure_request(request, provider, model)

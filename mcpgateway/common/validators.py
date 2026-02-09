@@ -397,8 +397,10 @@ class SecurityValidator:
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
 
-        # Check against allowed pattern
-        if not re.match(cls.NAME_PATTERN, value):
+        # Check against allowed pattern (compile once for performance)
+        if not hasattr(cls, "_NAME_RE"):
+            cls._NAME_RE = re.compile(cls.NAME_PATTERN)
+        if not cls._NAME_RE.match(value):
             raise ValueError(f"{field_name} can only contain letters, numbers, underscore, and hyphen. Special characters like <, >, quotes are not allowed.")
 
         # Additional check for HTML-like patterns (uses precompiled regex)
@@ -480,7 +482,9 @@ class SecurityValidator:
             raise ValueError(f"{field_name} cannot be empty")
 
         # MCP spec: identifiers should be alphanumeric + limited special chars
-        if not re.match(cls.IDENTIFIER_PATTERN, value):
+        if not hasattr(cls, "_IDENTIFIER_RE"):
+            cls._IDENTIFIER_RE = re.compile(cls.IDENTIFIER_PATTERN)
+        if not cls._IDENTIFIER_RE.match(value):
             raise ValueError(f"{field_name} can only contain letters, numbers, underscore, hyphen, and dots")
 
         # Block HTML-like patterns (uses precompiled regex)
@@ -589,7 +593,9 @@ class SecurityValidator:
             raise ValueError("Tool name cannot be empty")
 
         # MCP tools have specific naming requirements
-        if not re.match(cls.TOOL_NAME_PATTERN, value):
+        if not hasattr(cls, "_TOOL_NAME_RE"):
+            cls._TOOL_NAME_RE = re.compile(cls.TOOL_NAME_PATTERN)
+        if not cls._TOOL_NAME_RE.match(value):
             raise ValueError("Tool name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes")
 
         # Ensure no HTML-like content (uses precompiled regex)

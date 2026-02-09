@@ -669,8 +669,8 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_team_roles failed: {e}")
 
-    async def get_user_teams(self, cache_key: str) -> Optional[List[str]]:
-        """Get cached team IDs for a user.
+    async def get_user_teams(self, cache_key: str) -> Optional[list]:
+        """Get cached teams for a user (IDs or serialized team objects).
 
         The cache_key should be in the format "email:include_personal" to
         distinguish between calls with different include_personal flags.
@@ -678,7 +678,7 @@ class AuthCache:
         Returns:
             - None: Cache miss (caller should query DB)
             - Empty list: User has no teams (cached result)
-            - List of team IDs: Cached team IDs
+            - List of team IDs OR list of serialized team dicts
 
         Args:
             cache_key: Cache key in format "email:include_personal"
@@ -728,12 +728,12 @@ class AuthCache:
         self._miss_count += 1
         return None
 
-    async def set_user_teams(self, cache_key: str, team_ids: List[str]) -> None:
-        """Store team IDs for a user in cache.
+    async def set_user_teams(self, cache_key: str, teams: list) -> None:
+        """Store team IDs or serialized team dicts for a user in cache.
 
         Args:
             cache_key: Cache key in format "email:include_personal"
-            team_ids: List of team IDs the user belongs to
+            teams: List of team IDs or list of serialized team dicts
 
         Examples:
             >>> import asyncio
@@ -751,14 +751,14 @@ class AuthCache:
                 import orjson  # pylint: disable=import-outside-toplevel
 
                 redis_key = self._get_redis_key("teams", cache_key)
-                await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(team_ids))
+                await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(teams))
             except Exception as e:
                 logger.warning(f"AuthCache Redis set_user_teams failed: {e}")
 
         # Store in in-memory cache
         with self._lock:
             self._teams_list_cache[cache_key] = CacheEntry(
-                value=team_ids,
+                value=teams,
                 expiry=time.time() + self._teams_list_ttl,
             )
 

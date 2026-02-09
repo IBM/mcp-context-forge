@@ -255,8 +255,8 @@ services:
       # Option A: NullPool - safest, eliminates stale connection errors, ~10% slower
       # - DB_POOL_CLASS=null
       # Option B: QueuePool + pre_ping - better performance, validates before use
-      - DB_POOL_CLASS=queue
-      - DB_POOL_PRE_PING=true          # Validate connections before use (SELECT 1)
+      - DB_POOL_CLASS=null
+      - DB_POOL_PRE_PING=false         # Disable pre-ping; PgBouncer handles connection health
       - DB_POOL_SIZE=20                # Pool size per worker
       - DB_MAX_OVERFLOW=10             # Extra connections under load
       - DB_POOL_TIMEOUT=60             # Time to wait for connection before failing

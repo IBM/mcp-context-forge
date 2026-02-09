@@ -990,6 +990,19 @@ class TokenCatalogService:
             >>> service = TokenCatalogService(None)  # Would use real DB session
             >>> # Returns Optional[TokenRevocation] if token is revoked
         """
+        # Check auth cache first to avoid DB round-trip for common non-revoked tokens
+        try:
+            from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+
+            cache = get_auth_cache()
+            cached = await cache.is_token_revoked(jti)
+            if cached is False:
+                return None
+            # If cached is True or None (unknown), fall through to DB to get full record
+        except Exception:
+            # Cache failure should not block functionality; fall back to DB
+            pass
+
         result = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
         return result.scalar_one_or_none()
 
