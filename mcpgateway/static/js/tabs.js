@@ -2,12 +2,15 @@
 // ===================================================================
 // ENHANCED TAB HANDLING with Better Error Management
 
+import { loadRecentImports } from "./fileTransfer";
+import { initializeExportImport } from "./initialization";
+import { initializeLLMChat } from "./llmChat";
 import { loadAggregatedMetrics } from "./metrics";
 import { safeSetInnerHTML } from "./security";
 import { fetchWithTimeout, isAdminUser, safeGetElement, showErrorMessage } from "./utils";
 
 // ===================================================================
-const ADMIN_ONLY_TABS = new Set([
+export const ADMIN_ONLY_TABS = new Set([
   "users",
   "metrics",
   "performance",
@@ -186,7 +189,7 @@ export const showTab = function (tabName) {
           }
         }
         if (tabName === "llm-chat") {
-          Admin.initializeLLMChat();
+          initializeLLMChat();
         }
         
         if (tabName === "logs") {
@@ -541,12 +544,12 @@ export const showTab = function (tabName) {
             );
             try {
               // Ensure the export/import functionality is initialized
-              if (typeof Admin.initializeExportImport === "function") {
-                Admin.initializeExportImport();
+              if (typeof initializeExportImport === "function") {
+                initializeExportImport();
               }
               // Load recent imports
-              if (typeof Admin.loadRecentImports === "function") {
-                Admin.loadRecentImports();
+              if (typeof loadRecentImports === "function") {
+                loadRecentImports();
               }
             } catch (error) {
               console.error(

@@ -8,6 +8,7 @@ import {
 } from "./security";
 import { 
   fetchWithTimeout, 
+  getCurrentTeamId, 
   handleFetchError, 
   safeGetElement, 
   showErrorMessage, 
@@ -308,7 +309,7 @@ export const initToolSelect = function (
           const selectedGatewayIds = Admin.getSelectedGatewayIds
           ? Admin.getSelectedGatewayIds()
           : [];
-          const selectedTeamId = Admin.getCurrentTeamId();
+          const selectedTeamId = getCurrentTeamId();
           const params = new URLSearchParams();
           if (selectedGatewayIds && selectedGatewayIds.length) {
             params.set("gateway_id", selectedGatewayIds.join(","));

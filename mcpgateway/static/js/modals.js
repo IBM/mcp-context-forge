@@ -132,3 +132,129 @@ export function resetModalState(modalId) {
         console.error(`Error resetting modal state ${modalId}:`, error);
     }
 }
+
+/**
+* Show a modal dialog with copyable content.
+*
+* @param {string} title - The modal title.
+* @param {string} message - The message to display (can be multi-line).
+* @param {string} type - The type of modal: 'success', 'error', or 'info'.
+*/
+export const showCopyableModal = function (title, message, type = "info") {
+  // Remove any existing modal
+  const existingModal = safeGetElement("copyable-modal-overlay");
+  if (existingModal) {
+    existingModal.remove();
+  }
+  
+  // Color schemes based on type
+  const colors = {
+    success: {
+      bg: "bg-green-50 dark:bg-green-900/20",
+      border: "border-green-500",
+      title: "text-green-800 dark:text-green-200",
+      icon: `<svg class="h-6 w-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>`,
+    },
+    error: {
+      bg: "bg-red-50 dark:bg-red-900/20",
+      border: "border-red-500",
+      title: "text-red-800 dark:text-red-200",
+      icon: `<svg class="h-6 w-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>`,
+    },
+    info: {
+      bg: "bg-blue-50 dark:bg-blue-900/20",
+      border: "border-blue-500",
+      title: "text-blue-800 dark:text-blue-200",
+      icon: `<svg class="h-6 w-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>`,
+    },
+  };
+  
+  const colorScheme = colors[type] || colors.info;
+  
+  // Create modal overlay
+  const overlay = document.createElement("div");
+  overlay.id = "copyable-modal-overlay";
+  overlay.className =
+  "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      overlay.remove();
+    }
+  };
+  
+  // Create modal content
+  const modal = document.createElement("div");
+  modal.className = `${colorScheme.bg} border-l-4 ${colorScheme.border} rounded-lg shadow-xl max-w-lg w-full mx-4 overflow-hidden`;
+  
+  modal.innerHTML = `
+    <div class="p-4">
+      <div class="flex items-start">
+        <div class="flex-shrink-0">
+          ${colorScheme.icon}
+        </div>
+        <div class="ml-3 flex-1">
+          <h3 class="text-lg font-medium ${colorScheme.title}">${escapeHtml(title)}</h3>
+          <div class="mt-2">
+            <pre id="copyable-modal-content" class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-600 max-h-64 overflow-auto select-all cursor-text">${escapeHtml(message)}</pre>
+          </div>
+          <div class="mt-4 flex justify-end space-x-3">
+            <button id="copyable-modal-copy" class="inline-flex items-center px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-sm font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+              <svg class="h-4 w-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+              </svg>
+              Copy
+            </button>
+            <button id="copyable-modal-close" class="inline-flex items-center px-3 py-1.5 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  
+  // Add event listeners
+  safeGetElement("copyable-modal-close").onclick = () =>
+    overlay.remove();
+  
+  safeGetElement("copyable-modal-copy").onclick = async () => {
+    const content = safeGetElement("copyable-modal-content");
+    try {
+      await navigator.clipboard.writeText(content.textContent);
+      const copyBtn = safeGetElement("copyable-modal-copy");
+      const originalText = copyBtn.innerHTML;
+      copyBtn.innerHTML = `<svg class="h-4 w-4 mr-1.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg> Copied!`;
+      setTimeout(() => {
+        copyBtn.innerHTML = originalText;
+      }, 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+      // Fallback: select the text
+      const range = document.createRange();
+      range.selectNodeContents(content);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  };
+  
+  // Close on Escape key
+  const handleEscape = (e) => {
+    if (e.key === "Escape") {
+      overlay.remove();
+      document.removeEventListener("keydown", handleEscape);
+    }
+  };
+  document.addEventListener("keydown", handleEscape);
+}

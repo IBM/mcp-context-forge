@@ -1,4 +1,6 @@
 import { AppState } from "./appState";
+import { setupFormValidation } from "./formValidation";
+import { initializeCodeMirrorEditors, initializeEventListeners, initializeExportImport, initializeTabState, initializeToolSelects, setupBulkImportModal } from "./initialization";
 import { closeModal } from "./modals";
 import { initializeTagFiltering } from "./tags";
 import { cleanupToolTestState, loadTools } from "./tools";
@@ -102,9 +104,7 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
     }
     
     // Generic API call for Enrich/Validate
-    const callEnrichment = async function () {
-      // const selectedTools = Admin.getSelectedTools();
-      
+    const callEnrichment = async function () {      
       if (selectedTools.length === 0) {
         showErrorMessage("⚠️ Please select at least one tool.");
         return;
@@ -304,25 +304,90 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
     console.log("✓ Performance markers available");
   }
 
+  // ===============================================
+  // TAG FILTERING FUNCTIONALITY
+  // ===============================================
+
+  // Initialize tag filtering when page loads
+  document.addEventListener("DOMContentLoaded", function () {
+      initializeTagFiltering();
+
+      if (typeof initializeTeamScopingMonitor === "function") {
+          Admin.initializeTeamScopingMonitor();
+      }
+  });
+
+  // ===================================================================
+  // CHART.JS INSTANCE CLEANUP
+  // ===================================================================
+  window.addEventListener("beforeunload", () => {
+    Admin.chartRegistry.destroyAll();
+  });
 
 
-    // ===============================================
-    // TAG FILTERING FUNCTIONALITY
-    // ===============================================
-
-    // Initialize tag filtering when page loads
-    document.addEventListener("DOMContentLoaded", function () {
-        initializeTagFiltering();
-
-        if (typeof initializeTeamScopingMonitor === "function") {
-            Admin.initializeTeamScopingMonitor();
-        }
-    });
-
-    // ===================================================================
-    // CHART.JS INSTANCE CLEANUP
-    // ===================================================================
-    window.addEventListener("beforeunload", () => {
-        Admin.chartRegistry.destroyAll();
-    });
+  // ===================================================================
+  // Initialization
+  // ===================================================================
+  document.addEventListener("DOMContentLoaded", () => {
+    console.log("🔐 DOM loaded - initializing secure admin interface...");
+    
+    try {      
+      // 1. Initialize CodeMirror editors first
+      initializeCodeMirrorEditors();
+      
+      // 2. Initialize tool selects
+      initializeToolSelects();
+      
+      // 3. Set up all event listeners
+      initializeEventListeners();
+      
+      // 4. Handle initial tab/state
+      initializeTabState();
+      
+      // 5. Set up form validation
+      setupFormValidation();
+      
+      // 6. Setup bulk import modal
+      try {
+        setupBulkImportModal();
+      } catch (error) {
+        console.error("Error setting up bulk import modal:", error);
+      }
+      
+      // 7. Initialize export/import functionality
+      try {
+        initializeExportImport();
+      } catch (error) {
+        console.error(
+          "Error setting up export/import functionality:",
+          error,
+        );
+      }
+      
+      // // ✅ 4.1 Set up tab button click handlers
+      // document.querySelectorAll('.tab-button').forEach(button => {
+      //     button.addEventListener('click', () => {
+      //         const tabId = button.getAttribute('data-tab');
+      
+      //         document.querySelectorAll('.tab-panel').forEach(panel => {
+      //             panel.classList.add('hidden');
+      //         });
+      
+      //         safeGetElement(tabId).classList.remove('hidden');
+      //     });
+      // });
+      
+      // Mark as initialized
+      AppState.isInitialized = true;
+      
+      console.log(
+        "✅ Secure initialization complete - XSS protection active",
+      );
+    } catch (error) {
+      console.error("❌ Initialization failed:", error);
+      showErrorMessage(
+        "Failed to initialize the application. Please refresh the page.",
+      );
+    }
+  });
 })(window.Admin)

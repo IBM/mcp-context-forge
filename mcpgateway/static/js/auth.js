@@ -466,5 +466,193 @@ export function handleAuthTypeSelection(
             break;
     }
 }
+  
+export const handleAuthTypeChange = function () {
+  const authType = this.value;
+  
+  // Detect form type based on the element ID
+  // e.g., "auth-type-a2a" or "auth-type-gw"
+  const isA2A = this.id.includes("a2a");
+  const prefix = isA2A ? "a2a" : "gw";
+  
+  // Select the correct field groups dynamically
+  const basicFields = safeGetElement(`auth-basic-fields-${prefix}`);
+  const bearerFields = safeGetElement(`auth-bearer-fields-${prefix}`);
+  const headersFields = safeGetElement(`auth-headers-fields-${prefix}`);
+  const oauthFields = safeGetElement(`auth-oauth-fields-${prefix}`);
+  const queryParamFields = safeGetElement(
+    `auth-query_param-fields-${prefix}`,
+  );
+  
+  // Hide all auth sections first
+  [
+    basicFields,
+    bearerFields,
+    headersFields,
+    oauthFields,
+    queryParamFields,
+  ].forEach((section) => {
+    if (section) {
+      section.style.display = "none";
+    }
+  });
+  
+  // Show the appropriate section
+  switch (authType) {
+    case "basic":
+    if (basicFields) {
+      basicFields.style.display = "block";
+    }
+    break;
+    case "bearer":
+    if (bearerFields) {
+      bearerFields.style.display = "block";
+    }
+    break;
+    case "authheaders":
+    if (headersFields) {
+      headersFields.style.display = "block";
+    }
+    break;
+    case "oauth":
+    if (oauthFields) {
+      oauthFields.style.display = "block";
+    }
+    break;
+    case "query_param":
+    if (queryParamFields) {
+      queryParamFields.style.display = "block";
+    }
+    break;
+    default:
+    // "none" or unknown type — keep everything hidden
+    break;
+  }
+}
 
-console.log("🛡️ ContextForge MCP Gateway auth module initialized");
+export const handleOAuthGrantTypeChange = function () {
+  const grantType = this.value;
+  
+  // Detect form type (a2a or gw) from the triggering element ID
+  const isA2A = this.id.includes("a2a");
+  const prefix = isA2A ? "a2a" : "gw";
+  
+  // Select the correct fields dynamically based on prefix
+  const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
+  const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
+  const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
+  
+  // Handle Authorization Code flow
+  if (authCodeFields) {
+    if (grantType === "authorization_code") {
+      authCodeFields.style.display = "block";
+      
+      // Make URL fields required
+      const requiredFields =
+      authCodeFields.querySelectorAll('input[type="url"]');
+      requiredFields.forEach((field) => (field.required = true));
+      
+      console.log(
+        `(${prefix.toUpperCase()}) Authorization Code flow selected - fields are now required`,
+      );
+    } else {
+      authCodeFields.style.display = "none";
+      
+      // Remove required validation
+      const requiredFields =
+      authCodeFields.querySelectorAll('input[type="url"]');
+      requiredFields.forEach((field) => (field.required = false));
+    }
+  }
+  
+  // Handle Password Grant flow
+  if (usernameField && passwordField) {
+    const usernameInput = safeGetElement(`oauth-username-${prefix}`);
+    const passwordInput = safeGetElement(`oauth-password-${prefix}`);
+    
+    if (grantType === "password") {
+      usernameField.style.display = "block";
+      passwordField.style.display = "block";
+      
+      if (usernameInput) {
+        usernameInput.required = true;
+      }
+      if (passwordInput) {
+        passwordInput.required = true;
+      }
+      
+      console.log(
+        `(${prefix.toUpperCase()}) Password grant flow selected - username and password are now required`,
+      );
+    } else {
+      usernameField.style.display = "none";
+      passwordField.style.display = "none";
+      
+      if (usernameInput) {
+        usernameInput.required = false;
+      }
+      if (passwordInput) {
+        passwordInput.required = false;
+      }
+    }
+  }
+}
+
+export const handleEditOAuthGrantTypeChange = function () {
+  const grantType = this.value;
+  
+  // Detect prefix dynamically (supports both gw-edit and a2a-edit)
+  const id = this.id || "";
+  const prefix = id.includes("a2a") ? "a2a-edit" : "gw-edit";
+  
+  const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
+  const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
+  const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
+  
+  // === Handle Authorization Code grant ===
+  if (authCodeFields) {
+    const urlInputs = authCodeFields.querySelectorAll('input[type="url"]');
+    if (grantType === "authorization_code") {
+      authCodeFields.style.display = "block";
+      urlInputs.forEach((field) => (field.required = true));
+      console.log(
+        `Authorization Code flow selected (${prefix}) - additional fields are now required`,
+      );
+    } else {
+      authCodeFields.style.display = "none";
+      urlInputs.forEach((field) => (field.required = false));
+    }
+  }
+  
+  // === Handle Password grant ===
+  if (usernameField && passwordField) {
+    const usernameInput = safeGetElement(`oauth-username-${prefix}`);
+    const passwordInput = safeGetElement(`oauth-password-${prefix}`);
+    
+    if (grantType === "password") {
+      usernameField.style.display = "block";
+      passwordField.style.display = "block";
+      
+      if (usernameInput) {
+        usernameInput.required = true;
+      }
+      if (passwordInput) {
+        passwordInput.required = true;
+      }
+      
+      console.log(
+        `Password grant flow selected (${prefix}) - username and password are now required`,
+      );
+    } else {
+      usernameField.style.display = "none";
+      passwordField.style.display = "none";
+      
+      if (usernameInput) {
+        usernameInput.required = false;
+      }
+      if (passwordInput) {
+        passwordInput.required = false;
+      }
+    }
+  }
+}
