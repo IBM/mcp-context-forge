@@ -135,7 +135,7 @@ def upgrade() -> None:
     2. Creates platform_viewer role with global scope
     3. Assigns roles to existing users (excluding admin@example.com):
        - Admin users: team_admin (team scope) + platform_admin (global scope)
-       - Non-admin users: team_admin (team scope) + viewer (global scope)
+       - Non-admin users: team_admin (team scope) + platformviewer (global scope)
 
     The migration is idempotent and safe to run multiple times.
     Supports both PostgreSQL and SQLite databases.
@@ -272,9 +272,15 @@ def upgrade() -> None:
     if dialect_name == "postgresql":
         users_query = text(
             """
-            SELECT eu.email, eu.is_admin, etm.id
+            SELECT eu.email, eu.is_admin,
+                   (SELECT et.id FROM email_teams et
+                    INNER JOIN email_team_members etm ON etm.team_id = et.id
+                    WHERE etm.user_email = eu.email
+                    AND et.is_personal = TRUE
+                    AND et.is_active = TRUE
+                    AND etm.is_active = TRUE
+                    LIMIT 1) as team_id
             FROM email_users eu
-            LEFT JOIN email_teams etm ON etm.created_by = eu.email AND etm.is_active = TRUE and etm.is_personal = TRUE
             WHERE eu.email NOT IN (SELECT DISTINCT user_email FROM user_roles WHERE is_active = TRUE)
             AND eu.is_active = TRUE
             AND eu.email != :admin_email
@@ -283,9 +289,15 @@ def upgrade() -> None:
     else:
         users_query = text(
             """
-            SELECT eu.email, eu.is_admin, etm.id
+            SELECT eu.email, eu.is_admin,
+                   (SELECT et.id FROM email_teams et
+                    INNER JOIN email_team_members etm ON etm.team_id = et.id
+                    WHERE etm.user_email = eu.email
+                    AND et.is_personal = 1
+                    AND et.is_active = 1
+                    AND etm.is_active = 1
+                    LIMIT 1) as team_id
             FROM email_users eu
-            LEFT JOIN email_teams etm ON etm.created_by = eu.email AND etm.is_active = 1 and etm.is_personal = 1
             WHERE eu.email NOT IN (SELECT DISTINCT user_email FROM user_roles WHERE is_active = 1)
             AND eu.is_active = 1
             AND eu.email != :admin_email
@@ -414,8 +426,33 @@ def downgrade() -> None:
 
     now = datetime.now(timezone.utc)
 
-    # Step 1: Revert role permissions to original values
-    print("\n=== Step 1: Reverting role permissions ===")
+    # Step 1: Remove migration-assigned role assignments (keeping admin@example.com)
+    # Do this FIRST to avoid foreign key constraint issues
+    print("\n=== Step 1: Removing migration-assigned roles ===")
+    try:
+        delete_sql = text("DELETE FROM user_roles WHERE user_email != :keep_email")
+        result = bind.execute(delete_sql, {"keep_email": "admin@example.com"})
+        rowcount = getattr(result, "rowcount", "unknown")
+        print(f"  ✓ Removed {rowcount} role assignments (preserved admin@example.com)")
+    except Exception as e:
+        print(f"  ⚠ Could not remove migration-assigned roles: {e}")
+        # Don't return - continue with other steps
+
+    # Step 2: Remove platform_viewer role
+    print("\n=== Step 2: Removing platform_viewer role ===")
+    try:
+        delete_role = text("DELETE FROM roles WHERE name = :role_name")
+        result = bind.execute(delete_role, {"role_name": "platform_viewer"})
+        if hasattr(result, "rowcount") and result.rowcount > 0:
+            print("  ✓ Removed 'platform_viewer' role")
+        else:
+            print("  ℹ 'platform_viewer' role not found")
+    except Exception as e:
+        print(f"  ⚠ Could not remove 'platform_viewer' role: {e}")
+        # Don't return - continue with other steps
+
+    # Step 3: Revert role permissions to original values
+    print("\n=== Step 3: Reverting role permissions ===")
     original_permissions = {
         "team_admin": [
             "teams.read",
@@ -443,58 +480,42 @@ def downgrade() -> None:
     }
 
     for role_name, old_permissions in original_permissions.items():
-        role_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
-        role_result = bind.execute(role_query, {"role_name": role_name}).fetchone()
+        try:
+            role_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
+            role_result = bind.execute(role_query, {"role_name": role_name}).fetchone()
 
-        if role_result:
-            role_id = role_result[0]
-            if dialect_name == "postgresql":
-                update_query = text(
-                    """
-                    UPDATE roles
-                    SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
-                    WHERE id = :role_id
-                    """
+            if role_result:
+                role_id = role_result[0]
+                if dialect_name == "postgresql":
+                    update_query = text(
+                        """
+                        UPDATE roles
+                        SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
+                        WHERE id = :role_id
+                        """
+                    )
+                else:
+                    update_query = text(
+                        """
+                        UPDATE roles
+                        SET permissions = :permissions, updated_at = :updated_at
+                        WHERE id = :role_id
+                        """
+                    )
+
+                bind.execute(
+                    update_query,
+                    {
+                        "permissions": json.dumps(old_permissions),
+                        "updated_at": now,
+                        "role_id": role_id,
+                    },
                 )
+                print(f"  ✓ Reverted '{role_name}' role permissions")
             else:
-                update_query = text(
-                    """
-                    UPDATE roles
-                    SET permissions = :permissions, updated_at = :updated_at
-                    WHERE id = :role_id
-                    """
-                )
-
-            bind.execute(
-                update_query,
-                {
-                    "permissions": json.dumps(old_permissions),
-                    "updated_at": now,
-                    "role_id": role_id,
-                },
-            )
-            print(f"  ✓ Reverted '{role_name}' role permissions")
-
-    # Step 2: Remove platform_viewer role
-    print("\n=== Step 2: Removing platform_viewer role ===")
-    try:
-        delete_role = text("DELETE FROM roles WHERE name = :role_name")
-        result = bind.execute(delete_role, {"role_name": "platform_viewer"})
-        if hasattr(result, "rowcount") and result.rowcount > 0:
-            print("  ✓ Removed 'platform_viewer' role")
-        else:
-            print("  ℹ 'platform_viewer' role not found")
-    except Exception as e:
-        print(f"  ⚠ Could not remove 'platform_viewer' role: {e}")
-
-    # Step 3: Remove migration-assigned role assignments (keeping admin@example.com)
-    print("\n=== Step 3: Removing migration-assigned roles ===")
-    try:
-        delete_sql = text("DELETE FROM user_roles WHERE user_email != :keep_email")
-        result = bind.execute(delete_sql, {"keep_email": "admin@example.com"})
-        rowcount = getattr(result, "rowcount", "unknown")
-        print(f"  ✓ Removed {rowcount} role assignments (preserved admin@example.com)")
-    except Exception as e:
-        print(f"  ⚠ Could not remove migration-assigned roles: {e}")
+                print(f"  ℹ Role '{role_name}' not found")
+        except Exception as e:
+            print(f"  ⚠ Could not revert '{role_name}' role permissions: {e}")
+            # Continue with next role
 
     print("\n✅ Downgrade completed")
