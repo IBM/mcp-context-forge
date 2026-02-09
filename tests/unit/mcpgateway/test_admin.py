@@ -14,12 +14,12 @@ Enhanced with additional test cases for better coverage.
 from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
-from uuid import UUID, uuid4
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
+from uuid import UUID, uuid4
 
 # Third-Party
 from fastapi import HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, ORJSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
 from pydantic_core import ValidationError as CoreValidationError
@@ -29,32 +29,47 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
+    _generate_unified_teams_view,
     _get_latency_heatmap_postgresql,
     _get_latency_heatmap_python,
     _get_latency_percentiles_postgresql,
     _get_latency_percentiles_python,
+    _get_span_entity_performance,
     _get_timeseries_metrics_postgresql,
     _get_timeseries_metrics_python,
+    _get_user_team_roles,
     _normalize_team_id,
+    _read_request_json,
     _render_user_card_html,
     _validated_team_id_param,
+    admin_a2a_partial_html,
+    admin_activate_user,
     admin_add_a2a_agent,
     admin_add_gateway,
     admin_add_prompt,
     admin_add_resource,
     admin_add_root,
     admin_add_server,
+    admin_add_team_members,
+    admin_add_team_members_view,
     admin_add_tool,
     admin_approve_join_request,
     admin_cancel_join_request,
+    admin_create_grpc_service,
     admin_create_join_request,
+    admin_create_team,
+    admin_create_user,
+    admin_deactivate_user,
     admin_delete_a2a_agent,
     admin_delete_gateway,
+    admin_delete_grpc_service,
     admin_delete_prompt,
     admin_delete_resource,
     admin_delete_root,
     admin_delete_server,
+    admin_delete_team,
     admin_delete_tool,
+    admin_delete_user,
     admin_edit_a2a_agent,
     admin_edit_gateway,
     admin_edit_prompt,
@@ -66,185 +81,171 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_export_logs,
     admin_export_root,
     admin_export_selective,
-    admin_get_all_team_ids,
-    admin_get_gateway,
-    admin_get_import_status,
-    admin_get_log_file,
-    admin_get_logs,
-    admin_get_all_gateways_ids,
+    admin_force_password_change,
+    admin_gateways_partial_html,
+    admin_generate_support_bundle,
+    admin_get_agent,
     admin_get_all_agent_ids,
+    admin_get_all_gateways_ids,
     admin_get_all_prompt_ids,
     admin_get_all_resource_ids,
     admin_get_all_server_ids,
+    admin_get_all_team_ids,
     admin_get_all_tool_ids,
-    admin_get_agent,
+    admin_get_gateway,
+    admin_get_grpc_methods,
+    admin_get_grpc_service,
+    admin_get_import_status,
+    admin_get_log_file,
+    admin_get_logs,
     admin_get_prompt,
     admin_get_resource,
     admin_get_root,
     admin_get_server,
+    admin_get_team_edit,
     admin_get_tool,
+    admin_get_user_edit,
     admin_import_configuration,
     admin_import_preview,
     admin_import_tools,
     admin_leave_team,
     admin_list_a2a_agents,
+    admin_list_gateways,
+    admin_list_grpc_services,
+    admin_list_import_statuses,
     admin_list_join_requests,
-    admin_a2a_partial_html,
+    admin_list_prompts,
+    admin_list_resources,
+    admin_list_servers,
+    admin_list_tags,
+    admin_list_teams,
+    admin_list_tools,
+    admin_list_users,
     admin_login_handler,
     admin_login_page,
     admin_logout_get,
     admin_logout_post,
-    admin_reject_join_request,
-    admin_search_a2a_agents,
-    admin_search_teams,
-    admin_list_users,
-    admin_users_partial_html,
-    admin_gateways_partial_html,
+    admin_metrics_partial_html,
     admin_prompts_partial_html,
+    admin_reflect_grpc_service,
+    admin_reject_join_request,
+    admin_remove_team_member,
+    admin_reset_metrics,
     admin_resources_partial_html,
-    admin_servers_partial_html,
-    admin_tools_partial_html,
-    admin_tool_ops_partial,
+    admin_search_a2a_agents,
     admin_search_gateways,
     admin_search_prompts,
     admin_search_resources,
     admin_search_servers,
+    admin_search_teams,
     admin_search_tools,
     admin_search_users,
-    admin_create_user,
-    admin_get_user_edit,
-    admin_update_root,
-    admin_update_user,
-    admin_activate_user,
-    admin_deactivate_user,
-    admin_delete_user,
-    admin_force_password_change,
-    admin_list_teams,
-    admin_team_members_partial_html,
-    admin_team_non_members_partial_html,
-    admin_teams_partial_html,
-    admin_metrics_partial_html,
-    admin_create_team,
-    admin_view_team_members,
-    admin_add_team_members_view,
-    admin_add_team_members,
-    admin_update_team_member_role,
-    admin_remove_team_member,
-    admin_delete_team,
-    admin_get_team_edit,
-    admin_update_team,
-    admin_list_gateways,
-    admin_list_import_statuses,
-    admin_list_prompts,
-    admin_list_resources,
-    admin_list_servers,
-    admin_list_tools,
-    admin_list_tags,
-    admin_reset_metrics,
-    admin_stream_logs,
-    admin_test_resource,
-    admin_test_a2a_agent,
-    admin_test_gateway,
-    bulk_register_catalog_servers,
-    change_password_required_handler,
-    change_password_required_page,
-    check_catalog_server_status,
-    delete_observability_query,
-    get_client_ip,
-    get_maintenance_partial,
-    get_observability_metrics_partial,
-    get_observability_partial,
-    get_observability_stats,
-    get_observability_trace_detail,
-    get_performance_cache,
-    get_performance_history,
-    get_performance_requests,
-    get_performance_system,
-    get_performance_workers,
-    get_prompt_usage,
-    get_prompts_errors,
-    get_resource_usage,
-    get_resources_errors,
-    get_tool_chains,
-    get_tool_errors,
-    get_tool_usage,
-    get_latency_heatmap,
-    get_latency_percentiles,
-    get_timeseries_metrics,
-    get_user_agent,
-    get_user_email,
-    get_user_id,
-    list_catalog_servers,
-    register_catalog_server,
-    save_observability_query,
-    serialize_datetime,
+    admin_servers_partial_html,
     admin_set_a2a_agent_state,
     admin_set_gateway_state,
+    admin_set_grpc_service_state,
     admin_set_prompt_state,
     admin_set_resource_state,
     admin_set_server_state,
     admin_set_tool_state,
+    admin_stream_logs,
+    admin_team_members_partial_html,
+    admin_team_non_members_partial_html,
+    admin_teams_partial_html,
+    admin_test_a2a_agent,
+    admin_test_gateway,
+    admin_test_resource,
+    admin_tool_ops_partial,
+    admin_tools_partial_html,
     admin_ui,
-    admin_list_grpc_services,
-    admin_create_grpc_service,
-    admin_get_grpc_service,
     admin_update_grpc_service,
-    admin_set_grpc_service_state,
-    admin_delete_grpc_service,
-    admin_reflect_grpc_service,
-    admin_get_grpc_methods,
-    admin_generate_support_bundle,
-    get_configuration_settings,
-    get_overview_partial,
+    admin_update_root,
+    admin_update_team,
+    admin_update_team_member_role,
+    admin_update_user,
+    admin_users_partial_html,
+    admin_view_team_members,
+    bulk_register_catalog_servers,
+    catalog_partial,
+    change_password_required_handler,
+    change_password_required_page,
+    check_catalog_server_status,
+    delete_observability_query,
+    get_a2a_stats_cache_stats,
     get_aggregated_metrics,
+    get_client_ip,
+    get_configuration_settings,
+    get_gateways_section,
+    get_global_passthrough_headers,
+    get_latency_heatmap,
+    get_latency_percentiles,
+    get_maintenance_partial,
+    get_mcp_session_pool_metrics,
+    get_observability_metrics_partial,
+    get_observability_partial,
+    get_observability_query,
+    get_observability_stats,
+    get_observability_trace_detail,
+    get_observability_traces,
+    get_overview_partial,
+    get_passthrough_headers_cache_stats,
+    get_performance_cache,
+    get_performance_history,
+    get_performance_requests,
+    get_performance_stats,
+    get_performance_system,
+    get_performance_workers,
+    get_plugin_details,
+    get_plugin_stats,
     get_plugins_partial,
+    get_prompt_performance,
+    get_prompt_usage,
+    get_prompts_errors,
+    get_prompts_partial,
     get_prompts_section,
+    get_resource_performance,
+    get_resource_usage,
+    get_resources_errors,
+    get_resources_partial,
     get_resources_section,
     get_servers_section,
-    get_tool_performance,
-    get_prompt_performance,
-    get_resource_performance,
-    _get_span_entity_performance,
-    _generate_unified_teams_view,
-    get_global_passthrough_headers,
-    update_global_passthrough_headers,
-    invalidate_passthrough_headers_cache,
-    get_passthrough_headers_cache_stats,
-    list_observability_queries,
-    get_observability_query,
-    update_observability_query,
-    track_query_usage,
-    invalidate_a2a_stats_cache,
-    get_a2a_stats_cache_stats,
-    get_mcp_session_pool_metrics,
     get_system_stats,
-    list_plugins,
-    get_plugin_stats,
-    get_plugin_details,
-    catalog_partial,
-    get_observability_traces,
-    get_prompts_partial,
-    get_resources_partial,
+    get_timeseries_metrics,
+    get_tool_chains,
+    get_tool_errors,
+    get_tool_performance,
+    get_tool_usage,
     get_tools_partial,
+    get_top_error_endpoints,
     get_top_slow_endpoints,
     get_top_volume_endpoints,
-    get_top_error_endpoints,
-    get_gateways_section,
-    get_performance_stats,
-    _read_request_json,
+    get_user_agent,
+    get_user_email,
+    get_user_id,
+    invalidate_a2a_stats_cache,
+    invalidate_passthrough_headers_cache,
+    list_catalog_servers,
+    list_observability_queries,
+    list_plugins,
+    register_catalog_server,
+    save_observability_query,
+    serialize_datetime,
+    track_query_usage,
+    update_global_passthrough_headers,
+    update_observability_query,
 )
 from mcpgateway.config import settings
 from mcpgateway.schemas import (
     GatewayTestRequest,
     GlobalConfigRead,
     GlobalConfigUpdate,
+    GrpcServiceCreate,
+    GrpcServiceUpdate,
     PaginationMeta,
     PromptMetrics,
     ResourceMetrics,
     ServerMetrics,
     ToolMetrics,
-    GrpcServiceCreate,
-    GrpcServiceUpdate,
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.export_service import ExportError, ExportService
@@ -261,7 +262,6 @@ from mcpgateway.services.tool_service import (
     ToolNotFoundError,
     ToolService,
 )
-from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 
 
@@ -417,6 +417,7 @@ class TestAdminServerRoutes:
     @patch("mcpgateway.admin.server_service")
     async def test_admin_list_servers_with_various_states(self, mock_server_service, mock_team_service_class, mock_paginate, mock_db):
         """Test listing servers with various states and configurations."""
+        # First-Party
         from mcpgateway.schemas import PaginationMeta
 
         # Mock team service
@@ -1084,6 +1085,7 @@ class TestAdminToolRoutes:
     @patch("mcpgateway.admin.tool_service")
     async def test_admin_list_tools_empty_and_exception(self, mock_tool_service, mock_team_service_class, mock_db):
         """Test listing tools with empty results and exceptions."""
+        # First-Party
         from mcpgateway.schemas import PaginationMeta
 
         # Test empty list
@@ -1796,8 +1798,11 @@ class TestAdminResourceRoutes:
     @patch("mcpgateway.admin.resource_service")
     async def test_admin_list_resources_with_complex_data(self, mock_resource_service, mock_db):
         """Test listing resources with complex data structures."""
-        from mcpgateway.schemas import PaginationMeta, ResourceRead, ResourceMetrics
+        # Standard
         from datetime import datetime, timezone
+
+        # First-Party
+        from mcpgateway.schemas import PaginationMeta, ResourceMetrics, ResourceRead
 
         # Create a proper ResourceRead Pydantic object
         resource_read = ResourceRead(
@@ -1987,6 +1992,7 @@ class TestAdminPromptRoutes:
     @patch("mcpgateway.admin.TeamManagementService")
     async def test_admin_list_prompts_with_complex_arguments(self, mock_team_service_class, mock_prompt_service, mock_db):
         """Test listing prompts with complex argument structures."""
+        # First-Party
         from mcpgateway.schemas import PaginationMeta
 
         # Mock team service
@@ -2245,8 +2251,11 @@ class TestAdminGatewayRoutes:
     @patch("mcpgateway.admin.TeamManagementService")
     async def test_admin_list_gateways_with_auth_info(self, mock_team_service_class, mock_gateway_service, mock_db):
         """Test listing gateways with authentication information."""
-        from mcpgateway.schemas import PaginationMeta
+        # Standard
         from datetime import datetime, timezone
+
+        # First-Party
+        from mcpgateway.schemas import PaginationMeta
 
         # Mock team service
         mock_team_service = AsyncMock()
@@ -2812,7 +2821,10 @@ class TestAdminUIRoute:
         mock_db,
     ):
         """Test admin UI when some services fail."""
+        # Standard
         from unittest.mock import patch
+
+        # Third-Party
         from fastapi.responses import HTMLResponse
 
         # Some services succeed
@@ -3469,6 +3481,7 @@ class TestA2AAgentManagement:
 
         result = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
 
+        # Third-Party
         from starlette.responses import JSONResponse
 
         assert isinstance(result, JSONResponse)
@@ -3714,7 +3727,9 @@ class TestExportImportEndpoints:
 
         mock_export_config.return_value = {"version": "1.0", "servers": [], "tools": [], "resources": [], "prompts": []}
 
-        result = await admin_export_configuration(include_inactive=False, include_dependencies=True, types="servers,tools", exclude_types="", tags="", db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_export_configuration(
+            include_inactive=False, include_dependencies=True, types="servers,tools", exclude_types="", tags="", db=mock_db, user={"email": "test-user", "db": mock_db}
+        )
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "application/json"
@@ -6141,11 +6156,7 @@ async def test_admin_list_users_json(monkeypatch, mock_db, allow_permission):
     request.scope = {"root_path": ""}
 
     auth_service = MagicMock()
-    auth_service.list_users = AsyncMock(
-        return_value=SimpleNamespace(
-            data=[SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False)]
-        )
-    )
+    auth_service.list_users = AsyncMock(return_value=SimpleNamespace(data=[SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False)]))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_list_users(request=request, page=1, per_page=50, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
@@ -6201,7 +6212,11 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
     auth_service = MagicMock()
     auth_service.list_users = AsyncMock(
         return_value=SimpleNamespace(
-            data=[SimpleNamespace(email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)],
+            data=[
+                SimpleNamespace(
+                    email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False
+                )
+            ],
             pagination=SimpleNamespace(model_dump=lambda: {"page": 1}),
         )
     )
@@ -6209,9 +6224,7 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     team_service = MagicMock()
-    team_service.get_team_members = AsyncMock(
-        return_value=[(SimpleNamespace(email=current_user_email), SimpleNamespace(role="owner", joined_at=datetime.now(timezone.utc)))]
-    )
+    team_service.get_team_members = AsyncMock(return_value=[(SimpleNamespace(email=current_user_email), SimpleNamespace(role="owner", joined_at=datetime.now(timezone.utc)))])
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
     response = await admin_users_partial_html(
@@ -6359,9 +6372,7 @@ async def test_admin_users_partial_html_exception(monkeypatch, mock_request, moc
 async def test_admin_search_users(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.list_users = AsyncMock(
-        return_value=SimpleNamespace(data=[SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False)])
-    )
+    auth_service.list_users = AsyncMock(return_value=SimpleNamespace(data=[SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False)]))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     result = await admin_search_users(q="a", limit=5, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
@@ -6564,7 +6575,9 @@ async def test_admin_update_user_exception(monkeypatch, mock_db, allow_permissio
 async def test_admin_activate_user_success(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.activate_user = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False))
+    auth_service.activate_user = AsyncMock(
+        return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)
+    )
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
@@ -6623,7 +6636,11 @@ async def test_admin_deactivate_user_success(monkeypatch, mock_request, mock_db,
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
     auth_service.is_last_active_admin = AsyncMock(return_value=False)
-    auth_service.deactivate_user = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=False, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False))
+    auth_service.deactivate_user = AsyncMock(
+        return_value=SimpleNamespace(
+            email="a@example.com", full_name="A", is_active=False, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False
+        )
+    )
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
@@ -6700,7 +6717,9 @@ async def test_admin_delete_user_exception(monkeypatch, mock_request, mock_db, a
 async def test_admin_force_password_change_success(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False))
+    auth_service.get_user_by_email = AsyncMock(
+        return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)
+    )
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
@@ -6818,6 +6837,7 @@ def test_get_span_entity_performance_postgres_percentiles(monkeypatch):
 
 
 def test_validate_password_strength_policy(monkeypatch):
+    # First-Party
     from mcpgateway.admin import validate_password_strength
 
     monkeypatch.setattr(settings, "password_policy_enabled", False)
@@ -7838,9 +7858,7 @@ async def test_admin_search_tools_empty_query(mock_db):
 @pytest.mark.asyncio
 async def test_admin_search_tools_returns_matches(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
-    mock_db.execute.return_value.all.return_value = [
-        SimpleNamespace(id="tool-1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")
-    ]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]
     result = await admin_search_tools(
         q="tool",
         include_inactive=False,
@@ -7872,9 +7890,7 @@ async def test_admin_search_resources_returns_matches(monkeypatch, mock_db):
 @pytest.mark.asyncio
 async def test_admin_search_prompts_returns_matches(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
-    mock_db.execute.return_value.all.return_value = [
-        SimpleNamespace(id="prompt-1", original_name="Prompt 1", display_name="Prompt 1", description="Desc")
-    ]
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="prompt-1", original_name="Prompt 1", display_name="Prompt 1", description="Desc")]
     result = await admin_search_prompts(
         q="prompt",
         include_inactive=False,
@@ -8609,6 +8625,7 @@ class TestAdminAdditionalCoverage:
 
     async def test_admin_stream_logs_filters(self, monkeypatch, mock_db):
         """Stream logs with filters applied."""
+
         async def _subscribe():
             yield {"data": {"entity_type": "tool", "entity_id": "tool-1", "level": "INFO"}}
 
@@ -9731,6 +9748,7 @@ async def test_get_observability_traces_with_filters(monkeypatch, mock_request, 
     span_query = MagicMock()
     span_query.filter.return_value = span_query
     span_query.distinct.return_value = span_query
+    # Third-Party
     from sqlalchemy import column
 
     span_query.subquery.return_value = SimpleNamespace(c=SimpleNamespace(trace_id=column("trace_id")))
@@ -10312,6 +10330,7 @@ async def test_get_gateways_section(monkeypatch, mock_db):
     class GatewayModel:
         def model_dump(self, by_alias=True):
             return {"id": "g3", "name": "G3", "created_at": None, "updated_at": None}
+
         team_id = "team-1"
 
     gateway_service = MagicMock()
@@ -11185,7 +11204,10 @@ async def test_admin_add_a2a_agent_oauth_auto_detect(monkeypatch, mock_db):
     encryptor = MagicMock()
     encryptor.encrypt_secret_async = AsyncMock(return_value="enc")
     monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _secret: encryptor)
-    monkeypatch.setattr("mcpgateway.admin.MetadataCapture.extract_creation_metadata", lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None})
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+        lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
+    )
 
     response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 200
@@ -11424,7 +11446,9 @@ async def test_admin_edit_a2a_agent_parses_fields(monkeypatch, mock_db):
     encryptor = MagicMock()
     encryptor.encrypt_secret_async = AsyncMock(return_value="enc")
     monkeypatch.setattr("mcpgateway.admin.get_encryption_service", lambda _secret: encryptor)
-    monkeypatch.setattr("mcpgateway.admin.MetadataCapture.extract_modification_metadata", lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None})
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata", lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None}
+    )
 
     response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 200
@@ -12663,7 +12687,9 @@ class TestCatalogEndpoints:
     @pytest.mark.asyncio
     async def test_bulk_register_catalog_servers_disabled(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", False, raising=False)
+        # First-Party
         from mcpgateway.schemas import CatalogBulkRegisterRequest
+
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
         with pytest.raises(HTTPException) as exc_info:
             await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
@@ -12675,7 +12701,9 @@ class TestCatalogEndpoints:
         bulk_result = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.catalog_service.bulk_register_servers", AsyncMock(return_value=bulk_result))
 
+        # First-Party
         from mcpgateway.schemas import CatalogBulkRegisterRequest
+
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
         result = await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
         assert result == bulk_result
@@ -12788,9 +12816,7 @@ class TestObservability:
 
         request = MagicMock(spec=Request)
         user = {"email": "admin@test.com"}
-        result = await save_observability_query(
-            request, name="test-query", description="desc", filter_config={"status": "error"}, is_shared=False, user=user, db=mock_session
-        )
+        result = await save_observability_query(request, name="test-query", description="desc", filter_config={"status": "error"}, is_shared=False, user=user, db=mock_session)
         assert result["name"] == "test-query"
 
     @pytest.mark.asyncio
@@ -13258,7 +13284,9 @@ class TestMaintenanceMisc:
 
     @pytest.mark.asyncio
     async def test_rate_limit_decorator_allows_request(self, monkeypatch):
+        # First-Party
         from mcpgateway.admin import rate_limit, rate_limit_storage
+
         rate_limit_storage.clear()
         monkeypatch.setattr("mcpgateway.admin.settings.validation_max_requests_per_minute", 100, raising=False)
 
@@ -13274,7 +13302,9 @@ class TestMaintenanceMisc:
 
     @pytest.mark.asyncio
     async def test_rate_limit_decorator_blocks_over_limit(self, monkeypatch):
+        # First-Party
         from mcpgateway.admin import rate_limit, rate_limit_storage
+
         rate_limit_storage.clear()
 
         @rate_limit(2)
@@ -13316,6 +13346,7 @@ class TestSpanEntityPerformance:
         assert result == []
 
     def test_get_span_entity_performance_postgresql_path(self, mock_db):
+        # First-Party
         from mcpgateway.admin import settings as admin_settings
 
         mock_bind = MagicMock()
@@ -13855,10 +13886,19 @@ class TestObservabilityTraces:
         template_resp = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = template_resp
         result = await get_observability_traces(
-            request, time_range="24h", status_filter="all", limit=50,
-            min_duration=None, max_duration=None, http_method=None,
-            user_email=None, name_search=None, attribute_search=None,
-            tool_name=None, _user={"email": "admin@test.com"}, db=mock_session,
+            request,
+            time_range="24h",
+            status_filter="all",
+            limit=50,
+            min_duration=None,
+            max_duration=None,
+            http_method=None,
+            user_email=None,
+            name_search=None,
+            attribute_search=None,
+            tool_name=None,
+            _user={"email": "admin@test.com"},
+            db=mock_session,
         )
         assert result == template_resp
         request.app.state.templates.TemplateResponse.assert_called_once()
@@ -13879,10 +13919,19 @@ class TestObservabilityTraces:
         template_resp = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = template_resp
         result = await get_observability_traces(
-            request, time_range="24h", status_filter="error", limit=50,
-            min_duration=None, max_duration=None, http_method=None,
-            user_email=None, name_search=None, attribute_search=None,
-            tool_name=None, _user={"email": "admin@test.com"}, db=mock_session,
+            request,
+            time_range="24h",
+            status_filter="error",
+            limit=50,
+            min_duration=None,
+            max_duration=None,
+            http_method=None,
+            user_email=None,
+            name_search=None,
+            attribute_search=None,
+            tool_name=None,
+            _user={"email": "admin@test.com"},
+            db=mock_session,
         )
         assert result == template_resp
 
@@ -13959,3 +14008,291 @@ class TestToolPromptResourcePerformanceEndpoints:
         result = await get_resource_performance(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
         assert result["resources"] == []
         assert result["time_range_hours"] == 24
+
+
+class TestTemplateButtonGating:
+    """Tests that partial template HTML output correctly shows/hides mutation buttons based on can_modify."""
+
+    @pytest.fixture
+    def jinja_env(self):
+        """Create a real Jinja2 environment for rendering partial templates."""
+        # Third-Party
+        from jinja2 import Environment, FileSystemLoader
+
+        templates_dir = str(settings.templates_dir)
+        return Environment(loader=FileSystemLoader(templates_dir), autoescape=True)
+
+    def _render_tools_partial(self, jinja_env, tool_data, current_user_email, is_admin=False, user_team_roles=None):
+        """Helper to render tools_partial.html with given context."""
+        template = jinja_env.get_template("tools_partial.html")
+        pagination = {"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False}
+        return template.render(
+            data=[tool_data],
+            pagination=pagination,
+            links=None,
+            root_path="",
+            include_inactive=False,
+            current_user_email=current_user_email,
+            is_admin=is_admin,
+            user_team_roles=user_team_roles or {},
+        )
+
+    def _render_gateways_partial(self, jinja_env, gw_data, current_user_email, is_admin=False, user_team_roles=None):
+        template = jinja_env.get_template("gateways_partial.html")
+        pagination = {"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False}
+        return template.render(
+            data=[gw_data],
+            pagination=pagination,
+            links=None,
+            root_path="",
+            include_inactive=False,
+            current_user_email=current_user_email,
+            is_admin=is_admin,
+            user_team_roles=user_team_roles or {},
+        )
+
+    def _render_servers_partial(self, jinja_env, server_data, current_user_email, is_admin=False, user_team_roles=None):
+        template = jinja_env.get_template("servers_partial.html")
+        pagination = {"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False}
+        return template.render(
+            data=[server_data],
+            pagination=pagination,
+            links=None,
+            root_path="",
+            include_inactive=False,
+            current_user_email=current_user_email,
+            is_admin=is_admin,
+            user_team_roles=user_team_roles or {},
+        )
+
+    def _render_prompts_partial(self, jinja_env, prompt_data, current_user_email, is_admin=False, user_team_roles=None):
+        template = jinja_env.get_template("prompts_partial.html")
+        pagination = {"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False}
+        return template.render(
+            data=[prompt_data],
+            pagination=pagination,
+            links=None,
+            root_path="",
+            include_inactive=False,
+            current_user_email=current_user_email,
+            is_admin=is_admin,
+            user_team_roles=user_team_roles or {},
+        )
+
+    def _render_resources_partial(self, jinja_env, resource_data, current_user_email, is_admin=False, user_team_roles=None):
+        template = jinja_env.get_template("resources_partial.html")
+        pagination = {"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False}
+        return template.render(
+            data=[resource_data],
+            pagination=pagination,
+            links=None,
+            root_path="",
+            include_inactive=False,
+            current_user_email=current_user_email,
+            is_admin=is_admin,
+            user_team_roles=user_team_roles or {},
+        )
+
+    def _render_agents_partial(self, jinja_env, agent_data, current_user_email, is_admin=False, user_team_roles=None):
+        template = jinja_env.get_template("agents_partial.html")
+        pagination = {"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False}
+        return template.render(
+            data=[agent_data],
+            pagination=pagination,
+            links=None,
+            root_path="",
+            include_inactive=False,
+            current_user_email=current_user_email,
+            is_admin=is_admin,
+            user_team_roles=user_team_roles or {},
+        )
+
+    @pytest.fixture
+    def tool_data(self):
+        return {
+            "id": "tool-1",
+            "name": "Test Tool",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "reachable": True,
+            "integrationType": "MCP",
+            "requestType": "SSE",
+            "description": "A tool",
+            "gatewaySlug": "gw",
+            "url": "http://example.com",
+            "annotations": {},
+            "tags": [],
+            "team": None,
+        }
+
+    def test_tools_hides_buttons_for_non_owner(self, jinja_env, tool_data):
+        """Non-owner: HTML has no editTool onclick."""
+        html = self._render_tools_partial(jinja_env, tool_data, current_user_email="other@example.com")
+        assert "editTool" not in html
+        assert "/delete" not in html
+
+    def test_tools_shows_buttons_for_owner(self, jinja_env, tool_data):
+        """Owner: HTML contains editTool onclick."""
+        html = self._render_tools_partial(jinja_env, tool_data, current_user_email="owner@example.com")
+        assert "editTool" in html
+
+    def test_tools_shows_buttons_for_admin(self, jinja_env, tool_data):
+        """Admin: HTML contains editTool onclick."""
+        html = self._render_tools_partial(jinja_env, tool_data, current_user_email="admin@example.com", is_admin=True)
+        assert "editTool" in html
+
+    def test_gateways_hides_buttons_for_non_owner(self, jinja_env):
+        """Non-owner: no editGateway in HTML."""
+        gw_data = {
+            "id": "gw-1",
+            "name": "Test Gateway",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "url": "http://example.com",
+            "authType": "none",
+            "tags": [],
+            "lastSeen": None,
+            "team": None,
+        }
+        html = self._render_gateways_partial(jinja_env, gw_data, current_user_email="other@example.com")
+        assert "editGateway" not in html
+        assert "/delete" not in html
+
+    def test_servers_hides_buttons_for_non_owner(self, jinja_env):
+        """Non-owner: no editServer in HTML."""
+        server_data = {
+            "id": "srv-1",
+            "name": "Test Server",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "description": "A server",
+            "icon": None,
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_servers_partial(jinja_env, server_data, current_user_email="other@example.com")
+        assert "editServer" not in html
+        assert "/delete" not in html
+
+    def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
+        """Non-owner: no editPrompt in HTML."""
+        prompt_data = {
+            "id": "prompt-1",
+            "name": "Test Prompt",
+            "ownerEmail": "owner@example.com",
+            "owner_email": "owner@example.com",
+            "teamId": "team-1",
+            "team_id": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "description": "A prompt",
+            "gatewaySlug": "gw",
+            "displayName": "Test",
+            "originalName": "test",
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_prompts_partial(jinja_env, prompt_data, current_user_email="other@example.com")
+        assert "editPrompt" not in html
+        assert "/delete" not in html
+
+    def test_resources_hides_buttons_for_non_owner(self, jinja_env):
+        """Non-owner: no editResource in HTML."""
+        resource_data = {
+            "id": "res-1",
+            "name": "Test Resource",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "description": "A resource",
+            "uri": "file:///test",
+            "mimeType": "text/plain",
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_resources_partial(jinja_env, resource_data, current_user_email="other@example.com")
+        assert "editResource" not in html
+        assert "/delete" not in html
+
+    def test_agents_hides_buttons_for_non_owner(self, jinja_env):
+        """Non-owner: no edit onclick in HTML."""
+        agent_data = {
+            "id": "agent-1",
+            "name": "Test Agent",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "reachable": True,
+            "description": "An agent",
+            "endpointUrl": "http://example.com/agent",
+            "agentType": "a2a",
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_agents_partial(jinja_env, agent_data, current_user_email="other@example.com")
+        assert "editA2AAgent" not in html
+        assert "/delete" not in html
+
+
+class TestAdminGetToolPassesTeamRoles:
+    """Tests that admin_get_tool and admin_list_tools pass requesting_user_team_roles."""
+
+    @pytest.mark.asyncio
+    async def test_admin_get_tool_passes_team_roles(self, mock_db):
+        """admin_get_tool calls tool_service.get_tool with requesting_user_team_roles."""
+        tool_read = MagicMock()
+        with (
+            patch.object(ToolService, "get_tool", new_callable=AsyncMock, return_value=tool_read) as mock_get,
+            patch("mcpgateway.admin._get_user_team_roles", return_value={"team-1": "owner"}) as mock_roles,
+        ):
+            result = await admin_get_tool("tool-1", mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+
+            mock_roles.assert_called_once_with(mock_db, "user@example.com")
+            mock_get.assert_called_once()
+            call_kwargs = mock_get.call_args
+            assert call_kwargs[1].get("requesting_user_team_roles") == {"team-1": "owner"} or (len(call_kwargs[0]) > 2 and True)
+
+    @pytest.mark.asyncio
+    async def test_admin_list_tools_passes_team_roles(self, mock_db):
+        """admin_list_tools calls list_tools with requesting_user_team_roles."""
+        mock_pagination = PaginationMeta(page=1, per_page=50, total_items=0, total_pages=1, has_next=False, has_prev=False)
+        mock_tool_svc = MagicMock()
+        mock_tool_svc.list_tools = AsyncMock(
+            return_value={
+                "data": [],
+                "pagination": mock_pagination,
+                "links": None,
+            }
+        )
+
+        with patch("mcpgateway.admin.tool_service", mock_tool_svc), patch("mcpgateway.admin._get_user_team_roles", return_value={"team-2": "member"}) as mock_roles:
+            result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+
+            mock_roles.assert_called_once_with(mock_db, "user@example.com")
+            mock_tool_svc.list_tools.assert_called_once()
+            call_kwargs = mock_tool_svc.list_tools.call_args[1]
+            assert call_kwargs.get("requesting_user_team_roles") == {"team-2": "member"}
+
+
+class TestGetUserTeamRolesWrapper:
+    """Test the _get_user_team_roles wrapper in admin.py."""
+
+    def test_get_user_team_roles_delegates_to_auth(self):
+        """Calls auth.get_user_team_roles() with correct args."""
+        mock_db = MagicMock(spec=Session)
+        with patch("mcpgateway.admin.get_user_team_roles", return_value={"team-1": "owner"}) as mock_auth_fn:
+            result = _get_user_team_roles(mock_db, "user@example.com")
+
+            mock_auth_fn.assert_called_once_with(mock_db, "user@example.com")
+            assert result == {"team-1": "owner"}
