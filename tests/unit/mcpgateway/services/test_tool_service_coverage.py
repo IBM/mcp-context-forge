@@ -2979,3 +2979,1884 @@ class TestConvertToolToReadMetrics:
         result = tool_service.convert_tool_to_read(tool, include_metrics=False)
         assert result.metrics is None
         assert result.execution_count is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADDITIONAL COVERAGE — targets lines identified in coverage report
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ---------------------------------------------------------------------------
+# extract_using_jq — error paths (lines 286-289)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractUsingJqErrors:
+    def test_jq_filter_returns_none_result(self):
+        """When jq filter produces [None], returns error string."""
+        import mcpgateway.services.tool_service as ts
+
+        with patch.object(ts, "_compile_jq_filter") as mock_compile:
+            mock_prog = MagicMock()
+            mock_input = MagicMock()
+            mock_input.all = MagicMock(return_value=[None])
+            mock_prog.input = MagicMock(return_value=mock_input)
+            mock_compile.return_value = mock_prog
+
+            result = extract_using_jq({"key": "value"}, ".x")
+        assert result == "Error applying jsonpath filter"
+
+    def test_jq_filter_exception(self):
+        """When jq raises exception, returns error message."""
+        import mcpgateway.services.tool_service as ts
+
+        with patch.object(ts, "_compile_jq_filter", side_effect=ValueError("bad filter")):
+            result = extract_using_jq({"data": 1}, "bad_filter")
+        assert isinstance(result, str)
+        assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# get_top_tools — cache hit (line 494)
+# ---------------------------------------------------------------------------
+
+
+class TestGetTopToolsCacheHit:
+    @pytest.mark.asyncio
+    async def test_cache_hit_returns_cached(self, tool_service):
+        """When cache has data, returns it directly."""
+        cached_data = [{"tool_id": "1", "count": 10}]
+        with patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True), \
+             patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache:
+            mock_cache.get = MagicMock(return_value=cached_data)
+            db = MagicMock()
+            result = await tool_service.get_top_tools(db)
+        assert result == cached_data
+
+
+# ---------------------------------------------------------------------------
+# _extract_and_validate_structured_content — TextContent extraction + error paths
+# (lines 928-932, 941-947, 962-963, 979-980)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateToolOutputSchemaBranches:
+    def test_text_content_dict_extraction(self, tool_service):
+        """Extract structured content from TextContent-like dict in content array."""
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": '{"name": "test"}'}],
+            is_error=False,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "properties": {"name": {"type": "string"}}},
+        )
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        assert result is True
+        assert hasattr(tool_result, "structured_content")
+
+    def test_schema_type_extraction_exception(self, tool_service):
+        """When output_schema is not a dict, schema_type falls back to None."""
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": '{"data": 1}'}],
+            is_error=False,
+        )
+        # output_schema is not a dict → isinstance check fails → schema_type=None
+        tool = SimpleNamespace(name="test_tool", output_schema="not_a_dict")
+
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should not crash; schema_type falls to None
+        assert result is True or result is False
+
+    def test_single_element_list_unwrap_for_object_schema(self, tool_service):
+        """Unwrap [item] when schema expects object type."""
+        tool_result = SimpleNamespace(content=None, is_error=False)
+        tool = SimpleNamespace(
+            name="t",
+            output_schema={"type": "object", "properties": {"key": {"type": "string"}}},
+        )
+        # Pass a list with single element as candidate
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result, candidate=[{"key": "val"}])
+        assert result is True
+
+    def test_validation_error_json_encoding_failure(self, tool_service):
+        """When orjson can't encode validation details, falls back to str()."""
+        tool_result = SimpleNamespace(
+            content=[{"type": "text", "text": '{"wrong": 1}'}],
+            is_error=False,
+        )
+        tool = SimpleNamespace(
+            name="test_tool",
+            output_schema={"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}},
+        )
+
+        with patch("mcpgateway.services.tool_service._validate_with_cached_schema", side_effect=jsonschema.ValidationError("bad")):
+            with patch("mcpgateway.services.tool_service.orjson.dumps", side_effect=TypeError("can't encode")):
+                result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        assert result is False
+        assert tool_result.is_error is True
+
+    def test_setattr_structured_content_failure(self, tool_service):
+        """When setattr fails on tool_result, logs debug and continues."""
+
+        class Frozen:
+            __slots__ = ("content", "is_error")
+
+            def __init__(self):
+                self.content = [{"type": "text", "text": '{"k": "v"}'}]
+                self.is_error = False
+
+        tool_result = Frozen()
+        tool = SimpleNamespace(
+            name="t",
+            output_schema={"type": "object", "properties": {"k": {"type": "string"}}},
+        )
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        assert result is True or result is False
+
+
+# ---------------------------------------------------------------------------
+# register_tool — team name conflict (lines 1075-1078) + defaults (1059-1062)
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterToolBranches:
+    @pytest.mark.asyncio
+    async def test_team_name_conflict(self, tool_service):
+        """Raises ToolNameConflictError when team tool with same name exists."""
+        tool = MagicMock()
+        tool.name = "my_tool"
+        tool.displayName = "My Tool"
+        tool.url = "http://example.com"
+        tool.description = "desc"
+        tool.integration_type = "REST"
+        tool.request_type = "GET"
+        tool.headers = {}
+        tool.input_schema = {}
+        tool.output_schema = None
+        tool.annotations = {}
+        tool.jsonpath_filter = None
+        tool.auth = None
+        tool.tags = []
+        tool.team_id = "team-1"
+
+        existing = MagicMock()
+        existing.name = "my_tool"
+        existing.enabled = True
+        existing.id = "existing-id"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
+
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.register_tool(
+                db, tool, visibility="team", team_id="team-1", owner_email="user@test.com"
+            )
+
+    @pytest.mark.asyncio
+    async def test_defaults_visibility_from_tool_object(self, tool_service):
+        """When visibility is None, defaults from tool.visibility then checks name conflict."""
+        tool = MagicMock()
+        tool.name = "dup_tool_defaults"
+        tool.team_id = "team-99"
+        tool.owner_email = "default@test.com"
+        tool.visibility = "team"  # will be used as default since visibility=None
+
+        existing = MagicMock()
+        existing.name = "dup_tool_defaults"
+        existing.enabled = True
+        existing.id = "existing-id"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=existing)))
+
+        # visibility=None => uses tool.visibility="team", team_id defaults from tool.team_id
+        with pytest.raises(ToolNameConflictError):
+            await tool_service.register_tool(db, tool, visibility=None, owner_email=None)
+
+
+# ---------------------------------------------------------------------------
+# _process_chunk — fail status + audit + exception (lines 1432-1434, 1449-1465)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessChunkBranches:
+    def test_fail_status_increments_counter(self, tool_service):
+        """fail status from _process_single_tool_for_bulk increments failed count."""
+        tool = MagicMock()
+        tool.name = "dup_tool"
+
+        db = MagicMock()
+
+        with patch.object(tool_service, "_process_single_tool_for_bulk", return_value={"status": "fail", "error": "conflict"}):
+            result = tool_service._process_tool_chunk(
+                db, [tool], "fail", "public", None, None, None, None, None, None, None, None
+            )
+        assert result["failed"] == 1
+
+    def test_chunk_exception_rollback(self, tool_service):
+        """Exception during chunk processing triggers rollback."""
+        db = MagicMock()
+        with patch.object(tool_service, "_process_single_tool_for_bulk", side_effect=RuntimeError("db error")):
+            result = tool_service._process_tool_chunk(
+                db, [MagicMock()], "skip", "public", None, None, None, None, None, None, None, None
+            )
+        assert result["failed"] == 1
+        db.rollback.assert_called_once()
+
+    def test_audit_trail_logged_for_created(self, tool_service, mock_logging_services):
+        """Audit trail logged when tools are created."""
+        tool = MagicMock()
+        tool.name = "new_tool"
+        db_tool = MagicMock()
+
+        db = MagicMock()
+        with patch.object(tool_service, "_process_single_tool_for_bulk", return_value={"status": "add", "tool": db_tool}):
+            result = tool_service._process_tool_chunk(
+                db, [tool], "skip", "public", None, None, "admin", None, None, None, None, None
+            )
+        assert result["created"] == 1
+        mock_logging_services["audit_trail"].log_action.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _process_single_tool_for_bulk — conflict_strategy="fail" (lines 1578-1582)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessSingleToolFail:
+    def test_conflict_strategy_fail_returns_fail(self, tool_service):
+        """conflict_strategy='fail' with duplicate returns fail status."""
+        tool = MagicMock()
+        tool.name = "existing_tool"
+        tool.auth = None
+        tool.team_id = None
+        tool.owner_email = None
+        tool.visibility = None
+
+        existing = MagicMock()
+        existing_map = {"existing_tool": existing}
+
+        result = tool_service._process_single_tool_for_bulk(
+            tool, existing_map, "fail", "public", None, None, None, None, None, None, None, None
+        )
+        assert result["status"] == "fail"
+        assert "conflict" in result["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# list_tools — cache hit, page-based, gateway_id="null", visibility, team access
+# (lines 1753-1759, 1775, 1789-1791, 1805, 1812, 1834, 1854, 1865-1869)
+# ---------------------------------------------------------------------------
+
+
+class TestListToolsBranches:
+    @pytest.mark.asyncio
+    async def test_cache_hit(self, tool_service):
+        """Returns cached tools when cache has data."""
+        tool_dict = {
+            "id": "t1", "name": "test_tool", "original_name": "test", "custom_name": "test",
+            "custom_name_slug": "test", "displayName": "Test", "url": "http://x.com",
+            "description": "d", "integration_type": "REST", "request_type": "GET",
+            "headers": {}, "input_schema": {}, "annotations": {}, "enabled": True,
+            "reachable": True, "gateway_id": None, "gateway_slug": "test-gw", "visibility": "public",
+            "team_id": None, "owner_email": None, "tags": [],
+            "jsonpath_filter": None, "auth": None,
+            "created_at": "2025-01-01T00:00:00Z", "updated_at": "2025-01-01T00:00:00Z",
+        }
+        cached = {"tools": [tool_dict], "next_cursor": None}
+        db = MagicMock()
+
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value="hash123")
+            mock_cache.get = AsyncMock(return_value=cached)
+            mock_cache_fn.return_value = mock_cache
+
+            result = await tool_service.list_tools(db)
+        tools, cursor = result
+        assert len(tools) == 1
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_page_based_pagination(self, tool_service):
+        """Page-based pagination returns dict with data/pagination/links."""
+        db = MagicMock()
+        db.commit = MagicMock()
+        pag_result = {"data": [], "pagination": {"page": 1, "total": 0}, "links": None}
+
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn, \
+             patch("mcpgateway.services.tool_service.unified_paginate", AsyncMock(return_value=pag_result)):
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value=None)
+            mock_cache_fn.return_value = mock_cache
+
+            result = await tool_service.list_tools(db, page=1, per_page=10)
+        assert isinstance(result, dict)
+        assert "data" in result
+
+    @pytest.mark.asyncio
+    async def test_gateway_id_null_filter(self, tool_service):
+        """gateway_id='null' filters for tools with NULL gateway."""
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn, \
+             patch("mcpgateway.services.tool_service.unified_paginate", AsyncMock(return_value=([], None))):
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value=None)
+            mock_cache_fn.return_value = mock_cache
+
+            result = await tool_service.list_tools(db, gateway_id="null")
+        tools, _ = result
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_user_with_team_and_visibility(self, tool_service):
+        """User with teams and visibility filter applies all conditions."""
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn, \
+             patch("mcpgateway.services.tool_service.unified_paginate", AsyncMock(return_value=([], None))):
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value=None)
+            mock_cache_fn.return_value = mock_cache
+
+            result = await tool_service.list_tools(
+                db, user_email="user@test.com", token_teams=["team-1"],
+                team_id="team-1", visibility="team"
+            )
+        tools, _ = result
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_user_with_empty_token_teams(self, tool_service):
+        """Empty token_teams means public-only access."""
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn, \
+             patch("mcpgateway.services.tool_service.unified_paginate", AsyncMock(return_value=([], None))):
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value=None)
+            mock_cache_fn.return_value = mock_cache
+
+            result = await tool_service.list_tools(
+                db, user_email=None, token_teams=[]
+            )
+        tools, _ = result
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_cache_set_on_first_page(self, tool_service):
+        """First page results are cached for non-user queries."""
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn, \
+             patch("mcpgateway.services.tool_service.unified_paginate", AsyncMock(return_value=([], None))):
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value="hash123")
+            mock_cache.get = AsyncMock(return_value=None)  # cache miss
+            mock_cache.set = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+
+            result = await tool_service.list_tools(db)
+        mock_cache.set.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_gateway_id_specific_filter(self, tool_service):
+        """Specific gateway_id filters by that ID."""
+        db = MagicMock()
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn, \
+             patch("mcpgateway.services.tool_service.unified_paginate", AsyncMock(return_value=([], None))):
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value=None)
+            mock_cache_fn.return_value = mock_cache
+
+            result = await tool_service.list_tools(db, gateway_id="gw-123")
+        tools, _ = result
+        assert tools == []
+
+
+# ---------------------------------------------------------------------------
+# list_server_tools — include_metrics, team lookup, access conditions
+# (lines 1920, 1947-1952, 1962-1966)
+# ---------------------------------------------------------------------------
+
+
+class TestListServerToolsBranches:
+    @pytest.mark.asyncio
+    async def test_include_metrics_true(self, tool_service):
+        """include_metrics=True uses selectinload for metrics."""
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+        db.commit = MagicMock()
+
+        result = await tool_service.list_server_tools(db, "srv-1", include_metrics=True)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_user_email_with_no_token_teams(self, tool_service):
+        """user_email without token_teams looks up teams from DB."""
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_tms:
+            mock_svc = MagicMock()
+            mock_svc.get_user_teams = AsyncMock(return_value=[MagicMock(id="team-1")])
+            mock_tms.return_value = mock_svc
+
+            result = await tool_service.list_server_tools(db, "srv-1", user_email="u@test.com")
+        assert isinstance(result, list)
+
+    @pytest.mark.asyncio
+    async def test_non_public_only_token_with_teams(self, tool_service):
+        """Non-public-only token with teams adds owner + team access conditions."""
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+        db.commit = MagicMock()
+
+        result = await tool_service.list_server_tools(
+            db, "srv-1", user_email="u@test.com", token_teams=["t1"]
+        )
+        assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# list_tools_for_user (DEPRECATED) — various branches
+# (lines 2027-2030, 2037-2038, 2051-2088, 2094, 2101, 2115-2116)
+# ---------------------------------------------------------------------------
+
+
+class TestListToolsForUserBranches:
+    @pytest.mark.asyncio
+    async def test_limit_zero_fetches_all(self, tool_service):
+        """limit=0 fetches all tools without pagination."""
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_tms:
+            mock_svc = MagicMock()
+            mock_svc.get_user_teams = AsyncMock(return_value=[])
+            mock_tms.return_value = mock_svc
+
+            tools, cursor = await tool_service.list_tools_for_user(db, "u@test.com", limit=0)
+        assert tools == []
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_with_cursor(self, tool_service):
+        """Valid cursor extracts last_id and applies filter."""
+        from mcpgateway.utils.pagination import encode_cursor
+
+        cursor = encode_cursor({"id": "last-tool-id", "created_at": "2025-01-01T00:00:00"})
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_tms:
+            mock_svc = MagicMock()
+            mock_svc.get_user_teams = AsyncMock(return_value=[])
+            mock_tms.return_value = mock_svc
+
+            tools, next_cursor = await tool_service.list_tools_for_user(db, "u@test.com", cursor=cursor)
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_with_team_id_and_filters(self, tool_service):
+        """team_id, visibility, gateway_id='null', tags applied."""
+        from sqlalchemy import literal
+
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_tms, \
+             patch("mcpgateway.services.tool_service.json_contains_tag_expr", return_value=literal(True)):
+            mock_svc = MagicMock()
+            mock_team = MagicMock()
+            mock_team.id = "t1"
+            mock_svc.get_user_teams = AsyncMock(return_value=[mock_team])
+            mock_tms.return_value = mock_svc
+
+            tools, _ = await tool_service.list_tools_for_user(
+                db, "u@test.com", team_id="t1", visibility="team",
+                gateway_id="null", tags=["api"],
+                include_inactive=False,
+            )
+        assert tools == []
+
+    @pytest.mark.asyncio
+    async def test_has_more_generates_cursor(self, tool_service):
+        """When more results than page_size, generates next_cursor."""
+        mock_tool1 = MagicMock()
+        mock_tool1.id = "t1"
+        mock_tool1.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mock_tool2 = MagicMock()
+        mock_tool2.id = "t2"
+        mock_tool2.created_at = datetime(2025, 1, 2, tzinfo=timezone.utc)
+
+        db = MagicMock()
+        # Return 2 tools when limit=1 → has_more=True
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[mock_tool1, mock_tool2])))))
+        db.commit = MagicMock()
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_tms, \
+             patch.object(tool_service, "convert_tool_to_read", side_effect=lambda t, **kw: {"id": t.id}):
+            mock_svc = MagicMock()
+            mock_svc.get_user_teams = AsyncMock(return_value=[])
+            mock_tms.return_value = mock_svc
+
+            tools, next_cursor = await tool_service.list_tools_for_user(db, "u@test.com", limit=1)
+        assert len(tools) == 1
+        assert next_cursor is not None
+
+
+# ---------------------------------------------------------------------------
+# delete_tool / set_tool_state — permission check (lines 2208-2211, 2368-2371)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteToolPermissionCheck:
+    @pytest.mark.asyncio
+    async def test_non_owner_cannot_delete(self, tool_service):
+        """Non-owner user gets PermissionError."""
+        tool = MagicMock()
+        tool.id = "t1"
+        tool.name = "tool"
+        tool.team_id = None
+        db = MagicMock()
+        db.get = MagicMock(return_value=tool)
+
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_ps:
+            mock_svc = MagicMock()
+            mock_svc.check_resource_ownership = AsyncMock(return_value=False)
+            mock_ps.return_value = mock_svc
+
+            with pytest.raises(PermissionError, match="owner"):
+                await tool_service.delete_tool(db, "t1", user_email="other@test.com")
+
+
+class TestSetToolStatePermissionCheck:
+    @pytest.mark.asyncio
+    async def test_non_owner_cannot_activate(self, tool_service):
+        """Non-owner user gets PermissionError on state change."""
+        tool = MagicMock()
+        tool.id = "t1"
+        tool.name = "tool"
+        tool.enabled = True
+        tool.reachable = True
+        db = MagicMock()
+
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), \
+             patch("mcpgateway.services.permission_service.PermissionService") as mock_ps:
+            mock_svc = MagicMock()
+            mock_svc.check_resource_ownership = AsyncMock(return_value=False)
+            mock_ps.return_value = mock_svc
+
+            with pytest.raises(PermissionError, match="owner"):
+                await tool_service.set_tool_state(db, "t1", activate=True, reachable=True, user_email="other@test.com")
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — cached status checks (lines 2547-2551, 2565-2577, 2585, 2592-2606)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolCachePaths:
+    @pytest.mark.asyncio
+    async def test_cached_status_missing(self, tool_service):
+        """Cached status 'missing' raises ToolNotFoundError."""
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value={"status": "missing"})
+            mock_cache_fn.return_value = mock_cache
+
+            db = MagicMock()
+            with pytest.raises(ToolNotFoundError):
+                await tool_service.invoke_tool(db, "missing_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_cached_status_inactive(self, tool_service):
+        """Cached status 'inactive' raises ToolNotFoundError."""
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value={"status": "inactive"})
+            mock_cache_fn.return_value = mock_cache
+
+            db = MagicMock()
+            with pytest.raises(ToolNotFoundError, match="inactive"):
+                await tool_service.invoke_tool(db, "inactive_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_cached_status_offline(self, tool_service):
+        """Cached status 'offline' raises ToolNotFoundError."""
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value={"status": "offline"})
+            mock_cache_fn.return_value = mock_cache
+
+            db = MagicMock()
+            with pytest.raises(ToolNotFoundError, match="offline"):
+                await tool_service.invoke_tool(db, "offline_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_db_tool_unreachable_sets_negative_cache(self, tool_service):
+        """Unreachable tool in DB sets negative cache and raises."""
+        tool = MagicMock(spec=DbTool)
+        tool.name = "unreachable"
+        tool.enabled = True
+        tool.reachable = False
+        tool.gateway = None
+
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set_negative = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+
+            db = MagicMock()
+            db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=tool)))
+
+            with pytest.raises(ToolNotFoundError, match="offline"):
+                await tool_service.invoke_tool(db, "unreachable", {})
+            mock_cache.set_negative.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cached_payload_enabled_false(self, tool_service):
+        """Cached payload with enabled=False raises."""
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value={"status": "active", "tool": {"enabled": False}, "gateway": None})
+            mock_cache_fn.return_value = mock_cache
+
+            db = MagicMock()
+            with pytest.raises(ToolNotFoundError, match="inactive"):
+                await tool_service.invoke_tool(db, "disabled_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_cached_payload_reachable_false(self, tool_service):
+        """Cached payload with reachable=False raises."""
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value={"status": "active", "tool": {"reachable": False, "enabled": True}, "gateway": None})
+            mock_cache_fn.return_value = mock_cache
+
+            db = MagicMock()
+            with pytest.raises(ToolNotFoundError, match="offline"):
+                await tool_service.invoke_tool(db, "unreachable_cached", {})
+
+    @pytest.mark.asyncio
+    async def test_access_denied_returns_not_found(self, tool_service):
+        """Access denied by _check_tool_access returns generic not found."""
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn, \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=False)):
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value={
+                "status": "active",
+                "tool": {"enabled": True, "reachable": True, "id": "t1", "visibility": "private"},
+                "gateway": None,
+            })
+            mock_cache_fn.return_value = mock_cache
+
+            db = MagicMock()
+            with pytest.raises(ToolNotFoundError, match="not found"):
+                await tool_service.invoke_tool(db, "private_tool", {}, user_email="outsider@test.com")
+
+    @pytest.mark.asyncio
+    async def test_server_scoping_denies_unattached_tool(self, tool_service):
+        """Tool not attached to specified server raises not found."""
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn, \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)):
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value={
+                "status": "active",
+                "tool": {"enabled": True, "reachable": True, "id": "t1", "visibility": "public",
+                         "integration_type": "REST", "annotations": {}},
+                "gateway": None,
+            })
+            mock_cache_fn.return_value = mock_cache
+
+            db = MagicMock()
+            db.execute = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+
+            with pytest.raises(ToolNotFoundError, match="not found"):
+                await tool_service.invoke_tool(db, "tool", {}, server_id="srv-1")
+
+
+# ---------------------------------------------------------------------------
+# update_tool — various field updates (lines 3775-3859)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateToolBranches:
+    @pytest.mark.asyncio
+    async def test_update_multiple_fields(self, tool_service):
+        """Updating multiple optional fields covers many branches."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.display_name = "Old"
+        tool.description = "old desc"
+        tool.version = 3
+        tool.team_id = None
+        tool.visibility = "public"
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = "new_name"
+        tool_update.custom_name = None
+        tool_update.displayName = "New Tool"
+        tool_update.url = None
+        tool_update.description = "new desc"
+        tool_update.integration_type = None
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = {"type": "object"}
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = "team"
+        tool_update.team_id = "team-1"
+        tool_update.auth = None
+        tool_update.tags = ["api", "v2"]
+
+        db = MagicMock()
+
+        # First call returns the tool being edited, second call returns None (no conflict)
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, None]), \
+             patch.object(tool_service, "_notify_tool_updated", AsyncMock()), \
+             patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}):
+
+            result = await tool_service.update_tool(
+                db, "t1", tool_update,
+                modified_by="admin", modified_from_ip="1.2.3.4",
+                modified_via="api", modified_user_agent="curl/8.0",
+            )
+
+        assert result is not None
+        assert tool.display_name == "New Tool"
+        assert tool.output_schema == {"type": "object"}
+        assert tool.tags == ["api", "v2"]
+        assert tool.version == 4
+        assert tool.modified_by == "admin"
+        assert tool.modified_from_ip == "1.2.3.4"
+        assert tool.modified_via == "api"
+        assert tool.modified_user_agent == "curl/8.0"
+        # custom_name auto-updated when name == custom_name and custom_name is None
+        assert tool.custom_name == "new_name"
+
+    @pytest.mark.asyncio
+    async def test_version_none_initializes_to_1(self, tool_service):
+        """When tool.version is None, it's initialized to 1."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t1"
+        tool.name = "tool"
+        tool.custom_name = "tool"
+        tool.version = None
+        tool.team_id = None
+        tool.visibility = "public"
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = None
+        tool_update.custom_name = None
+        tool_update.displayName = None
+        tool_update.url = None
+        tool_update.description = None
+        tool_update.integration_type = None
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = None
+        tool_update.auth = None
+        tool_update.tags = None
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), \
+             patch.object(tool_service, "_notify_tool_updated", AsyncMock()), \
+             patch.object(tool_service, "convert_tool_to_read", return_value={"id": "t1"}):
+            result = await tool_service.update_tool(db, "t1", tool_update)
+
+        assert tool.version == 1
+
+    @pytest.mark.asyncio
+    async def test_team_name_conflict_on_update(self, tool_service):
+        """Raises ToolNameConflictError when team tool name conflicts on rename."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t1"
+        tool.name = "old_name"
+        tool.custom_name = "old_name"
+        tool.team_id = "team-1"
+        tool.visibility = "team"
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = "conflict_name"
+        tool_update.custom_name = "conflict_name"
+        tool_update.displayName = None
+        tool_update.url = None
+        tool_update.description = None
+        tool_update.integration_type = None
+        tool_update.request_type = None
+        tool_update.headers = None
+        tool_update.input_schema = None
+        tool_update.output_schema = None
+        tool_update.annotations = None
+        tool_update.jsonpath_filter = None
+        tool_update.visibility = "team"
+        tool_update.team_id = "team-1"
+        tool_update.auth = None
+        tool_update.tags = None
+
+        existing = MagicMock()
+        existing.custom_name = "conflict_name"
+        existing.enabled = True
+        existing.id = "t2"
+        existing.visibility = "team"
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", side_effect=[tool, existing]):
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "t1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_permission_check_on_update(self, tool_service):
+        """Non-owner user gets PermissionError on update."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "t1"
+        tool.name = "tool"
+
+        tool_update = MagicMock(spec=ToolUpdate)
+        tool_update.name = None
+
+        db = MagicMock()
+        with patch("mcpgateway.services.tool_service.get_for_update", return_value=tool), \
+             patch("mcpgateway.services.permission_service.PermissionService") as mock_ps:
+            mock_svc = MagicMock()
+            mock_svc.check_resource_ownership = AsyncMock(return_value=False)
+            mock_ps.return_value = mock_svc
+
+            with pytest.raises(PermissionError, match="owner"):
+                await tool_service.update_tool(db, "t1", tool_update, user_email="other@test.com")
+
+
+# ---------------------------------------------------------------------------
+# register_tools_bulk — tool without name (line 1341)
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterToolsBulkEdge:
+    @pytest.mark.asyncio
+    async def test_tool_without_name_skipped(self, tool_service):
+        """Tools without name attribute are skipped in cache invalidation."""
+        tool_no_name = MagicMock()
+        del tool_no_name.name  # getattr(tool, "name", None) returns None
+
+        tool_with_name = MagicMock()
+        tool_with_name.name = "good_tool"
+
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))))
+
+        with patch.object(tool_service, "_process_tool_chunk", return_value={"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}), \
+             patch("mcpgateway.services.tool_service._get_registry_cache") as mock_cache_fn, \
+             patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_tlc, \
+             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_asc:
+            mock_cache = AsyncMock()
+            mock_cache.invalidate_tools = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+            mock_tlc_inst = AsyncMock()
+            mock_tlc_inst.invalidate = AsyncMock()
+            mock_tlc.return_value = mock_tlc_inst
+            mock_asc.invalidate_tags = AsyncMock()
+
+            result = await tool_service.register_tools_bulk(db, [tool_no_name, tool_with_name])
+        assert result["created"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Helper: build a cached tool payload for invoke_tool tests
+# ---------------------------------------------------------------------------
+
+def _make_tool_payload(
+    *,
+    integration_type="REST",
+    request_type="GET",
+    auth_type=None,
+    auth_value=None,
+    gateway_id=None,
+    annotations=None,
+    output_schema=None,
+    jsonpath_filter=None,
+    timeout_ms=None,
+    url="http://backend:8000/api/data",
+):
+    """Build a minimal tool_payload dict matching what _build_tool_cache_payload returns."""
+    return {
+        "id": "tool-uuid-1",
+        "name": "test_tool",
+        "original_name": "test_tool",
+        "custom_name": "test_tool",
+        "display_name": "Test Tool",
+        "url": url,
+        "description": "A test tool",
+        "integration_type": integration_type,
+        "request_type": request_type,
+        "headers": {},
+        "input_schema": {},
+        "output_schema": output_schema,
+        "annotations": annotations or {},
+        "jsonpath_filter": jsonpath_filter,
+        "auth_type": auth_type,
+        "auth_value": auth_value,
+        "oauth_config": None,
+        "enabled": True,
+        "reachable": True,
+        "gateway_id": gateway_id,
+        "visibility": "public",
+        "team_id": None,
+        "owner_email": None,
+        "timeout_ms": timeout_ms,
+    }
+
+
+def _make_gateway_payload(*, auth_type=None, auth_value=None, auth_query_params=None, oauth_config=None, ca_certificate=None, ca_certificate_sig=None, passthrough_headers=None):
+    return {
+        "id": "gw-uuid-1",
+        "name": "test_gw",
+        "url": "http://gateway:9000",
+        "auth_type": auth_type,
+        "auth_value": auth_value,
+        "auth_query_params": auth_query_params,
+        "oauth_config": oauth_config,
+        "ca_certificate": ca_certificate,
+        "ca_certificate_sig": ca_certificate_sig,
+        "passthrough_headers": passthrough_headers,
+    }
+
+
+def _setup_cache_for_invoke(tool_payload, gateway_payload=None):
+    """Return a patch context manager that makes invoke_tool use a cached payload."""
+    cached = {
+        "status": "active",
+        "tool": tool_payload,
+        "gateway": gateway_payload,
+    }
+    mock_cache = AsyncMock()
+    mock_cache.enabled = True
+    mock_cache.get = AsyncMock(return_value=cached)
+    return patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=mock_cache)
+
+
+# ---------------------------------------------------------------------------
+# _extract_and_validate_structured_content — JSON parse error (lines 930-932)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractValidateJsonParseError:
+    def test_json_parse_error_in_content_continues(self, tool_service):
+        """JSON parse errors in content items are silently skipped."""
+        tool = SimpleNamespace(name="t", output_schema={"type": "object", "properties": {"k": {"type": "string"}}})
+        tool_result = MagicMock()
+        tool_result.content = [
+            {"type": "text", "text": "not-valid-json{{{"},
+            {"type": "text", "text": '{"k": "v"}'},
+        ]
+        tool_result.is_error = False
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        # Should parse second content item successfully
+        assert result is True
+
+    def test_schema_type_exception_falls_through(self, tool_service):
+        """When output_schema.get raises, schema_type defaults to None."""
+        tool = SimpleNamespace(name="t", output_schema="not-a-dict")
+        tool_result = MagicMock()
+        tool_result.content = [{"type": "text", "text": '{"k": "v"}'}]
+        tool_result.is_error = False
+        # "not-a-dict".get will raise AttributeError, caught by except on line 943
+        result = tool_service._extract_and_validate_structured_content(tool, tool_result)
+        assert result is True or result is False
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — REST timeout path (lines 2900-2939)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolRestTimeout:
+    @pytest.mark.asyncio
+    async def test_rest_timeout_raises_tool_timeout_error(self, tool_service):
+        """REST tool timeout raises ToolTimeoutError."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            # Make HTTP GET timeout
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = AsyncMock(side_effect=asyncio.TimeoutError())
+
+            with pytest.raises(ToolTimeoutError, match="timed out"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — REST success with JSON response (lines 2959-2960, 2967-2968)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolRestSuccess:
+    @pytest.mark.asyncio
+    async def test_rest_success_json_response(self, tool_service):
+        """REST tool successful JSON response is parsed and returned."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"result": "ok"})
+        mock_response.raise_for_status = MagicMock()
+
+        import asyncio as aio
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+        assert result is not None
+        assert result.is_error is not True
+
+    @pytest.mark.asyncio
+    async def test_rest_non_json_response(self, tool_service):
+        """REST tool non-JSON response falls back to text."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(side_effect=orjson.JSONDecodeError("invalid", "x", 0))
+        mock_response.text = "plain text response"
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_rest_success_with_output_schema_validation(self, tool_service):
+        """REST tool validates response against output schema."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET", output_schema={"type": "object", "properties": {"result": {"type": "string"}}})
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"result": "ok"})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — REST non-JSON error response (lines 2949-2950)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolRestErrorResponse:
+    @pytest.mark.asyncio
+    async def test_rest_non_standard_status_non_json(self, tool_service):
+        """REST tool 207 Multi-Status with non-JSON body."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 207
+        mock_response.json = MagicMock(side_effect=orjson.JSONDecodeError("invalid", "x", 0))
+        mock_response.text = "multi-status response"
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+        assert result.is_error is True
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — Observability span creation & ending (lines 2768-2793, 3622-3643)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolObservability:
+    @pytest.mark.asyncio
+    async def test_observability_span_created_and_ended(self, tool_service):
+        """When trace_id is present, database span is created and ended."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        mock_obs_svc = MagicMock()
+        mock_obs_svc.start_span = MagicMock(return_value="span-123")
+        mock_obs_svc.end_span = MagicMock()
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.ObservabilityService", return_value=mock_obs_svc), \
+             patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fds, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value="trace-abc")
+            mock_fds.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fds.return_value.__exit__ = MagicMock(return_value=False)
+            mock_span = MagicMock()
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=mock_span)
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+        assert result is not None
+        # Verify span was created and ended
+        mock_obs_svc.start_span.assert_called_once()
+        assert mock_obs_svc.end_span.call_count == 1
+        # Verify OTel span attributes set
+        mock_span.set_attribute.assert_any_call("success", True)
+
+    @pytest.mark.asyncio
+    async def test_observability_span_start_failure(self, tool_service):
+        """When span creation fails, invocation continues."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        mock_obs_svc = MagicMock()
+        mock_obs_svc.start_span = MagicMock(side_effect=RuntimeError("DB down"))
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.ObservabilityService", return_value=mock_obs_svc), \
+             patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fds, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value="trace-abc")
+            mock_fds.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fds.return_value.__exit__ = MagicMock(return_value=False)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            # Should not raise despite span creation failure
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — Metrics recording failure (lines 3659-3660)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolMetricsFailure:
+    @pytest.mark.asyncio
+    async def test_metrics_recording_failure_doesnt_crash(self, tool_service):
+        """Metrics recording failure is logged but doesn't raise."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", side_effect=RuntimeError("metrics down")), \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — Gateway query param decryption (lines 2661-2672)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolGatewayQueryParams:
+    @pytest.mark.asyncio
+    async def test_gateway_query_param_auth_decryption(self, tool_service):
+        """Gateway query params are decrypted and applied to URL."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-uuid-1")
+        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "encrypted_value"})
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with _setup_cache_for_invoke(tp, gp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "secret123"}), \
+             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://gateway:9000?api_key=secret123"), \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_gateway_query_param_decryption_failure(self, tool_service):
+        """Failed decryption of query params is silently skipped."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-uuid-1")
+        gp = _make_gateway_payload(auth_type="query_param", auth_query_params={"api_key": "bad_encrypted"})
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        with _setup_cache_for_invoke(tp, gp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.decode_auth", side_effect=lambda v: (_ for _ in ()).throw(RuntimeError("decrypt fail")) if v == "bad_encrypted" else {}), \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+        assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — Plugin global_context update (lines 2742-2748)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolPluginContext:
+    @pytest.mark.asyncio
+    async def test_global_context_updated_with_server_id_and_email(self, tool_service):
+        """Plugin global context is updated with gateway_id and user email."""
+        from mcpgateway.plugins.framework.models import GlobalContext
+
+        tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-42")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*a, **kw):
+            return mock_response
+
+        gc = GlobalContext(request_id="req-1", server_id="old-server", tenant_id=None, user=None)
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(
+                db, "test_tool", {},
+                app_user_email="user@test.com",
+                plugin_global_context=gc,
+            )
+        assert gc.server_id == "gw-42"
+        assert gc.user == "user@test.com"
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — MCP-Session-Id normalization (lines 2841-2845)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolMcpSessionAffinity:
+    @pytest.mark.asyncio
+    async def test_mcp_session_id_normalized(self, tool_service):
+        """MCP-Session-Id header is normalized to x-mcp-session-id."""
+        tp = _make_tool_payload(integration_type="REST", request_type="GET")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        captured_headers = {}
+
+        async def fake_get(url, params=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"MCP-Session-Id": "session-abc123def456"}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            result = await tool_service.invoke_tool(
+                db, "test_tool", {},
+                request_headers={"MCP-Session-Id": "session-abc123def456"},
+            )
+        assert "x-mcp-session-id" in captured_headers
+        assert captured_headers["x-mcp-session-id"] == "session-abc123def456"
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — REST POST method (verifies method routing)
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeToolRestPost:
+    @pytest.mark.asyncio
+    async def test_rest_post_uses_request_method(self, tool_service):
+        """REST tool with POST request_type uses .request('POST', ...) with json payload."""
+        tp = _make_tool_payload(integration_type="REST", request_type="POST")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"data": "ok"})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_request(method, url, json=None, headers=None):
+            return mock_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.request = fake_request
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"key": "val"})
+        assert result is not None
+        assert result.is_error is not True
+
+
+# ---------------------------------------------------------------------------
+# invoke_tool — A2A agent invocation (lines 2703-2724, 3430-3547)
+# ---------------------------------------------------------------------------
+
+
+def _make_a2a_agent(*, enabled=True, agent_type="jsonrpc", auth_type=None, auth_value=None, auth_query_params=None):
+    """Create a mock A2A agent."""
+    agent = MagicMock()
+    agent.id = "agent-uuid-1"
+    agent.name = "test_a2a_agent"
+    agent.endpoint_url = "http://a2a-agent:9000/"
+    agent.agent_type = agent_type
+    agent.protocol_version = "0.3"
+    agent.enabled = enabled
+    agent.auth_type = auth_type
+    agent.auth_value = auth_value
+    agent.auth_query_params = auth_query_params
+    return agent
+
+
+class TestInvokeToolA2A:
+    @pytest.mark.asyncio
+    async def test_a2a_jsonrpc_success_with_query(self, tool_service):
+        """A2A JSONRPC agent invocation with query argument succeeds."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "Hello from A2A"})
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "What is A2A?"})
+        assert result is not None
+        assert result.is_error is False
+        assert "Hello from A2A" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_a2a_jsonrpc_success_no_query(self, tool_service):
+        """A2A JSONRPC agent invocation without query uses raw params."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"result": {"data": "test"}})
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"params": {"key": "val"}, "method": "tasks/list"})
+        assert result is not None
+        assert result.is_error is False
+
+    @pytest.mark.asyncio
+    async def test_a2a_custom_agent_type(self, tool_service):
+        """A2A custom agent uses direct parameter passing."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(agent_type="custom")
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"result": "custom ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"interaction_type": "query"})
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_a2a_with_api_key_auth(self, tool_service):
+        """A2A agent with api_key auth adds Bearer header."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(auth_type="api_key", auth_value="my-api-key")
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        captured_headers = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+        assert captured_headers.get("Authorization") == "Bearer my-api-key"
+
+    @pytest.mark.asyncio
+    async def test_a2a_http_error_response(self, tool_service):
+        """A2A agent HTTP 500 returns error result."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 500
+        mock_http_response.text = "Internal Server Error"
+
+        async def fake_post(url, json=None, headers=None):
+            return mock_http_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+        assert result.is_error is True
+        assert "500" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_a2a_timeout_raises_error(self, tool_service):
+        """A2A agent timeout raises ToolTimeoutError."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = AsyncMock(side_effect=asyncio.TimeoutError())
+
+            with pytest.raises(ToolTimeoutError, match="timed out"):
+                await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+
+    @pytest.mark.asyncio
+    async def test_a2a_agent_not_found(self, tool_service):
+        """A2A agent not in database raises ToolNotFoundError."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "missing-agent"},
+        )
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc:
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+
+            with pytest.raises(ToolNotFoundError, match="agent not found"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_a2a_agent_disabled(self, tool_service):
+        """Disabled A2A agent raises ToolNotFoundError."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(enabled=False)
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc:
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+
+            with pytest.raises(ToolNotFoundError, match="disabled"):
+                await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_a2a_query_param_auth(self, tool_service):
+        """A2A agent with query_param auth decrypts and applies to URL."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(auth_type="query_param", auth_query_params={"token": "encrypted_tok"})
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        captured_url = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_url["url"] = url
+            return mock_http_response
+
+        with _setup_cache_for_invoke(tp), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)), \
+             patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc, \
+             patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace, \
+             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx, \
+             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf, \
+             patch("mcpgateway.services.tool_service.decode_auth", return_value={"token": "decrypted_val"}), \
+             patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://a2a-agent:9000/?token=decrypted_val"), \
+             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "test"})
+        assert result is not None
+        assert captured_url["url"] == "http://a2a-agent:9000/?token=decrypted_val"

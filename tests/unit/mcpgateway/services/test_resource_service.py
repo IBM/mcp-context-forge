@@ -568,6 +568,124 @@ class TestResourceReading:
         assert result.uri == "greetme://morning/{name}"
         assert result.id == "template-id"
 
+    @pytest.mark.asyncio
+    async def test_read_resource_quack_text_updates_content_and_records_observability(self, resource_service):
+        """Cover quack-content text path + ObservabilityService span in read_resource()."""
+        from types import SimpleNamespace
+        from mcpgateway.services.observability_service import current_trace_id
+
+        token = current_trace_id.set("trace-read-1")
+        try:
+            # db.get() path (resource_id provided)
+            content_obj = SimpleNamespace(id="content-1", uri="http://example.com/r", text="template-text")
+            resource_db = MagicMock()
+            resource_db.id = "res-1"
+            resource_db.uri = "http://example.com/r"
+            resource_db.enabled = True
+            resource_db.content = content_obj
+            resource_db.gateway = MagicMock()
+
+            db = MagicMock()
+            db.get.return_value = resource_db
+
+            with (
+                patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+                patch.object(resource_service, "invoke_resource", new_callable=AsyncMock, return_value="REMOTE"),
+                patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
+                patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh_db_session,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            ):
+                obs = MagicMock()
+                obs.start_span.return_value = "span-read-1"
+                obs.end_span = MagicMock()
+                MockObs.return_value = obs
+
+                mock_fresh_db_session.return_value.__enter__.return_value = MagicMock()
+                mock_fresh_db_session.return_value.__exit__.return_value = False
+
+                mock_metrics_buffer.return_value = MagicMock()
+
+                result = await resource_service.read_resource(db, resource_id="res-1")
+
+            assert result.text == "REMOTE"
+            obs.start_span.assert_called_once()
+            obs.end_span.assert_called_once()
+        finally:
+            current_trace_id.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_observability_start_span_failure_is_swallowed(self, resource_service):
+        """Cover ObservabilityService.start_span exception handling in read_resource()."""
+        from types import SimpleNamespace
+        from mcpgateway.services.observability_service import current_trace_id
+
+        token = current_trace_id.set("trace-read-2")
+        try:
+            content_obj = SimpleNamespace(id="content-1", uri="http://example.com/r", text="template-text")
+            resource_db = MagicMock(id="res-1", uri="http://example.com/r", enabled=True, content=content_obj, gateway=MagicMock())
+
+            db = MagicMock()
+            db.get.return_value = resource_db
+
+            with (
+                patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+                patch.object(resource_service, "invoke_resource", new_callable=AsyncMock, return_value="REMOTE"),
+                patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            ):
+                obs = MagicMock()
+                obs.start_span.side_effect = Exception("boom")
+                obs.end_span = MagicMock()
+                MockObs.return_value = obs
+
+                mock_metrics_buffer.return_value = MagicMock()
+
+                result = await resource_service.read_resource(db, resource_id="res-1")
+
+            assert result.text == "REMOTE"
+            obs.start_span.assert_called_once()
+            obs.end_span.assert_not_called()
+        finally:
+            current_trace_id.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_observability_end_span_failure_is_swallowed(self, resource_service):
+        """Cover ObservabilityService.end_span exception handling in read_resource()."""
+        from types import SimpleNamespace
+        from mcpgateway.services.observability_service import current_trace_id
+
+        token = current_trace_id.set("trace-read-3")
+        try:
+            content_obj = SimpleNamespace(id="content-1", uri="http://example.com/r", text="template-text")
+            resource_db = MagicMock(id="res-1", uri="http://example.com/r", enabled=True, content=content_obj, gateway=MagicMock())
+
+            db = MagicMock()
+            db.get.return_value = resource_db
+
+            with (
+                patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+                patch.object(resource_service, "invoke_resource", new_callable=AsyncMock, return_value="REMOTE"),
+                patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
+                patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh_db_session,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            ):
+                obs = MagicMock()
+                obs.start_span.return_value = "span-read-3"
+                obs.end_span = MagicMock(side_effect=Exception("end boom"))
+                MockObs.return_value = obs
+
+                mock_fresh_db_session.return_value.__enter__.return_value = MagicMock()
+                mock_fresh_db_session.return_value.__exit__.return_value = False
+
+                mock_metrics_buffer.return_value = MagicMock()
+
+                result = await resource_service.read_resource(db, resource_id="res-1")
+
+            assert result.text == "REMOTE"
+            obs.end_span.assert_called_once()
+        finally:
+            current_trace_id.reset(token)
+
 
 # --------------------------------------------------------------------------- #
 # Resource management tests                                                   #
@@ -1453,6 +1571,35 @@ class TestUtilityMethods:
         assert m.failure_rate == 0.0
         assert m.min_response_time is None
 
+    def test_convert_resource_to_read_normalizes_tags(self, resource_service, mock_resource):
+        """convert_resource_to_read normalizes tags of various shapes."""
+
+        class TagObj:
+            def __init__(self, label=None, name=None):
+                self.label = label
+                self.name = name
+
+        mock_resource.tags = [
+            "plain",
+            {"label": "dict-label"},
+            {"name": "dict-name"},
+            TagObj(label="obj-label"),
+            TagObj(name="obj-name"),
+            TagObj(label=None, name=None),  # ignored
+            123,  # ignored
+        ]
+
+        result = resource_service.convert_resource_to_read(mock_resource, include_metrics=False)
+        assert result.tags == ["plain", "dict-label", "dict-name", "obj-label", "obj-name"]
+
+    def test_init_skips_plugin_manager_when_plugins_unavailable(self):
+        """Cover the PLUGINS_AVAILABLE=False init branch."""
+        from mcpgateway.services import resource_service as rs_mod
+
+        with patch.object(rs_mod, "PLUGINS_AVAILABLE", False):
+            svc = rs_mod.ResourceService()
+        assert svc._plugin_manager is None
+
 
 # --------------------------------------------------------------------------- #
 # Notification tests                                                          #
@@ -1793,6 +1940,48 @@ class TestResourceServiceMetricsExtended:
             assert result[1].name == "resource2"
             assert result[1].execution_count == 7
             assert result[1].success_rate == pytest.approx(71.43, rel=0.01)
+
+    @pytest.mark.asyncio
+    async def test_get_top_resources_returns_cached_when_present(self, resource_service):
+        """Cover cache hit path for get_top_resources()."""
+        db = MagicMock()
+        cached = [MagicMock(name="cached")]
+
+        with (
+            patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
+            patch("mcpgateway.services.metrics_query_service.get_top_performers_combined") as mock_combined,
+        ):
+            mock_cache.get.return_value = cached
+
+            result = await resource_service.get_top_resources(db, limit=2)
+
+        assert result is cached
+        mock_combined.assert_not_called()
+        mock_cache.get.assert_called_once()
+        mock_cache.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_top_resources_skips_cache_when_disabled(self, resource_service, mock_db):
+        """Cover is_cache_enabled=False branches in get_top_resources()."""
+        mock_performer = MagicMock()
+        mock_performer.id = "1"
+        mock_performer.name = "resource"
+        mock_performer.execution_count = 1
+        mock_performer.avg_response_time = 0.1
+        mock_performer.success_rate = 100.0
+        mock_performer.last_execution = "2025-01-10T12:00:00"
+
+        with (
+            patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=False),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
+            patch("mcpgateway.services.metrics_query_service.get_top_performers_combined", return_value=[mock_performer]),
+        ):
+            result = await resource_service.get_top_resources(mock_db, limit=1)
+
+        assert len(result) == 1
+        mock_cache.get.assert_not_called()
+        mock_cache.set.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -2678,6 +2867,154 @@ class TestInvokeResourceCoverage:
                 resource_obj=resource, gateway_obj=gateway,
             )
 
+    @pytest.mark.asyncio
+    async def test_observability_span_started_and_ended(self, resource_service, monkeypatch):
+        """Cover ObservabilityService start_span/end_span success paths in invoke_resource()."""
+        from mcpgateway.services.observability_service import current_trace_id
+
+        token = current_trace_id.set("trace-1")
+        try:
+            resource = self._make_resource()
+            gateway = self._make_gateway(transport="sse")
+            db = MagicMock()
+            db.close = MagicMock()
+
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
+
+            with (
+                patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
+                patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh_db_session,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+                patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            ):
+                obs = MagicMock()
+                obs.start_span.return_value = "span-1"
+                obs.end_span = MagicMock()
+                MockObs.return_value = obs
+
+                mock_fresh_db_session.return_value.__enter__.return_value = MagicMock()
+                mock_fresh_db_session.return_value.__exit__.return_value = False
+
+                metrics_buffer = MagicMock()
+                mock_metrics_buffer.return_value = metrics_buffer
+
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                cs_session = AsyncMock()
+                cs_session.initialize = AsyncMock(return_value=None)
+                cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+                assert result == "ok"
+
+                obs.start_span.assert_called_once()
+                obs.end_span.assert_called_once()
+
+        finally:
+            current_trace_id.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_observability_start_span_failure_is_swallowed(self, resource_service, monkeypatch):
+        """Cover ObservabilityService.start_span exception handling in invoke_resource()."""
+        from mcpgateway.services.observability_service import current_trace_id
+
+        token = current_trace_id.set("trace-2")
+        try:
+            resource = self._make_resource()
+            gateway = self._make_gateway(transport="sse")
+            db = MagicMock()
+            db.close = MagicMock()
+
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
+
+            with (
+                patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+                patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            ):
+                obs = MagicMock()
+                obs.start_span.side_effect = Exception("boom")
+                obs.end_span = MagicMock()
+                MockObs.return_value = obs
+
+                metrics_buffer = MagicMock()
+                mock_metrics_buffer.return_value = metrics_buffer
+
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                cs_session = AsyncMock()
+                cs_session.initialize = AsyncMock(return_value=None)
+                cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+                assert result == "ok"
+
+                obs.start_span.assert_called_once()
+                obs.end_span.assert_not_called()
+        finally:
+            current_trace_id.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_observability_end_span_failure_is_swallowed(self, resource_service, monkeypatch):
+        """Cover ObservabilityService.end_span exception handling in invoke_resource()."""
+        from mcpgateway.services.observability_service import current_trace_id
+
+        token = current_trace_id.set("trace-3")
+        try:
+            resource = self._make_resource()
+            gateway = self._make_gateway(transport="sse")
+            db = MagicMock()
+            db.close = MagicMock()
+
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.mcp_session_pool_enabled", False)
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.health_check_timeout", 1)
+            monkeypatch.setattr("mcpgateway.services.resource_service.settings.enable_ed25519_signing", False)
+
+            with (
+                patch("mcpgateway.services.resource_service.ObservabilityService") as MockObs,
+                patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh_db_session,
+                patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+                patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+                patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+            ):
+                obs = MagicMock()
+                obs.start_span.return_value = "span-3"
+                obs.end_span = MagicMock(side_effect=Exception("end boom"))
+                MockObs.return_value = obs
+
+                mock_fresh_db_session.return_value.__enter__.return_value = MagicMock()
+                mock_fresh_db_session.return_value.__exit__.return_value = False
+
+                metrics_buffer = MagicMock()
+                mock_metrics_buffer.return_value = metrics_buffer
+
+                mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+                mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                cs_session = AsyncMock()
+                cs_session.initialize = AsyncMock(return_value=None)
+                cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+                MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+                MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+                result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+                assert result == "ok"
+                obs.end_span.assert_called_once()
+        finally:
+            current_trace_id.reset(token)
+
 
 # ============================================================================
 # set_resource_state lock and permission error paths
@@ -2869,6 +3206,52 @@ class TestUpdateResourcePermissionAndConflict:
             db.execute.return_value.scalar_one_or_none.return_value = existing
             with pytest.raises(ResourceURIConflictError):
                 await resource_service.update_resource(db, "res-1", update)
+
+    @pytest.mark.asyncio
+    async def test_uri_conflict_team_resource(self, resource_service):
+        """update_resource raises ResourceURIConflictError for team URI conflict."""
+        from mcpgateway.services.resource_service import ResourceURIConflictError
+
+        db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.id = "res-1"
+        mock_resource.name = "Test Resource"
+        mock_resource.uri = "http://example.com/original"
+        mock_resource.visibility = "team"
+        mock_resource.team_id = "team-1"
+
+        existing = MagicMock()
+        existing.id = "res-2"
+        existing.enabled = True
+        existing.visibility = "team"
+
+        update = ResourceUpdate(uri="http://example.com/conflict", visibility="team", team_id="team-1")
+
+        with patch("mcpgateway.services.resource_service.get_for_update", side_effect=[mock_resource, existing]):
+            with pytest.raises(ResourceURIConflictError):
+                await resource_service.update_resource(db, "res-1", update)
+
+    @pytest.mark.asyncio
+    async def test_integrity_error_logs_and_reraises(self, resource_service, mock_logging_services):
+        """update_resource logs IntegrityError via structured_logger and re-raises it."""
+        db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.id = "res-1"
+        mock_resource.name = "Test Resource"
+        mock_resource.uri = "http://example.com/original"
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+
+        update = ResourceUpdate(name="Updated")
+
+        db.commit.side_effect = IntegrityError("stmt", {}, Exception("orig"))
+
+        with patch("mcpgateway.services.resource_service.get_for_update", return_value=mock_resource):
+            with pytest.raises(IntegrityError):
+                await resource_service.update_resource(db, "res-1", update, modified_by="user-1")
+
+        db.rollback.assert_called()
+        mock_logging_services["structured_logger"].log.assert_called()
 
 
 # ============================================================================

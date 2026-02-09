@@ -442,8 +442,8 @@ async def test_process_root_entities(import_service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_import_status_tracking(import_service):
-    """Test import status tracking functionality."""
+async def test_import_status_to_dict(import_service):
+    """Test ImportStatus initialization and to_dict conversion."""
     # Create import status
     import_id = "test-import-123"
     status = ImportStatus(import_id)
@@ -473,7 +473,7 @@ async def test_import_status_tracking(import_service):
 
 
 @pytest.mark.asyncio
-async def test_import_service_initialization(import_service):
+async def test_import_service_initialize_shutdown(import_service):
     """Test import service initialization and shutdown."""
     # Test initialization
     await import_service.initialize()
@@ -2336,77 +2336,81 @@ async def test_process_root_other_conflict_strategy(import_service, mock_db):
 
 @pytest.mark.asyncio
 async def test_bulk_tool_conversion_failure(import_service, mock_db):
-    """Test bulk tool processing with conversion failure for one item.
+    """Test bulk tool processing records conversion errors and returns early when nothing converts."""
+    status = ImportStatus("bulk-tools-1")
 
-    Note: Missing required field 'url' causes early validation failure, not conversion failure.
-    The import fails completely with ImportError during validation phase.
-    """
-    import_data = {
-        "version": "2025-03-26",
-        "exported_at": "2025-01-01T00:00:00Z",
-        "entities": {
-            "tools": [
-                {"name": "good_tool", "url": "https://api.example.com", "integration_type": "REST", "request_type": "GET"},
-                {"name": "bad_tool"},  # Missing url - fails validation
-            ]
-        },
-    }
+    tools_data = [
+        {"name": "good_tool", "url": "https://api.example.com", "integration_type": "REST"},
+        {"name": "bad_tool", "url": "https://api.example.com", "integration_type": "REST"},
+    ]
 
-    # This import should raise ImportError due to missing required field
-    with pytest.raises(ImportError) as exc_info:
-        await import_service.import_configuration(db=mock_db, import_data=import_data, imported_by="test_user")
+    # Force conversion errors inside the bulk loop (covers the exception path and early return).
+    import_service._convert_to_tool_create = MagicMock(side_effect=ValueError("boom"))
 
-    assert "missing required field: url" in str(exc_info.value)
+    await import_service._process_tools_bulk(
+        db=mock_db,
+        tools_data=tools_data,
+        conflict_strategy=ConflictStrategy.UPDATE,
+        dry_run=False,
+        status=status,
+        imported_by="test_user",
+    )
+
+    assert status.failed_entities == len(tools_data)
+    assert len(status.errors) == len(tools_data)
+    import_service.tool_service.register_tools_bulk.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_bulk_resource_conversion_failure(import_service, mock_db):
-    """Test bulk resource processing with conversion failure.
+    """Test bulk resource processing records conversion errors and returns early when nothing converts."""
+    status = ImportStatus("bulk-resources-1")
 
-    Note: Missing required field 'name' causes early validation failure, not conversion failure.
-    The import fails completely with ImportError during validation phase.
-    """
-    import_data = {
-        "version": "2025-03-26",
-        "exported_at": "2025-01-01T00:00:00Z",
-        "entities": {
-            "resources": [
-                {"name": "good_res", "uri": "file:///res1"},
-                {"uri": "file:///bad"},  # Missing name - fails validation
-            ]
-        },
-    }
+    resources_data = [
+        {"name": "good_res", "uri": "file:///res1"},
+        {"name": "bad_res", "uri": "file:///res2"},
+    ]
 
-    # This import should raise ImportError due to missing required field
-    with pytest.raises(ImportError) as exc_info:
-        await import_service.import_configuration(db=mock_db, import_data=import_data, imported_by="test_user")
+    import_service._convert_to_resource_create = MagicMock(side_effect=ValueError("boom"))
 
-    assert "missing required field: name" in str(exc_info.value)
+    await import_service._process_resources_bulk(
+        db=mock_db,
+        resources_data=resources_data,
+        conflict_strategy=ConflictStrategy.UPDATE,
+        dry_run=False,
+        status=status,
+        imported_by="test_user",
+    )
+
+    assert status.failed_entities == len(resources_data)
+    assert len(status.errors) == len(resources_data)
+    import_service.resource_service.register_resources_bulk.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_bulk_prompt_conversion_failure(import_service, mock_db):
-    """Test bulk prompt processing with conversion failure.
+    """Test bulk prompt processing records conversion errors and returns early when nothing converts."""
+    status = ImportStatus("bulk-prompts-1")
 
-    Note: Missing required field 'name' causes early validation failure, not conversion failure.
-    The import fails completely with ImportError during validation phase.
-    """
-    import_data = {
-        "version": "2025-03-26",
-        "exported_at": "2025-01-01T00:00:00Z",
-        "entities": {
-            "prompts": [
-                {"name": "good_prompt", "template": "Hello"},
-                {"template": "Bad"},  # Missing name - fails validation
-            ]
-        },
-    }
+    prompts_data = [
+        {"name": "good_prompt", "template": "Hello"},
+        {"name": "bad_prompt", "template": "Hello"},
+    ]
 
-    # This import should raise ImportError due to missing required field
-    with pytest.raises(ImportError) as exc_info:
-        await import_service.import_configuration(db=mock_db, import_data=import_data, imported_by="test_user")
+    import_service._convert_to_prompt_create = MagicMock(side_effect=ValueError("boom"))
 
-    assert "missing required field: name" in str(exc_info.value)
+    await import_service._process_prompts_bulk(
+        db=mock_db,
+        prompts_data=prompts_data,
+        conflict_strategy=ConflictStrategy.UPDATE,
+        dry_run=False,
+        status=status,
+        imported_by="test_user",
+    )
+
+    assert status.failed_entities == len(prompts_data)
+    assert len(status.errors) == len(prompts_data)
+    import_service.prompt_service.register_prompts_bulk.assert_not_called()
 
 
 @pytest.mark.asyncio
