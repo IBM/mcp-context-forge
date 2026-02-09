@@ -72,7 +72,7 @@ class SemanticSearchService:
 
     # Helpers
 
-    def _nornalize_query(self, query: str) -> str:
+    def _normalize_query(self, query: str) -> str:
         return query.strip().lower()
     
     def _make_cache_key(self, query: str, limit: int, threshold: Optional[float]) -> str:

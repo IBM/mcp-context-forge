@@ -359,3 +359,248 @@ class TestSemanticSearchService:
 
         with pytest.raises(ValueError, match="Threshold must be between 0.0 and 1.0"):
             await service.search_tools(query="test", limit=10, threshold=1.1)
+
+
+class TestSemanticSearchCache:
+    """Test suite for semantic search caching functionality."""
+
+    @pytest.mark.anyio
+    async def test_cache_hit_returns_cached_results(self):
+        """Test that repeated identical requests return cached results without recomputation."""
+        # Arrange
+        service = SemanticSearchService()
+        mock_results = [
+            ToolSearchResult(
+                tool_name="cached_tool",
+                description="Cached result",
+                server_id="srv1",
+                server_name="Server",
+                similarity_score=0.95,
+            )
+        ]
+
+        # Mock the underlying services
+        mock_embedding_service = MagicMock()
+        mock_embedding_service.embed_query = AsyncMock(return_value=[0.1] * 768)
+        
+        mock_vector_service = MagicMock()
+        mock_vector_service.search_similar_tools = AsyncMock(return_value=mock_results)
+        
+        service.embedding_service = mock_embedding_service
+        service.vector_search_service = mock_vector_service
+
+        # Act - First call should hit the services
+        results1 = await service.search_tools(query="test query", limit=10)
+        
+        # Second call with identical params should hit cache
+        results2 = await service.search_tools(query="test query", limit=10)
+
+        # Assert
+        assert results1 == results2
+        assert len(results1) == 1
+        assert results1[0].tool_name == "cached_tool"
+        
+        # Services should only be called once (first request)
+        mock_embedding_service.embed_query.assert_awaited_once()
+        mock_vector_service.search_similar_tools.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_query_normalization_cache_key(self):
+        """Test that queries with different cases/whitespace hit the same cache."""
+        # Arrange
+        service = SemanticSearchService()
+        mock_results = [
+            ToolSearchResult(
+                tool_name="normalized_tool",
+                description="Test",
+                server_id="srv1",
+                server_name="Server",
+                similarity_score=0.9,
+            )
+        ]
+
+        mock_embedding_service = MagicMock()
+        mock_embedding_service.embed_query = AsyncMock(return_value=[0.1] * 768)
+        
+        mock_vector_service = MagicMock()
+        mock_vector_service.search_similar_tools = AsyncMock(return_value=mock_results)
+        
+        service.embedding_service = mock_embedding_service
+        service.vector_search_service = mock_vector_service
+
+        # Act - Different formats of same query
+        results1 = await service.search_tools(query="Test Query", limit=10)
+        results2 = await service.search_tools(query="test query", limit=10)
+        results3 = await service.search_tools(query="  TEST QUERY  ", limit=10)
+
+        # Assert - All should return same cached result
+        assert results1 == results2 == results3
+        
+        # Embedding service should only be called once
+        mock_embedding_service.embed_query.assert_awaited_once_with("test query")
+        mock_vector_service.search_similar_tools.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_different_params_create_different_cache_keys(self):
+        """Test that different limit/threshold values create separate cache entries."""
+        # Arrange
+        service = SemanticSearchService()
+        mock_results_limit5 = [
+            ToolSearchResult(
+                tool_name="tool1",
+                description="Test",
+                server_id="srv1",
+                server_name="Server",
+                similarity_score=0.9,
+            )
+        ]
+        mock_results_limit10 = mock_results_limit5 + [
+            ToolSearchResult(
+                tool_name="tool2",
+                description="Test2",
+                server_id="srv1",
+                server_name="Server",
+                similarity_score=0.8,
+            )
+        ]
+
+        mock_embedding_service = MagicMock()
+        mock_embedding_service.embed_query = AsyncMock(return_value=[0.1] * 768)
+        
+        mock_vector_service = MagicMock()
+        # Return different results based on limit
+        mock_vector_service.search_similar_tools = AsyncMock(side_effect=[mock_results_limit5, mock_results_limit10])
+        
+        service.embedding_service = mock_embedding_service
+        service.vector_search_service = mock_vector_service
+
+        # Act - Same query, different limits
+        results1 = await service.search_tools(query="test", limit=5)
+        results2 = await service.search_tools(query="test", limit=10)
+
+        # Assert - Should get different results (not cached)
+        assert len(results1) == 1
+        assert len(results2) == 2
+        
+        # Should call services twice (different cache keys)
+        assert mock_embedding_service.embed_query.await_count == 2
+        assert mock_vector_service.search_similar_tools.await_count == 2
+
+    @pytest.mark.anyio
+    async def test_memory_cache_works_independently(self):
+        """Test that memory cache works when Redis is unavailable."""
+        # Arrange
+        service = SemanticSearchService()
+        mock_results = [
+            ToolSearchResult(
+                tool_name="memory_cached",
+                description="Test",
+                server_id="srv1",
+                server_name="Server",
+                similarity_score=0.85,
+            )
+        ]
+
+        mock_embedding_service = MagicMock()
+        mock_embedding_service.embed_query = AsyncMock(return_value=[0.1] * 768)
+        
+        mock_vector_service = MagicMock()
+        mock_vector_service.search_similar_tools = AsyncMock(return_value=mock_results)
+        
+        service.embedding_service = mock_embedding_service
+        service.vector_search_service = mock_vector_service
+
+        # Mock Redis to return None (unavailable)
+        with patch("mcpgateway.services.semantic_search_service.get_redis_client", return_value=None):
+            # Act - First call
+            results1 = await service.search_tools(query="test", limit=10)
+            
+            # Second call should hit memory cache
+            results2 = await service.search_tools(query="test", limit=10)
+
+            # Assert
+            assert results1 == results2
+            assert len(results1) == 1
+            
+            # Services called only once (memory cache worked)
+            mock_embedding_service.embed_query.assert_awaited_once()
+            mock_vector_service.search_similar_tools.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_cache_key_generation(self):
+        """Test cache key format includes normalized query, limit, and threshold."""
+        # Arrange
+        service = SemanticSearchService()
+
+        # Act & Assert - Different cache keys
+        key1 = service._make_cache_key("test query", 10, None)
+        key2 = service._make_cache_key("test query", 10, 0.7)
+        key3 = service._make_cache_key("test query", 20, None)
+        key4 = service._make_cache_key("different query", 10, None)
+
+        assert key1 == "semantic:test query:10:None"
+        assert key2 == "semantic:test query:10:0.7"
+        assert key3 == "semantic:test query:20:None"
+        assert key4 == "semantic:different query:10:None"
+        
+        # All keys should be unique
+        assert len({key1, key2, key3, key4}) == 4
+
+    @pytest.mark.anyio
+    async def test_query_normalization(self):
+        """Test query normalization strips whitespace and converts to lowercase."""
+        # Arrange
+        service = SemanticSearchService()
+
+        # Act & Assert
+        assert service._normalize_query("Test Query") == "test query"
+        assert service._normalize_query("  UPPERCASE  ") == "uppercase"
+        assert service._normalize_query("MiXeD CaSe") == "mixed case"
+        assert service._normalize_query("   spaces   ") == "spaces"
+
+    @pytest.mark.anyio
+    async def test_memory_cache_expiry(self):
+        """Test that memory cache entries expire after TTL."""
+        # Arrange
+        import time
+        service = SemanticSearchService()
+        service.CACHE_TTL_SECONDS = 1  # Short TTL for testing
+        
+        mock_results = [
+            ToolSearchResult(
+                tool_name="expiring_tool",
+                description="Test",
+                server_id="srv1",
+                server_name="Server",
+                similarity_score=0.9,
+            )
+        ]
+
+        mock_embedding_service = MagicMock()
+        mock_embedding_service.embed_query = AsyncMock(return_value=[0.1] * 768)
+        
+        mock_vector_service = MagicMock()
+        mock_vector_service.search_similar_tools = AsyncMock(return_value=mock_results)
+        
+        service.embedding_service = mock_embedding_service
+        service.vector_search_service = mock_vector_service
+
+        # Mock Redis to be unavailable (test memory cache only)
+        with patch("mcpgateway.services.semantic_search_service.get_redis_client", return_value=None):
+            # Act - First call
+            results1 = await service.search_tools(query="test", limit=10)
+            assert len(results1) == 1
+            
+            # Wait for cache to expire
+            time.sleep(1.1)
+            
+            # Second call after expiry should recompute
+            results2 = await service.search_tools(query="test", limit=10)
+
+            # Assert
+            assert results1 == results2
+            
+            # Services should be called twice (cache expired)
+            assert mock_embedding_service.embed_query.await_count == 2
+            assert mock_vector_service.search_similar_tools.await_count == 2
+
