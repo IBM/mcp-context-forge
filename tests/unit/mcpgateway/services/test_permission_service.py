@@ -322,6 +322,14 @@ async def test_get_user_roles_with_scope(svc, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_get_user_roles_include_all_teams(svc, mock_db):
+    """get_user_roles with include_all_teams=True."""
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+    roles = await svc.get_user_roles("user@test.com", include_all_teams=True)
+    assert roles == []
+
+
+@pytest.mark.asyncio
 async def test_get_user_roles_include_expired(svc, mock_db):
     """get_user_roles with include_expired."""
     mock_db.execute.return_value.scalars.return_value.all.return_value = []
