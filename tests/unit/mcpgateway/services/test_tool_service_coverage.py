@@ -2828,10 +2828,19 @@ class TestDeleteToolPermissionAndPurge:
         db.get.return_value = mock_tool
         db.execute.return_value.rowcount = 1
 
+        mock_admin_cache = AsyncMock()
+        mock_metrics_cache = MagicMock()
+
         with patch("mcpgateway.services.tool_service.delete_metrics_in_batches") as mock_delete, \
-             patch("mcpgateway.services.tool_service.pause_rollup_during_purge") as mock_pause:
+             patch("mcpgateway.services.tool_service.pause_rollup_during_purge") as mock_pause, \
+             patch("mcpgateway.services.tool_service._get_registry_cache") as mock_rc, \
+             patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_tlc, \
+             patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", mock_admin_cache), \
+             patch("mcpgateway.cache.metrics_cache.metrics_cache", mock_metrics_cache):
             mock_pause.return_value.__enter__ = MagicMock()
             mock_pause.return_value.__exit__ = MagicMock(return_value=False)
+            mock_rc.return_value = AsyncMock()
+            mock_tlc.return_value = AsyncMock()
             await tool_service.delete_tool(db, "tool-1", purge_metrics=True)
         assert mock_delete.call_count == 2  # ToolMetric + ToolMetricsHourly
 
