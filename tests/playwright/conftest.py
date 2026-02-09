@@ -22,6 +22,21 @@ import pytest
 from mcpgateway.config import Settings
 from mcpgateway.utils.create_jwt_token import _create_jwt_token
 
+# Local
+from .pages.admin_page import AdminPage
+from .pages.agents_page import AgentsPage
+from .pages.gateways_page import GatewaysPage
+from .pages.login_page import LoginPage
+from .pages.mcp_registry_page import MCPRegistryPage
+from .pages.metrics_page import MetricsPage
+from .pages.prompts_page import PromptsPage
+from .pages.resources_page import ResourcesPage
+from .pages.servers_page import ServersPage
+from .pages.team_page import TeamPage
+from .pages.tokens_page import TokensPage
+from .pages.tools_page import ToolsPage
+from .pages.version_page import VersionPage
+
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
 API_TOKEN = os.getenv("MCP_AUTH", "")
@@ -110,6 +125,77 @@ def _set_admin_jwt_cookie(page: Page, email: str) -> None:
     )
 
 
+def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
+    """Ensure the page is logged into the admin interface using LoginPage.
+    
+    This helper function handles all login scenarios including:
+    - Password change requirements
+    - Initial login
+    - Retry with new password
+    - JWT fallback if credentials fail
+    """
+    settings = Settings()
+    admin_email = settings.platform_admin_email or ADMIN_EMAIL
+    
+    # Create LoginPage instance
+    login_page = LoginPage(page, base_url)
+    
+    # Go directly to admin
+    page.goto("/admin")
+    
+    # Handle password change requirement
+    if login_page.is_on_change_password_page():
+        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
+        login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
+        ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+        _wait_for_admin_transition(page)
+    
+    # Handle login page redirect if auth is required
+    if login_page.is_on_login_page() or login_page.is_login_form_available():
+        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
+        login_page.submit_login(admin_email, current_password)
+        
+        status = _wait_for_login_response(page)
+        if status is not None and status >= 400:
+            raise AssertionError(f"Login failed with status {status}")
+        _wait_for_admin_transition(page)
+        
+        # Handle password change after login
+        if login_page.is_on_change_password_page():
+            login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
+            ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+            _wait_for_admin_transition(page)
+        
+        # Retry with new password if credentials were invalid
+        if login_page.has_invalid_credentials_error() and ADMIN_NEW_PASSWORD != current_password:
+            login_page.submit_login(admin_email, ADMIN_NEW_PASSWORD)
+            status = _wait_for_login_response(page)
+            if status is not None and status >= 400:
+                raise AssertionError(f"Login failed with status {status}")
+            ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
+            _wait_for_admin_transition(page)
+        
+        # If login still failed, fallback to JWT cookie unless disabled
+        if login_page.is_on_login_page():
+            if DISABLE_JWT_FALLBACK:
+                raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
+            _set_admin_jwt_cookie(page, admin_email)
+            page.goto("/admin/")
+            _wait_for_admin_transition(page)
+    
+    # Verify we're on the admin page
+    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
+    
+    # Wait for the application shell to load
+    try:
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    except Exception:
+        content = page.content()
+        if "Internal Server Error" in content:
+            raise AssertionError("Admin page failed to load: Internal Server Error (500)")
+        raise
+
+
 @pytest.fixture(scope="session")
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Create API request context with optional bearer token."""
@@ -177,77 +263,87 @@ def authenticated_page(page: Page) -> Page:
 
 
 @pytest.fixture
-def admin_page(page: Page):
-    """Provide a logged-in admin page for UI tests."""
-    settings = Settings()
-    admin_email = settings.platform_admin_email or ADMIN_EMAIL
-    # Go directly to admin - session login handled here if needed
-    page.goto("/admin")
-    login_form_visible = page.locator('input[name="email"]').count() > 0
-    if re.search(r"/admin/change-password-required", page.url):
-        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
-        page.fill('input[name="current_password"]', current_password)
-        page.fill('input[name="new_password"]', ADMIN_NEW_PASSWORD)
-        page.fill('input[name="confirm_password"]', ADMIN_NEW_PASSWORD)
-        previous_url = page.url
-        page.click('button[type="submit"]')
-        ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
-        _wait_for_admin_transition(page, previous_url)
-    # Handle login page redirect if auth is required
-    if re.search(r"login", page.url) or login_form_visible:
-        page.wait_for_selector('input[name="email"]')
-        current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
-        page.fill('input[name="email"]', admin_email)
-        page.fill('input[name="password"]', current_password)
-        previous_url = page.url
-        page.click('button[type="submit"]')
-        status = _wait_for_login_response(page)
-        if status is not None and status >= 400:
-            raise AssertionError(f"Login failed with status {status}")
-        _wait_for_admin_transition(page, previous_url)
-        if re.search(r"/admin/change-password-required", page.url):
-            page.fill('input[name="current_password"]', current_password)
-            page.fill('input[name="new_password"]', ADMIN_NEW_PASSWORD)
-            page.fill('input[name="confirm_password"]', ADMIN_NEW_PASSWORD)
-            previous_url = page.url
-            page.click('button[type="submit"]')
-            ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
-            _wait_for_admin_transition(page, previous_url)
-        if re.search(r"error=invalid_credentials", page.url) and ADMIN_NEW_PASSWORD != current_password:
-            page.fill('input[name="email"]', admin_email)
-            page.fill('input[name="password"]', ADMIN_NEW_PASSWORD)
-            previous_url = page.url
-            page.click('button[type="submit"]')
-            status = _wait_for_login_response(page)
-            if status is not None and status >= 400:
-                raise AssertionError(f"Login failed with status {status}")
-            ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
-            _wait_for_admin_transition(page, previous_url)
-        # If login still failed, fallback to JWT cookie unless disabled
-        if re.search(r"/admin/login", page.url):
-            if DISABLE_JWT_FALLBACK:
-                raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
-            _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/")
-            _wait_for_admin_transition(page)
-    # Verify we're on the admin page
-    expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
-    # Ensure the Authorization header is set for programmatic page.request calls.
-    # Cookie-only auth is rejected for non-browser requests (CSRF protection),
-    # so extract the JWT from the cookie and set it as a Bearer header.
-    jwt_cookie = next((c for c in page.context.cookies() if c["name"] == "jwt_token"), None)
-    if jwt_cookie:
-        page.context.set_extra_http_headers({"Authorization": f"Bearer {jwt_cookie['value']}"})
-    # Wait for the application shell to load to ensure we aren't looking at a 500 error page
-    try:
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
-    except Exception:
-        # If tab is missing, check if we have an error message on page to report
-        content = page.content()
-        if "Internal Server Error" in content:
-            raise AssertionError("Admin page failed to load: Internal Server Error (500)")
-        raise
-    return page
+def admin_page(page: Page, base_url: str) -> AdminPage:
+    """Provide a logged-in AdminPage instance for UI tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return AdminPage(page, base_url)
+
+
+@pytest.fixture
+def team_page(page: Page, base_url: str) -> TeamPage:
+    """Provide a logged-in TeamPage instance for team tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return TeamPage(page)
+
+
+@pytest.fixture
+def tokens_page(page: Page, base_url: str) -> TokensPage:
+    """Provide a logged-in TokensPage instance for token tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return TokensPage(page)
+
+
+@pytest.fixture
+def metrics_page(page: Page, base_url: str) -> MetricsPage:
+    """Provide a logged-in MetricsPage instance for metrics tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return MetricsPage(page)
+
+
+@pytest.fixture
+def tools_page(page: Page, base_url: str) -> ToolsPage:
+    """Provide a logged-in ToolsPage instance for tool tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return ToolsPage(page)
+
+
+@pytest.fixture
+def resources_page(page: Page, base_url: str) -> ResourcesPage:
+    """Provide a logged-in ResourcesPage instance for resource tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return ResourcesPage(page)
+
+
+@pytest.fixture
+def prompts_page(page: Page, base_url: str) -> PromptsPage:
+    """Provide a logged-in PromptsPage instance for prompt tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return PromptsPage(page)
+
+
+@pytest.fixture
+def agents_page(page: Page, base_url: str) -> AgentsPage:
+    """Provide a logged-in AgentsPage instance for A2A agent tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return AgentsPage(page)
+
+
+@pytest.fixture
+def gateways_page(page: Page, base_url: str) -> GatewaysPage:
+    """Provide a logged-in GatewaysPage instance for gateway tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return GatewaysPage(page)
+
+
+@pytest.fixture
+def servers_page(page: Page, base_url: str) -> ServersPage:
+    """Provide a logged-in ServersPage instance for virtual server tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return ServersPage(page)
+
+
+@pytest.fixture
+def version_page(page: Page, base_url: str) -> VersionPage:
+    """Provide a logged-in VersionPage instance for version info tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return VersionPage(page)
+
+
+@pytest.fixture
+def mcp_registry_page(page: Page, base_url: str) -> MCPRegistryPage:
+    """Provide a logged-in MCPRegistryPage instance for MCP Registry tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return MCPRegistryPage(page)
 
 
 @pytest.fixture
@@ -307,6 +403,126 @@ def test_prompt_data():
         "name": f"test-prompt-{unique_id}",
         "description": "A test prompt created by automation",
         "arguments": '[{"name": "topic", "description": "Topic to discuss", "required": true}]',
+    }
+
+
+@pytest.fixture
+def test_agent_data():
+    """Provide test data for A2A agent creation."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    return {
+        "name": f"test-agent-{unique_id}",
+        "endpoint_url": "https://api.example.com/agent",
+        "agent_type": "generic",
+        "description": "A test A2A agent created by automation",
+        "tags": "test,automation,ai",
+        "visibility": "public",
+    }
+
+
+# Pool of valid MCP server URLs for testing
+# These are real, publicly available MCP servers that can be used for testing
+VALID_MCP_SERVER_URLS = [
+    "https://docs.mcp.cloudflare.com/sse",
+    "https://www.javadocs.dev/mcp",
+    "https://mcp.openzeppelin.com/contracts/cairo/mcp",
+    "https://mcp.openzeppelin.com/contracts/stylus/mcp",
+    "https://mcp.openzeppelin.com/contracts/stellar/mcp",
+    "https://mcp.openzeppelin.com/contracts/solidity/mcp",
+]
+
+
+@pytest.fixture
+def test_gateway_data():
+    """Provide test data for gateway creation."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    # Use specific URL for simple gateway test
+    url = VALID_MCP_SERVER_URLS[0]
+    
+    return {
+        "name": f"test-gateway-{unique_id}",
+        "url": url,
+        "description": "A test MCP Server gateway created by automation",
+        "tags": "test,automation,mcp",
+        "transport": "SSE",
+        "visibility": "public",
+    }
+
+
+@pytest.fixture
+def test_gateway_with_basic_auth_data():
+    """Provide test data for gateway with basic authentication."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    # Use specific URL for basic auth test (index 1 after removing Astro)
+    url = VALID_MCP_SERVER_URLS[1]
+    
+    return {
+        "name": f"test-gateway-basic-{unique_id}",
+        "url": url,
+        "description": "Test gateway with basic auth",
+        "tags": "test,auth,basic",
+        "transport": "SSE",
+        "visibility": "public",
+        "auth_type": "basic",
+        "auth_username": "testuser",
+        "auth_password": "testpass123",
+    }
+
+
+@pytest.fixture
+def test_gateway_with_bearer_auth_data():
+    """Provide test data for gateway with bearer token authentication."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    # Use specific URL for bearer auth test
+    url = VALID_MCP_SERVER_URLS[2]
+    
+    return {
+        "name": f"test-gateway-bearer-{unique_id}",
+        "url": url,
+        "description": "Test gateway with bearer token auth",
+        "tags": "test,auth,bearer",
+        "transport": "SSE",
+        "visibility": "private",
+        "auth_type": "bearer",
+        "auth_token": "test-bearer-token-12345",
+    }
+
+
+@pytest.fixture
+def test_gateway_with_oauth_data():
+    """Provide test data for gateway with OAuth 2.0 authentication."""
+    # Standard
+    import uuid
+
+    unique_id = uuid.uuid4()
+    # Use specific URL for OAuth test
+    url = VALID_MCP_SERVER_URLS[3]
+    
+    return {
+        "name": f"test-gateway-oauth-{unique_id}",
+        "url": url,
+        "description": "Test gateway with OAuth 2.0",
+        "tags": "test,auth,oauth",
+        "transport": "SSE",
+        "visibility": "team",
+        "auth_type": "oauth",
+        "oauth_grant_type": "client_credentials",
+        "oauth_issuer": "http://localhost:3003",
+        "oauth_client_id": "test-client-id",
+        "oauth_client_secret": "test-client-secret",
+        "oauth_scopes": "openid profile email",
     }
 
 

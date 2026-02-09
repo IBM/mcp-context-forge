@@ -8,107 +8,215 @@ Tests for Organization features (Teams, Tokens) in MCP Gateway Admin UI.
 """
 
 # Standard
-import time
 import uuid
 
 # Third-Party
-from playwright.sync_api import expect, Page
+from playwright.sync_api import expect
 import pytest
 
 
-class TestOrganization:
-    """Tests for Organization features."""
+class TestTeams:
+    """Tests for Team management features."""
 
-    @pytest.mark.skip(reason="Flaky in CI/Headless mode, requires manual verification")
-    def test_create_and_delete_team(self, admin_page: Page):
+    def test_create_and_delete_team(self, team_page):
         """Test creating and deleting a team."""
         # Go to Teams tab
-        admin_page.click('[data-testid="teams-tab"]')
-        admin_page.wait_for_selector("#teams-panel:not(.hidden)")
+        team_page.navigate_to_teams_tab()
 
         # Generate unique team name
         team_name = f"Test Team {uuid.uuid4().hex[:8]}"
 
-        # Click Create Team button (opens modal)
-        admin_page.click("#create-team-btn")
-        admin_page.wait_for_selector("#create-team-modal")
-
-        # Fill form
-        admin_page.fill("#team-name", team_name)
-
-        # Submit
-        with admin_page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST") as response_info:
-            admin_page.click('#create-team-form button[type="submit"]')
+        # Create team - HTMX will automatically update #unified-teams-list
+        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST") as response_info:
+            team_page.create_team(team_name)
         response = response_info.value
         assert response.status < 400
 
-        # Verify team appears in list
-        # We might need to search for it if the list is long, or just check visibility
-        # Assuming it appears at top or we can find it text
-        admin_page.goto(f"{admin_page.url.split('#')[0]}#teams")
-        admin_page.reload()
-        admin_page.wait_for_selector("#teams-panel:not(.hidden)")
+        # Workaround: Auto-refresh doesn't work, so wait and reload the page
+        team_page.page.wait_for_timeout(2000)
+        team_page.page.reload()
+        team_page.page.wait_for_timeout(1000)
 
-        # Wait for list to populate
-        admin_page.wait_for_selector(f"text={team_name}", timeout=30000)
-        expect(admin_page.locator(f"text={team_name}")).to_be_visible()
+        # Search for the team to bring it into view (handles pagination)
+        team_search = team_page.page.locator("#team-search")
+        team_search.fill(team_name)
+        team_page.page.wait_for_timeout(1000)
+
+        # Wait for team to be visible in the list after search
+        team_page.wait_for_team_visible(team_name)
 
         # Delete the team
-        # Find the row with the team name
-        team_row = admin_page.locator(f"tr:has-text('{team_name}')")
-
-        # Setup dialog listener for confirmation
-        admin_page.once("dialog", lambda dialog: dialog.accept())
-
-        # Click delete button in that row
-        team_row.locator('button:has-text("Delete")').click()
+        team_page.delete_team(team_name)
 
         # Verify it's gone
-        admin_page.wait_for_timeout(1000)
-        expect(admin_page.locator(f"text={team_name}")).to_be_hidden()
+        team_page.page.wait_for_timeout(1000)
+        team_page.wait_for_team_hidden(team_name)
 
-    @pytest.mark.skip(reason="Flaky in CI/Headless mode, requires manual verification")
-    def test_create_and_revoke_token(self, admin_page: Page):
+    def test_manage_members_button(self, team_page):
+        """Test Manage Members button opens member management interface."""
+        team_page.navigate_to_teams_tab()
+        team_name = f"Test Team {uuid.uuid4().hex[:8]}"
+
+        # Create test team
+        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
+            team_page.create_team(team_name)
+        
+        # Wait and reload to see the new team
+        team_page.page.wait_for_timeout(2000)
+        team_page.page.reload()
+        team_page.page.wait_for_timeout(1000)
+
+        # Search for the team
+        team_search = team_page.page.locator("#team-search")
+        team_search.fill(team_name)
+        team_page.page.wait_for_timeout(1000)
+
+        # Verify team is visible
+        team_page.wait_for_team_visible(team_name)
+
+        # Click Manage Members button
+        manage_btn = team_page.get_team_manage_members_btn(team_name)
+        expect(manage_btn).to_be_visible()
+        manage_btn.click()
+
+        # Verify team edit modal opens with member management content
+        team_edit_modal = team_page.page.locator("#team-edit-modal")
+        expect(team_edit_modal).to_be_visible(timeout=5000)
+        
+        # Verify it's the member management interface (has "Team Members:" title)
+        modal_content = team_page.page.locator("#team-edit-modal-content")
+        expect(modal_content).to_contain_text("Team Members:")
+        
+        # Verify member management form elements are present
+        expect(modal_content.locator('form[id^="team-members-form-"]')).to_be_visible()
+
+        # Close modal
+        close_btn = team_edit_modal.locator('button:has-text("Cancel")')
+        if close_btn.count() > 0:
+            close_btn.first.click()
+        else:
+            # Alternative: click the X button or backdrop
+            team_page.page.evaluate("document.getElementById('team-edit-modal').classList.add('hidden')")
+
+        # Cleanup
+        team_page.delete_team(team_name)
+        team_page.page.wait_for_timeout(1000)
+
+    def test_edit_settings_button(self, team_page):
+        """Test Edit Settings button opens team settings editor."""
+        team_page.navigate_to_teams_tab()
+        team_name = f"Test Team {uuid.uuid4().hex[:8]}"
+
+        # Create test team
+        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
+            team_page.create_team(team_name)
+        
+        # Wait and reload to see the new team
+        team_page.page.wait_for_timeout(2000)
+        team_page.page.reload()
+        team_page.page.wait_for_timeout(1000)
+
+        # Search for the team
+        team_search = team_page.page.locator("#team-search")
+        team_search.fill(team_name)
+        team_page.page.wait_for_timeout(1000)
+
+        # Verify team is visible
+        team_page.wait_for_team_visible(team_name)
+
+        # Click Edit Settings button
+        edit_btn = team_page.get_team_edit_settings_btn(team_name)
+        expect(edit_btn).to_be_visible()
+        edit_btn.click()
+
+        # Verify team edit modal opens with settings form
+        team_edit_modal = team_page.page.locator("#team-edit-modal")
+        expect(team_edit_modal).to_be_visible(timeout=5000)
+        
+        # Verify it's the edit settings interface (has "Edit Team" title)
+        modal_content = team_page.page.locator("#team-edit-modal-content")
+        expect(modal_content).to_contain_text("Edit Team")
+
+        # Verify form is pre-filled with team name
+        name_input = modal_content.locator('input[name="name"]')
+        expect(name_input).to_be_visible()
+        assert team_name in name_input.input_value()
+
+        # Verify other form fields are present
+        expect(modal_content.locator('input[name="slug"]')).to_be_visible()
+        expect(modal_content.locator('select[name="visibility"]')).to_be_visible()
+
+        # Close modal without saving
+        cancel_btn = team_edit_modal.locator('button:has-text("Cancel")')
+        if cancel_btn.count() > 0:
+            cancel_btn.first.click()
+        else:
+            # Alternative: close via JavaScript
+            team_page.page.evaluate("document.getElementById('team-edit-modal').classList.add('hidden')")
+
+        # Cleanup
+        team_page.delete_team(team_name)
+        team_page.page.wait_for_timeout(1000)
+
+    def test_delete_team_button_in_card(self, team_page):
+        """Test Delete Team button in team card with confirmation."""
+        team_page.navigate_to_teams_tab()
+        team_name = f"Test Team {uuid.uuid4().hex[:8]}"
+
+        # Create test team
+        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
+            team_page.create_team(team_name)
+        
+        # Wait and reload to see the new team
+        team_page.page.wait_for_timeout(2000)
+        team_page.page.reload()
+        team_page.page.wait_for_timeout(1000)
+
+        # Search for the team
+        team_search = team_page.page.locator("#team-search")
+        team_search.fill(team_name)
+        team_page.page.wait_for_timeout(1000)
+
+        # Verify team is visible
+        team_page.wait_for_team_visible(team_name)
+
+        # Click Delete Team button (handles confirmation automatically via delete_team method)
+        team_page.delete_team(team_name)
+
+        # Verify team is deleted
+        team_page.page.wait_for_timeout(1000)
+        team_page.wait_for_team_hidden(team_name)
+
+
+class TestTokens:
+    """Tests for API Token management features."""
+
+    def test_create_and_revoke_token(self, tokens_page):
         """Test creating and revoking an API token."""
         # Go to Tokens tab
-        admin_page.click("#tab-tokens")
-        admin_page.wait_for_selector("#tokens-panel:not(.hidden)")
+        tokens_page.navigate_to_tokens_tab()
 
         # Generate token name
         token_name = f"Test Token {uuid.uuid4().hex[:8]}"
 
-        # Fill form
-        admin_page.fill("#api-token-name", token_name)
-        # Select expiry (optional, default is fine)
-
-        # Submit
-        admin_page.click('#create-token-form button[type="submit"]')
+        # Create token and wait for API response to /tokens
+        with tokens_page.page.expect_response(lambda response: response.url.endswith("/tokens") and response.request.method == "POST") as response_info:
+            tokens_page.create_token(token_name)
+        
+        response = response_info.value
+        assert response.status < 400, f"Token creation failed with status {response.status}"
 
         # Wait for success modal
-        admin_page.wait_for_selector("text=Token Created Successfully", timeout=30000)
+        tokens_page.wait_for_token_created_modal()
 
         # Close result modal
-        admin_page.click('button:has-text("I\'ve Saved It")')
+        tokens_page.close_token_created_modal()
 
         # Verify token in list
-        admin_page.wait_for_selector(f"text={token_name}", timeout=30000)
-        expect(admin_page.locator(f"text={token_name}")).to_be_visible()
+        tokens_page.wait_for_token_visible(token_name)
 
         # Revoke the token
-        # Find container/row with token name
-        # Tokens might be in a grid or table. Admin.js renders them.
-        # Assuming we can find a revoke button near the text.
-        token_element = admin_page.locator(f"div:has-text('{token_name}')").first
-
-        admin_page.once("dialog", lambda dialog: dialog.accept())
-        # The revoke button might be a sibling or child.
-        # Using a broad search for Revoke button visible on page might be risky if multiple.
-        # Let's try to scope it.
-        # If list is refreshed, the new token should be there.
-
-        # Specific selector depends on HTML structure of token list which is dynamic JS.
-        # Let's assume there is a Revoke button.
-        admin_page.locator(f"div:has-text('{token_name}')").locator("xpath=..").locator("button:has-text('Revoke')").click()
+        tokens_page.revoke_token(token_name)
 
         # Verify status changes or row removed/updated
-        admin_page.wait_for_timeout(500)
+        tokens_page.page.wait_for_timeout(500)
