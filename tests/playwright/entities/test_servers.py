@@ -8,7 +8,7 @@ CRUD tests for Servers entity in MCP Gateway Admin UI.
 """
 
 # Local
-from ..pages.admin_utils import cleanup_server, find_server
+from ..pages.admin_utils import cleanup_server, delete_server, find_server
 from ..pages.servers_page import ServersPage
 
 
@@ -53,12 +53,7 @@ class TestServersCRUD:
         assert created_server is not None
 
         # Delete using helper
-        delete_response = servers_page.page.request.post(
-            f"/admin/servers/{created_server['id']}/delete",
-            data="is_inactive_checked=false",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        assert delete_response.status < 400
+        assert delete_server(servers_page.page, created_server["id"])
 
         # Verify deletion
         assert find_server(servers_page.page, test_server_data["name"]) is None

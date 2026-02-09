@@ -11,7 +11,7 @@ CRUD tests for Prompts entity in MCP Gateway Admin UI.
 import json
 
 # Local
-from ..pages.admin_utils import find_prompt
+from ..pages.admin_utils import delete_prompt, find_prompt
 from ..pages.prompts_page import PromptsPage
 
 
@@ -58,11 +58,7 @@ class TestPromptsCRUD:
 
         # Cleanup: delete the created prompt for idempotency
         if created_prompt:
-            prompts_page.page.request.post(
-                f"/admin/prompts/{created_prompt['id']}/delete",
-                data="is_inactive_checked=false",
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
+            delete_prompt(prompts_page.page, created_prompt["id"])
 
     def test_delete_prompt(self, prompts_page: PromptsPage, test_prompt_data):
         """Test deleting a prompt."""
@@ -89,13 +85,8 @@ class TestPromptsCRUD:
         created_prompt = find_prompt(prompts_page.page, test_prompt_data["name"])
         assert created_prompt is not None
 
-        # Delete using API (could be enhanced with UI delete method in future)
-        delete_response = prompts_page.page.request.post(
-            f"/admin/prompts/{created_prompt['id']}/delete",
-            data="is_inactive_checked=false",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        assert delete_response.status < 400
+        # Delete using API helper
+        assert delete_prompt(prompts_page.page, created_prompt["id"])
 
         # Verify deletion
         assert find_prompt(prompts_page.page, test_prompt_data["name"]) is None

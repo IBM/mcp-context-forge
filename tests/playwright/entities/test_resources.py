@@ -8,7 +8,7 @@ CRUD tests for Resources entity in MCP Gateway Admin UI.
 """
 
 # Local
-from ..pages.admin_utils import find_resource
+from ..pages.admin_utils import delete_resource, find_resource
 from ..pages.resources_page import ResourcesPage
 
 
@@ -32,11 +32,7 @@ class TestResourcesCRUD:
 
         # Cleanup: delete the created resource for idempotency
         if created_resource:
-            resources_page.page.request.post(
-                f"/admin/resources/{created_resource['id']}/delete",
-                data="is_inactive_checked=false",
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
+            delete_resource(resources_page.page, created_resource["id"])
 
     def test_delete_resource(self, resources_page: ResourcesPage, test_resource_data):
         """Test deleting a resource."""
@@ -51,13 +47,8 @@ class TestResourcesCRUD:
         created_resource = find_resource(resources_page.page, test_resource_data["name"])
         assert created_resource is not None
 
-        # Delete using API (could be enhanced with UI delete method in future)
-        delete_response = resources_page.page.request.post(
-            f"/admin/resources/{created_resource['id']}/delete",
-            data="is_inactive_checked=false",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        assert delete_response.status < 400
+        # Delete using API helper
+        assert delete_resource(resources_page.page, created_resource["id"])
 
         # Verify deletion
         assert find_resource(resources_page.page, test_resource_data["name"]) is None

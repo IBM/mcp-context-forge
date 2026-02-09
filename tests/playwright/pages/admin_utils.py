@@ -8,10 +8,28 @@ Shared utility functions for admin page interactions.
 """
 
 # Standard
+import logging
 import time
 
 # Third-Party
 from playwright.sync_api import Page
+
+logger = logging.getLogger(__name__)
+
+
+def _get_auth_headers(page: Page) -> dict:
+    """Extract JWT token from browser cookies and return Authorization headers.
+
+    The server rejects cookie-based authentication for programmatic API
+    requests (page.request), requiring an Authorization header instead.
+    This extracts the jwt_token cookie set during login and converts it
+    to a Bearer token header.
+    """
+    cookies = page.context.cookies()
+    jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
+    if jwt_cookie:
+        return {"Authorization": f"Bearer {jwt_cookie['value']}"}
+    return {}
 
 
 def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
@@ -26,9 +44,11 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
     Returns:
         Entity dict if found, None otherwise
     """
+    headers = _get_auth_headers(page)
     for _ in range(retries):
         cache_bust = str(int(time.time() * 1000))
-        response = page.request.get(f"/admin/{endpoint}?per_page=500&cache_bust={cache_bust}")
+        url = f"/admin/{endpoint}?per_page=500&cache_bust={cache_bust}"
+        response = page.request.get(url, headers=headers)
         if response.ok:
             payload = response.json()
             # Handle both list and dict responses
@@ -39,6 +59,8 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
             for item in data:
                 if item.get("name") == name:
                     return item
+        else:
+            logger.warning("find_entity_by_name: %s returned status=%d: %s", endpoint, response.status, response.text()[:200])
         time.sleep(0.5)
     return None
 
@@ -143,10 +165,12 @@ def delete_entity_by_id(page: Page, endpoint: str, entity_id: str, mark_inactive
         True if deletion successful, False otherwise
     """
     data = f"is_inactive_checked={'true' if mark_inactive else 'false'}"
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    headers.update(_get_auth_headers(page))
     response = page.request.post(
         f"/admin/{endpoint}/{entity_id}/delete",
         data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        headers=headers,
     )
     return response.status < 400
 
