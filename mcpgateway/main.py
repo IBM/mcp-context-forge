@@ -2904,7 +2904,7 @@ async def server_get_tools(
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
     user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
     _req_email, _req_is_admin = user_email, is_admin
-    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email else None
+    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
     # Admin bypass - only when token has NO team restrictions (token_teams is None)
     # If token has explicit team scope (even empty [] for public-only), respect it
     if is_admin and token_teams is None:
@@ -3539,7 +3539,7 @@ async def list_tools(
 
     # Use unified list_tools() with token-based team filtering
     # Always apply visibility filtering based on token scope
-    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email else None
+    _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
     data, next_cursor = await tool_service.list_tools(
         db=db,
         cursor=cursor,
@@ -3696,7 +3696,7 @@ async def get_tool(
     try:
         logger.debug(f"User {user} is retrieving tool with ID {tool_id}")
         _req_email, _, _req_is_admin = _get_rpc_filter_context(request, user)
-        _req_team_roles = get_user_team_roles(db, _req_email) if _req_email else None
+        _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
         if apijsonpath is None:
             return data
@@ -5664,7 +5664,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "tools/list":
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
-            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email else None
+            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions
             if is_admin and token_teams is None:
                 user_email = None
@@ -5706,6 +5706,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "list_tools":  # Legacy endpoint
             user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
             _req_email, _req_is_admin = user_email, is_admin
+            _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
             # Admin bypass - only when token has NO team restrictions (token_teams is None)
             # If token has explicit team scope (even empty [] for public-only), respect it
             if is_admin and token_teams is None:
@@ -5715,14 +5716,28 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 token_teams = []  # Non-admin without teams = public-only (secure default)
             if server_id:
                 tools = await tool_service.list_server_tools(
-                    db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin
+                    db,
+                    server_id,
+                    cursor=cursor,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    requesting_user_email=_req_email,
+                    requesting_user_is_admin=_req_is_admin,
+                    requesting_user_team_roles=_req_team_roles,
                 )
                 db.commit()
                 db.close()
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
                 tools, next_cursor = await tool_service.list_tools(
-                    db, cursor=cursor, limit=0, user_email=user_email, token_teams=token_teams, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin
+                    db,
+                    cursor=cursor,
+                    limit=0,
+                    user_email=user_email,
+                    token_teams=token_teams,
+                    requesting_user_email=_req_email,
+                    requesting_user_is_admin=_req_is_admin,
+                    requesting_user_team_roles=_req_team_roles,
                 )
                 db.commit()
                 db.close()

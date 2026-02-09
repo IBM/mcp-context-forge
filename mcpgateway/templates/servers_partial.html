@@ -21,7 +21,7 @@
   {% for server in data %}
   {% set server_label = server.name or server.id %}
   {% set can_modify = is_admin or server.ownerEmail == current_user_email or (server.visibility == 'team' and server.teamId and user_team_roles.get(server.teamId|string) == 'owner') %}
-  <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}">
+  <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}" data-owner-email="{{ server.ownerEmail }}" data-team-id="{{ server.teamId or '' }}" data-visibility="{{ server.visibility }}">
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
       <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
         <!-- Row 1: View | Edit -->

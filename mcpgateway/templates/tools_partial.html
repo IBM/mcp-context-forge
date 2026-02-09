@@ -21,7 +21,7 @@
   >
     {% for tool in data %}
       {% set can_modify = is_admin or tool.ownerEmail == current_user_email or (tool.visibility == 'team' and tool.teamId and user_team_roles.get(tool.teamId|string) == 'owner') %}
-      <tr data-enabled="{{ tool.enabled|lower }}">
+      <tr data-enabled="{{ tool.enabled|lower }}" data-owner-email="{{ tool.ownerEmail }}" data-team-id="{{ tool.teamId or '' }}" data-visibility="{{ tool.visibility }}">
         <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
           <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
             <!-- Row 1: Test -->

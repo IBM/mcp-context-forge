@@ -13,7 +13,6 @@ and error handling scenarios.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-import hashlib
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,9 +24,9 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user, get_db
+from mcpgateway.auth import get_current_user, get_db, get_user_team_roles
 from mcpgateway.config import settings
-from mcpgateway.db import EmailApiToken, EmailUser
+from mcpgateway.db import EmailUser
 
 
 class TestGetDb:
@@ -605,6 +604,7 @@ class TestAuthHooksOptimization:
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")
 
         # Mock plugin result that continues to standard auth
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult
 
         mock_plugin_result = PluginResult(
@@ -684,6 +684,7 @@ class TestLogAuthEventBranches:
 
     def test_log_auth_event_without_user_id_and_auth_method(self):
         """Test _log_auth_event when user_id and auth_method are None."""
+        # First-Party
         from mcpgateway.auth import _log_auth_event
 
         captured = {}
@@ -704,6 +705,7 @@ class TestNormalizeTokenTeamsEdgeCases:
 
     def test_dict_without_id_skipped(self):
         """Dict team entry with no 'id' key is skipped (branch 194->191)."""
+        # First-Party
         from mcpgateway.auth import normalize_token_teams
 
         result = normalize_token_teams({"teams": [{"name": "team-no-id"}, "team2"]})
@@ -711,6 +713,7 @@ class TestNormalizeTokenTeamsEdgeCases:
 
     def test_non_string_non_dict_team_skipped(self):
         """Numeric team entry is skipped (branch 196->191)."""
+        # First-Party
         from mcpgateway.auth import normalize_token_teams
 
         result = normalize_token_teams({"teams": [42, "team1"]})
@@ -718,6 +721,7 @@ class TestNormalizeTokenTeamsEdgeCases:
 
     def test_teams_null_non_admin_no_user(self):
         """Null teams with user as non-dict is treated as non-admin."""
+        # First-Party
         from mcpgateway.auth import normalize_token_teams
 
         result = normalize_token_teams({"teams": None, "user": "not-a-dict"})
@@ -729,13 +733,16 @@ class TestGetDbInvalidateException:
 
     def test_invalidate_also_fails(self):
         """Invalidate exception is swallowed (pass) (lines 118-119)."""
+        # First-Party
         from mcpgateway.auth import get_db
 
         class FailSession:
             def rollback(self):
                 raise RuntimeError("rollback fail")
+
             def invalidate(self):
                 raise RuntimeError("invalidate fail")
+
             def close(self):
                 pass
 
@@ -751,6 +758,7 @@ class TestLookupApiTokenSyncNone:
 
     def test_api_token_not_found(self, monkeypatch):
         """Returns None when no API token matches (line 322)."""
+        # Standard
         from contextlib import contextmanager
 
         class DummyResult:
@@ -766,7 +774,9 @@ class TestLookupApiTokenSyncNone:
             yield DummySession()
 
         monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        # First-Party
         from mcpgateway.auth import _lookup_api_token_sync
+
         result = _lookup_api_token_sync("nonexistent_hash")
         assert result is None
 
@@ -776,6 +786,7 @@ class TestGetUserByEmailSyncNone:
 
     def test_user_not_found(self, monkeypatch):
         """Returns None when user not in DB (line 387)."""
+        # Standard
         from contextlib import contextmanager
 
         class DummyResult:
@@ -791,7 +802,9 @@ class TestGetUserByEmailSyncNone:
             yield DummySession()
 
         monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        # First-Party
         from mcpgateway.auth import _get_user_by_email_sync
+
         result = _get_user_by_email_sync("missing@example.com")
         assert result is None
 
@@ -801,14 +814,21 @@ class TestBatchedSyncNoPTeam:
 
     def test_no_personal_team(self, monkeypatch):
         """User exists but has no personal team (branch 455->459)."""
+        # Standard
         from contextlib import contextmanager
 
         results = [
             SimpleNamespace(  # user
-                email="user@example.com", password_hash="h", full_name="U",
-                is_admin=False, is_active=True, auth_provider="local",
-                password_change_required=False, email_verified_at=None,
-                created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+                email="user@example.com",
+                password_hash="h",
+                full_name="U",
+                is_admin=False,
+                is_active=True,
+                auth_provider="local",
+                password_change_required=False,
+                email_verified_at=None,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
             ),
             None,  # no personal team
             [],  # no team memberships (query 4: team_ids)
@@ -817,14 +837,17 @@ class TestBatchedSyncNoPTeam:
         class DummyResult:
             def __init__(self, val):
                 self._val = val
+
             def scalar_one_or_none(self):
                 return self._val
+
             def all(self):
                 return self._val if isinstance(self._val, list) else []
 
         class DummySession:
             def __init__(self):
                 self._idx = 0
+
             def execute(self, _q):
                 val = results[self._idx] if self._idx < len(results) else None
                 self._idx += 1
@@ -835,7 +858,9 @@ class TestBatchedSyncNoPTeam:
             yield DummySession()
 
         monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        # First-Party
         from mcpgateway.auth import _get_auth_context_batched_sync
+
         result = _get_auth_context_batched_sync("user@example.com")
         assert result["user"] is not None
         assert result["personal_team_id"] is None
@@ -859,16 +884,24 @@ class TestSetAuthMethodFromPayload:
             "jti": "jti-123",
         }
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, auth_provider="api_token",
-            password_change_required=False, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            auth_provider="api_token",
+            password_change_required=False,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.auth_method == "api_token"
@@ -883,16 +916,23 @@ class TestSetAuthMethodFromPayload:
             "jti": "legacy-jti",
         }
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.auth_method == "api_token"
@@ -907,16 +947,23 @@ class TestSetAuthMethodFromPayload:
             "jti": "not-api-jti",
         }
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._is_api_token_jti_sync", return_value=False), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._is_api_token_jti_sync", return_value=False),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.auth_method == "jwt"
@@ -931,15 +978,22 @@ class TestSetAuthMethodFromPayload:
             # no jti
         }
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.auth_method == "jwt"
@@ -951,6 +1005,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_auth_success(self):
         """Plugin successfully authenticates user (lines 614-646)."""
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
@@ -977,8 +1032,7 @@ class TestPluginAuthHook:
         )
         mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, {"ctx": "data"}))
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "plugin@example.com"
@@ -988,6 +1042,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_violation_error(self):
         """Plugin denies auth with PluginViolationError (lines 649-656)."""
+        # First-Party
         from mcpgateway.plugins.framework.errors import PluginViolationError
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="denied_token")
@@ -998,8 +1053,7 @@ class TestPluginAuthHook:
 
         mock_pm.invoke_hook = AsyncMock(side_effect=PluginViolationError(message="Access denied by plugin"))
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value=None):
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value=None):
             with pytest.raises(HTTPException) as exc:
                 await get_current_user(credentials=credentials, request=request)
 
@@ -1019,16 +1073,23 @@ class TestPluginAuthHook:
 
         jwt_payload = {"sub": "user@example.com", "user": {"auth_provider": "local"}}
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value="req-1"), \
-             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "user@example.com"
@@ -1036,6 +1097,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_auth_no_credentials_no_request(self):
         """Plugin hook with no credentials and no request (lines 562, 573)."""
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult
 
         mock_pm = MagicMock()
@@ -1046,8 +1108,7 @@ class TestPluginAuthHook:
         mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))
 
         # No credentials → falls through plugin to standard auth → 401
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
             with pytest.raises(HTTPException) as exc:
                 await get_current_user(credentials=None, request=None)
 
@@ -1056,6 +1117,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_auth_fallback_request_id(self):
         """Request_id fallback to request.state.request_id (lines 577-580)."""
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
@@ -1074,16 +1136,23 @@ class TestPluginAuthHook:
 
         jwt_payload = {"sub": "user@example.com", "user": {"auth_provider": "local"}}
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value=None), \
-             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value=None),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "user@example.com"
@@ -1091,6 +1160,7 @@ class TestPluginAuthHook:
     @pytest.mark.asyncio
     async def test_plugin_auth_uuid_fallback_request_id(self):
         """Request_id fallback to uuid when neither correlation_id nor state (lines 581-583)."""
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")
@@ -1106,16 +1176,23 @@ class TestPluginAuthHook:
 
         jwt_payload = {"sub": "user@example.com", "user": {"auth_provider": "local"}}
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value=None), \
-             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value=None),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "user@example.com"
@@ -1126,10 +1203,14 @@ class TestCachePathBranches:
 
     def _make_user(self, email="user@example.com", is_admin=False, is_active=True):
         return EmailUser(
-            email=email, password_hash="h", full_name="U",
-            is_admin=is_admin, is_active=is_active,
+            email=email,
+            password_hash="h",
+            full_name="U",
+            is_admin=is_admin,
+            is_active=is_active,
             email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
     @pytest.mark.asyncio
@@ -1141,8 +1222,7 @@ class TestCachePathBranches:
         cached_ctx = SimpleNamespace(is_token_revoked=True, user=None, personal_team_id=None)
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
             with pytest.raises(HTTPException) as exc:
                 await get_current_user(credentials=credentials)
             assert exc.value.detail == "Token has been revoked"
@@ -1160,8 +1240,7 @@ class TestCachePathBranches:
         )
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
             with pytest.raises(HTTPException) as exc:
                 await get_current_user(credentials=credentials)
             assert exc.value.detail == "Account disabled"
@@ -1171,8 +1250,10 @@ class TestCachePathBranches:
         """Cached path with admin token (teams=None) → admin bypass (line 737)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "admin@example.com", "jti": "jti-1",
-            "teams": None, "is_admin": True,
+            "sub": "admin@example.com",
+            "jti": "jti-1",
+            "teams": None,
+            "is_admin": True,
             "user": {"auth_provider": "local", "is_admin": True},
         }
 
@@ -1185,8 +1266,7 @@ class TestCachePathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
         monkeypatch.setattr(settings, "require_user_in_db", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.token_teams is None  # admin bypass
@@ -1197,7 +1277,8 @@ class TestCachePathBranches:
         """Cached path with dict team ID → extract id (lines 743-746)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "teams": [{"id": "team-1"}],
             "user": {"auth_provider": "local"},
         }
@@ -1211,8 +1292,7 @@ class TestCachePathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
         monkeypatch.setattr(settings, "require_user_in_db", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id == "team-1"
@@ -1222,7 +1302,8 @@ class TestCachePathBranches:
         """Cached context exists but user is None → fall through to DB (line 773)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "user": {"auth_provider": "local"},
         }
 
@@ -1232,10 +1313,12 @@ class TestCachePathBranches:
 
         mock_user = self._make_user()
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "user@example.com"
@@ -1245,17 +1328,20 @@ class TestCachePathBranches:
         """Cache raises exception → fall through to DB (lines 777-778)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "user": {"auth_provider": "local"},
         }
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
 
         mock_user = self._make_user()
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(side_effect=RuntimeError("cache down"))), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(side_effect=RuntimeError("cache down"))),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials)
 
         assert user.email == "user@example.com"
@@ -1265,7 +1351,8 @@ class TestCachePathBranches:
         """Cached path with include_user_info enabled (line 768)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "user": {"auth_provider": "local"},
         }
 
@@ -1282,10 +1369,12 @@ class TestCachePathBranches:
         mock_pm.has_hooks_for = MagicMock(return_value=False)
         mock_pm.config.plugin_settings.include_user_info = True
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)), \
-             patch("mcpgateway.auth._inject_userinfo_instate") as mock_inject:
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            patch("mcpgateway.auth._inject_userinfo_instate") as mock_inject,
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         mock_inject.assert_called_once()
@@ -1305,8 +1394,7 @@ class TestBatchedPathBranches:
 
         auth_ctx = {"user": None, "personal_team_id": None, "is_token_revoked": True}
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
             with pytest.raises(HTTPException) as exc:
                 await get_current_user(credentials=credentials)
             assert exc.value.detail == "Token has been revoked"
@@ -1316,8 +1404,10 @@ class TestBatchedPathBranches:
         """Batched path with admin token (teams=None) → admin bypass (line 802)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "admin@example.com", "jti": "jti-1",
-            "teams": None, "is_admin": True,
+            "sub": "admin@example.com",
+            "jti": "jti-1",
+            "teams": None,
+            "is_admin": True,
             "user": {"auth_provider": "local", "is_admin": True},
         }
 
@@ -1330,8 +1420,7 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id is None
@@ -1342,7 +1431,8 @@ class TestBatchedPathBranches:
         """Batched path with dict team_id → extract id (lines 808-810)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "teams": [{"id": "team-1"}],
             "user": {"auth_provider": "local"},
         }
@@ -1356,8 +1446,7 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id == "team-1"
@@ -1367,7 +1456,8 @@ class TestBatchedPathBranches:
         """Batched result stored in cache (lines 818-832)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "user": {"auth_provider": "local"},
         }
 
@@ -1383,9 +1473,11 @@ class TestBatchedPathBranches:
         mock_cache.get_auth_context = AsyncMock(return_value=None)  # cache miss
         mock_cache.set_auth_context = AsyncMock()
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx), \
-             patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache),
+        ):
             user = await get_current_user(credentials=credentials)
 
         mock_cache.set_auth_context.assert_called_once()
@@ -1395,7 +1487,8 @@ class TestBatchedPathBranches:
         """Cache store fails but doesn't break auth (line 832)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "user": {"auth_provider": "local"},
         }
 
@@ -1411,9 +1504,11 @@ class TestBatchedPathBranches:
         mock_cache.get_auth_context = AsyncMock(return_value=None)
         mock_cache.set_auth_context = AsyncMock(side_effect=RuntimeError("cache write fail"))
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx), \
-             patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache),
+        ):
             user = await get_current_user(credentials=credentials)
 
         assert user.email == "user@example.com"
@@ -1432,8 +1527,7 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
             with pytest.raises(HTTPException) as exc:
                 await get_current_user(credentials=credentials)
             assert exc.value.detail == "Account disabled"
@@ -1450,8 +1544,7 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "require_user_in_db", False)
         monkeypatch.setattr(settings, "platform_admin_email", "admin@example.com")
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
             user = await get_current_user(credentials=credentials)
 
         assert user.email == "admin@example.com"
@@ -1469,8 +1562,7 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "require_user_in_db", False)
         monkeypatch.setattr(settings, "platform_admin_email", "admin@example.com")
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
             with pytest.raises(HTTPException) as exc:
                 await get_current_user(credentials=credentials)
             assert exc.value.detail == "User not found"
@@ -1493,10 +1585,12 @@ class TestBatchedPathBranches:
         mock_pm.has_hooks_for = MagicMock(return_value=False)
         mock_pm.config.plugin_settings.include_user_info = True
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx), \
-             patch("mcpgateway.auth._inject_userinfo_instate") as mock_inject:
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            patch("mcpgateway.auth._inject_userinfo_instate") as mock_inject,
+        ):
             user = await get_current_user(credentials=credentials)
 
         mock_inject.assert_called_once()
@@ -1511,16 +1605,23 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
 
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_auth_context_batched_sync", side_effect=RuntimeError("batch fail")), \
-             patch("mcpgateway.auth._check_token_revoked_sync", return_value=False), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", side_effect=RuntimeError("batch fail")),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials)
 
         assert user.email == "user@example.com"
@@ -1540,15 +1641,22 @@ class TestFallbackPathWithRequest:
         }
 
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.token_teams == ["team-1"]
@@ -1565,16 +1673,24 @@ class TestApiTokenWithRequest:
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_value")
 
         mock_user = EmailUser(
-            email="api@example.com", password_hash="h", full_name="API",
-            is_admin=False, is_active=True, auth_provider="api_token",
-            password_change_required=False, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="api@example.com",
+            password_hash="h",
+            full_name="API",
+            is_admin=False,
+            is_active=True,
+            auth_provider="api_token",
+            password_change_required=False,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("JWT fail"))), \
-             patch("mcpgateway.auth._lookup_api_token_sync", return_value={"user_email": "api@example.com", "jti": "api-jti"}), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=Exception("JWT fail"))),
+            patch("mcpgateway.auth._lookup_api_token_sync", return_value={"user_email": "api@example.com", "jti": "api-jti"}),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.auth_method == "api_token"
@@ -1585,13 +1701,19 @@ class TestInjectUserInfoInState:
 
     def test_inject_with_no_request_id(self):
         """Fallback to request.state.request_id (line 1054)."""
+        # First-Party
         from mcpgateway.auth import _inject_userinfo_instate
 
         request = SimpleNamespace(state=SimpleNamespace(request_id="state-req-id"))
         user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="User",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
         with patch("mcpgateway.auth.get_correlation_id", return_value=None):
@@ -1601,13 +1723,19 @@ class TestInjectUserInfoInState:
 
     def test_inject_with_uuid_fallback(self):
         """Fallback to uuid when no correlation_id or state (lines 1055-1057)."""
+        # First-Party
         from mcpgateway.auth import _inject_userinfo_instate
 
         request = SimpleNamespace(state=SimpleNamespace())
         user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="User",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
         with patch("mcpgateway.auth.get_correlation_id", return_value=None):
@@ -1617,6 +1745,7 @@ class TestInjectUserInfoInState:
 
     def test_inject_with_existing_global_context(self):
         """Existing global_context has user dict already (line 1070-1072)."""
+        # First-Party
         from mcpgateway.auth import _inject_userinfo_instate
         from mcpgateway.plugins.framework import GlobalContext
 
@@ -1624,9 +1753,14 @@ class TestInjectUserInfoInState:
         gc.user = {"existing_key": "value"}
         request = SimpleNamespace(state=SimpleNamespace(plugin_global_context=gc))
         user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="User",
-            is_admin=True, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="User",
+            is_admin=True,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
         with patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
@@ -1637,6 +1771,7 @@ class TestInjectUserInfoInState:
 
     def test_inject_without_user(self):
         """user is None → skip user injection (branch 1069->1076)."""
+        # First-Party
         from mcpgateway.auth import _inject_userinfo_instate
 
         request = SimpleNamespace(state=SimpleNamespace())
@@ -1648,6 +1783,7 @@ class TestInjectUserInfoInState:
 
     def test_inject_no_request(self):
         """request is None → minimal execution."""
+        # First-Party
         from mcpgateway.auth import _inject_userinfo_instate
 
         with patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
@@ -1661,6 +1797,7 @@ class TestPluginAuthHookEdgeCases:
     @pytest.mark.asyncio
     async def test_plugin_auth_no_metadata_no_context(self):
         """Plugin returns user with no metadata and no context_table (branches 631-641)."""
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
@@ -1681,9 +1818,11 @@ class TestPluginAuthHookEdgeCases:
         )
         mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))  # No context_table
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value="req-1"), \
-             patch("mcpgateway.auth._inject_userinfo_instate") as mock_inject:
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm),
+            patch("mcpgateway.auth.get_correlation_id", return_value="req-1"),
+            patch("mcpgateway.auth._inject_userinfo_instate") as mock_inject,
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "plugin@example.com"
@@ -1692,6 +1831,7 @@ class TestPluginAuthHookEdgeCases:
     @pytest.mark.asyncio
     async def test_plugin_auth_metadata_without_auth_method(self):
         """Plugin returns metadata but without auth_method key (branch 633->637)."""
+        # First-Party
         from mcpgateway.plugins.framework import PluginResult
 
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
@@ -1712,8 +1852,7 @@ class TestPluginAuthHookEdgeCases:
         )
         mock_pm.invoke_hook = AsyncMock(return_value=(plugin_result, None))
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "plugin@example.com"
@@ -1728,12 +1867,9 @@ class TestPluginAuthHookEdgeCases:
         mock_pm = MagicMock()
         mock_pm.has_hooks_for = MagicMock(return_value=True)
 
-        mock_pm.invoke_hook = AsyncMock(
-            side_effect=HTTPException(status_code=403, detail="Forbidden by plugin")
-        )
+        mock_pm.invoke_hook = AsyncMock(side_effect=HTTPException(status_code=403, detail="Forbidden by plugin"))
 
-        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), \
-             patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
             with pytest.raises(HTTPException) as exc:
                 await get_current_user(credentials=credentials, request=request)
 
@@ -1749,7 +1885,8 @@ class TestCacheRequireUserInDbFound:
         """Cached user + require_user_in_db + DB has user → success (branch 756->767)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "user": {"auth_provider": "local"},
         }
 
@@ -1763,14 +1900,21 @@ class TestCacheRequireUserInDbFound:
         monkeypatch.setattr(settings, "require_user_in_db", True)
 
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "user@example.com"
@@ -1784,7 +1928,8 @@ class TestFallbackPathBatchDisabled:
         """Batch disabled → skip to individual queries (branch 781->899)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
         payload = {
-            "sub": "user@example.com", "jti": "jti-1",
+            "sub": "user@example.com",
+            "jti": "jti-1",
             "user": {"auth_provider": "local"},
         }
 
@@ -1792,17 +1937,90 @@ class TestFallbackPathBatchDisabled:
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
         mock_user = EmailUser(
-            email="user@example.com", password_hash="h", full_name="U",
-            is_admin=False, is_active=True, email_verified_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
         )
         request = SimpleNamespace(state=SimpleNamespace())
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), \
-             patch("mcpgateway.auth._check_token_revoked_sync", return_value=False), \
-             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user), \
-             patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert user.email == "user@example.com"
         assert request.state.auth_method == "jwt"
+
+
+class TestGetUserTeamRoles:
+    """Tests for the get_user_team_roles() helper function."""
+
+    def test_get_user_team_roles_returns_mapping(self):
+        """Active memberships are returned as a {team_id: role} dict."""
+        mock_db = MagicMock(spec=Session)
+        mock_rows = [
+            SimpleNamespace(team_id="team-1", role="owner"),
+            SimpleNamespace(team_id="team-2", role="member"),
+        ]
+        mock_db.query.return_value.filter.return_value.all.return_value = mock_rows
+
+        result = get_user_team_roles(mock_db, "user@example.com")
+
+        assert result == {"team-1": "owner", "team-2": "member"}
+
+    def test_get_user_team_roles_filters_inactive(self):
+        """Only active memberships are returned (filter is applied by the query)."""
+        mock_db = MagicMock(spec=Session)
+        # The function filters by is_active=True in the query; inactive rows
+        # are excluded at the DB level, so the mock returns only active rows.
+        mock_db.query.return_value.filter.return_value.all.return_value = [
+            SimpleNamespace(team_id="team-active", role="owner"),
+        ]
+
+        result = get_user_team_roles(mock_db, "user@example.com")
+
+        assert result == {"team-active": "owner"}
+        # Verify the query was constructed (filter was called)
+        mock_db.query.assert_called_once()
+        mock_db.query.return_value.filter.assert_called_once()
+
+    def test_get_user_team_roles_empty_for_unknown_user(self):
+        """Unknown email returns empty dict."""
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.return_value.filter.return_value.all.return_value = []
+
+        result = get_user_team_roles(mock_db, "unknown@example.com")
+
+        assert result == {}
+
+    def test_get_user_team_roles_returns_empty_on_db_error(self):
+        """DB exception returns empty dict (safe default)."""
+        mock_db = MagicMock(spec=Session)
+        mock_db.query.side_effect = RuntimeError("DB connection failed")
+
+        result = get_user_team_roles(mock_db, "user@example.com")
+
+        assert result == {}
+
+    def test_get_user_team_roles_multiple_teams(self):
+        """User in 3 teams returns all 3 in result."""
+        mock_db = MagicMock(spec=Session)
+        mock_rows = [
+            SimpleNamespace(team_id="team-a", role="owner"),
+            SimpleNamespace(team_id="team-b", role="member"),
+            SimpleNamespace(team_id="team-c", role="viewer"),
+        ]
+        mock_db.query.return_value.filter.return_value.all.return_value = mock_rows
+
+        result = get_user_team_roles(mock_db, "user@example.com")
+
+        assert len(result) == 3
+        assert result == {"team-a": "owner", "team-b": "member", "team-c": "viewer"}

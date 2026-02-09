@@ -13,7 +13,7 @@
         <tbody class="bg-white divide-y divide-gray-200" id="toolBody">
             {% for tool in tools %}
                 {% set can_modify = is_admin or tool.owner_email == current_user_email or (tool.visibility == 'team' and tool.team_id and user_team_roles.get(tool.team_id|string) == 'owner') %}
-                <tr data-name="{{ tool.name.lower() }}" data-status="{{ 'enabled' if tool.enabled else 'disabled' }}">
+                <tr data-name="{{ tool.name.lower() }}" data-status="{{ 'enabled' if tool.enabled else 'disabled' }}" data-owner-email="{{ tool.owner_email or '' }}" data-team-id="{{ tool.team_id or '' }}" data-visibility="{{ tool.visibility or '' }}">
                     <td class="px-4 py-3">
                         <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
                             data-tool="{{ tool.name }}###{{ tool.id }}">

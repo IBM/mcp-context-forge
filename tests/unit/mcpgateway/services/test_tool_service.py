@@ -5276,3 +5276,107 @@ class TestToolServiceBulkImport:
         result = await service.register_tools_bulk(db=MagicMock(), tools=[])
 
         assert result == {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+
+class TestConvertToolToReadHeaderMasking:
+    """Tests for header masking in convert_tool_to_read based on requesting_user_* params."""
+
+    @pytest.fixture
+    def service(self):
+        return ToolService()
+
+    @pytest.fixture
+    def tool_with_headers(self, mock_tool):
+        """A mock tool with sensitive headers set."""
+        mock_tool.headers = {"Authorization": "Bearer secret-token", "X-Api-Key": "my-api-key"}
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        return mock_tool
+
+    def test_headers_masked_for_non_owner(self, service, tool_with_headers):
+        """Non-owner sees masked values for all header values."""
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email="other@example.com",
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={},
+        )
+        for v in result.headers.values():
+            assert v == settings.masked_auth_value
+
+    def test_headers_visible_for_owner(self, service, tool_with_headers):
+        """Direct owner sees real header values."""
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email=tool_with_headers.owner_email,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={},
+        )
+        assert result.headers["Authorization"] == "Bearer secret-token"
+        assert result.headers["X-Api-Key"] == "my-api-key"
+
+    def test_headers_visible_for_admin(self, service, tool_with_headers):
+        """Admin (requesting_user_is_admin=True) sees real values."""
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email="admin@other.com",
+            requesting_user_is_admin=True,
+            requesting_user_team_roles={},
+        )
+        assert result.headers["Authorization"] == "Bearer secret-token"
+        assert result.headers["X-Api-Key"] == "my-api-key"
+
+    def test_headers_visible_for_team_owner(self, service, tool_with_headers):
+        """Team owner on a team-visibility tool sees real values."""
+        tool_with_headers.visibility = "team"
+        tool_with_headers.team_id = "team-123"
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email="team-owner@example.com",
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={"team-123": "owner"},
+        )
+        assert result.headers["Authorization"] == "Bearer secret-token"
+
+    def test_headers_masked_for_team_member(self, service, tool_with_headers):
+        """Team member (non-owner role) sees masked values."""
+        tool_with_headers.visibility = "team"
+        tool_with_headers.team_id = "team-123"
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email="member@example.com",
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={"team-123": "member"},
+        )
+        for v in result.headers.values():
+            assert v == settings.masked_auth_value
+
+    def test_headers_masked_when_no_context(self, service, tool_with_headers):
+        """Default params (all None) leave headers unmasked (no requesting_user_email means no masking)."""
+        result = service.convert_tool_to_read(tool_with_headers)
+        # When requesting_user_email is None, the masking branch is skipped
+        assert result.headers["Authorization"] == "Bearer secret-token"
+
+    def test_headers_none_no_masking(self, service, mock_tool):
+        """Tool with headers=None does not error."""
+        mock_tool.headers = None
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        result = service.convert_tool_to_read(
+            mock_tool,
+            requesting_user_email="other@example.com",
+            requesting_user_is_admin=False,
+        )
+        assert result.headers is None
+
+    def test_headers_empty_dict(self, service, mock_tool):
+        """Tool with headers={} does not error."""
+        mock_tool.headers = {}
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        result = service.convert_tool_to_read(
+            mock_tool,
+            requesting_user_email="other@example.com",
+            requesting_user_is_admin=False,
+        )
+        assert result.headers == {}

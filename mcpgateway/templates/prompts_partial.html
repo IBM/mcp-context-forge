@@ -20,7 +20,7 @@
       {% set prompt_gateway = prompt.gatewaySlug or 'Local' %}
       {% set prompt_tech_name = prompt.name or prompt.originalName or prompt.id %}
       {% set can_modify = is_admin or prompt.owner_email == current_user_email or prompt.ownerEmail == current_user_email or (prompt.visibility == 'team' and prompt.teamId and user_team_roles.get(prompt.teamId|string) == 'owner') or (prompt.visibility == 'team' and prompt.team_id and user_team_roles.get(prompt.team_id|string) == 'owner') %}
-      <tr data-enabled="{{ prompt.enabled|lower }}">
+      <tr data-enabled="{{ prompt.enabled|lower }}" data-owner-email="{{ prompt.ownerEmail or prompt.owner_email }}" data-team-id="{{ prompt.teamId or prompt.team_id or '' }}" data-visibility="{{ prompt.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
             <!-- Row 1: Test -->

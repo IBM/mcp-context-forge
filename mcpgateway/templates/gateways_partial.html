@@ -18,7 +18,7 @@
     {% for gateway in data %}
       {% set gateway_label = gateway.name or gateway.id %}
       {% set can_modify = is_admin or gateway.ownerEmail == current_user_email or (gateway.visibility == 'team' and gateway.teamId and user_team_roles.get(gateway.teamId|string) == 'owner') %}
-      <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}">
+      <tr id="gateway-row-{{ gateway.id }}" data-enabled="{{ gateway.enabled|lower }}" data-owner-email="{{ gateway.ownerEmail }}" data-team-id="{{ gateway.teamId or '' }}" data-visibility="{{ gateway.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="flex flex-col gap-y-1 max-w-48">
             <!-- Row 1: Test -->
