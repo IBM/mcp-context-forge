@@ -189,7 +189,7 @@ class SemanticSearchService:
         # 4. Store cache
         await self._set_redis_cache(cache_key, results)
         self._set_memory_cache(cache_key, results)
-        
+
         return results
 
 
