@@ -317,3 +317,104 @@ export const copyJsonToClipboard = function (sourceId) {
     },
   );
 }
+
+/**
+* Utility function to get cookie value
+*/
+export const getCookie = function (name) {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) {
+    return parts.pop().split(";").shift();
+  }
+  return "";
+}
+
+/**
+* Get the currently selected team ID from the team selector
+*/
+export const getCurrentTeamId = function () {
+  // First, try to get from Alpine.js component (most reliable)
+  const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
+  if (
+    teamSelector &&
+    teamSelector._x_dataStack &&
+    teamSelector._x_dataStack[0]
+  ) {
+    const alpineData = teamSelector._x_dataStack[0];
+    const selectedTeam = alpineData.selectedTeam;
+    
+    // Return null if empty string or falsy (means "All Teams")
+    if (!selectedTeam || selectedTeam === "" || selectedTeam === "all") {
+      return null;
+    }
+    
+    return selectedTeam;
+  }
+  
+  // Fallback: check URL parameters
+  const urlParams = new URLSearchParams(window.location.search);
+  const teamId = urlParams.get("team_id");
+  
+  if (!teamId || teamId === "" || teamId === "all") {
+    return null;
+  }
+  
+  return teamId;
+}
+
+/**
+* Get the currently selected team name from Alpine.js team selector
+* @returns {string|null} Team name or null if not found
+*/
+export const getCurrentTeamName = function () {
+  const currentTeamId = getCurrentTeamId();
+  
+  if (!currentTeamId) {
+    return null;
+  }
+  
+  // Method 1: Try from window.USERTEAMSDATA (most reliable)
+  if (window.USERTEAMSDATA && Array.isArray(window.USERTEAMSDATA)) {
+    const teamObj = window.USERTEAMSDATA.find(
+      (t) => t.id === currentTeamId,
+    );
+    if (teamObj) {
+      // Return the personal team name format if it's a personal team
+      return teamObj.ispersonal ? `${teamObj.name}` : teamObj.name;
+    }
+  }
+  
+  // Method 2: Try from Alpine.js component
+  const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
+  if (
+    teamSelector &&
+    teamSelector._x_dataStack &&
+    teamSelector._x_dataStack[0]
+  ) {
+    const alpineData = teamSelector._x_dataStack[0];
+    
+    // Get the selected team name directly from Alpine
+    if (
+      alpineData.selectedTeamName &&
+      alpineData.selectedTeamName !== "All Teams"
+    ) {
+      return alpineData.selectedTeamName;
+    }
+    
+    // Try to find in teams array
+    if (alpineData.teams && Array.isArray(alpineData.teams)) {
+      const selectedTeamObj = alpineData.teams.find(
+        (t) => t.id === currentTeamId,
+      );
+      if (selectedTeamObj) {
+        return selectedTeamObj.ispersonal
+        ? `${selectedTeamObj.name}`
+        : selectedTeamObj.name;
+      }
+    }
+  }
+  
+  // Fallback: return the team ID if name not found
+  return currentTeamId;
+}

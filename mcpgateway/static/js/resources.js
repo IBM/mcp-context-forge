@@ -1,4 +1,4 @@
-import { safeGetElement } from "./utils";
+import { getCurrentTeamId, safeGetElement } from "./utils";
 
 export const initResourceSelect = function (
   selectId,
@@ -218,7 +218,7 @@ export const initResourceSelect = function (
             const selectedGatewayIds = Admin.getSelectedGatewayIds
             ? Admin.getSelectedGatewayIds()
             : [];
-            const selectedTeamId = Admin.getCurrentTeamId();
+            const selectedTeamId = getCurrentTeamId();
             const params = new URLSearchParams();
             if (selectedGatewayIds && selectedGatewayIds.length) {
               params.set("gateway_id", selectedGatewayIds.join(","));
