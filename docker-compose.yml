@@ -768,14 +768,6 @@ services:
           memory: 1G
       retries: 3
       start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 256M
-        reservations:
-          cpus: '0.5'
-          memory: 128M
 
   # migration:
   #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
