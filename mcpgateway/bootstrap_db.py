@@ -268,7 +268,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                 {
                     "name": "viewer",
                     "description": "Read-only access to resources and admin UI",
-                    "scope": "team",
+                    "scope": "global",
                     "permissions": ["admin.dashboard", "gateways.read", "servers.read", "teams.join", "tools.read", "resources.read", "prompts.read"],
                     "is_system_role": True,
                 },

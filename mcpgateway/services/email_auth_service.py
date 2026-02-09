@@ -379,54 +379,8 @@ class EmailAuthService:
 
             logger.info(f"Created new user: {email}")
 
-            # Auto-assign default role for admin UI access
-            try:
-                # Import here to avoid circular imports
-                # First-Party
-                from mcpgateway.db import Role, UserRole  # pylint: disable=import-outside-toplevel
-
-                # Determine which role to assign based on is_admin flag
-                if is_admin:
-                    # Assign platform_admin role for admin users
-                    default_role_name = "platform_admin"
-                else:
-                    # Assign viewer role for non-admin users (read-only access)
-                    default_role_name = "viewer"
-
-                # Find the default role
-                default_role = self.db.execute(select(Role).where(and_(Role.name == default_role_name, Role.is_active.is_(True)))).scalar_one_or_none()
-                default_role_scope = default_role.scope if default_role else None
-                if default_role:
-                    # Check if role assignment already exists (shouldn't happen for new user, but be safe)
-                    existing_assignment = self.db.execute(
-                        select(UserRole).where(and_(UserRole.user_email == email, UserRole.role_id == default_role.id, UserRole.scope == default_role_scope))
-                    ).scalar_one_or_none()
-
-                    if not existing_assignment:
-                        # Create role assignment
-                        role_scope = default_role_scope  # This role applies to all teams - adjust if you want team-specific default roles
-                        user_role = UserRole(
-                            user_email=email,
-                            role_id=default_role.id,
-                            scope=role_scope,
-                            scope_id=None,  # No specific team - applies to all teams
-                            granted_by=granted_by or email,  # Use granted_by if provided, otherwise self-granted
-                            granted_at=utc_now(),
-                            is_active=True,
-                        )
-                        self.db.add(user_role)
-                        self.db.commit()
-                        logger.info(f"Assigned default role '{default_role_name}' to user {email}")
-                    else:
-                        logger.debug(f"User {email} already has role '{default_role_name}' assigned")
-                else:
-                    logger.warning(f"Default role '{default_role_name}' not found in database. User {email} created without role assignment. " "Run bootstrap_db.py to create default roles.")
-            except Exception as role_error:
-                logger.error(f"Failed to assign default role to user {email}: {role_error}")
-                # Don't fail user creation if role assignment fails
-                # User can be assigned a role manually later
-
-            # Create personal team if enabled
+            # Create personal team first if enabled (needed for team-scoped role assignment)
+            personal_team_id = None
             if getattr(settings, "auto_create_personal_teams", True):
                 try:
                     # Import here to avoid circular imports
@@ -435,10 +389,83 @@ class EmailAuthService:
 
                     personal_team_service = PersonalTeamService(self.db)
                     personal_team = await personal_team_service.create_personal_team(user)
-                    logger.info(f"Created personal team '{personal_team.name}' for user {email}")
+                    personal_team_id = personal_team.id  # Get team_id directly from created team
+                    logger.info(f"Created personal team '{personal_team.name}' (ID: {personal_team_id}) for user {email}")
                 except Exception as e:
                     logger.warning(f"Failed to create personal team for {email}: {e}")
                     # Don't fail user creation if personal team creation fails
+
+            # Auto-assign dual roles using RoleService (after personal team creation)
+            try:
+                # Import here to avoid circular imports
+                # First-Party
+                from mcpgateway.db import Role  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+                role_service = RoleService(self.db)
+                granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
+
+                # Assign roles based on is_admin flag
+                if is_admin:
+                    # Admin users get: platform_admin (global) + team_admin (team-scoped to personal team)
+
+                    # 1. Assign platform_admin role with global scope
+                    platform_admin_role = self.db.execute(select(Role).where(and_(Role.name == "platform_admin", Role.is_active.is_(True)))).scalar_one_or_none()
+
+                    if platform_admin_role:
+                        try:
+                            await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=granter)
+                            logger.info(f"Assigned platform_admin role (global scope) to admin user {email}")
+                        except ValueError as e:
+                            logger.warning(f"Could not assign platform_admin role to {email}: {e}")
+                    else:
+                        logger.warning(f"platform_admin role not found. User {email} created without global admin role.")
+
+                    # 2. Assign team_admin role with team scope (if personal team exists)
+                    if personal_team_id:
+                        team_admin_role = self.db.execute(select(Role).where(and_(Role.name == "team_admin", Role.is_active.is_(True)))).scalar_one_or_none()
+
+                        if team_admin_role:
+                            try:
+                                await role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                                logger.info(f"Assigned team_admin role (team scope: {personal_team_id}) to admin user {email}")
+                            except ValueError as e:
+                                logger.warning(f"Could not assign team_admin role to {email}: {e}")
+                        else:
+                            logger.warning(f"team_admin role not found. User {email} created without team admin role.")
+
+                else:
+                    # Non-admin users get: viewer (global) + team_admin (team-scoped to personal team)
+
+                    # 1. Assign viewer role with global scope
+                    viewer_role = self.db.execute(select(Role).where(and_(Role.name == "viewer", Role.is_active.is_(True)))).scalar_one_or_none()
+
+                    if viewer_role:
+                        try:
+                            await role_service.assign_role_to_user(user_email=email, role_id=viewer_role.id, scope="global", scope_id=None, granted_by=granter)
+                            logger.info(f"Assigned viewer role (global scope) to user {email}")
+                        except ValueError as e:
+                            logger.warning(f"Could not assign viewer role to {email}: {e}")
+                    else:
+                        logger.warning(f"viewer role not found. User {email} created without global viewer role.")
+
+                    # 2. Assign team_admin role with team scope (if personal team exists)
+                    if personal_team_id:
+                        team_admin_role = self.db.execute(select(Role).where(and_(Role.name == "team_admin", Role.is_active.is_(True)))).scalar_one_or_none()
+
+                        if team_admin_role:
+                            try:
+                                await role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                                logger.info(f"Assigned team_admin role (team scope: {personal_team_id}) to user {email}")
+                            except ValueError as e:
+                                logger.warning(f"Could not assign team_admin role to {email}: {e}")
+                        else:
+                            logger.warning(f"team_admin role not found. User {email} created without team admin role.")
+
+            except Exception as role_error:
+                logger.error(f"Failed to assign roles to user {email}: {role_error}")
+                # Don't fail user creation if role assignment fails
+                # User can be assigned roles manually later
 
             # Log registration event
             registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
