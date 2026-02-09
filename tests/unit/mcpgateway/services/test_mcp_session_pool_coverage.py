@@ -1206,3 +1206,365 @@ class TestGetMetricsWithAffinity:
         metrics = pool.get_metrics()
         assert "http://test:8080" in metrics["circuit_breakers"]
         assert metrics["circuit_breakers"]["http://test:8080"]["failures"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Circuit breaker: _is_circuit_open, _record_failure, _record_success
+# ---------------------------------------------------------------------------
+class TestCircuitBreakerMethods:
+    """Cover circuit breaker edge cases."""
+
+    def test_is_circuit_open_no_entry(self):
+        """No circuit entry → closed."""
+        pool = MCPSessionPool()
+        assert pool._is_circuit_open("http://test:8080") is False
+
+    def test_is_circuit_open_expired_resets(self):
+        """Expired timer → circuit resets to closed."""
+        pool = MCPSessionPool()
+        pool._circuit_open_until["http://test:8080"] = time.time() - 10
+        pool._failures["http://test:8080"] = 5
+        assert pool._is_circuit_open("http://test:8080") is False
+        assert pool._failures["http://test:8080"] == 0
+
+    def test_is_circuit_open_still_open(self):
+        """Future timer → circuit remains open."""
+        pool = MCPSessionPool()
+        pool._circuit_open_until["http://test:8080"] = time.time() + 9999
+        assert pool._is_circuit_open("http://test:8080") is True
+
+    def test_record_failure_trips_breaker(self):
+        """Reaching threshold opens the circuit."""
+        pool = MCPSessionPool(circuit_breaker_threshold=2)
+        pool._record_failure("http://test:8080")
+        assert pool._failures["http://test:8080"] == 1
+        assert "http://test:8080" not in pool._circuit_open_until
+        pool._record_failure("http://test:8080")
+        assert pool._failures["http://test:8080"] == 2
+        assert "http://test:8080" in pool._circuit_open_until
+        assert pool._circuit_breaker_trips == 1
+
+    def test_record_success_resets_failures(self):
+        """Success resets failure count."""
+        pool = MCPSessionPool()
+        pool._failures["http://test:8080"] = 3
+        pool._record_success("http://test:8080")
+        assert pool._failures["http://test:8080"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _compute_identity_hash: custom identity extractor
+# ---------------------------------------------------------------------------
+class TestIdentityExtractor:
+    """Cover custom identity extractor paths."""
+
+    def test_identity_extractor_success(self):
+        """Custom extractor returns non-None → uses it."""
+        pool = MCPSessionPool(identity_extractor=lambda h: h.get("X-User-ID", ""))
+        result = pool._compute_identity_hash({"X-User-ID": "user42"})
+        expected = hashlib.sha256(b"user42").hexdigest()
+        assert result == expected
+
+    def test_identity_extractor_returns_none(self):
+        """Custom extractor returns None → falls through to header hash."""
+        pool = MCPSessionPool(identity_extractor=lambda _h: None)
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            result = pool._compute_identity_hash({"Authorization": "Bearer tok"})
+        assert result != "anonymous"
+
+    def test_identity_extractor_raises(self):
+        """Custom extractor raises → falls through to header hash."""
+        pool = MCPSessionPool(identity_extractor=lambda _h: (_ for _ in ()).throw(ValueError("nope")))
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            result = pool._compute_identity_hash({"Authorization": "Bearer tok"})
+        assert result != "anonymous"
+
+    def test_no_identity_headers_returns_anonymous(self):
+        """No identity headers → anonymous."""
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            result = pool._compute_identity_hash({"X-Request-ID": "12345"})
+        assert result == "anonymous"
+
+
+# ---------------------------------------------------------------------------
+# _make_pool_key with various user identities
+# ---------------------------------------------------------------------------
+class TestMakePoolKey:
+    """Cover _make_pool_key branches."""
+
+    def test_anonymous_user_identity(self):
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            key = pool._make_pool_key("http://test:8080", None, TransportType.SSE, "anonymous")
+        assert key[0] == "anonymous"
+
+    def test_named_user_identity_hashed(self):
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            key = pool._make_pool_key("http://test:8080", None, TransportType.SSE, "admin@example.com")
+        expected_hash = hashlib.sha256(b"admin@example.com").hexdigest()
+        assert key[0] == expected_hash
+
+    def test_gateway_id_in_key(self):
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            key = pool._make_pool_key("http://test:8080", None, TransportType.STREAMABLE_HTTP, "anonymous", gateway_id="gw-1")
+        assert key[4] == "gw-1"
+
+
+# ---------------------------------------------------------------------------
+# Health check: list_prompts, McpError, unknown method
+# ---------------------------------------------------------------------------
+class TestHealthCheckAdditional:
+    """Cover additional health check branches."""
+
+    @pytest.mark.asyncio
+    async def test_health_check_list_prompts(self):
+        """list_prompts as health check method."""
+        pool = MCPSessionPool(health_check_methods=["list_prompts"])
+        pooled = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+        pooled.session.list_prompts = AsyncMock(return_value=[])
+        result = await pool._run_health_check_chain(pooled)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_health_check_mcp_error_method_not_found(self):
+        """McpError METHOD_NOT_FOUND → try next method."""
+        from mcp import McpError
+        from mcp.shared.exceptions import ErrorData
+
+        pool = MCPSessionPool(health_check_methods=["ping", "skip"])
+        pooled = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+        error_data = ErrorData(code=-32601, message="Method not found")
+        pooled.session.send_ping = AsyncMock(side_effect=McpError(error_data))
+        result = await pool._run_health_check_chain(pooled)
+        assert result is True  # Falls through to "skip"
+
+    @pytest.mark.asyncio
+    async def test_health_check_mcp_error_other(self):
+        """McpError with non-METHOD_NOT_FOUND code → failure."""
+        from mcp import McpError
+        from mcp.shared.exceptions import ErrorData
+
+        pool = MCPSessionPool(health_check_methods=["ping"])
+        pooled = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+        error_data = ErrorData(code=-32600, message="Invalid request")
+        pooled.session.send_ping = AsyncMock(side_effect=McpError(error_data))
+        result = await pool._run_health_check_chain(pooled)
+        assert result is False
+        assert pool._health_check_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_health_check_generic_exception(self):
+        """Generic exception on health check → failure."""
+        pool = MCPSessionPool(health_check_methods=["ping"])
+        pooled = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+        pooled.session.send_ping = AsyncMock(side_effect=ConnectionError("gone"))
+        result = await pool._run_health_check_chain(pooled)
+        assert result is False
+        assert pool._health_check_failures == 1
+
+    @pytest.mark.asyncio
+    async def test_health_check_unknown_method(self):
+        """Unknown method name → skipped, falls to all-failed."""
+        pool = MCPSessionPool(health_check_methods=["nonexistent_method"])
+        pooled = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+        result = await pool._run_health_check_chain(pooled)
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Eviction: expired sessions get closed during eviction
+# ---------------------------------------------------------------------------
+class TestEvictionExpiredSessions:
+    """Cover eviction closing expired sessions."""
+
+    @pytest.mark.asyncio
+    async def test_eviction_closes_expired_sessions(self):
+        """Expired sessions in idle pools should be closed."""
+        pool = MCPSessionPool(idle_pool_eviction_seconds=0.01, session_ttl_seconds=0.01)
+        pool._eviction_run_interval = 0
+
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        await pool._get_or_create_pool(pool_key)
+        pool._pool_last_used[pool_key] = time.time() - 1000
+
+        expired_session = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url=url, identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            created_at=time.time() - 1000,
+            last_used=time.time() - 1000,
+        )
+        pool._pools[pool_key].put_nowait(expired_session)
+
+        pool._last_eviction_run = 0
+        with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
+            await pool._maybe_evict_idle_pool_keys()
+        mock_close.assert_awaited_once()
+        assert pool._sessions_reaped >= 1
+
+
+# ---------------------------------------------------------------------------
+# _create_session: message handler factory success and failure
+# ---------------------------------------------------------------------------
+class TestCreateSessionMessageHandler:
+    """Cover message handler factory paths in _create_session."""
+
+    @pytest.mark.asyncio
+    async def test_create_session_with_message_handler(self):
+        """Message handler factory should be called during session creation."""
+        handler = MagicMock()
+        pool = MCPSessionPool(message_handler_factory=lambda _url, _gw: handler)
+
+        transport_ctx = MagicMock()
+        transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
+        transport_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        session_instance = MagicMock()
+        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aexit__ = AsyncMock(return_value=None)
+        session_instance.initialize = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.services.mcp_session_pool.streamablehttp_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance) as mock_cs:
+                pooled = await pool._create_session(
+                    "http://test:8080", None, TransportType.STREAMABLE_HTTP, None, gateway_id="gw-1",
+                )
+        # Verify ClientSession was called with message_handler
+        mock_cs.assert_called_once()
+        assert mock_cs.call_args[1].get("message_handler") is handler
+
+    @pytest.mark.asyncio
+    async def test_create_session_message_handler_factory_failure(self):
+        """Factory raising should not prevent session creation."""
+        def bad_factory(_url, _gw):
+            raise RuntimeError("factory boom")
+
+        pool = MCPSessionPool(message_handler_factory=bad_factory)
+
+        transport_ctx = MagicMock()
+        transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
+        transport_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        session_instance = MagicMock()
+        session_instance.__aenter__ = AsyncMock(return_value=None)
+        session_instance.__aexit__ = AsyncMock(return_value=None)
+        session_instance.initialize = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.services.mcp_session_pool.streamablehttp_client", return_value=transport_ctx):
+            with patch("mcpgateway.services.mcp_session_pool.ClientSession", return_value=session_instance) as mock_cs:
+                pooled = await pool._create_session(
+                    "http://test:8080", None, TransportType.STREAMABLE_HTTP, None,
+                )
+        # Session should still be created with message_handler=None
+        mock_cs.assert_called_once()
+        assert mock_cs.call_args[1].get("message_handler") is None
+
+
+# ---------------------------------------------------------------------------
+# Context manager: __aenter__ / __aexit__
+# ---------------------------------------------------------------------------
+class TestPoolContextManager:
+    """Cover async context manager protocol."""
+
+    @pytest.mark.asyncio
+    async def test_context_manager(self):
+        """Pool should support async with."""
+        async with MCPSessionPool() as pool:
+            assert pool._closed is False
+        assert pool._closed is True
+
+
+# ---------------------------------------------------------------------------
+# _validate_session: closed and stale with health check
+# ---------------------------------------------------------------------------
+class TestValidateSessionAdditional:
+    """Cover validate_session edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_validate_session_closed(self):
+        """Closed session should be invalid."""
+        pool = MCPSessionPool()
+        pooled = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+        )
+        pooled.mark_closed()
+        result = await pool._validate_session(pooled)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_validate_session_stale_runs_health_check(self):
+        """Stale session triggers health check."""
+        pool = MCPSessionPool(session_ttl_seconds=9999, health_check_interval_seconds=0.001)
+        pooled = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            created_at=time.time(),
+            last_used=time.time() - 100,
+        )
+        with patch.object(pool, "_run_health_check_chain", new_callable=AsyncMock, return_value=True) as mock_hc:
+            result = await pool._validate_session(pooled)
+        assert result is True
+        mock_hc.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_session_fresh_passes(self):
+        """Fresh session passes without health check."""
+        pool = MCPSessionPool(session_ttl_seconds=9999, health_check_interval_seconds=9999)
+        pooled = PooledSession(
+            session=MagicMock(), transport_context=MagicMock(),
+            url="http://test:8080", identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP, headers={},
+            created_at=time.time(),
+            last_used=time.time(),
+        )
+        result = await pool._validate_session(pooled)
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# acquire: circuit breaker open rejection
+# ---------------------------------------------------------------------------
+class TestAcquireCircuitBreaker:
+    """Cover acquire when circuit breaker is open."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_circuit_breaker_open(self):
+        """Should raise RuntimeError when circuit is open."""
+        pool = MCPSessionPool()
+        pool._circuit_open_until["http://test:8080"] = time.time() + 9999
+        with pytest.raises(RuntimeError, match="Circuit breaker open"):
+            await pool.acquire("http://test:8080")
+        await pool.close_all()

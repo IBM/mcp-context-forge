@@ -310,3 +310,315 @@ async def test_sync_provider_models(monkeypatch: pytest.MonkeyPatch):
 
     assert result["added"] == 1
     assert result["skipped"] == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_test_api_exception(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_gateway_models", MagicMock(side_effect=RuntimeError("db error")))
+
+    request = MagicMock()
+    request.body = AsyncMock(return_value=orjson.dumps({"test_type": "models"}))
+
+    response = await llm_admin_router.admin_test_api(request, db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    payload = orjson.loads(response.body)
+    assert payload["success"] is False
+    assert "db error" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_get_api_info_partial_provider_not_found(mock_request, monkeypatch: pytest.MonkeyPatch):
+    model = _model()
+    provider = _provider()
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_providers", lambda *args, **kwargs: ([provider], 1))
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_models", lambda *args, **kwargs: ([model], 1))
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", MagicMock(side_effect=LLMProviderNotFoundError("missing")))
+
+    response = await llm_admin_router.get_api_info_partial(mock_request, current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_set_provider_state_not_found(mock_request, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "set_provider_state", MagicMock(side_effect=LLMProviderNotFoundError("missing")))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_admin_router.set_provider_state_html(mock_request, "missing", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_check_provider_health_not_found(mock_request, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "check_provider_health", AsyncMock(side_effect=LLMProviderNotFoundError("missing")))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_admin_router.check_provider_health(mock_request, "missing", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_set_model_state_not_found(mock_request, monkeypatch: pytest.MonkeyPatch):
+    from mcpgateway.services.llm_provider_service import LLMModelNotFoundError
+
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "set_model_state", MagicMock(side_effect=LLMModelNotFoundError("missing")))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_admin_router.set_model_state_html(mock_request, "missing", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_set_model_state_provider_not_found(mock_request, monkeypatch: pytest.MonkeyPatch):
+    model = _model()
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "set_model_state", lambda *args, **kwargs: model)
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", MagicMock(side_effect=LLMProviderNotFoundError("missing")))
+
+    response = await llm_admin_router.set_model_state_html(mock_request, "m1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_delete_model_not_found(mock_request, monkeypatch: pytest.MonkeyPatch):
+    from mcpgateway.services.llm_provider_service import LLMModelNotFoundError
+
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "delete_model", MagicMock(side_effect=LLMModelNotFoundError("missing")))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_admin_router.delete_model_html(mock_request, "missing", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_provider_success(mock_request, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "delete_provider", lambda *args, **kwargs: True)
+
+    response = await llm_admin_router.delete_provider_html(mock_request, "p1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_models_not_found(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", MagicMock(side_effect=LLMProviderNotFoundError("missing")))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await llm_admin_router.fetch_provider_models(MagicMock(), "missing", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_models_http_error(monkeypatch: pytest.MonkeyPatch):
+    import httpx
+
+    provider = _provider()
+    provider.api_base = "http://api"
+    provider.api_key = None
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+
+    class DummyResponse:
+        status_code = 403
+        text = "Forbidden"
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("forbidden", request=MagicMock(), response=self)
+
+    class DummyClient:
+        async def get(self, *_args, **_kwargs):
+            return DummyResponse()
+
+    import mcpgateway.services.http_client_service as http_service
+
+    monkeypatch.setattr(http_service, "get_http_client", AsyncMock(return_value=DummyClient()))
+    monkeypatch.setattr(http_service, "get_admin_timeout", lambda: 1)
+
+    result = await llm_admin_router.fetch_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is False
+    assert "HTTP 403" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_models_request_error(monkeypatch: pytest.MonkeyPatch):
+    import httpx
+
+    provider = _provider()
+    provider.api_base = "http://api"
+    provider.api_key = None
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+
+    class DummyClient:
+        async def get(self, *_args, **_kwargs):
+            raise httpx.RequestError("connection refused")
+
+    import mcpgateway.services.http_client_service as http_service
+
+    monkeypatch.setattr(http_service, "get_http_client", AsyncMock(return_value=DummyClient()))
+    monkeypatch.setattr(http_service, "get_admin_timeout", lambda: 1)
+
+    result = await llm_admin_router.fetch_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is False
+    assert "Connection error" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_models_generic_error(monkeypatch: pytest.MonkeyPatch):
+    provider = _provider()
+    provider.api_base = "http://api"
+    provider.api_key = None
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+
+    class DummyClient:
+        async def get(self, *_args, **_kwargs):
+            raise RuntimeError("weird error")
+
+    import mcpgateway.services.http_client_service as http_service
+
+    monkeypatch.setattr(http_service, "get_http_client", AsyncMock(return_value=DummyClient()))
+    monkeypatch.setattr(http_service, "get_admin_timeout", lambda: 1)
+
+    result = await llm_admin_router.fetch_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is False
+    assert "weird error" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_models_ollama_format(monkeypatch: pytest.MonkeyPatch):
+    provider = _provider()
+    provider.api_base = "http://api"
+    provider.api_key = None
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+
+    class DummyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "llama3"}, "raw-model-string"]}
+
+    class DummyClient:
+        async def get(self, *_args, **_kwargs):
+            return DummyResponse()
+
+    import mcpgateway.services.http_client_service as http_service
+
+    monkeypatch.setattr(http_service, "get_http_client", AsyncMock(return_value=DummyClient()))
+    monkeypatch.setattr(http_service, "get_admin_timeout", lambda: 1)
+
+    result = await llm_admin_router.fetch_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is True
+    assert result["count"] == 2
+    assert result["models"][0]["id"] == "llama3"
+    assert result["models"][1]["id"] == "raw-model-string"
+
+
+@pytest.mark.asyncio
+async def test_fetch_provider_models_with_api_key(monkeypatch: pytest.MonkeyPatch):
+    provider = _provider()
+    provider.api_base = "http://api"
+    provider.api_key = "encrypted_key"
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *_args, **_kwargs: provider)
+    monkeypatch.setattr(llm_admin_router.LLMProviderType, "get_provider_defaults", lambda: {provider.provider_type: {"supports_model_list": True, "api_base": "http://api", "models_endpoint": "/models"}})
+
+    import mcpgateway.utils.services_auth as auth_module
+
+    monkeypatch.setattr(auth_module, "decode_auth", lambda *_a, **_k: {"api_key": "my-key"})
+
+    class DummyResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "m1"}]}
+
+    class DummyClient:
+        async def get(self, *_args, **_kwargs):
+            return DummyResponse()
+
+    import mcpgateway.services.http_client_service as http_service
+
+    monkeypatch.setattr(http_service, "get_http_client", AsyncMock(return_value=DummyClient()))
+    monkeypatch.setattr(http_service, "get_admin_timeout", lambda: 1)
+
+    result = await llm_admin_router.fetch_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_sync_provider_models_failure_result(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router, "fetch_provider_models", AsyncMock(return_value={"success": False, "error": "fail"}))
+
+    result = await llm_admin_router.sync_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_sync_provider_models_no_models(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router, "fetch_provider_models", AsyncMock(return_value={"success": True, "models": []}))
+
+    result = await llm_admin_router.sync_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["success"] is True
+    assert result["added"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_provider_models_create_failure(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router, "fetch_provider_models", AsyncMock(return_value={"success": True, "models": [{"id": "m1", "name": "Model"}]}))
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_models", lambda *_args, **_kwargs: ([], 0))
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "create_model", MagicMock(side_effect=RuntimeError("create failed")))
+
+    result = await llm_admin_router.sync_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["skipped"] == 1
+    assert result["added"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_provider_models_skip_empty_id(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(llm_admin_router, "fetch_provider_models", AsyncMock(return_value={"success": True, "models": [{"id": ""}, {"id": "m1"}]}))
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_models", lambda *_args, **_kwargs: ([], 0))
+    create_model = MagicMock()
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "create_model", create_model)
+
+    result = await llm_admin_router.sync_provider_models(MagicMock(), "p1", db=MagicMock(), current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert result["added"] == 1
+
+
+@pytest.mark.asyncio
+async def test_check_provider_health_no_latency(mock_request, monkeypatch: pytest.MonkeyPatch):
+    health = ProviderHealthCheck(provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.UNKNOWN, response_time_ms=None, error="No base URL", checked_at=datetime.now(timezone.utc))
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "check_provider_health", AsyncMock(return_value=health))
+
+    result = await llm_admin_router.check_provider_health(mock_request, "p1", current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+    assert result["latency_ms"] is None
+    assert result["error"] == "No base URL"
+
+
+@pytest.mark.asyncio
+async def test_get_models_partial_with_provider_filter(mock_request, monkeypatch: pytest.MonkeyPatch):
+    model = _model()
+    provider = _provider()
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_models", lambda **kwargs: ([model], 1))
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "get_provider", lambda *args, **kwargs: provider)
+    monkeypatch.setattr(llm_admin_router.llm_provider_service, "list_providers", lambda *args, **kwargs: ([provider], 1))
+
+    response = await llm_admin_router.get_models_partial(mock_request, provider_id="p1", page=1, per_page=50, current_user_ctx={"db": MagicMock(), "email": "user@example.com"})
+
+    assert isinstance(response, HTMLResponse)
