@@ -1,3 +1,66 @@
+## JavaScript Unit Testing
+
+MCP Gateway uses **Vitest** for JavaScript unit testing, providing fast and modern testing capabilities for browser-based code.
+
+### Configuration Files
+
+- **`vitest.config.js`** - Main Vitest configuration
+- **`tests/js/admin.test.js`** - Test suite for admin.js utilities
+
+### Running JavaScript Tests
+
+```bash
+# Run all tests
+npm test
+
+# Watch mode (auto-rerun on changes)
+npm run test:watch
+
+# Generate coverage report
+npm run test:coverage
+
+# Interactive UI mode
+npm run test:ui
+```
+
+### Test Structure
+
+JavaScript tests are located in the `tests/js/` directory:
+
+```
+tests/
+└── js/
+    ├── admin.test.js      # Admin UI utility tests
+    └── [future test files]
+```
+
+### Writing Tests
+
+Tests use Vitest's Jest-compatible API:
+
+```javascript
+import { describe, test, expect } from 'vitest';
+
+describe('MyFunction', () => {
+  test('should do something', () => {
+    expect(myFunction('input')).toBe('expected output');
+  });
+});
+```
+
+### Coverage
+
+JavaScript coverage is generated separately from Python coverage:
+
+```bash
+npm run test:coverage
+# Coverage report: coverage/index.html
+```
+
+---
+
+## Python Unit Testing
+
 |                                            filepath                                             | passed | skipped | SUBTOTAL |
 | ----------------------------------------------------------------------------------------------- | -----: | ------: | -------: |
 | tests/differential/test_pii_filter_differential.py                                              |      0 |      32 |       32 |
