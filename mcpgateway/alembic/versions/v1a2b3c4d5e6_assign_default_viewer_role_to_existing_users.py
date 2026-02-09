@@ -157,9 +157,9 @@ def upgrade() -> None:
         print("email_users table not found. Skipping migration.")
         return
 
-    # Skip if teams table doesn't exist
-    if "teams" not in existing_tables:
-        print("teams table not found. Skipping migration.")
+    # Check if email_team_members table exists
+    if "email_team_members" not in existing_tables:
+        print("email_team_members table not found. Skipping migration.")
         return
 
     now = datetime.now(timezone.utc)
@@ -250,13 +250,13 @@ def upgrade() -> None:
     team_admin_role_id = team_admin_result[0]
     print(f"  ✓ Found 'team_admin' role: {team_admin_role_id}")
 
-    viewer_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
-    viewer_result = bind.execute(viewer_query, {"role_name": "viewer"}).fetchone()
-    if not viewer_result:
-        print("  ✗ 'viewer' role not found. Cannot proceed with user role assignment.")
+    platform_viewer_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
+    platform_viewer_result = bind.execute(platform_viewer_query, {"role_name": "platform_viewer"}).fetchone()
+    if not platform_viewer_result:
+        print("  ✗ 'platform_viewer' role not found. Cannot proceed with user role assignment.")
         return
-    viewer_role_id = viewer_result[0]
-    print(f"  ✓ Found 'viewer' role: {viewer_role_id}")
+    platform_viewer_role_id = platform_viewer_result[0]
+    print(f"  ✓ Found 'platform_viewer' role: {platform_viewer_role_id}")
 
     platform_admin_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
     platform_admin_result = bind.execute(platform_admin_query, {"role_name": "platform_admin"}).fetchone()
@@ -271,9 +271,9 @@ def upgrade() -> None:
     if dialect_name == "postgresql":
         users_query = text(
             """
-            SELECT eu.email, eu.is_admin, t.id as team_id
+            SELECT eu.email, eu.is_admin, etm.team_id
             FROM email_users eu
-            LEFT JOIN teams t ON t.name = eu.email AND t.is_personal = TRUE
+            LEFT JOIN email_team_members etm ON etm.user_email = eu.email AND etm.is_active = TRUE
             WHERE eu.email NOT IN (SELECT DISTINCT user_email FROM user_roles WHERE is_active = TRUE)
             AND eu.is_active = TRUE
             AND eu.email != :admin_email
@@ -282,9 +282,9 @@ def upgrade() -> None:
     else:
         users_query = text(
             """
-            SELECT eu.email, eu.is_admin, t.id as team_id
+            SELECT eu.email, eu.is_admin, etm.team_id
             FROM email_users eu
-            LEFT JOIN teams t ON t.name = eu.email AND t.is_personal = 1
+            LEFT JOIN email_team_members etm ON etm.user_email = eu.email AND etm.is_active = 1
             WHERE eu.email NOT IN (SELECT DISTINCT user_email FROM user_roles WHERE is_active = 1)
             AND eu.is_active = 1
             AND eu.email != :admin_email
@@ -360,14 +360,14 @@ def upgrade() -> None:
                 )
                 print(f"  ✓ Assigned 'team_admin' (team) + 'platform_admin' (global) to: {user_email}")
             else:
-                # Non-admin users get viewer with global scope
+                # Non-admin users get platform_viewer with global scope
                 global_role_assignment_id = str(uuid.uuid4())
                 bind.execute(
                     insert_user_role,
                     {
                         "id": global_role_assignment_id,
                         "user_email": user_email,
-                        "role_id": viewer_role_id,
+                        "role_id": platform_viewer_role_id,
                         "scope": "global",
                         "scope_id": None,
                         "granted_by": granted_by_email,
@@ -376,7 +376,7 @@ def upgrade() -> None:
                         "is_active": True,
                     },
                 )
-                print(f"  ✓ Assigned 'team_admin' (team) + 'viewer' (global) to: {user_email}")
+                print(f"  ✓ Assigned 'team_admin' (team) + 'platform_viewer' (global) to: {user_email}")
 
             assigned_count += 1
         except Exception as e:
@@ -385,7 +385,7 @@ def upgrade() -> None:
     print(f"\n✅ Successfully assigned roles to {assigned_count} users")
     print("   • Each user received 2 roles:")
     print("     - team_admin with team scope (for their personal team)")
-    print("     - platform_admin (admins) or viewer (non-admins) with global scope")
+    print("     - platform_admin (admins) or platform_viewer (non-admins) with global scope")
 
 
 def downgrade() -> None:
@@ -497,5 +497,3 @@ def downgrade() -> None:
         print(f"  ⚠ Could not remove migration-assigned roles: {e}")
 
     print("\n✅ Downgrade completed")
-
-# Made with Bob
