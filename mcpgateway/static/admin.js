@@ -31594,3 +31594,81 @@ function handleKeydown(event, callback) {
 }
 
 window.handleKeydown = handleKeydown;
+
+/**
+ * Defense-in-depth: audit mutation buttons after every HTMX partial swap.
+ *
+ * Server-side Jinja2 `can_modify` is the authoritative control. This JS
+ * handler is a redundant safety net that hides edit/delete/activate/deactivate
+ * buttons when the client-side user context says the current user should not
+ * be able to mutate a given row.
+ */
+document.body.addEventListener("htmx:afterSettle", function (_evt) {
+    const currentUser = window.CURRENT_USER;
+    const isAdmin = Boolean(window.IS_ADMIN);
+    const userTeams = window.USER_TEAMS || [];
+
+    if (!currentUser) return;
+
+    // Build a quick lookup: team_id -> role (only "owner" matters for modify)
+    const teamRoleMap = {};
+    for (let i = 0; i < userTeams.length; i++) {
+        if (userTeams[i].id && userTeams[i].role) {
+            teamRoleMap[String(userTeams[i].id)] = userTeams[i].role;
+        }
+    }
+
+    // Known panel table body IDs that contain entity rows
+    const tableBodyIds = [
+        "tools-table-body",
+        "servers-table-body",
+        "resources-table-body",
+        "prompts-table-body",
+        "gateways-table-body",
+        "agents-table-body",
+        "toolBody",
+    ];
+
+    for (let t = 0; t < tableBodyIds.length; t++) {
+        const tbody = document.getElementById(tableBodyIds[t]);
+        if (!tbody) continue;
+
+        const rows = tbody.querySelectorAll("tr[data-owner-email]");
+        for (let r = 0; r < rows.length; r++) {
+            const row = rows[r];
+            const ownerEmail = row.getAttribute("data-owner-email") || "";
+            const teamId = row.getAttribute("data-team-id") || "";
+            const visibility = row.getAttribute("data-visibility") || "";
+
+            let canModify = isAdmin;
+            if (!canModify && ownerEmail === currentUser) {
+                canModify = true;
+            }
+            if (
+                !canModify &&
+                visibility === "team" &&
+                teamId &&
+                teamRoleMap[teamId] === "owner"
+            ) {
+                canModify = true;
+            }
+
+            if (!canModify) {
+                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate
+                const buttons = row.querySelectorAll(
+                    "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
+                );
+                for (let b = 0; b < buttons.length; b++) {
+                    buttons[b].remove();
+                }
+                // Remove delete and state-toggle forms
+                const forms = row.querySelectorAll(
+                    "form[action*='/delete'], form[action*='/state']",
+                );
+                for (let f = 0; f < forms.length; f++) {
+                    forms[f].remove();
+                }
+            }
+        }
+    }
+});

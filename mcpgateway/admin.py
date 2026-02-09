@@ -60,7 +60,7 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 
 # Authentication and password-related imports
-from mcpgateway.auth import get_current_user
+from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -515,6 +515,19 @@ def get_user_email(user: Union[str, dict, object] = None) -> str:
         return "unknown"
 
     return str(user)
+
+
+def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
+    """Return a {team_id: role} mapping for a user's active memberships.
+
+    Args:
+        db: The SQLAlchemy database session.
+        user_email: Email address of the user to query memberships for.
+
+    Returns:
+        Dict mapping team_id to the user's role in that team.
+    """
+    return get_user_team_roles(db, user_email)
 
 
 def _get_span_entity_performance(
@@ -1638,6 +1651,8 @@ async def admin_servers_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "servers_partial.html",
@@ -1648,6 +1663,9 @@ async def admin_servers_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -6508,6 +6526,8 @@ async def admin_list_tools(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
 
     # Call tool_service.list_tools with page-based pagination
     paginated_result = await tool_service.list_tools(
@@ -6516,6 +6536,9 @@ async def admin_list_tools(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        requesting_user_email=user_email,
+        requesting_user_is_admin=_is_admin,
+        requesting_user_team_roles=_team_roles,
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
@@ -6563,7 +6586,7 @@ async def admin_tools_partial_html(
         HTMLResponse with tools table rows and pagination controls.
     """
     user_email = get_user_email(user)
-    LOGGER.info(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
+    LOGGER.debug(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
 
     # Build base query using tool_service's team filtering logic
     team_service = TeamManagementService(db)
@@ -6661,10 +6684,21 @@ async def admin_tools_partial_html(
     # Team names are loaded via joinedload(DbTool.email_team) in the query
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     tools_pydantic = []
     for t in tools_db:
         try:
-            tools_pydantic.append(tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False))
+            tools_pydantic.append(
+                tool_service.convert_tool_to_read(
+                    t,
+                    include_metrics=False,
+                    include_auth=False,
+                    requesting_user_email=user_email,
+                    requesting_user_is_admin=_is_admin,
+                    requesting_user_team_roles=_team_roles,
+                )
+            )
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
 
@@ -6715,6 +6749,9 @@ async def admin_tools_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -6811,8 +6848,19 @@ async def admin_tool_ops_partial(
     )
 
     tools_db = paginated_result["data"]
-    tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False) for t in tools_db]
-
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
+    tools_pydantic = [
+        tool_service.convert_tool_to_read(
+            t,
+            include_metrics=False,
+            include_auth=False,
+            requesting_user_email=user_email,
+            requesting_user_is_admin=_is_admin,
+            requesting_user_team_roles=_team_roles,
+        )
+        for t in tools_db
+    ]
     db.commit()
 
     return request.app.state.templates.TemplateResponse(
@@ -6822,6 +6870,9 @@ async def admin_tool_ops_partial(
             "request": request,
             "tools": tools_pydantic,
             "root_path": request.scope.get("root_path", ""),
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7213,6 +7264,8 @@ async def admin_prompts_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "prompts_partial.html",
@@ -7223,6 +7276,9 @@ async def admin_prompts_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7265,7 +7321,7 @@ async def admin_gateways_partial_html(
         encoded gateway data when templates expect it.
     """
     user_email = get_user_email(user)
-    LOGGER.info(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
+    LOGGER.debug(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -7372,6 +7428,8 @@ async def admin_gateways_partial_html(
             {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "gateways_partial.html",
@@ -7382,6 +7440,9 @@ async def admin_gateways_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7891,6 +7952,8 @@ async def admin_resources_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "resources_partial.html",
@@ -7901,6 +7964,9 @@ async def admin_resources_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -8463,6 +8529,8 @@ async def admin_a2a_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "agents_partial.html",
@@ -8473,6 +8541,9 @@ async def admin_a2a_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -8666,8 +8737,11 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         'admin_get_tool'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
+    _user_email = get_user_email(user)
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, _user_email) if not _is_admin else {}
     try:
-        tool = await tool_service.get_tool(db, tool_id)
+        tool = await tool_service.get_tool(db, tool_id, requesting_user_email=_user_email, requesting_user_is_admin=_is_admin, requesting_user_team_roles=_team_roles)
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
