@@ -11,8 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 # Save original RBAC decorator functions at conftest import time.
-# Conftest files load before test modules, so these are the real functions
-# (not noop replacements from e2e tests that patch at module import time).
+# Conftest files load before test modules, so these should be the real functions.
 import mcpgateway.middleware.rbac as _rbac_mod
 
 _ORIG_REQUIRE_PERMISSION = _rbac_mod.require_permission
@@ -36,11 +35,9 @@ def mock_permission_service(monkeypatch):
 
     This fixture is auto-used for all tests in this directory.
 
-    It also restores real RBAC decorator functions that may be replaced by
-    noop versions from e2e test modules (test_main_apis.py,
-    test_oauth_protected_resource.py) which patch at module import time
-    without cleanup. When xdist assigns those modules to the same worker,
-    the decorators become permanently patched.
+    It also restores real RBAC decorator functions in case other tests
+    patched them (e.g., via module-level monkeypatching) in the same worker
+    process when running under xdist.
 
     Tests that need to verify permission denial behavior should:
     1. Set MockPermissionService.check_permission.return_value = False
