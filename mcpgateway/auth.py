@@ -173,6 +173,27 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
         return [row[0] for row in result.all()]
 
 
+def get_user_team_roles(db, user_email: str) -> Dict[str, str]:
+    """Return a {team_id: role} mapping for a user's active team memberships.
+
+    Args:
+        db: SQLAlchemy database session.
+        user_email: Email address of the user to query memberships for.
+
+    Returns:
+        Dict mapping team_id to the user's role in that team.
+        Returns empty dict on DB errors (safe default — headers stay masked).
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+        rows = db.query(EmailTeamMember.team_id, EmailTeamMember.role).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).all()
+        return {r.team_id: r.role for r in rows}
+    except Exception:
+        return {}
+
+
 def _resolve_teams_from_db_sync(email: str, is_admin: bool) -> Optional[List[str]]:
     """Resolve teams synchronously with L1 cache support.
 

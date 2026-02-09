@@ -60,14 +60,14 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 
 # Authentication and password-related imports
-from mcpgateway.auth import get_current_user
+from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam, EmailTeamMember, extract_json_field
+from mcpgateway.db import EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
@@ -527,8 +527,7 @@ def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
     Returns:
         Dict mapping team_id to the user's role in that team.
     """
-    rows = db.query(EmailTeamMember.team_id, EmailTeamMember.role).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).all()
-    return {r.team_id: r.role for r in rows}
+    return get_user_team_roles(db, user_email)
 
 
 def _get_span_entity_performance(
@@ -6528,6 +6527,7 @@ async def admin_list_tools(
     LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email)
 
     # Call tool_service.list_tools with page-based pagination
     paginated_result = await tool_service.list_tools(
@@ -6538,6 +6538,7 @@ async def admin_list_tools(
         user_email=user_email,
         requesting_user_email=user_email,
         requesting_user_is_admin=_is_admin,
+        requesting_user_team_roles=_team_roles,
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
@@ -8738,8 +8739,9 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
     _user_email = get_user_email(user)
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, _user_email)
     try:
-        tool = await tool_service.get_tool(db, tool_id, requesting_user_email=_user_email, requesting_user_is_admin=_is_admin)
+        tool = await tool_service.get_tool(db, tool_id, requesting_user_email=_user_email, requesting_user_is_admin=_is_admin, requesting_user_team_roles=_team_roles)
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
