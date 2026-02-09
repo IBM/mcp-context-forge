@@ -37,7 +37,7 @@
 | tests/unit/mcpgateway/services/test_event_service.py                                            |     22 |       5 |       27 |
 | tests/unit/mcpgateway/services/test_gateway_service.py                                          |    271 |       1 |      272 |
 | tests/unit/mcpgateway/services/test_gateway_service_extended.py                                 |     37 |       1 |       38 |
-| tests/unit/mcpgateway/services/test_mcp_client_chat_service_extended.py                         |     99 |       1 |      100 |
+| tests/unit/mcpgateway/services/test_mcp_client_chat_service_extended.py                         |    101 |       1 |      102 |
 | tests/unit/mcpgateway/services/test_row_level_locking.py                                        |     16 |       2 |       18 |
 | tests/unit/mcpgateway/services/test_team_invitation_service.py                                  |     37 |       4 |       41 |
 | tests/unit/mcpgateway/test_observability.py                                                     |     31 |       1 |       32 |
@@ -89,26 +89,26 @@
 | tests/unit/mcpgateway/plugins/framework/external/grpc/server/test_runtime.py                    |     22 |       0 |       22 |
 | tests/unit/mcpgateway/plugins/framework/external/grpc/server/test_server.py                     |     20 |       0 |       20 |
 | tests/unit/mcpgateway/plugins/framework/external/grpc/test_client.py                            |     25 |       0 |       25 |
+| tests/unit/mcpgateway/plugins/framework/external/grpc/test_client_integration.py                |      7 |       0 |        7 |
 | tests/unit/mcpgateway/plugins/framework/external/grpc/test_grpc_models.py                       |     42 |       0 |       42 |
 | tests/unit/mcpgateway/plugins/framework/external/grpc/test_tls_utils.py                         |     24 |       0 |       24 |
-| tests/unit/mcpgateway/plugins/framework/external/grpc/test_client_integration.py                |      7 |       0 |        7 |
 | tests/unit/mcpgateway/plugins/framework/external/mcp/server/test_runtime.py                     |     16 |       0 |       16 |
 | tests/unit/mcpgateway/plugins/framework/external/mcp/server/test_runtime_coverage.py            |     10 |       0 |       10 |
 | tests/unit/mcpgateway/plugins/framework/external/mcp/server/test_server.py                      |     32 |       0 |       32 |
 | tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_certificate_validation.py      |      8 |       0 |        8 |
 | tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_config.py                      |     16 |       0 |       16 |
 | tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_coverage.py                    |     22 |       0 |       22 |
-| tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py                          |     27 |       0 |       27 |
 | tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_stdio.py                       |      7 |       0 |        7 |
-| tests/unit/mcpgateway/plugins/framework/external/test_proto_convert.py                          |     46 |       0 |       46 |
+| tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py                          |     27 |       0 |       27 |
 | tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_streamable_http.py             |      4 |       0 |        4 |
+| tests/unit/mcpgateway/plugins/framework/external/test_proto_convert.py                          |     46 |       0 |       46 |
 | tests/unit/mcpgateway/plugins/framework/external/unix/test_client.py                            |     30 |       0 |       30 |
 | tests/unit/mcpgateway/plugins/framework/external/unix/test_protocol.py                          |     17 |       0 |       17 |
 | tests/unit/mcpgateway/plugins/framework/external/unix/test_runtime.py                           |      5 |       0 |        5 |
 | tests/unit/mcpgateway/plugins/framework/external/unix/test_server.py                            |     28 |       0 |       28 |
+| tests/unit/mcpgateway/plugins/framework/external/unix/test_client_integration.py                |      8 |       0 |        8 |
 | tests/unit/mcpgateway/plugins/framework/hooks/test_hook_patterns.py                             |      5 |       0 |        5 |
 | tests/unit/mcpgateway/plugins/framework/hooks/test_hook_registry.py                             |     12 |       0 |       12 |
-| tests/unit/mcpgateway/plugins/framework/external/unix/test_client_integration.py                |      8 |       0 |        8 |
 | tests/unit/mcpgateway/plugins/framework/hooks/test_http.py                                      |     42 |       0 |       42 |
 | tests/unit/mcpgateway/plugins/framework/loader/test_plugin_loader.py                            |      9 |       0 |        9 |
 | tests/unit/mcpgateway/plugins/framework/test_context.py                                         |      2 |       0 |        2 |
@@ -129,12 +129,12 @@
 | tests/unit/mcpgateway/plugins/plugins/cached_tool_result/test_cached_tool_result.py             |      1 |       0 |        1 |
 | tests/unit/mcpgateway/plugins/plugins/code_safety_linter/test_code_safety_linter.py             |      1 |       0 |        1 |
 | tests/unit/mcpgateway/plugins/plugins/content_moderation/test_content_moderation.py             |     17 |       0 |       17 |
-| tests/unit/mcpgateway/plugins/plugins/external_clamav/test_clamav_remote.py                     |      6 |       0 |        6 |
 | tests/unit/mcpgateway/plugins/plugins/content_moderation/test_content_moderation_integration.py |      5 |       0 |        5 |
+| tests/unit/mcpgateway/plugins/plugins/external_clamav/test_clamav_remote.py                     |      6 |       0 |        6 |
 | tests/unit/mcpgateway/plugins/plugins/file_type_allowlist/test_file_type_allowlist.py           |      1 |       0 |        1 |
 | tests/unit/mcpgateway/plugins/plugins/html_to_markdown/test_html_to_markdown.py                 |      1 |       0 |        1 |
-| tests/unit/mcpgateway/plugins/plugins/json_repair/test_json_repair.py                           |      1 |       0 |        1 |
 | tests/unit/mcpgateway/plugins/plugins/markdown_cleaner/test_markdown_cleaner.py                 |      1 |       0 |        1 |
+| tests/unit/mcpgateway/plugins/plugins/json_repair/test_json_repair.py                           |      1 |       0 |        1 |
 | tests/unit/mcpgateway/plugins/plugins/output_length_guard/test_output_length_guard.py           |      5 |       0 |        5 |
 | tests/unit/mcpgateway/plugins/plugins/pii_filter/test_pii_filter.py                             |     18 |       0 |       18 |
 | tests/unit/mcpgateway/plugins/plugins/rate_limiter/test_rate_limiter.py                         |      1 |       0 |        1 |
@@ -188,11 +188,11 @@
 | tests/unit/mcpgateway/services/test_gateway_service_health_oauth.py                             |     11 |       0 |       11 |
 | tests/unit/mcpgateway/services/test_gateway_service_helpers.py                                  |      8 |       0 |        8 |
 | tests/unit/mcpgateway/services/test_gateway_service_oauth_comprehensive.py                      |     30 |       0 |       30 |
-| tests/unit/mcpgateway/services/test_grpc_service.py                                             |     17 |       0 |       17 |
 | tests/unit/mcpgateway/services/test_gateway_validation_redirects.py                             |      2 |       0 |        2 |
+| tests/unit/mcpgateway/services/test_grpc_service.py                                             |     17 |       0 |       17 |
 | tests/unit/mcpgateway/services/test_grpc_service_no_grpc.py                                     |     27 |       0 |       27 |
 | tests/unit/mcpgateway/services/test_http_client_service.py                                      |     20 |       0 |       20 |
-| tests/unit/mcpgateway/services/test_import_service.py                                           |    122 |       0 |      122 |
+| tests/unit/mcpgateway/services/test_import_service.py                                           |    146 |       0 |      146 |
 | tests/unit/mcpgateway/services/test_llm_provider_service.py                                     |     41 |       0 |       41 |
 | tests/unit/mcpgateway/services/test_llm_proxy_service.py                                        |     61 |       0 |       61 |
 | tests/unit/mcpgateway/services/test_log_aggregator.py                                           |     52 |       0 |       52 |
@@ -201,7 +201,7 @@
 | tests/unit/mcpgateway/services/test_logging_service.py                                          |      7 |       0 |        7 |
 | tests/unit/mcpgateway/services/test_logging_service_comprehensive.py                            |     35 |       0 |       35 |
 | tests/unit/mcpgateway/services/test_mcp_chat_history_extra.py                                   |      3 |       0 |        3 |
-| tests/unit/mcpgateway/services/test_mcp_client_chat_service.py                                  |     27 |       0 |       27 |
+| tests/unit/mcpgateway/services/test_mcp_client_chat_service.py                                  |     56 |       0 |       56 |
 | tests/unit/mcpgateway/services/test_mcp_session_pool.py                                         |     69 |       0 |       69 |
 | tests/unit/mcpgateway/services/test_mcp_session_pool_coverage.py                                |     98 |       0 |       98 |
 | tests/unit/mcpgateway/services/test_metrics.py                                                  |     13 |       0 |       13 |
@@ -223,7 +223,7 @@
 | tests/unit/mcpgateway/services/test_prompt_service.py                                           |     97 |       0 |       97 |
 | tests/unit/mcpgateway/services/test_prompt_service_extended.py                                  |     24 |       0 |       24 |
 | tests/unit/mcpgateway/services/test_resource_ownership.py                                       |     16 |       0 |       16 |
-| tests/unit/mcpgateway/services/test_resource_service.py                                         |    128 |       0 |      128 |
+| tests/unit/mcpgateway/services/test_resource_service.py                                         |    140 |       0 |      140 |
 | tests/unit/mcpgateway/services/test_resource_service_plugins.py                                 |     13 |       0 |       13 |
 | tests/unit/mcpgateway/services/test_role_service.py                                             |     66 |       0 |       66 |
 | tests/unit/mcpgateway/services/test_root_service.py                                             |     11 |       0 |       11 |
@@ -244,11 +244,11 @@
 | tests/unit/mcpgateway/services/test_token_catalog_service.py                                    |     75 |       0 |       75 |
 | tests/unit/mcpgateway/services/test_token_storage_service.py                                    |     40 |       0 |       40 |
 | tests/unit/mcpgateway/services/test_tool_service.py                                             |    166 |       0 |      166 |
-| tests/unit/mcpgateway/services/test_tool_service_coverage.py                                    |    168 |       0 |      168 |
+| tests/unit/mcpgateway/services/test_tool_service_coverage.py                                    |    235 |       0 |      235 |
 | tests/unit/mcpgateway/services/test_tool_service_helpers.py                                     |      3 |       0 |        3 |
 | tests/unit/mcpgateway/test_admin.py                                                             |    413 |       0 |      413 |
-| tests/unit/mcpgateway/test_admin_catalog_htmx.py                                                |      7 |       0 |        7 |
 | tests/unit/mcpgateway/test_admin_error_handlers.py                                              |      9 |       0 |        9 |
+| tests/unit/mcpgateway/test_admin_catalog_htmx.py                                                |      7 |       0 |        7 |
 | tests/unit/mcpgateway/test_admin_import_export.py                                               |      7 |       0 |        7 |
 | tests/unit/mcpgateway/test_admin_metrics_helpers.py                                             |      7 |       0 |        7 |
 | tests/unit/mcpgateway/test_admin_module.py                                                      |     34 |       0 |       34 |
@@ -273,8 +273,8 @@
 | tests/unit/mcpgateway/test_main_helpers.py                                                      |     12 |       0 |       12 |
 | tests/unit/mcpgateway/test_main_helpers_extra.py                                                |      6 |       0 |        6 |
 | tests/unit/mcpgateway/test_main_pool_init.py                                                    |      5 |       0 |        5 |
-| tests/unit/mcpgateway/test_models.py                                                            |     25 |       0 |       25 |
 | tests/unit/mcpgateway/test_metrics.py                                                           |      4 |       0 |        4 |
+| tests/unit/mcpgateway/test_models.py                                                            |     25 |       0 |       25 |
 | tests/unit/mcpgateway/test_multi_auth_headers.py                                                |     22 |       0 |       22 |
 | tests/unit/mcpgateway/test_oauth_manager.py                                                     |    117 |       0 |      117 |
 | tests/unit/mcpgateway/test_performance_schemas.py                                               |     24 |       0 |       24 |
@@ -283,7 +283,7 @@
 | tests/unit/mcpgateway/test_rpc_tool_invocation.py                                               |     12 |       0 |       12 |
 | tests/unit/mcpgateway/test_schemas.py                                                           |     60 |       0 |       60 |
 | tests/unit/mcpgateway/test_schemas_auth_validation.py                                           |     27 |       0 |       27 |
-| tests/unit/mcpgateway/test_schemas_validators_extra.py                                          |     16 |       0 |       16 |
+| tests/unit/mcpgateway/test_schemas_validators_extra.py                                          |     29 |       0 |       29 |
 | tests/unit/mcpgateway/test_settings_fields.py                                                   |     32 |       0 |       32 |
 | tests/unit/mcpgateway/test_simple_coverage_boost.py                                             |      7 |       0 |        7 |
 | tests/unit/mcpgateway/test_streamable_closedresource_filter.py                                  |      1 |       0 |        1 |
@@ -350,7 +350,7 @@
 | tests/unit/plugins/toon_encoder/test_toon.py                                                    |    102 |       0 |      102 |
 | tests/unit/plugins/toon_encoder/test_toon_encoder.py                                            |     21 |       0 |       21 |
 | tests/unit/test_session_registry_redis_broadcast.py                                             |      1 |       0 |        1 |
-| TOTAL                                                                                           |   9994 |     407 |    10401 |
+| TOTAL                                                                                           |  10141 |     407 |    10548 |
 
 ## Coverage report
 
@@ -393,7 +393,7 @@
 | mcpgateway/middleware/security\_headers.py                                     |       61 |        0 |       40 |        0 |    100% |           |
 | mcpgateway/middleware/token\_scoping.py                                        |      382 |       26 |      192 |       16 |     93% |160, 233->224, 382, 414-415, 427->429, 440->443, 513, 553, 673-674, 712-713, 736-737, 765-766, 778-779, 786-787, 796-799, 866-870, 880, 926->931 |
 | mcpgateway/middleware/validation\_middleware.py                                |      100 |       11 |       52 |        7 |     87% |93-98, 118->123, 120, 130->exit, 196, 211, 213, 229->233, 238-239 |
-| mcpgateway/observability.py                                                    |      238 |       18 |       98 |       15 |     90% |23-28, 68->97, 92-94, 163-164, 170-171, 185->184, 232->231, 245, 269->268, 281-282, 289-290, 297-298, 308->323, 453->455, 455->462, 494->498, 514->516, 519->522 |
+| mcpgateway/observability.py                                                    |      238 |       18 |       98 |       16 |     90% |23-28, 68->97, 92-94, 163-164, 170-171, 185->184, 232->231, 245, 269->268, 281-282, 289-290, 297-298, 308->323, 450->453, 453->455, 455->462, 494->498, 514->516, 519->522 |
 | mcpgateway/plugins/framework/base.py                                           |      153 |        0 |       42 |        2 |     99% |532->541, 555->exit |
 | mcpgateway/plugins/framework/constants.py                                      |       26 |        0 |        0 |        0 |    100% |           |
 | mcpgateway/plugins/framework/decorator.py                                      |       21 |        0 |        0 |        0 |    100% |           |
@@ -448,7 +448,7 @@
 | mcpgateway/routers/tokens.py                                                   |      180 |        5 |       44 |        5 |     96% |74, 98, 351, 633, 638 |
 | mcpgateway/routers/toolops\_router.py                                          |       50 |        2 |        0 |        0 |     96% |   138-139 |
 | mcpgateway/routers/well\_known.py                                              |      108 |        1 |       50 |        2 |     98% |184->187, 188 |
-| mcpgateway/schemas.py                                                          |     2731 |      187 |      612 |      117 |     90% |400, 576->580, 754, 814, 841->845, 945, 978-980, 1018, 1022, 1062-1063, 1064->1073, 1068-1069, 1150, 1153->1155, 1155->1157, 1175, 1178, 1217, 1242->1239, 1244, 1264->1263, 1266, 1648, 2035, 2338-2340, 2620-2622, 2729, 2773, 2780, 2801, 2803, 2940-2942, 2993, 3023, 3030, 3034, 3038, 3045, 3049, 3053, 3062, 3067, 3074, 3094, 3215->3234, 3219->3234, 3227->3226, 3230->3233, 3313, 3318, 3328, 3332, 3339, 3343->3353, 3346, 3517, 3574, 3608, 3778-3780, 3829, 3843-3845, 3957-3959, 4066-4069, 4078, 4302-4304, 4336, 4402, 4432, 4443, 4450, 4457-4473, 4477, 4484, 4505, 4507, 4510->4520, 4580, 4639-4641, 4656, 4675, 4738-4744, 4751, 4763-4812, 4816, 4823, 4843, 4956->4975, 4960-4974, 5043, 5049, 5052, 5067, 5071, 5077, 5080->5086, 5083, 5114, 5147, 5163-5164, 5304, 5648, 5667->5671, 5692, 5694, 5737, 5744, 5746, 5762->5768, 5764->5768, 5767, 6097, 6103, 6139, 6148, 6771, 6786, 6788-6790, 6820, 6837-6841, 6855, 6857-6859 |
+| mcpgateway/schemas.py                                                          |     2731 |        2 |      612 |       23 |     99% |576->580, 841->845, 1064->1073, 1153->1155, 1155->1157, 1262->1266, 3215->3234, 3219->3234, 3227->3226, 3230->3233, 3343->3353, 3845, 4510->4520, 4956->4975, 4960->4975, 4962->4975, 4968->4967, 4971->4974, 5080->5086, 5667->5671, 5762->5768, 5764->5768, 6841 |
 | mcpgateway/scripts/validate\_env.py                                            |       68 |        6 |       36 |        2 |     88% |144, 243-249 |
 | mcpgateway/services/a2a\_service.py                                            |      618 |       21 |      242 |       29 |     93% |287->289, 355->361, 358->361, 409->422, 414, 648, 786, 994->997, 1013, 1070->1074, 1074->1083, 1091, 1093->1125, 1102-1105, 1111-1122, 1125->1130, 1218->1221, 1279->1282, 1399->1398, 1403-1404, 1405->1409, 1415-1416, 1417->1424, 1560->1566, 1585->1591, 1618->1621, 1658->1660, 1705->1713, 1707->1711 |
 | mcpgateway/services/argon2\_service.py                                         |       91 |        0 |       20 |        2 |     98% |253->247, 257->260 |
@@ -465,16 +465,16 @@
 | mcpgateway/services/gateway\_service.py                                        |     2210 |      184 |      910 |      119 |     89% |77-79, 514->exit, 565->570, 629->620, 647->620, 654->620, 739->750, 746->750, 760->764, 793->823, 911->908, 916-919, 998->995, 1003-1005, 1581-1585, 1597, 1650, 1715, 1798->1801, 1834-1840, 1859-1862, 1870->1892, 1883, 1953-1954, 1958, 1964, 2020->2038, 2026->2034, 2029->2034, 2034->2038, 2044-2050, 2076-2078, 2092->2094, 2095, 2097, 2117-2122, 2128-2132, 2156, 2158, 2171-2174, 2176-2179, 2479->2483, 2504->2503, 2528->2530, 2531, 2533, 2553-2558, 2564-2568, 2592, 2594, 2607-2610, 2612-2615, 2883, 3053, 3066->3108, 3117->3124, 3125-3127, 3131, 3136-3137, 3189->3191, 3223-3225, 3252->3279, 3262-3267, 3276, 3281, 3299->3306, 3302-3303, 3364-3367, 3516->3515, 3520-3521, 3522->3526, 3543-3547, 3549, 3568, 3605->3608, 3616->3619, 3623->3626, 3634->3637, 3655->3698, 3659-3695, 3707->3714, 3710-3711, 3718->3736, 3723, 3727->3730, 3751-3752, 3842->3839, 3978->3988, 4065->4067, 4068, 4103, 4138-4147, 4153->4158, 4155-4156, 4168-4170, 4180->4133, 4184-4185, 4188-4189, 4450, 4484->4486, 4486->4456, 4537, 4556->4565, 4565->4543, 4613, 4632->4639, 4639->4619, 4814->4813, 4818-4819, 4820->4824, 4866-4868, 4905->4917, 4908-4914, 4918->4929, 4921-4926, 4982->4984, 5230->5282, 5240->5242, 5268->5272, 5272->5275, 5278-5279, 5284->5308, 5291->5293, 5392->5446, 5404->5406, 5432->5436, 5436->5439, 5442-5443, 5447->5473, 5521, 5549->5553, 5554->5608, 5563->5566, 5566->5568, 5583-5584, 5594->5598, 5598->5601, 5604-5605, 5609->5625, 5619, 5622-5623 |
 | mcpgateway/services/grpc\_service.py                                           |      229 |        8 |       80 |        8 |     95% |26-31, 73->75, 214->217, 257->261, 305, 438-439, 465->464, 486->485, 494->493, 600->604 |
 | mcpgateway/services/http\_client\_service.py                                   |       79 |        1 |       18 |        3 |     96% |55, 93->95, 95->97 |
-| mcpgateway/services/import\_service.py                                         |      800 |       95 |      336 |       51 |     86% |296->exit, 625, 631, 633, 634->exit, 667-668, 701->exit, 763->exit, 825->exit, 856-857, 874->exit, 905-906, 923->exit, 952-955, 958, 1011-1014, 1017, 1070-1073, 1076, 1214-1228, 1230->1257, 1236->1257, 1243->1257, 1245->1257, 1283-1297, 1298->1321, 1303->1321, 1309->1321, 1311->1321, 1357->1360, 1360->1363, 1364-1365, 1391->1393, 1393->1396, 1397, 1415->1422, 1444->1451, 1526->1525, 1569->1573, 1573->1577, 1623-1624, 1644, 1652->1651, 1655->1653, 1659->1646, 1680, 1686->1682, 1709->1723, 1716->1714, 1719->1723, 1723->1741, 1730->1728, 1733->1741, 1753-1767, 1780-1799, 1812-1813, 1817-1818, 1832->1827, 1836-1841, 1845-1847, 1850-1851, 1855-1856 |
+| mcpgateway/services/import\_service.py                                         |      800 |        0 |      336 |       38 |     97% |296->exit, 634->exit, 701->exit, 763->exit, 825->exit, 874->exit, 923->exit, 1216->1257, 1230->1257, 1236->1257, 1243->1257, 1245->1257, 1285->1321, 1298->1321, 1303->1321, 1309->1321, 1311->1321, 1391->1393, 1415->1422, 1444->1451, 1526->1525, 1569->1573, 1573->1577, 1652->1651, 1655->1653, 1659->1646, 1686->1682, 1709->1723, 1716->1714, 1719->1723, 1723->1741, 1730->1728, 1733->1741, 1783->1786, 1786->1791, 1791->1795, 1795->1798, 1840->1835 |
 | mcpgateway/services/llm\_provider\_service.py                                  |      276 |        0 |      100 |       15 |     96% |92->exit, 98->exit, 284->286, 507->509, 509->511, 511->513, 513->515, 515->517, 517->519, 519->521, 521->523, 523->525, 525->527, 527->529, 529->532 |
 | mcpgateway/services/llm\_proxy\_service.py                                     |      280 |        0 |      140 |        0 |    100% |           |
 | mcpgateway/services/log\_aggregator.py                                         |      355 |       13 |      136 |       22 |     92% |64, 66, 71->75, 78, 83, 118->120, 124->126, 256->223, 374->335, 383->385, 405, 408->412, 434->431, 437->439, 442->444, 466->470, 483->485, 488->490, 549->525, 566-569, 596->600, 612->614, 616->618, 620-623 |
 | mcpgateway/services/log\_storage\_service.py                                   |      154 |        1 |       44 |        5 |     97% |216->218, 245->254, 248->254, 257->exit, 346 |
 | mcpgateway/services/logging\_service.py                                        |      238 |        8 |       56 |        3 |     96% |124->exit, 131-133, 158->178, 261-263, 463-465, 472-473, 677->682 |
-| mcpgateway/services/mcp\_client\_chat\_service.py                              |      848 |       82 |      300 |       47 |     88% |64, 74, 84, 210, 240, 665->668, 806->818, 905->921, 914->916, 997->1025, 1017->1020, 1116->1141, 1127->1136, 1233->1269, 1254->1264, 1365->1401, 1375->1377, 1377->1379, 1388->1397, 1559, 1564, 1660->1663, 1941-1942, 2094->2088, 2192->2197, 2194->2197, 2198, 2239->2243, 2247-2249, 2283, 2295-2297, 2431-2432, 2439-2448, 2560->2554, 2602, 2626->2622, 2628->2622, 2630->2622, 2635->2639, 2641-2643, 2687, 2691, 2724, 2726, 2742-2743, 2762->2765, 2779, 2782->2788, 2785-2786, 2802-2803, 2818-2819, 2839-2840, 2857->2747, 2860-2861, 2863->2747, 2865->2747, 2867->2747, 2871-2873, 2887->2889, 2899->2907, 2931-2933, 2954-2957, 2976-2980, 3013-3029, 3083-3100 |
+| mcpgateway/services/mcp\_client\_chat\_service.py                              |      848 |        1 |      300 |       33 |     97% |665->668, 806->818, 905->921, 914->916, 997->1025, 1017->1020, 1116->1141, 1127->1136, 1233->1269, 1254->1264, 1365->1401, 1375->1377, 1377->1379, 1388->1397, 1559, 1660->1663, 2094->2088, 2192->2197, 2194->2197, 2239->2243, 2560->2554, 2626->2622, 2628->2622, 2630->2622, 2635->2639, 2762->2765, 2857->2747, 2863->2747, 2865->2747, 2867->2747, 2887->2889, 2899->2907, 3017->3021 |
 | mcpgateway/services/mcp\_session\_pool.py                                      |      843 |      121 |      236 |       15 |     85% |88, 418->423, 704->744, 725->744, 806->815, 873->875, 890->exit, 937->925, 946->939, 952-953, 1167->1173, 1226->exit, 1271-1272, 1320->exit, 1402, 1455, 1463-1466, 1488-1522, 1567-1574, 1577-1578, 1603-1664, 1710-1782 |
 | mcpgateway/services/metrics.py                                                 |       50 |        0 |       14 |        1 |     98% |  121->130 |
-| mcpgateway/services/metrics\_buffer\_service.py                                |      256 |       19 |       48 |        9 |     91% |147->exit, 160->168, 293-303, 364-375, 385->exit, 394, 397-399, 404-407, 489->505, 506, 522, 538, 737-738 |
+| mcpgateway/services/metrics\_buffer\_service.py                                |      256 |       20 |       48 |       11 |     90% |147->exit, 160->168, 293-303, 364-375, 385->exit, 394, 397-399, 404-407, 426, 473->489, 489->505, 506, 522, 538, 737-738 |
 | mcpgateway/services/metrics\_cleanup\_service.py                               |      185 |       31 |       40 |        9 |     80% |198->exit, 211->218, 231->exit, 240, 243-251, 256-259, 285, 302->321, 308, 368-379, 384-387, 392, 431-441 |
 | mcpgateway/services/metrics\_query\_service.py                                 |      172 |       18 |       42 |       10 |     86% |195->202, 236, 308, 339, 365, 457, 563-580, 586, 589, 597-615 |
 | mcpgateway/services/metrics\_rollup\_service.py                                |      345 |       22 |       86 |       15 |     90% |188->190, 217->exit, 230->237, 269, 275-276, 284, 290, 307-310, 479->518, 512->518, 514->518, 596->601, 640, 683, 688->694, 706-714, 730-732, 928 |
@@ -487,7 +487,7 @@
 | mcpgateway/services/personal\_team\_service.py                                 |       71 |        0 |        8 |        0 |    100% |           |
 | mcpgateway/services/plugin\_service.py                                         |      107 |        3 |       54 |       10 |     92% |34->39, 105->109, 113, 119->144, 121->120, 138->142, 182->185, 189->208, 192, 231 |
 | mcpgateway/services/prompt\_service.py                                         |      860 |       71 |      316 |       42 |     89% |208-209, 479->481, 530, 534-535, 780->782, 811->813, 813->815, 852->855, 857->764, 886-887, 1057, 1067-1073, 1087, 1209, 1295->1300, 1304-1309, 1421->1434, 1426-1428, 1500-1517, 1540-1554, 1557-1568, 1592, 1599-1606, 1626-1627, 1631-1639, 1680-1683, 1707-1708, 1712-1722, 1803->1813, 1805->1813, 1809->1813, 1825-1827, 1848->1850, 1873, 2059->2103, 2066->2070, 2172, 2356->exit, 2464->2471, 2475, 2485->2492, 2623->2630, 2626, 2636->2639 |
-| mcpgateway/services/resource\_service.py                                       |     1154 |      195 |      440 |       63 |     81% |81-82, 174->194, 237->245, 240, 258->261, 338-339, 342->344, 345-347, 449, 747->689, 823-828, 904->920, 910-914, 1000-1001, 1024, 1032-1041, 1051, 1057, 1119-1120, 1190->1193, 1212, 1305-1329, 1337->1341, 1348-1349, 1531->1534, 1585-1601, 1616-1617, 1674-1684, 1698-1731, 1736, 1782, 1788-1793, 1796-1806, 1814-1818, 1864, 1870-1875, 1878-1888, 1899-1900, 1920-1923, 1926-1955, 2061-2078, 2120, 2125, 2129-2134, 2161-2162, 2174, 2198->2206, 2200->2202, 2208, 2215, 2218-2219, 2223, 2232, 2239-2246, 2250-2253, 2296-2308, 2311, 2316, 2346-2347, 2352-2363, 2430->2435, 2659->2670, 2663-2667, 2720, 2810-2826, 3075->3082, 3180->exit, 3227, 3236, 3245-3246, 3251, 3465, 3468, 3509->3516, 3512, 3532->3535 |
+| mcpgateway/services/resource\_service.py                                       |     1154 |      142 |      440 |       55 |     85% |81-82, 342->344, 449, 747->689, 823-828, 904->920, 910-914, 1000-1001, 1024, 1032-1041, 1057, 1119-1120, 1190->1193, 1212, 1305-1329, 1337->1341, 1348-1349, 1531->1534, 1616-1617, 1674-1684, 1698-1731, 1736, 1782, 1788-1793, 1796-1806, 1864, 1870-1875, 1878-1888, 1899-1900, 1920-1923, 1937-1938, 2120, 2125, 2129-2134, 2161-2162, 2174, 2198->2206, 2200->2202, 2208, 2215, 2218-2219, 2223, 2232, 2239-2246, 2250-2253, 2296->2321, 2307->2321, 2311, 2316, 2346-2347, 2430->2435, 2659->2670, 2666->2670, 2720, 3075->3082, 3180->exit, 3227, 3236, 3245-3246, 3251, 3465, 3468, 3509->3516, 3512, 3532->3535 |
 | mcpgateway/services/role\_service.py                                           |      174 |        1 |       78 |        2 |     99% |428, 447->460 |
 | mcpgateway/services/root\_service.py                                           |       96 |        2 |       20 |        1 |     97% |81-82, 275->279 |
 | mcpgateway/services/security\_logger.py                                        |      144 |        0 |       40 |        1 |     99% |  596->598 |
@@ -501,7 +501,7 @@
 | mcpgateway/services/team\_management\_service.py                               |      679 |        0 |      182 |        0 |    100% |           |
 | mcpgateway/services/token\_catalog\_service.py                                 |      253 |       28 |       86 |       10 |     87% |334, 338, 342, 346, 354-359, 561, 566->569, 709-710, 735-756, 850->854, 874, 965->964 |
 | mcpgateway/services/token\_storage\_service.py                                 |      183 |        2 |       56 |        2 |     98% |  232, 261 |
-| mcpgateway/services/tool\_service.py                                           |     1602 |      318 |      618 |       69 |     78% |286-289, 494, 928-932, 941->947, 943-944, 962-963, 979-980, 1341, 1432->1408, 1578->1582, 1775, 1789->1791, 1805, 1812, 1868-1869, 1920, 1947-1952, 1962->1964, 1964->1966, 2027-2030, 2037-2038, 2051->2054, 2058-2062, 2068->2071, 2075, 2078-2081, 2084, 2088, 2094, 2101, 2115-2116, 2547, 2549, 2551, 2565-2566, 2575, 2577, 2605->2609, 2661-2672, 2681->2688, 2684-2686, 2703-2724, 2742-2748, 2768-2793, 2841-2845, 2849->2851, 2862->2866, 2900-2939, 2949-2950, 2959-2960, 2967-2968, 2980-3000, 3006-3008, 3024-3028, 3041, 3062-3081, 3136-3141, 3145-3153, 3157, 3176-3238, 3281-3286, 3291-3300, 3304, 3323-3385, 3392->3394, 3394->3396, 3403->3410, 3407->3410, 3424, 3430-3547, 3576, 3581-3585, 3596-3597, 3622-3638, 3642-3643, 3659-3660, 3777-3788, 3790, 3844, 3857->3859, 4297, 4389, 4391, 4552-4554, 4581->4580, 4585-4586, 4587->4593 |
+| mcpgateway/services/tool\_service.py                                           |     1602 |      155 |      618 |       45 |     89% |943-944, 1432->1408, 1578->1582, 1775, 1789->1791, 1812, 1868-1869, 1952, 1962->1964, 1964->1966, 2051->2054, 2081, 2605->2609, 2663->2662, 2681->2688, 2684-2686, 2705, 2744->2747, 2747->2756, 2849->2851, 2862->2866, 2916-2917, 2925-2931, 2980-3000, 3006-3008, 3024-3028, 3041, 3062-3081, 3136-3141, 3145-3153, 3176-3238, 3281-3286, 3291-3300, 3304, 3323-3385, 3392->3394, 3394->3396, 3403->3410, 3407->3410, 3424, 3434-3448, 3473-3474, 3480, 3484->3483, 3488-3489, 3490->3494, 3515-3516, 3520-3526, 3576, 3582->3585, 3596-3597, 3637-3638, 4297, 4389, 4391, 4552-4554, 4581->4580, 4585-4586, 4587->4593 |
 | mcpgateway/toolops/toolops\_altk\_service.py                                   |      135 |       18 |       32 |       11 |     83% |32-37, 66, 117, 120, 123, 126, 157->188, 169->188, 170->188, 173->188, 177-179, 249-250, 255->268, 265-266 |
 | mcpgateway/toolops/utils/db\_util.py                                           |       34 |        0 |        4 |        1 |     97% |  78->exit |
 | mcpgateway/toolops/utils/format\_conversion.py                                 |       23 |        0 |        6 |        0 |    100% |           |
@@ -554,4 +554,4 @@
 | mcpgateway/validation/tags.py                                                  |       72 |        3 |       38 |        3 |     95% |167, 257, 265 |
 | mcpgateway/version.py                                                          |      137 |       16 |       24 |        3 |     87% |84-85, 89-96, 835-840, 845-853 |
 | mcpgateway/wrapper.py                                                          |      307 |        0 |      134 |        0 |    100% |           |
-| **TOTAL**                                                                      | **51391** | **4485** | **15604** | **1911** | **89%** |           |
+| **TOTAL**                                                                      | **51391** | **3909** | **15604** | **1761** | **91%** |           |

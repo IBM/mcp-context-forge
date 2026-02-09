@@ -2521,3 +2521,310 @@ async def test_gateway_create_auth_decode_failure(import_service):
 
     # Should be a pydantic ValidationError for missing auth_token
     assert "auth_token" in str(exc_info.value) or "bearer" in str(exc_info.value).lower()
+
+
+# ============================================================================
+# Coverage Gap Tests (mcpgateway/services/import_service.py)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_process_single_entity_dispatches_to_specific_handlers(import_service, mock_db):
+    """Ensure _process_single_entity can dispatch to non-bulk handlers (tools/prompts/resources)."""
+    status = ImportStatus("dispatch-1")
+    import_service._process_tool = AsyncMock()
+    import_service._process_prompt = AsyncMock()
+    import_service._process_resource = AsyncMock()
+
+    await import_service._process_single_entity(mock_db, "tools", {"name": "t"}, ConflictStrategy.UPDATE, False, status, imported_by="test_user")
+    await import_service._process_single_entity(mock_db, "prompts", {"name": "p"}, ConflictStrategy.UPDATE, False, status, imported_by="test_user")
+    await import_service._process_single_entity(mock_db, "resources", {"uri": "file:///r"}, ConflictStrategy.UPDATE, False, status, imported_by="test_user")
+
+    import_service._process_tool.assert_awaited_once()
+    import_service._process_prompt.assert_awaited_once()
+    import_service._process_resource.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_tool_success_increments_created(import_service, mock_db):
+    status = ImportStatus("tool-ok-1")
+    tool_data = {"name": "tool_ok", "url": "http://example.com", "integration_type": "REST", "request_type": "GET"}
+
+    await import_service._process_tool(mock_db, tool_data, ConflictStrategy.UPDATE, False, status)
+
+    assert status.created_entities == 1
+    import_service.tool_service.register_tool.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_prompt_success_increments_created(import_service, mock_db):
+    status = ImportStatus("prompt-ok-1")
+    prompt_data = {"name": "prompt_ok", "template": "Hello {{name}}"}
+
+    await import_service._process_prompt(mock_db, prompt_data, ConflictStrategy.UPDATE, False, status)
+
+    assert status.created_entities == 1
+    import_service.prompt_service.register_prompt.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_resource_success_increments_created(import_service, mock_db):
+    status = ImportStatus("resource-ok-1")
+    resource_data = {"name": "res_ok", "uri": "file:///res_ok"}
+
+    await import_service._process_resource(mock_db, resource_data, ConflictStrategy.UPDATE, False, status)
+
+    assert status.created_entities == 1
+    import_service.resource_service.register_resource.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gateway_auth_conversion_query_param_success(import_service):
+    """Cover query_param auth conversion path in _convert_to_gateway_create."""
+    # First-Party
+    from mcpgateway.config import settings
+
+    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}
+
+    original_allow = settings.insecure_allow_queryparam_auth
+    original_hosts = settings.insecure_queryparam_auth_allowed_hosts
+    settings.insecure_allow_queryparam_auth = True
+    settings.insecure_queryparam_auth_allowed_hosts = []
+    try:
+        with patch("mcpgateway.services.import_service.decode_auth", return_value={"api_key": "secret"}):
+            gw = import_service._convert_to_gateway_create(gateway_data)
+    finally:
+        settings.insecure_allow_queryparam_auth = original_allow
+        settings.insecure_queryparam_auth_allowed_hosts = original_hosts
+
+    assert gw.auth_type == "query_param"
+    assert gw.auth_query_param_key == "api_key"
+    assert gw.auth_query_param_value is not None
+    assert gw.auth_query_param_value.get_secret_value() == "secret"
+
+
+@pytest.mark.asyncio
+async def test_gateway_auth_conversion_query_param_decode_error(import_service):
+    """Cover query_param auth conversion exception logging path in _convert_to_gateway_create."""
+    # First-Party
+    from mcpgateway.config import settings
+
+    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}
+
+    original_allow = settings.insecure_allow_queryparam_auth
+    original_hosts = settings.insecure_queryparam_auth_allowed_hosts
+    settings.insecure_allow_queryparam_auth = True
+    settings.insecure_queryparam_auth_allowed_hosts = []
+    try:
+        with patch("mcpgateway.services.import_service.decode_auth", side_effect=Exception("boom")):
+            with pytest.raises(Exception):
+                import_service._convert_to_gateway_create(gateway_data)
+    finally:
+        settings.insecure_allow_queryparam_auth = original_allow
+        settings.insecure_queryparam_auth_allowed_hosts = original_hosts
+
+
+@pytest.mark.asyncio
+async def test_gateway_update_auth_conversion_query_param_success(import_service):
+    """Cover query_param auth conversion path in _convert_to_gateway_update."""
+    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}
+
+    with patch("mcpgateway.services.import_service.decode_auth", return_value={"api_key": "secret"}):
+        gw = import_service._convert_to_gateway_update(gateway_data)
+
+    assert gw.auth_type == "query_param"
+    assert gw.auth_query_param_key == "api_key"
+    assert gw.auth_query_param_value is not None
+    assert gw.auth_query_param_value.get_secret_value() == "secret"
+
+
+@pytest.mark.asyncio
+async def test_gateway_update_auth_conversion_query_param_decode_error(import_service):
+    """Cover query_param auth conversion exception logging path in _convert_to_gateway_update."""
+    gateway_data = {"name": "qp_gateway", "url": "https://example.com", "auth_type": "query_param", "auth_query_params": {"api_key": "enc"}}
+
+    with patch("mcpgateway.services.import_service.decode_auth", side_effect=Exception("boom")):
+        with pytest.raises(Exception):
+            import_service._convert_to_gateway_update(gateway_data)
+
+
+@pytest.mark.asyncio
+async def test_convert_to_server_create_resolves_tool_references(import_service, mock_db):
+    tools = [SimpleNamespace(id="t1", original_name="orig1", name="name1"), SimpleNamespace(id="t2", original_name="orig2", name="name2")]
+    import_service.tool_service.list_tools.return_value = (tools, None)
+
+    server_data = {"name": "srv", "tool_ids": ["t1", "orig2", "name1"]}
+    create = await import_service._convert_to_server_create(mock_db, server_data)
+
+    assert create.associated_tools == ["t1", "t2", "t1"]
+
+
+@pytest.mark.asyncio
+async def test_convert_to_server_update_resolves_tool_references(import_service, mock_db):
+    tools = [SimpleNamespace(id="t1", original_name="orig1", name="name1")]
+    import_service.tool_service.list_tools.return_value = (tools, None)
+
+    server_data = {"name": "srv", "tool_ids": ["orig1"]}
+    update = await import_service._convert_to_server_update(mock_db, server_data)
+
+    assert update.associated_tools == ["t1"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_import_item_handles_service_exception(import_service, mock_db):
+    import_service.tool_service.list_tools.side_effect = Exception("boom")
+    result = await import_service._analyze_import_item(mock_db, "tools", {"name": "tool1"})
+    assert result["conflicts_with"] is False
+
+
+@pytest.mark.asyncio
+async def test_find_gateway_bundles_returns_empty_when_no_gateways(import_service):
+    assert import_service._find_gateway_bundles({"tools": []}) == {}
+
+
+@pytest.mark.asyncio
+async def test_find_server_dependencies_returns_empty_when_no_servers(import_service):
+    assert import_service._find_server_dependencies({"tools": []}) == {}
+
+
+@pytest.mark.asyncio
+async def test_get_user_context_user_not_found(import_service):
+    # First-Party
+    from mcpgateway.db import EmailUser
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+
+    context = await import_service._get_user_context(db, imported_by="user@example.com")
+    assert context is None
+    db.query.assert_called_with(EmailUser)
+
+
+@pytest.mark.asyncio
+async def test_get_user_context_personal_team_missing(import_service):
+    user = MagicMock()
+    user.email = "user@example.com"
+    user.get_personal_team.return_value = None
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = user
+
+    context = await import_service._get_user_context(db, imported_by="user@example.com")
+    assert context is None
+
+
+@pytest.mark.asyncio
+async def test_get_user_context_success(import_service):
+    team = SimpleNamespace(id="team-1", name="Personal Team")
+    user = MagicMock()
+    user.email = "user@example.com"
+    user.get_personal_team.return_value = team
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = user
+
+    context = await import_service._get_user_context(db, imported_by="user@example.com")
+    assert context == {"user_email": "user@example.com", "team_id": "team-1", "team_name": "Personal Team"}
+
+
+@pytest.mark.asyncio
+async def test_get_user_context_handles_exception(import_service):
+    db = MagicMock()
+    db.query.side_effect = Exception("boom")
+
+    context = await import_service._get_user_context(db, imported_by="user@example.com")
+    assert context is None
+
+
+@pytest.mark.asyncio
+async def test_add_multitenancy_context_defaults_and_tracking(import_service):
+    entity_data = {"name": "x"}
+    user_context = {"team_id": "team-1", "user_email": "user@example.com"}
+
+    result = import_service._add_multitenancy_context(entity_data, user_context)
+
+    assert result["team_id"] == "team-1"
+    assert result["owner_email"] == "user@example.com"
+    assert result["visibility"] == "public"
+    assert result["federation_source"] == "imported-by-user@example.com"
+    # Should not mutate original input
+    assert "team_id" not in entity_data
+
+
+@pytest.mark.asyncio
+async def test_assign_imported_items_to_team_user_not_found_returns(import_service):
+    # First-Party
+    from mcpgateway.db import EmailUser
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+
+    await import_service._assign_imported_items_to_team(db, imported_by="user@example.com")
+    db.query.assert_called_with(EmailUser)
+    db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_assign_imported_items_to_team_personal_team_missing_returns(import_service):
+    user = MagicMock()
+    user.email = "user@example.com"
+    user.get_personal_team.return_value = None
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = user
+
+    await import_service._assign_imported_items_to_team(db, imported_by="user@example.com")
+    db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_assign_imported_items_to_team_assigns_and_commits(import_service):
+    # First-Party
+    from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
+
+    team = SimpleNamespace(id="team-1", name="Personal Team")
+    user = MagicMock()
+    user.email = "user@example.com"
+    user.get_personal_team.return_value = team
+
+    # One orphaned item for "servers"
+    orphan = SimpleNamespace(team_id=None, owner_email=None, visibility=None, federation_source="")
+    server_query = MagicMock()
+    server_query.filter.return_value.all.return_value = [orphan]
+
+    empty_query = MagicMock()
+    empty_query.filter.return_value.all.return_value = []
+
+    user_query = MagicMock()
+    user_query.filter.return_value.first.return_value = user
+
+    def query_side_effect(model):
+        if model is EmailUser:
+            return user_query
+        if model is Server:
+            return server_query
+        if model is Tool:
+            raise Exception("boom")  # cover per-model exception handling path
+        if model in {Resource, Prompt, Gateway, A2AAgent}:
+            return empty_query
+        raise AssertionError(f"Unexpected model: {model}")
+
+    db = MagicMock()
+    db.query.side_effect = query_side_effect
+
+    await import_service._assign_imported_items_to_team(db, imported_by="user@example.com")
+
+    assert orphan.team_id == "team-1"
+    assert orphan.owner_email == "user@example.com"
+    assert orphan.visibility == "public"
+    assert orphan.federation_source == "imported-by-user@example.com"
+    db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_assign_imported_items_to_team_handles_outer_exception(import_service):
+    db = MagicMock()
+    db.query.side_effect = Exception("boom")
+
+    # Should not raise
+    await import_service._assign_imported_items_to_team(db, imported_by="user@example.com")

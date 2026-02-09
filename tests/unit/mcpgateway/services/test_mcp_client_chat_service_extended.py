@@ -353,6 +353,27 @@ def test_gateway_provider_openai(monkeypatch):
     assert llm is not None
 
 
+def test_gateway_provider_openai_completion_branch(monkeypatch):
+    class DummyChat:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class DummyCompletion:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    _patch_gateway_llms(monkeypatch)
+    monkeypatch.setattr(svc, "ChatOpenAI", DummyChat)
+    monkeypatch.setattr(svc, "OpenAI", DummyCompletion)
+    model, provider = _make_model_and_provider("openai", config={}, api_base="https://api")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert isinstance(llm, DummyCompletion)
+
+
 def test_gateway_provider_openai_compatible(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai_compatible", api_base="https://compat")
@@ -986,6 +1007,49 @@ def test_optional_langchain_import_block_executes():
         spec.loader.exec_module(module)
     finally:
         sys.modules.pop("mcp_client_chat_service_alt", None)
+        for name, original in original_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+
+def test_optional_provider_import_blocks_execute():
+    module_names = ["langchain_anthropic", "langchain_aws", "langchain_ibm"]
+    original_modules = {name: sys.modules.get(name) for name in module_names}
+
+    try:
+        langchain_anthropic = types.ModuleType("langchain_anthropic")
+        langchain_anthropic.ChatAnthropic = object
+        langchain_anthropic.AnthropicLLM = object
+
+        langchain_aws = types.ModuleType("langchain_aws")
+        langchain_aws.ChatBedrock = object
+        langchain_aws.BedrockLLM = object
+
+        langchain_ibm = types.ModuleType("langchain_ibm")
+        langchain_ibm.ChatWatsonx = object
+        langchain_ibm.WatsonxLLM = object
+
+        sys.modules.update(
+            {
+                "langchain_anthropic": langchain_anthropic,
+                "langchain_aws": langchain_aws,
+                "langchain_ibm": langchain_ibm,
+            }
+        )
+
+        spec = importlib.util.spec_from_file_location("mcp_client_chat_service_optdeps", svc.__file__)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["mcp_client_chat_service_optdeps"] = module
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        assert module._ANTHROPIC_AVAILABLE is True
+        assert module._BEDROCK_AVAILABLE is True
+        assert module._WATSONX_AVAILABLE is True
+    finally:
+        sys.modules.pop("mcp_client_chat_service_optdeps", None)
         for name, original in original_modules.items():
             if original is None:
                 sys.modules.pop(name, None)

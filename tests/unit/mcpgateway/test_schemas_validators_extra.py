@@ -604,6 +604,35 @@ def test_a2a_agent_create_and_update_more_branches(monkeypatch, caplog):
         A2AAgentUpdate(auth_type="query_param", auth_query_param_value=SecretStr("secret"))
 
 
+def test_a2a_agent_create_legacy_authheaders_return():
+    encoded = A2AAgentCreate._process_auth_fields(SimpleNamespace(data={"auth_type": "authheaders", "auth_header_key": "X-Key", "auth_header_value": "v"}))
+    assert decode_auth(encoded)["X-Key"] == "v"
+
+
+def test_a2a_agent_update_basic_and_authheaders_edge_cases():
+    with pytest.raises((ValidationError, ValueError)):
+        A2AAgentUpdate(auth_type="basic", auth_username="u")
+
+    updated = A2AAgentUpdate(auth_type="basic", auth_username="u", auth_password="p")
+    assert decode_auth(updated.auth_value)["Authorization"].startswith("Basic ")
+
+    with pytest.raises(ValueError):
+        A2AAgentUpdate._process_auth_fields(SimpleNamespace(data={"auth_type": "authheaders", "auth_headers": [{"key": "Bad:Key", "value": "v"}]}))
+
+    with pytest.raises(ValueError):
+        A2AAgentUpdate._process_auth_fields(SimpleNamespace(data={"auth_type": "authheaders", "auth_headers": [{"key": "", "value": "v"}]}))
+
+    too_many = [{"key": f"X-{i}", "value": "v"} for i in range(101)]
+    with pytest.raises(ValueError):
+        A2AAgentUpdate._process_auth_fields(SimpleNamespace(data={"auth_type": "authheaders", "auth_headers": too_many}))
+
+    encoded = A2AAgentUpdate._process_auth_fields(SimpleNamespace(data={"auth_type": "authheaders", "auth_header_key": "X-Key", "auth_header_value": "v"}))
+    assert decode_auth(encoded)["X-Key"] == "v"
+
+    with pytest.raises(ValueError):
+        A2AAgentUpdate._process_auth_fields(SimpleNamespace(data={"auth_type": "authheaders"}))
+
+
 def test_a2a_agent_read_masking_and_populate_auth_error_paths():
     class DummyAgent:
         __table__ = SimpleNamespace(columns=[SimpleNamespace(name="id"), SimpleNamespace(name="auth_query_params")])
