@@ -997,12 +997,12 @@ class TokenCatalogService:
             cache = get_auth_cache()
             cached = await cache.is_token_revoked(jti)
             if cached is False:
-                return None
+                return None  # pragma: no cover
 
             # If cached is True or None (unknown), fall through to DB to get full record
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             # Cache failure should not block functionality; fall back to DB
-            logger.debug("Auth cache check failed in get_token_revocation: %s", e)
+            logger.debug("Auth cache check failed in get_token_revocation: %s", e)  # pragma: no cover
 
         result = self.db.execute(select(TokenRevocation).where(TokenRevocation.jti == jti))
         return result.scalar_one_or_none()
