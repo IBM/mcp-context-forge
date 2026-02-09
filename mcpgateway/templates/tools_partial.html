@@ -20,6 +20,7 @@
     class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700"
   >
     {% for tool in data %}
+      {% set can_modify = is_admin or tool.ownerEmail == current_user_email or (tool.teamId and user_team_roles.get(tool.teamId|string) == 'owner') %}
       <tr data-enabled="{{ tool.enabled|lower }}">
         <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
           <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
@@ -40,6 +41,7 @@
             >
               View
             </button>
+            {% if can_modify %}
             <button
               onclick="editTool('{{ tool.id }}')"
               class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
@@ -47,7 +49,9 @@
             >
               Edit
             </button>
+            {% endif %}
 
+            {% if can_modify %}
             <!-- Row 3: Deactivate/Activate | Delete -->
             <div class="col-span-2 flex flex-col space-y-1">
               {% if tool.enabled %}
@@ -99,6 +103,7 @@
                 </button>
               </form>
             </div>
+            {% endif %}
           </div>
         </td>
         <td

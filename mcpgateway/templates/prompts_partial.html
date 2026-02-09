@@ -19,6 +19,7 @@
       {% set prompt_label = prompt.displayName or prompt.originalName or prompt.name or prompt.id %}
       {% set prompt_gateway = prompt.gatewaySlug or 'Local' %}
       {% set prompt_tech_name = prompt.name or prompt.originalName or prompt.id %}
+      {% set can_modify = is_admin or prompt.owner_email == current_user_email or prompt.ownerEmail == current_user_email or (prompt.teamId and user_team_roles.get(prompt.teamId|string) == 'owner') or (prompt.team_id and user_team_roles.get(prompt.team_id|string) == 'owner') %}
       <tr data-enabled="{{ prompt.enabled|lower }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
@@ -33,8 +34,11 @@
 
             <!-- Row 2: View | Edit -->
             <button onclick="viewPrompt('{{ prompt.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+            {% if can_modify %}
             <button onclick="editPrompt('{{ prompt.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+            {% endif %}
 
+            {% if can_modify %}
             <!-- Row 3 & 4: Activate/Deactivate | Delete -->
             <div class="col-span-2 flex flex-col space-y-1">
               <form method="POST" action="{{ root_path }}/admin/prompts/{{ prompt.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'prompts')">
@@ -45,6 +49,7 @@
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
               </form>
             </div>
+            {% endif %}
           </div>
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12 dark:text-gray-100">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>

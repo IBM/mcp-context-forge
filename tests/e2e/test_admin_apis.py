@@ -45,7 +45,6 @@ from httpx import AsyncClient  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
-
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
@@ -396,10 +395,12 @@ class TestAdminToolAPIs:
 
     async def test_admin_tool_name_conflict(self, client: AsyncClient, mock_settings):
         """Test creating tool with duplicate name via admin UI for private, team, and public scopes."""
+        # Standard
         import uuid
 
         unique_name = f"duplicate_tool_{uuid.uuid4().hex[:8]}"
         # create a real team and use its ID
+        # First-Party
         from mcpgateway.services.team_management_service import TeamManagementService
 
         # Get db session from test fixture context
@@ -410,6 +411,7 @@ class TestAdminToolAPIs:
         else:
             # Fallback: import get_db and use it directly if available
             try:
+                # First-Party
                 from mcpgateway.db import get_db
 
                 db = next(get_db())
@@ -910,7 +912,8 @@ class TestTeamFiltering:
     async def test_tools_ids_with_team_id(self, client, app_with_temp_db):
         """Test that /admin/tools/ids respects team_id parameter."""
         # First-Party
-        from mcpgateway.db import get_db, Tool as DbTool
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Tool as DbTool
         from mcpgateway.services.team_management_service import TeamManagementService
 
         # Get db session from app's dependency overrides or directly from get_db
@@ -1045,6 +1048,7 @@ class TestTeamFiltering:
         }
 
         # Manually insert the tool since we can't POST as another user
+        # First-Party
         from mcpgateway.db import Tool as DbTool
 
         db_tool = DbTool(
@@ -1206,7 +1210,8 @@ class TestTeamFiltering:
     async def test_gateways_partial_with_team_id(self, client, app_with_temp_db):
         """Test that /admin/gateways/partial respects team_id parameter."""
         # First-Party
-        from mcpgateway.db import get_db, Gateway as DbGateway
+        from mcpgateway.db import Gateway as DbGateway
+        from mcpgateway.db import get_db
         from mcpgateway.services.team_management_service import TeamManagementService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
@@ -1263,7 +1268,8 @@ class TestTeamFiltering:
     async def test_visibility_private_not_visible_to_other_team_members(self, client, app_with_temp_db):
         """Test that visibility=private resources are NOT visible to other team members."""
         # First-Party
-        from mcpgateway.db import get_db, Tool as DbTool
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Tool as DbTool
         from mcpgateway.services.team_management_service import TeamManagementService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
@@ -1314,10 +1320,13 @@ class TestAdminListingGracefulErrorHandling:
         This test verifies the graceful error handling by mocking convert_tool_to_read
         to fail for one tool while succeeding for others.
         """
-        # First-Party
-        from mcpgateway.db import get_db, Tool as DbTool
-        from mcpgateway.services.tool_service import ToolService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Tool as DbTool
+        from mcpgateway.services.tool_service import ToolService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1364,7 +1373,7 @@ class TestAdminListingGracefulErrorHandling:
         # Store original convert_tool_to_read method
         original_convert = ToolService.convert_tool_to_read
 
-        def mock_convert(self, tool, include_metrics=False, include_auth=True):
+        def mock_convert(self, tool, include_metrics=False, include_auth=True, **kwargs):
             """Mock that raises ValueError for the corrupted tool."""
             if tool.id == corrupted_tool_id:
                 raise ValueError("Simulated corrupted data: invalid auth_value")
@@ -1400,9 +1409,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_resources_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/resources returns valid resources even when one fails conversion."""
-        from mcpgateway.db import get_db, Resource as DbResource
-        from mcpgateway.services.resource_service import ResourceService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1463,9 +1476,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_prompts_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/prompts returns valid prompts even when one fails conversion."""
-        from mcpgateway.db import get_db, Prompt as DbPrompt
-        from mcpgateway.services.prompt_service import PromptService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Prompt as DbPrompt
+        from mcpgateway.services.prompt_service import PromptService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1541,9 +1558,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_servers_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/servers returns valid servers even when one fails conversion."""
-        from mcpgateway.db import get_db, Server as DbServer
-        from mcpgateway.services.server_service import ServerService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Server as DbServer
+        from mcpgateway.services.server_service import ServerService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1601,9 +1622,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_gateways_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/gateways returns valid gateways even when one fails conversion."""
-        from mcpgateway.db import get_db, Gateway as DbGateway
-        from mcpgateway.services.gateway_service import GatewayService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import Gateway as DbGateway
+        from mcpgateway.db import get_db
+        from mcpgateway.services.gateway_service import GatewayService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1673,9 +1698,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_a2a_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/a2a returns valid A2A agents even when one fails conversion."""
-        from mcpgateway.db import get_db, A2AAgent as DbA2AAgent
-        from mcpgateway.services.a2a_service import A2AAgentService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import A2AAgent as DbA2AAgent
+        from mcpgateway.db import get_db
+        from mcpgateway.services.a2a_service import A2AAgentService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())

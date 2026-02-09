@@ -3098,6 +3098,45 @@ class GatewayUpdate(BaseModelWithConfigDict):
         return self
 
 
+# ---------------------------------------------------------------------------
+# OAuth config masking helper (used by GatewayRead.masked / A2AAgentRead.masked)
+# ---------------------------------------------------------------------------
+_SENSITIVE_OAUTH_KEYS = frozenset(
+    {
+        "client_secret",
+        "password",
+        "refresh_token",
+        "access_token",
+        "id_token",
+        "token",
+        "secret",
+        "private_key",
+    }
+)
+
+
+def _mask_oauth_config(oauth_config: Any) -> Any:
+    """Recursively mask sensitive keys inside an ``oauth_config`` dict.
+
+    Args:
+        oauth_config: The oauth_config value to mask (dict, list, or scalar).
+
+    Returns:
+        The masked copy with sensitive values replaced.
+    """
+    if isinstance(oauth_config, dict):
+        out: Dict[str, Any] = {}
+        for k, v in oauth_config.items():
+            if isinstance(k, str) and k.lower() in _SENSITIVE_OAUTH_KEYS:
+                out[k] = settings.masked_auth_value if v else v
+            else:
+                out[k] = _mask_oauth_config(v)
+        return out
+    if isinstance(oauth_config, list):
+        return [_mask_oauth_config(x) for x in oauth_config]
+    return oauth_config
+
+
 class GatewayRead(BaseModelWithConfigDict):
     """Schema for reading gateway information.
 
@@ -3391,6 +3430,10 @@ class GatewayRead(BaseModelWithConfigDict):
                 }
                 for header in masked_data["auth_headers"]
             ]
+
+        # Mask sensitive keys inside oauth_config (e.g. password, client_secret)
+        if masked_data.get("oauth_config"):
+            masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
 
         # SECURITY: Never expose unmasked credentials in API responses
         masked_data["auth_password_unmasked"] = None
@@ -5116,6 +5159,10 @@ class A2AAgentRead(BaseModelWithConfigDict):
         masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
         masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
         masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+
+        # Mask sensitive keys inside oauth_config (e.g. password, client_secret)
+        if masked_data.get("oauth_config"):
+            masked_data["oauth_config"] = _mask_oauth_config(masked_data["oauth_config"])
 
         return A2AAgentRead.model_validate(masked_data)
 
