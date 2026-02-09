@@ -34,7 +34,7 @@ try:
     from langchain_core.tools import BaseTool
     from langchain_mcp_adapters.client import MultiServerMCPClient
     from langchain_ollama import ChatOllama, OllamaLLM
-    from langchain_openai import AzureChatOpenAI, AzureOpenAI, ChatOpenAI, OpenAI
+    from langchain_openai import AzureChatOpenAI, AzureOpenAI, ChatOpenAI, OpenAI, OpenAIEmbeddings
     from langgraph.prebuilt import create_react_agent
 
     _LLMCHAT_AVAILABLE = True
@@ -54,6 +54,7 @@ except ImportError:
     AzureOpenAI = None
     ChatOpenAI = None  # type: ignore
     OpenAI = None
+    OpenAIEmbeddings = None  # type: ignore
     create_react_agent = None  # type: ignore
 
 # Try to import Anthropic and Bedrock providers (they may not be installed)
@@ -564,6 +565,99 @@ class GatewayConfig(BaseModel):
             }
         }
     }
+
+
+# ==================== EMBEDDING CONFIGURATION CLASSES ====================
+
+
+class OpenAIEmbeddingConfig(BaseModel):
+    """
+    Configuration for OpenAI Embeddings provider.
+
+    Defines parameters for connecting to OpenAI API for embedding generation.
+
+    Attributes:
+        api_key: OpenAI API authentication key.
+        base_url: Optional base URL for OpenAI-compatible endpoints.
+        model: Embedding model identifier (e.g., text-embedding-3-small, text-embedding-3-large).
+        dimensions: Optional embedding dimensions (for text-embedding-3 models).
+        timeout: Request timeout duration in seconds.
+        max_retries: Maximum number of retry attempts for failed requests.
+
+    Examples:
+        >>> config = OpenAIEmbeddingConfig(
+        ...     api_key="sk-...",
+        ...     model="text-embedding-3-small"
+        ... )
+        >>> config.model
+        'text-embedding-3-small'
+    """
+
+    api_key: str = Field(..., description="OpenAI API key")
+    base_url: Optional[str] = Field(None, description="Base URL for OpenAI-compatible endpoints")
+    model: str = Field(default="text-embedding-3-small", description="Embedding model name")
+    dimensions: Optional[int] = Field(None, gt=0, description="Embedding dimensions (for text-embedding-3 models)")
+    timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
+    max_retries: int = Field(default=2, ge=0, description="Maximum number of retries")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "api_key": "sk-...",
+                "model": "text-embedding-3-small",
+                "dimensions": 1536,
+            }
+        }
+    }
+
+
+class EmbeddingConfig(BaseModel):
+    """
+    Configuration for embedding provider.
+
+    Unified configuration class that supports multiple embedding providers through
+    a discriminated union pattern. Currently supports OpenAI embeddings with
+    extensibility for additional providers.
+
+    Attributes:
+        provider: Type of embedding provider (currently 'openai').
+        config: Provider-specific configuration object.
+
+    Examples:
+        >>> config = EmbeddingConfig(
+        ...     provider="openai",
+        ...     config=OpenAIEmbeddingConfig(
+        ...         api_key="sk-...",
+        ...         model="text-embedding-3-small"
+        ...     )
+        ... )
+        >>> config.provider
+        'openai'
+    """
+
+    provider: Literal["openai"] = Field(..., description="Embedding provider type")
+    config: Union[OpenAIEmbeddingConfig] = Field(..., description="Provider-specific configuration")
+
+    @field_validator("config", mode="before")
+    @classmethod
+    def validate_config_type(cls, v: Any, info) -> Union[OpenAIEmbeddingConfig]:
+        """
+        Validate and convert config dictionary to appropriate provider type.
+
+        Args:
+            v: Configuration value (dict or config object).
+            info: Validation context containing provider information.
+
+        Returns:
+            Union[OpenAIEmbeddingConfig]: Validated configuration object.
+        """
+        provider = info.data.get("provider")
+
+        if isinstance(v, dict):
+            if provider == "openai":
+                return OpenAIEmbeddingConfig(**v)
+
+        return v
 
 
 class LLMConfig(BaseModel):
@@ -1741,6 +1835,121 @@ class GatewayProvider:
         return self._model_name or self.config.model
 
 
+# ==================== EMBEDDING PROVIDER IMPLEMENTATIONS ====================
+
+
+class OpenAIEmbeddingProvider:
+    """
+    OpenAI Embeddings provider implementation.
+
+    Manages connection and interaction with OpenAI API for embedding generation.
+
+    Attributes:
+        config: OpenAI embedding configuration object.
+
+    Examples:
+        >>> config = OpenAIEmbeddingConfig(
+        ...     api_key="sk-...",
+        ...     model="text-embedding-3-small"
+        ... )
+        >>> provider = OpenAIEmbeddingProvider(config)
+        >>> provider.get_model_name()
+        'text-embedding-3-small'
+
+    Note:
+        The embedding model instance is lazily initialized on first access for
+        improved startup performance.
+    """
+
+    def __init__(self, config: OpenAIEmbeddingConfig):
+        """
+        Initialize OpenAI embedding provider.
+
+        Args:
+            config: OpenAI embedding configuration with API key and settings.
+
+        Raises:
+            ImportError: If langchain-openai is not installed.
+
+        Examples:
+            >>> config = OpenAIEmbeddingConfig(
+            ...     api_key="sk-...",
+            ...     model="text-embedding-3-small"
+            ... )
+            >>> provider = OpenAIEmbeddingProvider(config)
+        """
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("OpenAI embedding provider requires langchain-openai package. Install it with: pip install langchain-openai")
+
+        self.config = config
+        self._embedding_model: Any = None
+        logger.info(f"Initializing OpenAI embedding provider with model: {config.model}")
+
+    def get_embedding_model(self) -> Any:
+        """
+        Get OpenAI Embeddings instance with lazy initialization.
+
+        Creates and caches the OpenAI embeddings model instance on first call.
+        Subsequent calls return the cached instance.
+
+        Returns:
+            OpenAIEmbeddings: Configured OpenAI embeddings model.
+
+        Raises:
+            Exception: If embedding model initialization fails (e.g., invalid credentials).
+
+        Examples:
+            >>> config = OpenAIEmbeddingConfig(
+            ...     api_key="sk-...",
+            ...     model="text-embedding-3-small"
+            ... )
+            >>> provider = OpenAIEmbeddingProvider(config)
+            >>> # embeddings = provider.get_embedding_model()  # Returns OpenAIEmbeddings instance
+        """
+        if self._embedding_model is None:
+            try:
+                kwargs: Dict[str, Any] = {
+                    "api_key": self.config.api_key,
+                    "model": self.config.model,
+                    "max_retries": self.config.max_retries,
+                }
+
+                if self.config.base_url:
+                    kwargs["base_url"] = self.config.base_url
+
+                if self.config.dimensions:
+                    kwargs["dimensions"] = self.config.dimensions
+
+                if self.config.timeout:
+                    kwargs["timeout"] = self.config.timeout
+
+                self._embedding_model = OpenAIEmbeddings(**kwargs)  # type: ignore[misc]
+                logger.info("OpenAI embedding model instance created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create OpenAI embedding model: {e}")
+                raise
+
+        return self._embedding_model
+
+    def get_model_name(self) -> str:
+        """
+        Get the OpenAI embedding model name.
+
+        Returns:
+            str: The embedding model name configured for this provider.
+
+        Examples:
+            >>> config = OpenAIEmbeddingConfig(
+            ...     api_key="sk-...",
+            ...     model="text-embedding-3-small"
+            ... )
+            >>> provider = OpenAIEmbeddingProvider(config)
+            >>> provider.get_model_name()
+            'text-embedding-3-small'
+        """
+        return self.config.model
+
+
 class LLMProviderFactory:
     """
     Factory for creating LLM providers.
@@ -1829,6 +2038,71 @@ class LLMProviderFactory:
 
         logger.info(f"Creating LLM provider: {llm_config.provider}")
         return provider_class(llm_config.config)
+
+
+class EmbeddingProviderFactory:
+    """
+    Factory for creating embedding providers.
+
+    Implements the Factory pattern to instantiate the appropriate embedding provider
+    based on configuration, abstracting away provider-specific initialization.
+
+    Examples:
+        >>> config = EmbeddingConfig(
+        ...     provider="openai",
+        ...     config=OpenAIEmbeddingConfig(
+        ...         api_key="sk-...",
+        ...         model="text-embedding-3-small"
+        ...     )
+        ... )
+        >>> provider = EmbeddingProviderFactory.create(config)
+        >>> provider.get_model_name()
+        'text-embedding-3-small'
+
+    Note:
+        This factory supports dynamic provider registration and ensures
+        type safety through the EmbeddingConfig discriminated union.
+    """
+
+    @staticmethod
+    def create(embedding_config: EmbeddingConfig) -> "OpenAIEmbeddingProvider":
+        """
+        Create an embedding provider based on configuration.
+
+        Args:
+            embedding_config: Embedding configuration specifying provider type and settings.
+
+        Returns:
+            OpenAIEmbeddingProvider: Instantiated embedding provider.
+
+        Raises:
+            ValueError: If provider type is not supported.
+            ImportError: If required provider package is not installed.
+
+        Examples:
+            >>> # Create OpenAI embedding provider
+            >>> config = EmbeddingConfig(
+            ...     provider="openai",
+            ...     config=OpenAIEmbeddingConfig(
+            ...         api_key="sk-...",
+            ...         model="text-embedding-3-small"
+            ...     )
+            ... )
+            >>> provider = EmbeddingProviderFactory.create(config)
+            >>> isinstance(provider, OpenAIEmbeddingProvider)
+            True
+        """
+        provider_map: Dict[str, type] = {
+            "openai": OpenAIEmbeddingProvider,
+        }
+
+        provider_class = provider_map.get(embedding_config.provider)
+
+        if not provider_class:
+            raise ValueError(f"Unsupported embedding provider: {embedding_config.provider}. Supported providers: {list(provider_map.keys())}")
+
+        logger.info(f"Creating embedding provider: {embedding_config.provider}")
+        return provider_class(embedding_config.config)  # type: ignore[arg-type]
 
 
 # ==================== CHAT HISTORY MANAGER ====================
