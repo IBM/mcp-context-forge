@@ -998,7 +998,7 @@ class TokenCatalogService:
             cached = await cache.is_token_revoked(jti)
             if cached is False:
                 return None
-        
+
             # If cached is True or None (unknown), fall through to DB to get full record
         except Exception as e:
             # Cache failure should not block functionality; fall back to DB
