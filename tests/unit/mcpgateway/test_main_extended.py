@@ -4592,7 +4592,7 @@ class TestRemainingCoverageGaps:
         data = MagicMock()
         data.to_dict.return_value = {"id": "t1"}
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
-        result = await main_mod.get_tool.__wrapped__("tool-1", db=MagicMock(), user={"email": "u"}, apijsonpath=apijsonpath)
+        result = await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=apijsonpath)
         assert result == {"filtered": True}
 
     async def test_deprecated_toggle_endpoints(self, monkeypatch):
