@@ -7475,7 +7475,9 @@ function cleanUpUrlParamsForTab(targetTabName) {
         currentUrl.pathname +
         (newParams.toString() ? "?" + newParams.toString() : "") +
         currentUrl.hash;
-    try { window.history.replaceState({}, "", newUrl); } catch (e) {}
+    try {
+        window.history.replaceState({}, "", newUrl);
+    } catch (e) {}
 }
 
 function showTab(tabName) {
@@ -21112,7 +21114,9 @@ async function getAuthToken() {
 
     // Fallback to localStorage for compatibility
     if (!token) {
-        try { token = localStorage.getItem("auth_token"); } catch (e) {}
+        try {
+            token = localStorage.getItem("auth_token");
+        } catch (e) {}
     }
     return token || "";
 }
