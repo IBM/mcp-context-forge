@@ -630,30 +630,23 @@ def _get_span_entity_performance(
         """Calculate percentile using linear interpolation (matches PostgreSQL percentile_cont).
 
         Args:
-            data: Sorted list of numeric values.
+            data: Sorted, non-empty list of numeric values.
             p: Percentile to calculate (0.0 to 1.0).
 
         Returns:
-            float: The interpolated percentile value, or 0.0 if data is empty.
+            float: The interpolated percentile value.
         """
-        if not data:
-            return 0.0
         n = len(data)
-        if n == 1:
-            return data[0]
         k = p * (n - 1)
         f = int(k)
         c = k - f
-        if f + 1 < n:
-            return data[f] + c * (data[f + 1] - data[f])
-        return data[f]
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
 
     items: List[dict] = []
     for entity, durations in durations_by_entity.items():
         durations_sorted = sorted(durations)
         n = len(durations_sorted)
-        if n == 0:
-            continue
         items.append(
             {
                 result_key: entity,
@@ -1073,15 +1066,15 @@ async def update_global_passthrough_headers(
         # Invalidate cache so changes propagate immediately (Issue #1715)
         global_config_cache.invalidate()
         return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
-    except (IntegrityError, ValidationError, PassthroughHeadersError) as e:
+    except IntegrityError as e:
         db.rollback()
-        if isinstance(e, IntegrityError):
-            raise HTTPException(status_code=409, detail="Passthrough headers conflict")
-        if isinstance(e, ValidationError):
-            raise HTTPException(status_code=422, detail="Invalid passthrough headers format")
-        if isinstance(e, PassthroughHeadersError):
-            raise HTTPException(status_code=500, detail=str(e))
-        raise HTTPException(status_code=500, detail="Unknown error occurred")
+        raise HTTPException(status_code=409, detail="Passthrough headers conflict") from e
+    except ValidationError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Invalid passthrough headers format") from e
+    except PassthroughHeadersError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @admin_router.post("/config/passthrough-headers/invalidate-cache")
@@ -1317,9 +1310,6 @@ async def get_configuration_settings(
                 return settings.masked_auth_value
             if value and str(value) not in ["", "None", "null"]:
                 return settings.masked_auth_value
-        # Handle SecretStr even for non-sensitive keys
-        if isinstance(value, SecretStr):
-            return value.get_secret_value()
         return value
 
     # Group settings by category
@@ -1854,10 +1844,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    # NOTE: Pydantic validation errors subclass ValueError; CoreValidationError must be handled first.
     except ValueError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-    except ValidationError as ex:
-        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -2562,14 +2551,9 @@ async def admin_ui(
             >>> _matches_selected_team({'teams': ['t1', 't2']}, 't1')
             True
 
-            >>> _matches_selected_team({}, '')
-            True
-
             >>> _matches_selected_team(None, 'abc')
             False
         """
-        if not tid:
-            return True
         # If an item is explicitly public, it should be visible to any team
         try:
             vis = getattr(item, "visibility", None)
@@ -3862,23 +3846,19 @@ async def admin_teams_partial_html(
         t.member_count = counts.get(team_id, 0)
 
         # Determine relationship
+        t.relationship = "none"
+        t.pending_request = None
         if t.is_personal:
             t.relationship = "personal"
-            t.pending_request = None
         elif team_id in user_team_ids:
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
-            t.pending_request = None
         elif current_user.is_admin:
             # Admins get admin controls for teams they're not members of
             t.relationship = "none"  # Falls through to admin controls in template
-            t.pending_request = None
         elif team_id in public_team_ids:
             t.relationship = "public"
             t.pending_request = pending_requests.get(team_id)
-        else:
-            t.relationship = "none"
-            t.pending_request = None
 
         enriched_data.append(t)
 
@@ -4771,9 +4751,6 @@ async def admin_add_team_members(
 
         # 1. Handle additions and updates for checked users
         for user_email in user_emails:
-            if not isinstance(user_email, str):
-                continue
-
             user_email = user_email.strip()
             if not user_email:
                 continue
@@ -9376,12 +9353,13 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-    except ValueError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
+    except ValueError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -9576,14 +9554,15 @@ async def admin_edit_gateway(
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-        if isinstance(ex, ValueError):
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
         if isinstance(ex, ValidationError):
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
+        if isinstance(ex, ValueError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -12513,12 +12492,6 @@ async def admin_add_a2a_agent(
     except A2AAgentError as ex:
         LOGGER.error(f"A2A agent error: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-    except ValidationError as ex:
-        LOGGER.error(f"Validation error while creating A2A agent: {ex}")
-        return ORJSONResponse(
-            content=ErrorFormatter.format_validation_error(ex),
-            status_code=422,
-        )
     except IntegrityError as ex:
         return ORJSONResponse(
             content=ErrorFormatter.format_database_error(ex),
@@ -12772,17 +12745,14 @@ async def admin_set_a2a_agent_state(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    user_email = get_user_email(user)
     error_message = None
     try:
         form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
 
-        user_email = get_user_email(user)
-
         await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
@@ -14895,16 +14865,11 @@ def _get_latency_percentiles_python(db: Session, cutoff_time: datetime, interval
             float: Interpolated percentile value.
         """
         n = len(data)
-        if n == 0:
-            return 0.0
-        if n == 1:
-            return data[0]
         k = p * (n - 1)
         f = int(k)
         c = k - f
-        if f + 1 < n:
-            return data[f] + c * (data[f + 1] - data[f])
-        return data[f]
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
 
     for bucket_time in sorted(buckets.keys()):
         durations = sorted(buckets[bucket_time])
